@@ -1,0 +1,1414 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-DecodeView`'s structure clause, the CONSUMERS, as
+// `src/lower/decode_structure_scan.rs` scans them: the functions of a root's chain that hold a
+// decoded value as a position.  The scan admits a closed list of mentions of such a value and
+// declines on anything else:
+//
+// - an assignment from a position source: a consumer's or the producer's call, a field of a
+//   decoded record or of an element, a unit literal, the decoder's own record literal, a vector
+//   field read inside the arm that proved its variant;
+// - a read the encoding answers: the enum tag, a text field inside the arm that proved its
+//   variant, a scalar field of the decoded record, a hand-off to a consumer;
+// - a walk `for e in v.entries { … }` from the first element, whose body reads no index and
+//   leaves only by `return`;
+// - a `return` of a position, and the frees, clears and buffer mints of position locals;
+// - (6) in instance 1: no position made outside a loop or walk is read inside it, and no
+//   consumer reaches itself.
+//
+// The Rust scan keys the skipped statements and the walks by IR address; here by path
+// (`opt_decode_view::child`), marked in the code once the plan is made.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use opt_vr_shape;
+use types;
+use opt_decode_view::(child, under, op_name, int_of, var_of, is_var, call_def, call_args, call_name, var_tp, var_name, var_named, returned, DvPlan);
+use opt_decode_view;
+use opt_decode_structure::(Producer, PsPlan, WalkKey, scalar_index, has_elem, elem_of, walked_key, record_tp, fields, unit_literal, unit_return, trace, trace_on);
+use opt_decode_structure;
+
+// What a consumer's variable holds (`Rep`): a value of the enum (`R_T`), the producer's record
+// (`R_D`), an element record of a walked vector (`rep_e(etp)`), a vector field held as its
+// owner's position (`rep_v(vtp)`); `R_NONE` nothing.
+pub const R_NONE = -9;
+pub const R_T = -1;
+pub const R_D = -2;
+const R_E = 100000;
+const R_V = 200000;
+
+pub fn rep_e(etp: integer) -> integer {
+  R_E + etp
+}
+
+pub fn rep_v(vtp: integer) -> integer {
+  R_V + vtp
+}
+
+pub fn is_e(r: integer) -> boolean {
+  r >= R_E && r < R_V
+}
+
+pub fn is_v(r: integer) -> boolean {
+  r >= R_V
+}
+
+// The store type an `E` or `V` rep names.
+pub fn rep_tp(r: integer) -> integer {
+  if is_v(r) { r - R_V } else if is_e(r) { r - R_E } else { -1 }
+}
+
+// A walk of a vector field (`Walk`): the `for` block's path, its element variable, the vector
+// variable the loop reads, the walk twin's key and the first body statement in the loop.
+pub struct Walk {
+  pub path: text,
+  pub elem: integer,
+  pub vec: integer,
+  pub off: integer,
+  pub vtp: integer,
+  pub body_from: integer,
+}
+
+// One consumer's plan (`Consumer`).
+pub struct Consumer {
+  pub d: integer,
+  pub producer: integer,
+  pub reps: vector<integer>,
+  pub skip: vector<text>,
+  pub walks: vector<Walk>,
+  pub retbuf: integer,
+  pub returns: integer,
+  pub frame: integer,
+  pub callees: vector<integer>,
+}
+
+pub fn rep_of_var(c: Consumer, v: integer) -> integer {
+  if v < 0 || v >= len(c.reps) { R_NONE } else { c.reps[v]! }
+}
+
+// The walk a `For` block's marker names, null for none.
+pub fn walk_at(c: Consumer, i: integer) -> Walk? {
+  if i < 0 || i >= len(c.walks) { null } else { c.walks[i]! }
+}
+
+// A position a local or a field of one names, and how often it is handed on.
+struct Use {
+  var: integer,
+  off: integer,
+  count: integer,
+}
+
+// An arm that proved a value's variant: the value expression and the tag.
+struct Arm {
+  subject: ir::Node,
+  tag: integer,
+}
+
+struct CScan {
+  b: ir::Bundle,
+  plan: PsPlan,
+  p: Producer,
+  pd: integer,
+  d: integer,
+  c: Consumer,
+  depth_of: vector<integer>,
+  depth: integer,
+  arms: vector<Arm>,
+  callees: vector<integer>,
+  why: text,
+  in_walk: integer,
+  uses: vector<Use>,
+}
+
+fn fail(s: CScan, why: text) {
+  if s.why == "" {
+    s.why = why;
+  }
+}
+
+fn name(s: CScan, v: integer) -> text {
+  var_name(s.b, s.d, v)
+}
+
+fn rep(s: CScan, v: integer) -> integer {
+  rep_of_var(s.c, v)
+}
+
+fn read(s: CScan, v: integer) {
+  at = if v >= 0 && v < len(s.depth_of) { s.depth_of[v]! } else { -1 };
+  if at >= 0 && at < s.depth {
+    fail(s, "`{name(s, v)}` is read inside a loop it was not made in");
+  }
+}
+
+fn set_depth(s: CScan, v: integer, depth: integer) {
+  if v >= 0 && v < len(s.depth_of) {
+    s.depth_of[v] = depth;
+  }
+}
+
+// (6) READ ONCE (`hand_on`): the position `expr` names is handed on here; a second hand-off is
+// a second walk of the same encoding.
+fn hand_on(s: CScan, expr: ir::Node) {
+  var = -1;
+  off = -1;
+  match loop_shape::unspan(expr) {
+    NdVar { n } => var = n,
+    NdCall { def_nr, args } => {
+      if op_name(s.b, def_nr) != "OpGetField" || len(args) != 3 {
+        return;
+      }
+      v = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => return };
+      o = int_of(args[1]!);
+      if o == null {
+        return;
+      }
+      var = v;
+      off = o;
+    },
+    _ => return,
+  }
+  for u in s.uses {
+    if u.var == var && u.off == off {
+      s.uses[u#index].count = u.count + 1;
+      fail(s, "`{name(s, var)}` is handed on twice: read once (6) does not hold");
+      return;
+    }
+  }
+  s.uses += [Use { var: var, off: off, count: 1 }];
+}
+
+// The fields `(offset, content)` of the variant of enum `t_tp` with tag `tag`
+// (`variant_fields`), as two vectors; `ok` false for none.
+pub struct VFields {
+  pub ok: boolean,
+  pub offs: vector<integer>,
+  pub contents: vector<integer>,
+}
+
+pub fn variant_fields(b: ir::Bundle, t_tp: integer, tag: integer) -> VFields {
+  out = VFields { ok: false, offs: [], contents: [] };
+  if t_tp < 0 || t_tp >= len(b.types) {
+    return out;
+  }
+  match b.types[t_tp]!.parts[0] ?? ir::PtBase {
+    PtEnum { values } => {
+      for v in values {
+        match b.types[v.nr]?.parts[0] ?? ir::PtBase {
+          PtEnumValue { value, fields: fs } => {
+            if value == tag {
+              for f in fs {
+                out.offs += [f.position];
+                out.contents += [f.content];
+              }
+              out.ok = true;
+              return out;
+            }
+          },
+          _ => {},
+        }
+      }
+    },
+    _ => {},
+  }
+  out
+}
+
+// The enclosing arm proved `expr`'s variant (`proven`): its fields, `ok` false where none did.
+fn proven(s: CScan, expr: ir::Node) -> VFields {
+  u = loop_shape::unspan(expr);
+  for i in rev(0..len(s.arms)) {
+    a = s.arms[i]!;
+    if loop_shape::unspan(a.subject) == u {
+      return variant_fields(s.b, s.p.t_tp, a.tag);
+    }
+  }
+  VFields { ok: false, offs: [], contents: [] }
+}
+
+fn has_field(f: VFields, off: integer, content: integer) -> boolean {
+  for o in f.offs {
+    if o == off && f.contents[o#index]! == content {
+      return true;
+    }
+  }
+  false
+}
+
+// A position expression (`t_expr`): its rep, `R_NONE` for none.
+fn t_expr(s: CScan, v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      r = rep(s, n);
+      if r == R_NONE {
+        return R_NONE;
+      }
+      read(s, n);
+      r
+    },
+    NdCall { def_nr, args } => {
+      if op_name(s.b, def_nr) != "OpGetField" || len(args) != 3 {
+        return R_NONE;
+      }
+      expr = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => return R_NONE };
+      off = int_of(args[1]!);
+      if off == null {
+        return R_NONE;
+      }
+      r = rep(s, expr);
+      if r == R_D && off == s.p.vo {
+        read(s, expr);
+        return R_T;
+      }
+      if is_e(r) {
+        read(s, expr);
+        fs = fields(s.b, rep_tp(r)) ?? return R_NONE;
+        for f in fs {
+          if f.position == off {
+            return R_T;
+          }
+        }
+        return R_NONE;
+      }
+      if r == R_T {
+        vtp = int_of(args[2]!);
+        if vtp == null || vtp < 0 || vtp > 65535 || !has_elem(s.p, vtp) || walked_key(s.p, off, vtp) < 0 {
+          return R_NONE;
+        }
+        pf = proven(s, args[0]!);
+        if !pf.ok || !has_field(pf, off, vtp) || len(s.b.types) <= vtp {
+          return R_NONE;
+        }
+        read(s, expr);
+        return rep_v(vtp);
+      }
+      R_NONE
+    },
+    _ => R_NONE,
+  }
+}
+
+// Does `expr` name a position local?
+fn mentions_rep(s: CScan, expr: ir::Node) -> boolean {
+  match expr {
+    NdSpan { pos: _, inner } => return mentions_rep(s, inner),
+    NdVar { n } => if rep(s, n) != R_NONE { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(expr) {
+    if mentions_rep(s, c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn rep_vars(s: CScan) -> vector<integer> {
+  out: vector<integer> = [];
+  for r in s.c.reps {
+    if r != R_NONE {
+      out += [r#index];
+    }
+  }
+  out
+}
+
+// What a loft type holds as a position (`rep_of`), `R_NONE` for nothing.
+pub fn rep_of(b: ir::Bundle, p: Producer, tp: ir::TypeT) -> integer {
+  match cgen_types::base(tp) {
+    TyVector { inner, dep: _ } => {
+      etp = record_tp(b, inner);
+      if etp < 0 {
+        return R_NONE;
+      }
+      for e in p.elem {
+        if e.etp == etp {
+          return rep_v(e.vtp);
+        }
+      }
+      return R_NONE;
+    },
+    _ => {},
+  }
+  rec = record_tp(b, tp);
+  if rec < 0 {
+    return R_NONE;
+  }
+  if rec == p.d_tp {
+    return R_D;
+  }
+  if rec == p.t_tp {
+    return R_T;
+  }
+  for e in p.elem {
+    if e.etp == rec && !e.whole {
+      return rep_e(rec);
+    }
+  }
+  R_NONE
+}
+
+// An expression mentioning positions in plain code (`expr`), at path `p`.
+fn expr(s: CScan, v: ir::Node, p: text) {
+  if s.why != "" {
+    return;
+  }
+  up = under(p, v);
+  match loop_shape::unspan(v) {
+    NdVar { n } => {
+      if rep(s, n) != R_NONE {
+        fail(s, "`{name(s, n)}` is used whole");
+      }
+    },
+    NdCall { def_nr, args } => call(s, def_nr, args, up),
+    NdSet { var, inner } => set(s, v, p, var, inner, child(up, 0)),
+    NdBlock { block } => block_(s, v, p, block[0], up),
+    NdInsert { items } => {
+      for o in items {
+        expr(s, o, child(up, o#index));
+      }
+    },
+    NdIf { cond, t, f } => if_(s, v, p, cond, t, f, up),
+    NdLoop { block } => {
+      s.depth += 1;
+      for o in block[0].operators {
+        expr(s, o, child(up, o#index));
+      }
+      s.depth -= 1;
+    },
+    NdReturn { inner } => ret(s, inner, child(up, 0)),
+    NdDrop { inner } => expr(s, inner, child(up, 0)),
+    NdYield { inner: _ } => {
+      if opt_decode_structure::mentions_any(v, rep_vars(s)) {
+        fail(s, "a position reaches a yield or a function reference");
+      }
+    },
+    NdCallRef { var: _, args: _ } => {
+      if opt_decode_structure::mentions_any(v, rep_vars(s)) {
+        fail(s, "a position reaches a yield or a function reference");
+      }
+    },
+    NdFnRef { def_nr: _, var: _, t: _ } => {
+      if opt_decode_structure::mentions_any(v, rep_vars(s)) {
+        fail(s, "a position reaches a yield or a function reference");
+      }
+    },
+    NdBreak { n: _ } => {
+      if s.in_walk > 0 && s.depth == 0 {
+        fail(s, "a walk is left by a break or a continue");
+      }
+    },
+    NdContinue { n: _ } => {
+      if s.in_walk > 0 && s.depth == 0 {
+        fail(s, "a walk is left by a break or a continue");
+      }
+    },
+    _ => {
+      if opt_decode_structure::mentions_any(v, rep_vars(s)) {
+        fail(s, "a position in an unknown form");
+      }
+    },
+  }
+}
+
+fn call(s: CScan, callee: integer, args: vector<ir::Node>, up: text) {
+  nm = op_name(s.b, callee);
+  if position_read(s, nm, args) {
+    return;
+  }
+  if nm.starts_with("Op") {
+    // An operator over plain values: what it reads of a position was matched above.
+    for a in args {
+      expr(s, a, child(up, a#index));
+    }
+    return;
+  }
+  if callee == s.pd {
+    producer_call(s, args, up);
+    return;
+  }
+  if opt_decode_structure::producer_of(s.plan, callee) != null {
+    fail(s, "a second producer");
+    return;
+  }
+  hands = false;
+  for a in args {
+    if mentions_rep(s, a) {
+      hands = true;
+    }
+  }
+  answers = rep_of(s.b, s.p, returned(s.b, callee)) != R_NONE;
+  if hands || answers {
+    consumer_call(s, callee, args, answers, up);
+    return;
+  }
+  for a in args {
+    expr(s, a, child(up, a#index));
+  }
+}
+
+// A read the encoding answers, or a release of a position (`position_read`).
+fn position_read(s: CScan, nm: text, args: vector<ir::Node>) -> boolean {
+  n = len(args);
+  if (nm == "OpGetBoolean" || nm == "OpGetInt") && n == 2 {
+    rec = match args[0]! { NdVar { n: x } => x, _ => -1 };
+    if rec >= 0 && rep(s, rec) == R_D {
+      if scalar_index(s.p, int_of(args[1]!)) < 0 {
+        fail(s, "a field of the decoded record that is no scalar");
+      }
+      read(s, rec);
+      return true;
+    }
+  }
+  if nm == "OpConvIntFromEnum" && n == 1 {
+    inner = args[0]!;
+    ga = call_args(inner);
+    return call_name(s.b, inner) == "OpGetEnum" && len(ga) == 2 && int_of(ga[1]!) == 0 && t_expr(s, ga[0]!) == R_T;
+  }
+  if nm == "OpGetEnum" && n == 2 {
+    return int_of(args[1]!) == 0 && t_expr(s, args[0]!) == R_T;
+  }
+  // A number, boolean or text field of a value: the shape's slot, inside the arm that proved
+  // the variant.
+  if (nm == "OpGetInt" || nm == "OpGetBoolean" || nm == "OpGetText") && n == 2 && t_expr(s, args[0]!) == R_T {
+    want_name = if nm == "OpGetInt" { "integer" } else if nm == "OpGetBoolean" { "boolean" } else { "text" };
+    want = types::named(s.b.types, want_name) ?? -1;
+    off = int_of(args[1]!);
+    ok = false;
+    if off != null {
+      pf = proven(s, args[0]!);
+      ok = pf.ok && has_field(pf, off, want);
+    }
+    if !ok {
+      fail(s, "a field read outside the arm that proved its variant");
+    }
+    return true;
+  }
+  // Releases, clears and buffer mints of positions: nothing to release.
+  if nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpClear" || nm == "OpDatabase" || nm == "OpDatabaseNP" || nm == "OpRefIsNull" || nm == "OpConvBoolFromRef" || nm == "OpDistinctStore" || nm == "OpRefAlias" {
+    any_rep = false;
+    all_plain = true;
+    for a in args {
+      match loop_shape::unspan(a) {
+        NdVar { n: x } => if rep(s, x) != R_NONE { any_rep = true; },
+        NdInt { n: _ } => {},
+        NdLong { n: _ } => {},
+        _ => all_plain = false,
+      }
+    }
+    return any_rep && all_plain;
+  }
+  false
+}
+
+// A position handed to, or answered by, another consumer (`consumer_call`).
+fn consumer_call(s: CScan, callee: integer, args: vector<ir::Node>, answers: boolean, up: text) {
+  def = s.b.data.definitions[callee]!;
+  if def.def_type != 1 || len(def.code) == 0 || (def.code[0]! is NdNull) {
+    fail(s, "a position reaches `{def.name}`, which is no loft function");
+    return;
+  }
+  if callee == s.d {
+    fail(s, "a consumer reaches itself");
+    return;
+  }
+  s.callees += [callee];
+  rb = if answers { opt_vr_shape::ret_buffer_attr(def) } else { -1 };
+  for a in args {
+    i = a#index;
+    if i == rb {
+      continue;
+    }
+    want = if i < len(def.attributes) { rep_of(s.b, s.p, def.attributes[i]!.typedef[0] ?? ir::TyVoid) } else { R_NONE };
+    if want == R_NONE {
+      expr(s, a, child(up, i));
+      continue;
+    }
+    hand_on(s, a);
+    got = R_NONE;
+    v = match loop_shape::unspan(a) { NdVar { n } => n, _ => -1 };
+    if v >= 0 {
+      got = rep(s, v);
+      if got != R_NONE {
+        read(s, v);
+      }
+    } else {
+      got = t_expr(s, a);
+    }
+    if got != want {
+      fail(s, "a call is handed something other than a position where it takes one");
+    }
+  }
+}
+
+fn producer_call(s: CScan, args: vector<ir::Node>, up: text) {
+  def = s.b.data.definitions[s.pd]!;
+  for a in args {
+    pv = var_named(s.b, s.pd, def.attributes[a#index]!.name);
+    if pv == s.p.frame {
+      if s.c.frame < 0 || !is_var(a, s.c.frame) || !(match loop_shape::unspan(a) { NdVar { n: _ } => true, _ => false }) {
+        fail(s, "the producer is handed another frame");
+      }
+    } else if pv == s.p.retbuf {
+      // The buffer: a position local, or anything that names no position.
+    } else {
+      expr(s, a, child(up, a#index));
+    }
+  }
+}
+
+fn skip_at(s: CScan, p: text) {
+  if !s.c.skip.contains(p) {
+    s.c.skip += [p];
+  }
+}
+
+fn set(s: CScan, v: ir::Node, p: text, x: integer, rhs: ir::Node, rp: text) {
+  want = rep(s, x);
+  if want == R_NONE {
+    // A plain value computed from positions: a tag, a field, a call's answer.
+    expr(s, rhs, rp);
+    return;
+  }
+  set_depth(s, x, s.depth);
+  got = R_NONE;
+  nm = call_name(s.b, rhs);
+  cd = call_def(rhs);
+  match loop_shape::unspan(rhs) {
+    NdNull => {
+      skip_at(s, p);
+      return;
+    },
+    _ => {},
+  }
+  if nm == "OpRefAlias" && len(call_args(rhs)) == 1 {
+    skip_at(s, p);
+    return;
+  }
+  if cd >= 0 && cd == s.pd {
+    expr(s, rhs, rp);
+    got = R_D;
+  } else if nm == "OpPlaceRecord" && !any_mentions_rep(s, call_args(rhs)) {
+    skip_at(s, p);
+    return;
+  } else if cd >= 0 && !nm.starts_with("Op") {
+    expr(s, rhs, rp);
+    got = rep_of(s.b, s.p, returned(s.b, cd));
+  } else if unit_literal(s.b, rhs) >= 0 {
+    got = R_T;
+  } else if opt_decode_view::block_name(rhs) == "Object" {
+    got = if object(s, rhs, under(rp, rhs)) { R_D } else { R_NONE };
+  } else {
+    hand_on(s, rhs);
+    got = t_expr(s, rhs);
+  }
+  if got != want {
+    fail(s, "`{name(s, x)}` is assigned something other than a position");
+  }
+}
+
+fn any_mentions_rep(s: CScan, xs: vector<ir::Node>) -> boolean {
+  for y in xs {
+    if mentions_rep(s, y) {
+      return true;
+    }
+  }
+  false
+}
+
+// The decoder's own record literal (`object`): `{ OpDatabase(x); OpSetInt4(x, 0, 0);
+// OpCopyRecord(<unit literal>, OpGetField(x, vo)); OpSetInt/OpSetBoolean(x, off, scalar)…; x }`.
+fn object(s: CScan, rhs: ir::Node, up: text) -> boolean {
+  ops = opt_decode_view::block_ops(rhs);
+  if len(ops) == 0 {
+    return false;
+  }
+  x = match loop_shape::unspan(ops[len(ops) - 1]!) { NdVar { n } => n, _ => return false };
+  scalars = 0;
+  value = false;
+  for o in ops {
+    if o#index == len(ops) - 1 {
+      break;
+    }
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => continue,
+      NdCall { def_nr: _, args: _ } => {},
+      _ => return false,
+    }
+    nm = call_name(s.b, o);
+    args = call_args(o);
+    n = len(args);
+    if (nm == "OpDatabase" || nm == "OpDatabaseNP") && n == 2 && is_var(args[0]!, x) {
+      continue;
+    }
+    if nm == "OpSetInt4" && n == 3 && is_var(args[0]!, x) && int_of(args[1]!) == 0 && int_of(args[2]!) == 0 {
+      continue;
+    }
+    if nm == "OpCopyRecord" && n == 3 && unit_literal(s.b, args[0]!) >= 0 {
+      dst = args[1]!;
+      da = call_args(dst);
+      if call_name(s.b, dst) == "OpGetField" && len(da) >= 2 && is_var(da[0]!, x) && int_of(da[1]!) == s.p.vo {
+        value = true;
+        continue;
+      }
+    }
+    if (nm == "OpSetInt" || nm == "OpSetBoolean") && n == 3 && is_var(args[0]!, x) && scalar_index(s.p, int_of(args[1]!)) >= 0 {
+      scalars += 1;
+      expr(s, args[2]!, child(under(child(up, o#index), o), 2));
+      continue;
+    }
+    return false;
+  }
+  value && scalars == len(s.p.scalars)
+}
+
+fn ret(s: CScan, r: ir::Node, rp: text) {
+  if s.in_walk > 0 && s.c.returns == R_NONE {
+    fail(s, "a walk is left by a return of a function that answers no position");
+    return;
+  }
+  want = s.c.returns;
+  if want == R_NONE {
+    if mentions_rep(s, r) {
+      fail(s, "a position is returned from a function that answers none");
+    }
+    expr(s, r, rp);
+    return;
+  }
+  hand_on(s, r);
+  got = R_NONE;
+  v = match loop_shape::unspan(r) { NdVar { n } => n, _ => -1 };
+  if v >= 0 && rep(s, v) != R_NONE {
+    read(s, v);
+    got = rep(s, v);
+  } else if opt_decode_view::is_block(r) && unit_literal(s.b, r) >= 0 {
+    got = R_T;
+  } else {
+    got = t_expr(s, r);
+  }
+  if got != want {
+    fail(s, "a return of something other than a position");
+  }
+}
+
+fn block_(s: CScan, v: ir::Node, p: text, bl: ir::Block, up: text) {
+  if bl.name == "For block" {
+    found = walk(s, bl, p);
+    if found != null {
+      wk = found!;
+      s.c.walks += [wk];
+      li = -1;
+      for o in bl.operators {
+        if li < 0 && (match loop_shape::unspan(o) { NdLoop { block: _ } => true, _ => false }) {
+          li = o#index;
+        }
+      }
+      if li < 0 {
+        return;
+      }
+      lnode = bl.operators[li]!;
+      lup = under(child(up, li), lnode);
+      lops = opt_decode_view::block_ops(lnode);
+      s.depth += 1;
+      s.in_walk += 1;
+      saved_depth = s.depth;
+      set_depth(s, wk.elem, s.depth);
+      for o in lops {
+        if o#index >= wk.body_from {
+          expr(s, o, child(lup, o#index));
+        }
+      }
+      s.depth = saved_depth - 1;
+      s.in_walk -= 1;
+      return;
+    }
+  }
+  if unit_return(s.b, v) >= 0 {
+    // `return VNull` written inside the literal's own block.
+    if s.c.returns != R_T {
+      fail(s, "a unit literal returned from a function that answers no value");
+    }
+    if s.in_walk > 0 && s.c.returns == R_NONE {
+      fail(s, "a walk is left by a return");
+    }
+    return;
+  }
+  if bl.name == "materialized_view_return" {
+    // `return e.value` written into the caller's buffer: the position is the answer.
+    view_return(s, p, bl);
+    return;
+  }
+  for o in bl.operators {
+    stmt(s, o, child(up, o#index));
+  }
+}
+
+// `{#materialized_view_return OpDatabase(rb); OpCopyRecord(<position>, rb, tp); frees; return
+// rb }` (`view_return`).
+fn view_return(s: CScan, p: text, bl: ir::Block) {
+  rb = s.c.retbuf;
+  if rb < 0 {
+    fail(s, "a view return without a buffer");
+    return;
+  }
+  src = ir::NdNull;
+  has_src = false;
+  for o in bl.operators {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => continue,
+      NdReturn { inner } => {
+        if is_var(inner, rb) {
+          continue;
+        }
+        fail(s, "a view return that does more than answer");
+        return;
+      },
+      NdCall { def_nr: _, args: _ } => {},
+      _ => {
+        fail(s, "a view return that does more than answer");
+        return;
+      },
+    }
+    nm = call_name(s.b, o);
+    args = call_args(o);
+    if (nm == "OpDatabase" || nm == "OpDatabaseNP") && len(args) == 2 && is_var(args[0]!, rb) {
+      continue;
+    }
+    if nm == "OpCopyRecord" && len(args) == 3 && is_var(args[1]!, rb) {
+      src = args[0]!;
+      has_src = true;
+      continue;
+    }
+    if nm == "OpFreeText" || nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" {
+      continue;
+    }
+    fail(s, "a view return that does more than answer");
+    return;
+  }
+  ok = false;
+  if has_src {
+    hand_on(s, src);
+    ok = t_expr(s, src) == R_T;
+  }
+  if ok {
+    at = -1;
+    for k in s.c.skip {
+      if k == p {
+        at = k#index;
+      }
+    }
+    if at >= 0 {
+      s.c.skip.remove(at);
+    }
+  } else {
+    fail(s, "a view return of something other than a position");
+  }
+}
+
+fn stmt(s: CScan, o: ir::Node, p: text) {
+  if s.why != "" {
+    return;
+  }
+  if release_only(s, o) {
+    skip_at(s, p);
+    return;
+  }
+  expr(s, o, p);
+}
+
+// A statement that only releases, clears or mints buffers of positions (`release_only`).
+fn release_only(s: CScan, o: ir::Node) -> boolean {
+  if !mentions_rep(s, o) {
+    return false;
+  }
+  !kept_effect(s, o)
+}
+
+fn kept_effect(s: CScan, x: ir::Node) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return kept_effect(s, inner),
+    NdReturn { inner: _ } => return true,
+    NdBreak { n: _ } => return true,
+    NdContinue { n: _ } => return true,
+    NdSet { var, inner } => {
+      nm = call_name(s.b, inner);
+      if !(rep(s, var) != R_NONE && (nm == "OpDatabase" || nm == "OpDatabaseNP" || nm == "OpPlaceRecord")) {
+        return true;
+      }
+    },
+    NdCall { def_nr, args: _ } => {
+      nm = op_name(s.b, def_nr);
+      if nm != "OpFreeRef" && nm != "OpFreeRefIfDistinct" && nm != "OpClear" && nm != "OpDatabase" && nm != "OpDatabaseNP" && nm != "OpPlaceRecord" && nm != "OpRefIsNull" && nm != "OpConvBoolFromRef" && nm != "OpDistinctStore" {
+        return true;
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if kept_effect(s, c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn if_(s: CScan, node: ir::Node, p: text, cond: ir::Node, then: ir::Node, otherwise: ir::Node, up: text) {
+  if release_only(s, node) {
+    skip_at(s, p);
+    return;
+  }
+  expr(s, cond, child(up, 0));
+  tag = -1;
+  subject = tag_test(s.b, cond, tag);
+  if tag >= 0 {
+    // The arm's value may not change inside the arm.
+    read_vars: vector<integer> = [];
+    opt_decode_view::vars_read(subject, read_vars);
+    for var in read_vars {
+      if opt_decode_view::assigns(then, var) {
+        fail(s, "a matched value is assigned inside its arm");
+      }
+    }
+    s.arms += [Arm { subject: subject, tag: tag }];
+    expr(s, then, child(up, 1));
+    s.arms.remove(len(s.arms) - 1);
+  } else {
+    expr(s, then, child(up, 1));
+  }
+  expr(s, otherwise, child(up, 2));
+}
+
+// The parts of a walk the loop's head names (`WalkHead`).
+struct WalkHead {
+  vv: integer,
+  idx: integer,
+  off: integer,
+  vtp: integer,
+}
+
+// `for e in v { body }` over a position vector, in either form the parser writes (`walk`).
+fn walk(s: CScan, bl: ir::Block, p: text) -> Walk? {
+  ops: vector<ir::Node> = [];
+  for o in bl.operators {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => ops += [loop_shape::unspan(o)],
+    }
+  }
+  vv = -1;
+  src = ir::NdNull;
+  idx = -1;
+  init = ir::NdNull;
+  lb = ir::NdNull;
+  len_var = -1;
+  if len(ops) == 3 {
+    vv = opt_decode_view::set_var(ops[0]!);
+    if vv < 0 {
+      return null;
+    }
+    src = opt_decode_view::set_rhs(ops[0]!);
+    idx = opt_decode_view::set_var(ops[1]!);
+    if idx < 0 {
+      return null;
+    }
+    init = opt_decode_view::set_rhs(ops[1]!);
+    lb = ops[2]!;
+    if !(lb is NdLoop) {
+      return null;
+    }
+  } else if len(ops) == 4 {
+    vv = opt_decode_view::set_var(ops[0]!);
+    if vv < 0 {
+      return null;
+    }
+    src = opt_decode_view::set_rhs(ops[0]!);
+    lr = ir::NdNull;
+    len_var = opt_decode_view::set_var(ops[1]!);
+    if len_var < 0 {
+      return null;
+    }
+    lr = opt_decode_view::set_rhs(ops[1]!);
+    idx = opt_decode_view::set_var(ops[2]!);
+    if idx < 0 {
+      return null;
+    }
+    init = opt_decode_view::set_rhs(ops[2]!);
+    lb = ops[3]!;
+    if !(lb is NdLoop) {
+      return null;
+    }
+    la = call_args(lr);
+    if call_name(s.b, lr) != "OpLengthVector" || len(la) != 1 || !is_var(la[0]!, vv) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+  r = rep(s, vv);
+  if !is_v(r) {
+    return null;
+  }
+  vtp = rep_tp(r);
+  if int_of(init) != -1 {
+    return null;
+  }
+  // The owner: `src` is a vector field read inside the arm that proved it.
+  set_depth(s, vv, s.depth);
+  hand_on(s, src);
+  owner = false;
+  local = match loop_shape::unspan(src) { NdVar { n } => n, _ => -1 };
+  if local >= 0 && rep(s, local) == rep_v(vtp) {
+    read(s, local);
+    owner = true;
+  } else {
+    owner = t_expr(s, src) == rep_v(vtp);
+  }
+  if !owner {
+    return null;
+  }
+  off = vector_field(s, src);
+  if off == null {
+    return null;
+  }
+  lops = opt_decode_view::block_ops(lb);
+  loop_ops: vector<ir::Node> = [];
+  loop_at: vector<integer> = [];
+  for o in lops {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => {
+        loop_ops += [loop_shape::unspan(o)];
+        loop_at += [o#index];
+      },
+    }
+  }
+  head = WalkHead { vv: vv, idx: idx, off: off, vtp: vtp };
+  w = if len_var >= 0 { counted_walk(s, loop_ops, loop_at, head, len_var) } else { next_walk(s, loop_ops, loop_at, len(lops), head) };
+  if w == null {
+    return null;
+  }
+  out = w!;
+  out.path = p;
+  out
+}
+
+// `loop { e = {#iter next idx += 1; OpGetVectorNullable(_vector, size, idx)}; if len(_vector) <=
+// idx break; if idx < 0 break; body… }` (`next_walk`).
+fn next_walk(s: CScan, ops: vector<ir::Node>, at: vector<integer>, total: integer, head: WalkHead) -> Walk? {
+  if len(ops) < 3 {
+    return null;
+  }
+  elem = -1;
+  next = ir::NdNull;
+  elem = opt_decode_view::set_var(ops[0]!);
+  if elem < 0 {
+    return null;
+  }
+  next = opt_decode_view::set_rhs(ops[0]!);
+  if !opt_decode_view::is_block(next) {
+    return null;
+  }
+  nops: vector<ir::Node> = [];
+  for o in opt_decode_view::block_ops(next) {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => nops += [loop_shape::unspan(o)],
+    }
+  }
+  if len(nops) != 2 {
+    return null;
+  }
+  stepped = -1;
+  step = ir::NdNull;
+  stepped = opt_decode_view::set_var(nops[0]!);
+  if stepped < 0 {
+    return null;
+  }
+  step = opt_decode_view::set_rhs(nops[0]!);
+  if stepped != head.idx || !steps(s, step, head.idx) || !reads_element(s, nops[1]!, head.vv, head.idx) || !exits(ops[1]!, head) || !exits(ops[2]!, head) {
+    return null;
+  }
+  body_from = if len(ops) > 3 { at[3]! } else { total };
+  rest: vector<ir::Node> = [];
+  for o in ops {
+    if o#index >= 3 {
+      rest += [o];
+    }
+  }
+  walk_tail(s, elem, rest, [head.idx, head.vv], head, body_from)
+}
+
+// `loop { at = {#Iter range idx += 1; if len <= idx break; idx }; e =
+// OpGetVectorNullable(_vector, size, at); body… }` (`counted_walk`).
+fn counted_walk(s: CScan, ops: vector<ir::Node>, at: vector<integer>, head: WalkHead, len_var: integer) -> Walk? {
+  if len(ops) < 2 {
+    return null;
+  }
+  at_v = -1;
+  iter = ir::NdNull;
+  at_v = opt_decode_view::set_var(ops[0]!);
+  if at_v < 0 {
+    return null;
+  }
+  iter = opt_decode_view::set_rhs(ops[0]!);
+  elem = -1;
+  get = ir::NdNull;
+  elem = opt_decode_view::set_var(ops[1]!);
+  if elem < 0 {
+    return null;
+  }
+  get = opt_decode_view::set_rhs(ops[1]!);
+  if !opt_decode_view::is_block(iter) {
+    return null;
+  }
+  rops: vector<ir::Node> = [];
+  for o in opt_decode_view::block_ops(iter) {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => rops += [loop_shape::unspan(o)],
+    }
+  }
+  if len(rops) != 3 {
+    return null;
+  }
+  stepped = -1;
+  step = ir::NdNull;
+  stepped = opt_decode_view::set_var(rops[0]!);
+  if stepped < 0 {
+    return null;
+  }
+  step = opt_decode_view::set_rhs(rops[0]!);
+  cond = match rops[1]! { NdIf { cond, t: _, f: _ } => cond, _ => return null };
+  last = match rops[2]! { NdVar { n } => n, _ => return null };
+  if stepped != head.idx || last != head.idx || !steps(s, step, head.idx) || !opt_decode_view::mentions_read(cond, len_var) || !reads_element(s, get, head.vv, at_v) {
+    return null;
+  }
+  body_from = if len(ops) > 2 { at[2]! } else { at[1]! + 1 };
+  rest: vector<ir::Node> = [];
+  for o in ops {
+    if o#index >= 2 {
+      rest += [o];
+    }
+  }
+  walk_tail(s, elem, rest, [head.idx, head.vv, len_var, at_v], head, body_from)
+}
+
+// `idx = OpAddInt(idx, 1)` (`steps`).
+fn steps(s: CScan, step: ir::Node, idx: integer) -> boolean {
+  a = call_args(step);
+  call_name(s.b, step).starts_with("OpAddInt") && len(a) >= 2 && is_var(a[0]!, idx) && int_of(a[1]!) == 1
+}
+
+// `OpGetVectorNullable(vv, size, at)`, through an enum element's field read (`reads_element`).
+fn reads_element(s: CScan, get: ir::Node, vv: integer, at: integer) -> boolean {
+  e = element_read(s.b, get);
+  a = call_args(e);
+  call_name(s.b, e) == "OpGetVectorNullable" && len(a) >= 3 && is_var(a[0]!, vv) && is_var(a[2]!, at)
+}
+
+// An element read seen through the `OpGetField(…, 0, T)` a vector of enum values wraps it in.
+fn element_read(b: ir::Bundle, node: ir::Node) -> ir::Node {
+  a = call_args(node);
+  if call_name(b, node) == "OpGetField" && len(a) == 3 && int_of(a[1]!) == 0 {
+    return a[0]!;
+  }
+  node
+}
+
+// `if <a test of the index> { break }` — one of the two exits of the parser's walk.
+fn exits(node: ir::Node, head: WalkHead) -> boolean {
+  match loop_shape::unspan(node) {
+    NdIf { cond, t, f } => {
+      breaks = match loop_shape::unspan(t) {
+        NdBreak { n } => n == 0,
+        NdBlock { block } => {
+          bops: vector<ir::Node> = [];
+          for o in block[0].operators {
+            match loop_shape::unspan(o) {
+              NdLine { n: _ } => {},
+              _ => bops += [loop_shape::unspan(o)],
+            }
+          }
+          len(bops) == 1 && (match bops[0]! { NdBreak { n } => n == 0, _ => false })
+        },
+        _ => false,
+      };
+      if !breaks || !(loop_shape::unspan(f) is NdNull) {
+        return false;
+      }
+      read: vector<integer> = [];
+      opt_decode_view::vars_read(cond, read);
+      if !read.contains(head.idx) {
+        return false;
+      }
+      for r in read {
+        if r != head.idx && r != head.vv {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// The element's type and the body's independence of the loop's own variables (`walk_tail`).
+fn walk_tail(s: CScan, elem: integer, rest: vector<ir::Node>, own: vector<integer>, head: WalkHead, body_from: integer) -> Walk? {
+  e = elem_of(s.p, head.vtp) ?? return null;
+  want = if e.whole { R_T } else { rep_e(e.etp) };
+  if rep(s, elem) != want {
+    return null;
+  }
+  // The body reads none of the loop's own variables.
+  for o in rest {
+    for v in own {
+      if opt_decode_view::mentions(o, v) {
+        return null;
+      }
+    }
+  }
+  Walk { path: "", elem: elem, vec: head.vv, off: head.off, vtp: head.vtp, body_from: body_from }
+}
+
+// The offset a vector position names: its `OpGetField`, through copies of position locals
+// (`vector_field`); null for none.
+fn vector_field(s: CScan, src: ir::Node) -> integer {
+  if call_name(s.b, src) == "OpGetField" {
+    a = call_args(src);
+    return if len(a) > 1 { int_of(a[1]!) } else { null };
+  }
+  local = match loop_shape::unspan(src) { NdVar { n } => n, _ => return null };
+  last_field_set(s.b, s.b.data.definitions[s.d]!.code[0] ?? ir::NdNull, local, null)
+}
+
+// The offset of the last `local = OpGetField(…, off, …)` in pre-order, `found` the one before
+// `x`.
+fn last_field_set(b: ir::Bundle, x: ir::Node, local: integer, found: integer) -> integer {
+  out = found;
+  match x {
+    NdSpan { pos: _, inner } => return last_field_set(b, inner, local, found),
+    NdSet { var, inner } => {
+      if var == local && call_name(b, inner) == "OpGetField" {
+        a = call_args(inner);
+        out = if len(a) > 1 { int_of(a[1]!) } else { null };
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    out = last_field_set(b, c, local, out);
+  }
+  out
+}
+
+// `OpEqInt(OpConvIntFromEnum(OpGetEnum(x, 0)), tag)` (`tag_test`): answers `x`, its tag in
+// `tag` (-1 for no test).
+pub fn tag_test(b: ir::Bundle, cond: ir::Node, tag: &integer) -> ir::Node {
+  tag = -1;
+  ea = call_args(cond);
+  if call_name(b, cond) != "OpEqInt" || len(ea) != 2 {
+    return ir::NdNull;
+  }
+  conv = ea[0]!;
+  if call_name(b, conv) != "OpConvIntFromEnum" || len(call_args(conv)) == 0 {
+    return ir::NdNull;
+  }
+  get = call_args(conv)[0]!;
+  ga = call_args(get);
+  if call_name(b, get) != "OpGetEnum" || len(ga) < 2 || int_of(ga[1]!) != 0 {
+    return ir::NdNull;
+  }
+  t = int_of(ea[1]!);
+  if t == null || t < 0 || t > 255 {
+    return ir::NdNull;
+  }
+  tag = t;
+  ga[0]!
+}
+
+// Scan consumer `d` of producer `pd` (`consumer`); `why` names the reason it is not one.
+fn consumer(b: ir::Bundle, dv: DvPlan, plan: PsPlan, pd: integer, d: integer, root: boolean, why: &text) -> Consumer {
+  p = opt_decode_structure::producer_of(plan, pd)!;
+  def = b.data.definitions[d]!;
+  c = Consumer { d: d, producer: pd, reps: [], skip: [], walks: [], retbuf: -1, returns: R_NONE, frame: -1, callees: [] };
+  s = CScan { b: b, plan: plan, p: p, pd: pd, d: d, c: c, depth_of: [for _ in def.variables.variables { -1 }], depth: 0, arms: [], callees: [], why: "", in_walk: 0, uses: [] };
+  frames = opt_decode_view::bparams(dv, d);
+  if root {
+    s.c.frame = opt_decode_view::root_of(dv, d);
+  } else {
+    s.c.frame = if len(frames) == 0 { -1 } else { frames[0]! };
+    if len(frames) > 1 {
+      why = "two frame parameters";
+      return copy_consumer(s.c);
+    }
+  }
+  s.c.returns = rep_of(b, p, returned(b, d));
+  if root && s.c.returns != R_NONE {
+    why = "the root answers a decoded value";
+    return copy_consumer(s.c);
+  }
+  if s.c.returns != R_NONE {
+    rb = opt_vr_shape::ret_buffer_attr(def);
+    if rb < 0 {
+      why = "answers a position without a buffer";
+      return copy_consumer(s.c);
+    }
+    s.c.retbuf = var_named(b, d, def.attributes[rb]!.name);
+  }
+  any = false;
+  for v in def.variables.variables {
+    r = rep_of(b, p, v.type_def[0] ?? ir::TyVoid);
+    s.c.reps += [r];
+    if r != R_NONE {
+      any = true;
+    }
+  }
+  if !any {
+    why = "holds no decoded value";
+    return copy_consumer(s.c);
+  }
+  for v in def.variables.variables {
+    if v.argument {
+      s.depth_of[v#index] = 0;
+    }
+  }
+  code = def.code[0] ?? ir::NdNull;
+  match code {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        stmt(s, o, child("", o#index));
+      }
+    },
+    _ => {
+      why = "no body";
+      return copy_consumer(s.c);
+    },
+  }
+  if s.why != "" {
+    why = s.why;
+    return copy_consumer(s.c);
+  }
+  s.c.callees = s.callees;
+  copy_consumer(s.c)
+}
+
+// A consumer of its own: the scan that made `c` frees it with itself.
+fn copy_consumer(c: Consumer) -> Consumer {
+  Consumer { d: c.d, producer: c.producer, reps: [for r in c.reps { r }], skip: [for k in c.skip { k }], walks: [for w in c.walks { Walk { path: w.path, elem: w.elem, vec: w.vec, off: w.off, vtp: w.vtp, body_from: w.body_from } }], retbuf: c.retbuf, returns: c.returns, frame: c.frame, callees: [for k in c.callees { k }] }
+}
+
+// Admit each decode-view root whose chain holds every decoded value as a position (`roots`).
+pub fn roots(b: ir::Bundle, dv: DvPlan, plan: PsPlan) {
+  rs: vector<integer> = [];
+  for f in dv.fns {
+    if f.root >= 0 {
+      rs += [f.d];
+    }
+  }
+  rs.sort();
+  producers: vector<integer> = [for pr in plan.producers { pr.d }];
+  producers.sort();
+  for r in rs {
+    admitted: vector<Consumer> = [];
+    result_pd = -1;
+    result_why = "reaches no producer";
+    for pd in producers {
+      queue: vector<integer> = [r];
+      is_root: vector<boolean> = [true];
+      seen: vector<integer> = [];
+      local: vector<Consumer> = [];
+      err = "";
+      while len(queue) > 0 {
+        callee = queue[len(queue) - 1]!;
+        root = is_root[len(is_root) - 1]!;
+        queue.remove(len(queue) - 1);
+        is_root.remove(len(is_root) - 1);
+        if seen.contains(callee) {
+          continue;
+        }
+        seen += [callee];
+        known = opt_decode_structure::consumer_of(plan, callee);
+        if known != null {
+          for k in known.callees {
+            queue += [k];
+            is_root += [false];
+          }
+          local += [known];
+          continue;
+        }
+        why = "";
+        c = consumer(b, dv, plan, pd, callee, root, why);
+        if why != "" {
+          err = "{op_name(b, callee)}: {why}";
+          break;
+        }
+        for k in c.callees {
+          if k == r {
+            err = "the root reaches itself";
+          }
+          queue += [k];
+          is_root += [false];
+        }
+        local += [c];
+      }
+      // A consumer chain that never reaches the producer holds no decoded value.
+      reaches = false;
+      for c in local {
+        if c.reps.contains(R_D) {
+          reaches = true;
+        }
+      }
+      if err == "" && reaches {
+        admitted = local;
+        result_pd = pd;
+        break;
+      }
+      if err != "" {
+        result_why = err;
+      }
+    }
+    if result_pd >= 0 {
+      // The consumers in function order: the walks are numbered in that order.
+      sorted: vector<Consumer> = [];
+      for _ in admitted {
+        best = -1;
+        for c in admitted {
+          taken = false;
+          for t in sorted {
+            if t.d == c.d {
+              taken = true;
+            }
+          }
+          if !taken && (best < 0 || c.d < admitted[best]!.d) {
+            best = c#index;
+          }
+        }
+        if best >= 0 {
+          sorted += [admitted[best]!];
+        }
+      }
+      if trace_on() {
+        names: vector<text> = [for c in sorted { op_name(b, c.d) }];
+        names.sort();
+        trace("{op_name(b, r)}: a root over {op_name(b, result_pd)}, consumers [{names.join(", ")}]");
+      }
+      for c in sorted {
+        for w in c.walks {
+          if opt_decode_structure::walk_index(plan, result_pd, w.off, w.vtp) < 0 {
+            plan.walks += [WalkKey { pd: result_pd, off: w.off, vtp: w.vtp }];
+          }
+        }
+        if opt_decode_structure::consumer_of(plan, c.d) == null {
+          plan.consumers += [c];
+        }
+      }
+      plan.roots += [r];
+    } else if trace_on() {
+      trace("{op_name(b, r)}: declines: {result_why}");
+    }
+  }
+}

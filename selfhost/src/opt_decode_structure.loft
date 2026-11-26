@@ -1,0 +1,1345 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-DecodeView`'s STRUCTURE clause (`@C141`), instance 1, as
+// `src/lower/decode_structure.rs` plans it: a decoded value held as its POSITION, the arguments
+// of the decoding call that answers it.  Nothing of it is built.
+//
+// - the PRODUCER `P` is a region function answering a record `D` — one field of the view enum
+//   `T` and scalar fields — from a frame parameter `B` and scalar parameters (the POSITION).  Its
+//   SHAPE TWIN `P__ps` is its body with every statement that only builds dropped, each `return`
+//   answering the variant's tag, its slot and the scalar fields; its WALK TWIN `P__psw<k>` runs
+//   the same body and hands each element appended to the vector field `k` to a closure;
+// - a CONSUMER is every other function of the root's chain (`opt_decode_structure_scan`).
+//
+// The Rust plan keys the dropped statements and the walked appends by IR address; here they are
+// found by path and marked in the code (`file: "ps"`, `opt_decode_view::apply_marks`): a
+// dropped statement `P_DROP`, a walked append `P_YIELD + i` (`yields[i]`), and the consumers'
+// marks (`C_SKIP`, `C_WALK + i`).
+//
+// `LOFT_NO_DECODE_STRUCTURE=1` builds every decoded value; `LOFT_TRACE_DECODE_STRUCTURE=1` names
+// each producer, consumer and root admitted or declined, with the reason.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use types;
+use opt_vr_shape;
+use opt_decode_view::(Mark, child, under, op_name, int_of, var_of, is_var, call_def, call_args, call_name, var_tp, var_name, var_named, returned, text_run, DvPlan);
+use opt_decode_view;
+use opt_decode_structure_scan;
+
+// The marker file of the structure clause and its codes.
+pub MARK_FILE = "ps";
+pub const P_DROP = 1;
+pub const C_SKIP = 2;
+pub const P_YIELD = 1000;
+pub const C_WALK = 2000;
+
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_DECODE_STRUCTURE") ?? "0") == "0"
+}
+
+pub fn trace_on() -> boolean {
+  (env_variable("LOFT_TRACE_DECODE_STRUCTURE") ?? "0") != "0"
+}
+
+pub fn trace(msg: text) {
+  eprintln("[decode-structure] {msg}");
+}
+
+// Scalar operators a twin keeps (`scalar_op`): each answers from its operands alone, reports no
+// fault and writes nothing.
+pub fn scalar_op(name: text) -> boolean {
+  for s in ["OpNot", "OpAnd", "OpOr", "OpEqBool", "OpNeBool", "OpConvBoolFromInt", "OpConvBoolFromLong", "OpConvIntFromNull", "OpConvLongFromNull", "OpConvBoolFromNull", "OpConvLongFromInt", "OpConvIntFromLong"] {
+    if s == name {
+      return true;
+    }
+  }
+  if !name.starts_with("Op") {
+    return false;
+  }
+  rest = name[2..name.size()];
+  if rest.ends_with("Nullable") {
+    rest = rest[0..rest.size() - 8];
+  }
+  op = if rest.ends_with("Int") { rest[0..rest.size() - 3] } else if rest.ends_with("Long") { rest[0..rest.size() - 4] } else { return false };
+  for o in ["Add", "Min", "Mul", "Div", "Rem", "Eq", "Ne", "Lt", "Le", "Gt", "Ge", "LogicalAnd", "LogicalOr", "ExclusiveOr", "ShiftLeft", "ShiftRight"] {
+    if o == op {
+      return true;
+    }
+  }
+  false
+}
+
+// Operators a dropped statement may contain (`BUILD_OPS`).
+fn build_op(name: text) -> boolean {
+  for o in ["OpDatabase", "OpDatabaseNP", "OpPlaceRecord", "OpNewRecord", "OpFinishRecord", "OpPreAllocVector", "OpPushByte", "OpSliceVector", "OpSetInt", "OpSetInt4", "OpSetBoolean", "OpSetEnum", "OpSetText", "OpCopyRecord", "OpMoveField", "OpMoveVector", "OpClear", "OpFreeRef", "OpFreeRefIfDistinct", "OpFreeRecordIn", "OpFreeText", "OpGetField", "OpGetVectorNullable", "OpGetByte", "OpGetInt", "OpGetBoolean", "OpLengthVector", "OpRefIsNull", "OpConvBoolFromRef", "OpDistinctStore", "n_text_from_byte_range", "n_text_from_bytes", "t_6vector_len"] {
+    if o == name {
+      return true;
+    }
+  }
+  false
+}
+
+// One scalar field of the producer's record (`PsScalar`): its offset and its storage, `i64` an
+// integer, `u8` a boolean.
+pub struct PsScalar {
+  pub off: integer,
+  pub rust: text,
+}
+
+// One element appended to a walked vector (`Yield`): the walked local and the element's parts,
+// each a field offset (-1 when the element IS the enum) and the call-result variable whose
+// arguments are its position.
+pub struct Yield {
+  pub local: integer,
+  pub offs: vector<integer>,
+  pub calls: vector<integer>,
+}
+
+// A vector field of the value a `return` moves locals into: `(offset, vector type)` and the
+// locals.
+pub struct Walked {
+  pub off: integer,
+  pub vtp: integer,
+  pub locals: vector<integer>,
+}
+
+// The element type of a walked vector store type, and whether it is the enum itself.
+pub struct Elem {
+  pub vtp: integer,
+  pub etp: integer,
+  pub whole: boolean,
+}
+
+// The producer: its shape and walk twins' plan (`Producer`).
+pub struct Producer {
+  pub d: integer,
+  pub frame: integer,
+  pub params: vector<integer>,
+  pub param_rust: vector<text>,
+  pub retbuf: integer,
+  pub vo: integer,
+  pub t_tp: integer,
+  pub d_tp: integer,
+  pub scalars: vector<PsScalar>,
+  pub calls: vector<integer>,
+  // The paths of the statements dropped from both twins.
+  pub drops: vector<text>,
+  // The walked appends, and their paths.
+  pub yields: vector<Yield>,
+  pub yield_paths: vector<text>,
+  pub walked: vector<Walked>,
+  pub elem: vector<Elem>,
+}
+
+fn no_producer(d: integer) -> Producer {
+  Producer { d: d, frame: -1, params: [], param_rust: [], retbuf: -1, vo: 0, t_tp: 0, d_tp: 0, scalars: [], calls: [], drops: [], yields: [], yield_paths: [], walked: [], elem: [] }
+}
+
+// The shape tuple's Rust type: tag, two slot words, the scalar fields (`shape_tuple`).
+pub fn shape_tuple(p: Producer) -> text {
+  parts: vector<text> = ["u8", "i64", "i64"];
+  for s in p.scalars {
+    parts += [s.rust];
+  }
+  "({parts.join(", ")})"
+}
+
+// A position's Rust type (`rep_tuple`): the kind byte, the position's parameters, the shape's
+// tag and two slot words.
+pub fn rep_tuple(p: Producer) -> text {
+  parts: vector<text> = ["u8"];
+  for r in p.param_rust {
+    parts += [r];
+  }
+  parts += ["u8", "i64", "i64"];
+  "({parts.join(", ")})"
+}
+
+// Index of the scalar field at `off` in the shape tuple (`scalar_index`), -1 none.
+pub fn scalar_index(p: Producer, off: integer) -> integer {
+  if off == null {
+    return -1;
+  }
+  for s in p.scalars {
+    if s.off == off {
+      return s#index;
+    }
+  }
+  -1
+}
+
+// The element of walked vector type `vtp`, null for none.
+pub fn elem_of(p: Producer, vtp: integer) -> Elem? {
+  for e in p.elem {
+    if e.vtp == vtp {
+      return e;
+    }
+  }
+  null
+}
+
+pub fn has_elem(p: Producer, vtp: integer) -> boolean {
+  elem_of(p, vtp) != null
+}
+
+// Is the field `(off, vtp)` walked?
+pub fn walked_key(p: Producer, off: integer, vtp: integer) -> integer {
+  for w in p.walked {
+    if w.off == off && w.vtp == vtp {
+      return w#index;
+    }
+  }
+  -1
+}
+
+// The scalar store type of a loft type (`scalar_type`): "i64", "u8" or "".
+pub fn scalar_type(tp: ir::TypeT) -> text {
+  match cgen_types::base(tp) {
+    TyInteger { spec: _ } => "i64",
+    TyCharacter => "i64",
+    TyBoolean => "u8",
+    _ => "",
+  }
+}
+
+// The record store type a loft type names (`record_tp`): a reference or a reference enum, -1
+// none.
+pub fn record_tp(b: ir::Bundle, tp: ir::TypeT) -> integer {
+  match cgen_types::base(tp) {
+    TyReference { n, dep: _ } => opt_decode_view::known(b, n),
+    TyEnum { n, is_ref, dep: _ } => if is_ref { opt_decode_view::known(b, n) } else { -1 },
+    TyRefVar { inner } => record_tp(b, inner),
+    _ => -1,
+  }
+}
+
+// The fields of a struct or a variant, null for any other type.
+pub fn fields(b: ir::Bundle, tp: integer) -> vector<ir::DbField>? {
+  if tp < 0 || tp >= len(b.types) {
+    return null;
+  }
+  match b.types[tp]!.parts[0] ?? ir::PtBase {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => null,
+  }
+}
+
+fn enum_tag(v: ir::Node) -> integer {
+  match loop_shape::unspan(v) {
+    NdEnum { ord, tp: _ } => ord,
+    _ => -1,
+  }
+}
+
+fn non_line(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    match loop_shape::unspan(o) {
+      NdLine { n: _ } => {},
+      _ => out += [o],
+    }
+  }
+  out
+}
+
+// `{ OpDatabase(x, tp); OpSetEnum(x, 0, tag); x }` — a unit variant literal (`unit_literal`):
+// its tag, -1 for any other node.
+pub fn unit_literal(b: ir::Bundle, v: ir::Node) -> integer {
+  ops = match loop_shape::unspan(v) {
+    NdBlock { block } => non_line(block[0].operators),
+    _ => return -1,
+  };
+  if len(ops) != 3 {
+    return -1;
+  }
+  x = match loop_shape::unspan(ops[2]!) {
+    NdVar { n } => n,
+    _ => return -1,
+  };
+  unit_head(b, ops[0]!, ops[1]!, x)
+}
+
+// The tag of `OpDatabase(x, …); OpSetEnum(x, 0, tag)`, -1 for any other pair.
+fn unit_head(b: ir::Bundle, db: ir::Node, set: ir::Node, x: integer) -> integer {
+  if call_def(db) < 0 || call_def(set) < 0 {
+    return -1;
+  }
+  n1 = call_name(b, db);
+  a1 = call_args(db);
+  a2 = call_args(set);
+  if (n1 != "OpDatabase" && n1 != "OpDatabaseNP") || call_name(b, set) != "OpSetEnum" || len(a1) == 0 || !is_var(a1[0]!, x) || len(a2) != 3 || !is_var(a2[0]!, x) || int_of(a2[1]!) != 0 {
+    return -1;
+  }
+  enum_tag(a2[2]!)
+}
+
+// `{#EnumUnitLit OpDatabase(x, tp); OpSetEnum(x, 0, tag); frees…; return x }` — a unit literal
+// the scope pass returned from inside its own block (`unit_return`): its tag, -1 none.
+pub fn unit_return(b: ir::Bundle, v: ir::Node) -> integer {
+  ops = match loop_shape::unspan(v) {
+    NdBlock { block } => non_line(block[0].operators),
+    _ => return -1,
+  };
+  n = len(ops);
+  if n < 3 {
+    return -1;
+  }
+  x = match loop_shape::unspan(ops[n - 1]!) {
+    NdReturn { inner } => var_of(inner),
+    _ => return -1,
+  };
+  if x < 0 {
+    return -1;
+  }
+  tag = unit_head(b, ops[0]!, ops[1]!, x);
+  if tag < 0 {
+    return -1;
+  }
+  for o in ops {
+    if o#index >= 2 && o#index < n - 1 {
+      nm = call_name(b, o);
+      if nm != "OpFreeRef" && nm != "OpFreeRefIfDistinct" && nm != "OpFreeText" {
+        return -1;
+      }
+    }
+  }
+  tag
+}
+
+// `OpGetField(Var(rec), off, _)` — its `off`, null for any other node (`field_of`).
+fn field_of(b: ir::Bundle, v: ir::Node, rec: integer) -> integer {
+  a = call_args(v);
+  if call_name(b, v) == "OpGetField" && len(a) == 3 && is_var(a[0]!, rec) {
+    return int_of(a[1]!);
+  }
+  null
+}
+
+// Each variable `v` mentions, reads and writes alike, counted into `out` (`mentions`).
+pub fn count_mentions(v: ir::Node, out: vector<integer>) {
+  match v {
+    NdSpan { pos: _, inner } => {
+      count_mentions(inner, out);
+      return;
+    },
+    NdVar { n } => if n >= 0 && n < len(out) { out[n] = out[n]! + 1; },
+    NdSet { var, inner: _ } => if var >= 0 && var < len(out) { out[var] = out[var]! + 1; },
+    _ => {},
+  }
+  for c in el_ir::children(v) {
+    count_mentions(c, out);
+  }
+}
+
+// Does any variable of `xs` appear in `v` (`mentions_any`)?
+pub fn mentions_any(v: ir::Node, xs: vector<integer>) -> boolean {
+  for x in xs {
+    if opt_decode_view::mentions(v, x) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does a `Value` variant of `v` match the operators `build_only` refuses?
+fn holds_kept_effect(b: ir::Bundle, v: ir::Node, has_loop: boolean) -> boolean {
+  match v {
+    NdSpan { pos: _, inner } => return holds_kept_effect(b, inner, has_loop),
+    NdReturn { inner: _ } => return true,
+    NdYield { inner: _ } => return true,
+    NdCallRef { var: _, args: _ } => return true,
+    NdBreak { n: _ } => if !has_loop { return true; },
+    NdContinue { n: _ } => if !has_loop { return true; },
+    NdCall { def_nr, args: _ } => {
+      name = op_name(b, def_nr);
+      if !build_op(name) && !scalar_op(name) {
+        return true;
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(v) {
+    if holds_kept_effect(b, c, has_loop) {
+      return true;
+    }
+  }
+  false
+}
+
+pub fn has_loop(v: ir::Node) -> boolean {
+  match v {
+    NdSpan { pos: _, inner } => return has_loop(inner),
+    NdLoop { block: _ } => return true,
+    _ => {},
+  }
+  for c in el_ir::children(v) {
+    if has_loop(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does `v` call definition `d` (`any_node(Call(g, _) if g == d)`)?
+pub fn calls_def(v: ir::Node, d: integer) -> boolean {
+  match v {
+    NdSpan { pos: _, inner } => return calls_def(inner, d),
+    NdCall { def_nr, args: _ } => if def_nr == d { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(v) {
+    if calls_def(c, d) {
+      return true;
+    }
+  }
+  false
+}
+
+// ---- the producer's walk (`PWalk`) -----------------------------------------------------------
+
+const K_FRAME = 0;
+const K_SCALAR = 1;
+const K_CALL = 2;
+const K_BUILD = 3;
+
+// `kv = OpGetField(kd, vo)`: the call variable and the sequence at the bind.
+struct Bind {
+  kv: integer,
+  cr: integer,
+  seq: integer,
+}
+
+// The element record a walk mints and its parts so far.
+struct Elm {
+  elm: integer,
+  offs: vector<integer>,
+  calls: vector<integer>,
+}
+
+struct PWalk {
+  b: ir::Bundle,
+  d: integer,
+  p: Producer,
+  kinds: vector<integer>,
+  total: vector<integer>,
+  binds: vector<Bind>,
+  set_seq: vector<integer>,
+  seq: integer,
+  elms: vector<Elm>,
+  why: text,
+}
+
+fn fail(w: PWalk, why: text) {
+  if w.why == "" {
+    w.why = why;
+  }
+}
+
+fn kind(w: PWalk, v: integer) -> integer {
+  if v < 0 || v >= len(w.kinds) { K_BUILD } else { w.kinds[v]! }
+}
+
+fn name(w: PWalk, v: integer) -> text {
+  var_name(w.b, w.d, v)
+}
+
+// The variable a node IS, unspanned not: `Value::Var` matched in place.
+fn direct_var(x: ir::Node) -> integer {
+  match x {
+    NdVar { n } => n,
+    _ => -1,
+  }
+}
+
+// A read of the frame a twin keeps (`frame_read`): 1 `bytes[index]` (`frame_index`), 2
+// `len(bytes)`, 0 none.
+fn frame_read(w: PWalk, node: ir::Node) -> integer {
+  args = call_args(node);
+  nm = call_name(w.b, node);
+  if nm == "OpGetByte" && len(args) == 3 && int_of(args[1]!) == 0 && int_of(args[2]!) == 0 {
+    inner = args[0]!;
+    ga = call_args(inner);
+    if call_name(w.b, inner) == "OpGetVectorNullable" && len(ga) == 3 && is_var(ga[0]!, w.p.frame) && int_of(ga[1]!) == 1 {
+      return 1;
+    }
+    return 0;
+  }
+  if (nm == "OpLengthVector" || nm == "t_6vector_len") && len(args) == 1 && is_var(args[0]!, w.p.frame) {
+    return 2;
+  }
+  0
+}
+
+// The index of a frame read `bytes[index]`.
+fn frame_index(node: ir::Node) -> ir::Node {
+  call_args(call_args(node)[0]!)[2]!
+}
+
+// An expression a twin keeps: scalars, frame reads, scalar fields of a call's result.
+fn scalar(w: PWalk, v: ir::Node) {
+  if w.why != "" {
+    return;
+  }
+  fr = frame_read(w, v);
+  if fr == 1 {
+    scalar(w, frame_index(v));
+    return;
+  }
+  if fr == 2 {
+    return;
+  }
+  match loop_shape::unspan(v) {
+    NdInt { n: _ } => {},
+    NdLong { n: _ } => {},
+    NdBoolean { b: _ } => {},
+    NdFloat { f: _ } => {},
+    NdSingle { f: _ } => {},
+    NdNull => {},
+    NdLine { n: _ } => {},
+    NdBreak { n: _ } => {},
+    NdContinue { n: _ } => {},
+    NdVar { n } => {
+      if kind(w, n) != K_SCALAR {
+        fail(w, "a kept expression reads `{name(w, n)}`");
+      }
+    },
+    NdSet { var, inner } => {
+      if kind(w, var) == K_SCALAR {
+        scalar(w, inner);
+      } else {
+        fail(w, "a kept expression writes `{name(w, var)}`");
+      }
+    },
+    NdCall { def_nr, args } => {
+      nm = op_name(w.b, def_nr);
+      if (nm == "OpGetInt" || nm == "OpGetBoolean") && len(args) == 2 {
+        cr = direct_var(args[0]!);
+        if cr >= 0 && kind(w, cr) == K_CALL && scalar_index(w.p, int_of(args[1]!)) >= 0 {
+          return;
+        }
+      }
+      if !scalar_op(nm) {
+        fail(w, "a kept expression calls `{nm}`");
+        return;
+      }
+      for a in args {
+        scalar(w, a);
+      }
+    },
+    NdBlock { block } => {
+      for o in block[0].operators {
+        scalar(w, o);
+      }
+    },
+    NdIf { cond, t, f } => {
+      scalar(w, cond);
+      scalar(w, t);
+      scalar(w, f);
+    },
+    _ => fail(w, "a kept expression of an unknown form"),
+  }
+}
+
+// A statement whose every effect is building (`build_only`): dropped from both twins.  The
+// scalars it writes are its own.
+fn build_only(w: PWalk, v: ir::Node) -> boolean {
+  inner: vector<integer> = [for _ in w.kinds { 0 }];
+  count_mentions(v, inner);
+  for n in inner {
+    if n == 0 {
+      continue;
+    }
+    x = n#index;
+    k = kind(w, x);
+    if k == K_CALL {
+      if opt_decode_view::assigns(v, x) {
+        return false;
+      }
+    } else if k == K_SCALAR {
+      if opt_decode_view::assigns(v, x) && (w.total[x] ?? 0) != n {
+        return false;
+      }
+    }
+  }
+  !holds_kept_effect(w.b, v, has_loop(v))
+}
+
+fn drop_at(w: PWalk, p: text) {
+  if !w.p.drops.contains(p) {
+    w.p.drops += [p];
+  }
+}
+
+fn stmt(w: PWalk, v: ir::Node, p: text) {
+  if w.why != "" {
+    return;
+  }
+  w.seq += 1;
+  up = under(p, v);
+  match loop_shape::unspan(v) {
+    NdLine { n: _ } => {},
+    NdNull => {},
+    NdBlock { block } => {
+      bl = block[0];
+      if returns_buffer(bl.operators, w.p.retbuf) {
+        if !parse_return(w.b, w.p, bl.operators).ok {
+          fail(w, "a return whose record is not a variant, a unit literal and scalar fields");
+        }
+        walked_returns(w, bl.operators);
+      } else {
+        for o in bl.operators {
+          stmt(w, o, child(up, o#index));
+        }
+      }
+    },
+    NdLoop { block } => {
+      for o in block[0].operators {
+        stmt(w, o, child(up, o#index));
+      }
+    },
+    NdInsert { items } => {
+      if build_only(w, v) {
+        drop_at(w, p);
+      } else {
+        for o in items {
+          stmt(w, o, child(up, o#index));
+        }
+      }
+    },
+    NdIf { cond, t, f } => {
+      if build_only(w, v) {
+        drop_at(w, p);
+        return;
+      }
+      scalar(w, cond);
+      stmt(w, t, child(up, 1));
+      stmt(w, f, child(up, 2));
+    },
+    NdSet { var, inner } => set(w, v, p, var, inner),
+    NdBreak { n: _ } => {},
+    NdContinue { n: _ } => {},
+    NdCall { def_nr: _, args: _ } => {
+      element_part(w, v, p);
+      if build_only(w, v) {
+        drop_at(w, p);
+      } else {
+        fail(w, "a statement that is neither kept nor only building");
+      }
+    },
+    NdVar { n } => {
+      if kind(w, n) != K_SCALAR {
+        fail(w, "a statement of an unknown form");
+      }
+    },
+    _ => fail(w, "a statement of an unknown form"),
+  }
+}
+
+fn set(w: PWalk, v: ir::Node, p: text, x: integer, rhs: ir::Node) {
+  k = kind(w, x);
+  if k == K_SCALAR {
+    if build_only(w, v) && (w.total[x] ?? 0) == 1 {
+      drop_at(w, p);
+    } else {
+      scalar(w, rhs);
+    }
+    return;
+  }
+  if k == K_CALL {
+    w.seq += 1;
+    w.set_seq[x] = w.seq;
+    match loop_shape::unspan(rhs) {
+      NdNull => drop_at(w, p),
+      NdCall { def_nr, args } => {
+        if def_nr == w.d {
+          call_args_of(w, args);
+        } else {
+          fail(w, "`{name(w, x)}` holds something other than the decoder's result");
+        }
+      },
+      _ => fail(w, "`{name(w, x)}` holds something other than the decoder's result"),
+    }
+    return;
+  }
+  if k == K_BUILD {
+    cr = field_of_call(w, rhs);
+    if cr >= 0 {
+      at = -1;
+      for bd in w.binds {
+        if bd.kv == x {
+          at = bd#index;
+        }
+      }
+      if at >= 0 {
+        w.binds[at].cr = cr;
+        w.binds[at].seq = w.seq;
+      } else {
+        w.binds += [Bind { kv: x, cr: cr, seq: w.seq }];
+      }
+    }
+    if call_name(w.b, rhs) == "OpNewRecord" {
+      at = -1;
+      for e in w.elms {
+        if e.elm == x {
+          at = e#index;
+        }
+      }
+      if at >= 0 {
+        w.elms[at].offs = [];
+        w.elms[at].calls = [];
+      } else {
+        w.elms += [Elm { elm: x, offs: [], calls: [] }];
+      }
+    }
+    if build_only(w, v) {
+      drop_at(w, p);
+    } else {
+      fail(w, "`{name(w, x)}` is built from a kept value");
+    }
+    return;
+  }
+  fail(w, "the frame is assigned");
+}
+
+fn call_args_of(w: PWalk, args: vector<ir::Node>) {
+  def = w.b.data.definitions[w.d]!;
+  for a in args {
+    i = a#index;
+    if i >= len(def.attributes) {
+      fail(w, "a recursive call with more arguments than parameters");
+      return;
+    }
+    pv = var_named(w.b, w.d, def.attributes[i]!.name);
+    if pv == w.p.frame {
+      if !is_var(a, w.p.frame) {
+        fail(w, "a recursive call hands on another frame");
+      }
+    } else if pv == w.p.retbuf {
+      bv = var_of(a);
+      if bv < 0 || kind(w, bv) != K_BUILD {
+        fail(w, "a recursive call's buffer is not a buffer");
+      }
+    } else {
+      scalar(w, a);
+    }
+  }
+}
+
+// `OpMoveField(src, OpGetField(elm, off, T) | elm, T)` and `OpFinishRecord(L, elm, …)`: the
+// element parts a walk hands over (`element_part`).
+fn element_part(w: PWalk, st: ir::Node, p: text) {
+  nm = call_name(w.b, st);
+  args = call_args(st);
+  if nm == "OpMoveField" && len(args) == 3 {
+    src = args[0]!;
+    dst = args[1]!;
+    call = -1;
+    bound_at = 0;
+    kv = var_of(src);
+    if kv >= 0 && (match loop_shape::unspan(src) { NdVar { n: _ } => true, _ => false }) {
+      for bd in w.binds {
+        if bd.kv == kv {
+          call = bd.cr;
+          bound_at = bd.seq;
+        }
+      }
+    } else {
+      call = field_of_call(w, src);
+      bound_at = w.seq;
+    }
+    elm = -1;
+    off = -1;
+    match loop_shape::unspan(dst) {
+      NdVar { n } => {
+        elm = n;
+        off = -1;
+      },
+      NdCall { def_nr, args: ga } => {
+        if op_name(w.b, def_nr) == "OpGetField" && len(ga) > 1 && var_of(ga[0]!) >= 0 {
+          o = int_of(ga[1]!);
+          if o != null {
+            elm = var_of(ga[0]!);
+            off = o;
+          }
+        }
+      },
+      _ => {},
+    }
+    if call >= 0 && elm >= 0 {
+      for e in w.elms {
+        if e.elm == elm {
+          if (w.set_seq[call] ?? 0) > bound_at {
+            fail(w, "a part's call is assigned again before it is appended");
+          }
+          w.elms[e#index].offs += [off];
+          w.elms[e#index].calls += [call];
+        }
+      }
+    }
+    return;
+  }
+  if nm == "OpFinishRecord" && len(args) >= 2 {
+    local = direct_var(args[0]!);
+    elm = var_of(args[1]!);
+    if local < 0 || elm < 0 {
+      return;
+    }
+    at = -1;
+    for e in w.elms {
+      if e.elm == elm {
+        at = e#index;
+      }
+    }
+    if at < 0 {
+      return;
+    }
+    e = w.elms[at]!;
+    w.p.yields += [Yield { local: local, offs: e.offs, calls: e.calls }];
+    w.p.yield_paths += [p];
+    w.elms.remove(at);
+  }
+}
+
+// The vector fields a return moves a local into: the locals a walk of that field reads.
+fn walked_returns(w: PWalk, ops: vector<ir::Node>) {
+  for st in ops {
+    args = call_args(st);
+    if call_name(w.b, st) != "OpMoveVector" || len(args) != 3 {
+      continue;
+    }
+    local = direct_var(args[1]!);
+    dst = args[0]!;
+    ga = call_args(dst);
+    if local < 0 || call_name(w.b, dst) != "OpGetField" || len(ga) != 3 {
+      continue;
+    }
+    off = int_of(ga[1]!);
+    vtp = int_of(ga[2]!);
+    if off == null || vtp == null || vtp < 0 || vtp > 65535 || !has_elem(w.p, vtp) {
+      continue;
+    }
+    k = walked_key(w.p, off, vtp);
+    if k < 0 {
+      w.p.walked += [Walked { off: off, vtp: vtp, locals: [] }];
+      k = len(w.p.walked) - 1;
+    }
+    if !w.p.walked[k]!.locals.contains(local) {
+      w.p.walked[k].locals += [local];
+    }
+  }
+}
+
+// `kd`'s value: `OpGetField(Var(kd), vo, _)` of a call variable (`field_of_call`), -1 none.
+fn field_of_call(w: PWalk, node: ir::Node) -> integer {
+  args = call_args(node);
+  if call_name(w.b, node) != "OpGetField" || len(args) != 3 {
+    return -1;
+  }
+  call = var_of(args[0]!);
+  if call >= 0 && kind(w, call) == K_CALL && int_of(args[1]!) == w.p.vo { call } else { -1 }
+}
+
+// An `Object` block that answers the producer's buffer: its last statement returns it.
+pub fn returns_buffer(ops: vector<ir::Node>, retbuf: integer) -> boolean {
+  if len(ops) == 0 {
+    return false;
+  }
+  match loop_shape::unspan(ops[len(ops) - 1]!) {
+    NdReturn { inner } => is_var(inner, retbuf),
+    _ => false,
+  }
+}
+
+fn value_field(b: ir::Bundle, p: Producer, v: ir::Node) -> boolean {
+  f = field_of(b, v, p.retbuf);
+  f != null && f == p.vo
+}
+
+// What a `return` of the producer answers, read off its `Object` block (`RetForm`): the tag,
+// the slot (0 none, 1 a number `num`, 2 a text run `(guard, lo, hi)`, 3 a field only the built
+// value answers) and the scalar fields.
+pub struct RetForm {
+  pub ok: boolean,
+  pub tag: integer,
+  pub slot: integer,
+  pub num: ir::Node,
+  pub guard: ir::Node,
+  pub lo: ir::Node,
+  pub hi: ir::Node,
+  pub sc_off: vector<integer>,
+  pub sc_val: vector<ir::Node>,
+}
+
+pub const SLOT_NONE = 0;
+pub const SLOT_NUM = 1;
+pub const SLOT_TEXT = 2;
+pub const SLOT_BUILT = 3;
+
+fn no_form() -> RetForm {
+  RetForm { ok: false, tag: -1, slot: SLOT_NONE, num: ir::NdNull, guard: ir::NdNull, lo: ir::NdNull, hi: ir::NdNull, sc_off: [], sc_val: [] }
+}
+
+// Read a producer `return` off its `Object` block (`parse_return`); `ok` false when the block
+// does anything the twins cannot answer.
+pub fn parse_return(b: ir::Bundle, p: Producer, ops: vector<ir::Node>) -> RetForm {
+  f = no_form();
+  has_tag = false;
+  slots = 0;
+  for st in ops {
+    nm = "";
+    match loop_shape::unspan(st) {
+      NdLine { n: _ } => continue,
+      NdNull => continue,
+      NdReturn { inner: _ } => continue,
+      NdIf { cond: _, t: _, f: _ } => continue,
+      NdInsert { items: _ } => continue,
+      NdCall { def_nr, args: _ } => nm = op_name(b, def_nr),
+      _ => return no_form(),
+    }
+    args = call_args(st);
+    n = len(args);
+    if nm == "OpCopyRecord" && n == 3 && value_field(b, p, args[1]!) {
+      tag = unit_literal(b, args[0]!);
+      if tag < 0 {
+        return no_form();
+      }
+      f.tag = tag;
+      has_tag = true;
+    } else if nm == "OpSetEnum" && n == 3 && value_field(b, p, args[0]!) && int_of(args[1]!) == 0 {
+      tag = enum_tag(args[2]!);
+      if tag < 0 {
+        return no_form();
+      }
+      f.tag = tag;
+      has_tag = true;
+    } else if (nm == "OpSetInt" || nm == "OpSetBoolean") && n == 3 && value_field(b, p, args[0]!) {
+      if int_of(args[1]!) == null {
+        return no_form();
+      }
+      slots += 1;
+      f.slot = SLOT_NUM;
+      f.num = args[2]!;
+    } else if nm == "OpSetText" && n == 3 && value_field(b, p, args[0]!) {
+      slots += 1;
+      run = text_run(b, args[2]!);
+      if run.ok && run.frame == p.frame {
+        f.slot = SLOT_TEXT;
+        f.guard = run.guard;
+        f.lo = run.lo;
+        f.hi = run.hi;
+      } else {
+        f.slot = SLOT_BUILT;
+      }
+    } else if nm == "OpMoveVector" && n == 3 {
+      // A byte string is a slot only the built value answers; a vector of the enum or its
+      // records is a walk.
+      dst = args[0]!;
+      ga = call_args(dst);
+      if call_def(dst) < 0 || call_name(b, dst) != "OpGetField" || len(ga) < 3 || !value_field(b, p, ga[0]!) {
+        return no_form();
+      }
+      vtp = int_of(ga[2]!);
+      if vtp == null || vtp < 0 || vtp > 65535 {
+        return no_form();
+      }
+      if !has_elem(p, vtp) {
+        slots += 1;
+        f.slot = SLOT_BUILT;
+      }
+    } else if nm == "OpSetInt4" && n == 3 && int_of(args[2]!) == 0 {
+      if !is_var(args[0]!, p.retbuf) && !value_field(b, p, args[0]!) {
+        return no_form();
+      }
+    } else if (nm == "OpSetInt" || nm == "OpSetBoolean") && n == 3 && is_var(args[0]!, p.retbuf) {
+      off = int_of(args[1]!);
+      if off == null || scalar_index(p, off) < 0 {
+        return no_form();
+      }
+      f.sc_off += [off];
+      f.sc_val += [args[2]!];
+    } else if nm == "OpFreeText" || nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRecordIn" {
+      // A release of a part of the value: nothing to answer.
+    } else {
+      return no_form();
+    }
+  }
+  if slots > 1 || len(f.sc_off) != len(p.scalars) || !has_tag {
+    return no_form();
+  }
+  f.ok = true;
+  f
+}
+
+// The producer's parameters (`producer_params`): one frame, the rest numbers (the position).
+fn producer_params(b: ir::Bundle, dv: DvPlan, d: integer, rb: integer, p: Producer) -> text {
+  frames = opt_decode_view::bparams(dv, d);
+  frame = -1;
+  for attr in b.data.definitions[d]!.attributes {
+    if attr#index == rb {
+      continue;
+    }
+    pv = var_named(b, d, attr.name);
+    if frames.contains(pv) {
+      if frame >= 0 {
+        return "two frame parameters";
+      }
+      frame = pv;
+    } else {
+      rust = scalar_type(attr.typedef[0] ?? ir::TyVoid);
+      if rust == "" {
+        return "parameter `{attr.name}` is no frame and no number";
+      }
+      p.params += [pv];
+      p.param_rust += [rust];
+    }
+  }
+  if frame < 0 {
+    return "no frame parameter";
+  }
+  p.frame = frame;
+  ""
+}
+
+// The record (`producer_layout`): one field of a view enum, the rest scalars; and the element
+// types of the enum's vector fields.
+fn producer_layout(b: ir::Bundle, dv: DvPlan, p: Producer) -> text {
+  record = fields(b, p.d_tp) ?? return "its result is no struct";
+  int_tp = types::named(b.types, "integer") ?? -1;
+  bool_tp = types::named(b.types, "boolean") ?? -1;
+  for field in record {
+    if field.content >= 0 && field.content < len(dv.is_enum) && dv.is_enum[field.content]! {
+      if p.t_tp != 0 {
+        return "two decoded fields";
+      }
+      p.t_tp = field.content;
+      p.vo = field.position;
+    } else {
+      base = match b.types[field.content]?.parts[0] ?? ir::PtBase {
+        PtBase => true,
+        _ => false,
+      };
+      rust = if base && field.content == int_tp { "i64" } else if base && field.content == bool_tp { "u8" } else { "" };
+      if rust == "" {
+        return "field `{field.name}` is no number";
+      }
+      p.scalars += [PsScalar { off: field.position, rust: rust }];
+    }
+  }
+  if p.t_tp == 0 {
+    return "no decoded field";
+  }
+  // The scalars by offset.
+  sorted: vector<PsScalar> = [];
+  for _ in p.scalars {
+    best = -1;
+    for s in p.scalars {
+      taken = false;
+      for t in sorted {
+        if t.off == s.off {
+          taken = true;
+        }
+      }
+      if !taken && (best < 0 || s.off < p.scalars[best]!.off) {
+        best = s#index;
+      }
+    }
+    if best >= 0 {
+      sorted += [p.scalars[best]!];
+    }
+  }
+  p.scalars = sorted;
+  match b.types[p.t_tp]!.parts[0] ?? ir::PtBase {
+    PtEnum { values } => {
+      for v in values {
+        for field in fields(b, v.nr) ?? [] {
+          el = match b.types[field.content]?.parts[0] ?? ir::PtBase {
+            PtVector { content } => content,
+            _ => -1,
+          };
+          if el < 0 || has_elem(p, field.content) {
+            continue;
+          }
+          if el == p.t_tp {
+            p.elem += [Elem { vtp: field.content, etp: el, whole: true }];
+          } else {
+            ef = fields(b, el);
+            if ef != null && len(ef) > 0 {
+              all = true;
+              for part in ef {
+                if part.content != p.t_tp {
+                  all = false;
+                }
+              }
+              if all {
+                p.elem += [Elem { vtp: field.content, etp: el, whole: false }];
+              }
+            }
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  ""
+}
+
+// Each variable's class (`producer_kinds`): the frame, a scalar, a recursive call's result, or
+// a value of the tree being built.
+fn producer_kinds(b: ir::Bundle, d: integer, p: Producer) -> vector<integer> {
+  def = b.data.definitions[d]!;
+  code = def.code[0] ?? ir::NdNull;
+  kinds: vector<integer> = [];
+  for v in def.variables.variables {
+    tp = v.type_def[0] ?? ir::TyVoid;
+    k = K_BUILD;
+    if v#index == p.frame {
+      k = K_FRAME;
+    } else if scalar_type(tp) != "" {
+      k = K_SCALAR;
+    } else if v#index != p.retbuf && record_tp(b, tp) == p.d_tp && !v.argument && sets_from_call(code, v#index, d) {
+      k = K_CALL;
+    }
+    kinds += [k];
+  }
+  for pv in p.params {
+    if pv >= 0 && pv < len(kinds) {
+      kinds[pv] = K_SCALAR;
+    }
+  }
+  kinds
+}
+
+// Does `x` hold `v = d(…)`?
+fn sets_from_call(x: ir::Node, v: integer, d: integer) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return sets_from_call(inner, v, d),
+    NdSet { var, inner } => if var == v && call_def(inner) == d { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if sets_from_call(c, v, d) {
+      return true;
+    }
+  }
+  false
+}
+
+// A walked local is only appended to, and only moved into its field (`appended_only`).
+fn appended_only(b: ir::Bundle, d: integer, p: Producer) -> text {
+  code = b.data.definitions[d]!.code[0] ?? ir::NdNull;
+  for w in p.walked {
+    for local in w.locals {
+      if changed_other(b, code, local) {
+        return "`{var_name(b, d, local)}` is changed other than by an append";
+      }
+    }
+  }
+  ""
+}
+
+fn changed_other(b: ir::Bundle, x: ir::Node, local: integer) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return changed_other(b, inner, local),
+    NdCall { def_nr, args } => {
+      nm = op_name(b, def_nr);
+      named = false;
+      for a in args {
+        if is_var(a, local) {
+          named = true;
+        }
+      }
+      if named && nm != "OpPreAllocVector" && nm != "OpNewRecord" && nm != "OpFinishRecord" && nm != "OpMoveVector" && nm != "OpPlaceRecord" && nm != "OpFreeRef" && nm != "OpFreeRecordIn" {
+        return true;
+      }
+    },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if changed_other(b, c, local) {
+      return true;
+    }
+  }
+  false
+}
+
+// Admit `d` as a producer (`producer`); `why` names the reason it is not.
+fn producer(b: ir::Bundle, dv: DvPlan, d: integer, why: &text) -> Producer {
+  def = b.data.definitions[d]!;
+  p = no_producer(d);
+  rb = opt_vr_shape::ret_buffer_attr(def);
+  if rb < 0 {
+    why = "answers no record through a buffer";
+    return p;
+  }
+  p.retbuf = var_named(b, d, def.attributes[rb]!.name);
+  p.d_tp = record_tp(b, def.returned[0] ?? ir::TyVoid);
+  if p.d_tp < 0 {
+    why = "its result names no record";
+    return p;
+  }
+  why = producer_params(b, dv, d, rb, p);
+  if why != "" {
+    return p;
+  }
+  why = producer_layout(b, dv, p);
+  if why != "" {
+    return p;
+  }
+  kinds = producer_kinds(b, d, p);
+  for k in kinds {
+    if k == K_CALL {
+      p.calls += [k#index];
+    }
+  }
+  total: vector<integer> = [for _ in kinds { 0 }];
+  count_mentions(def.code[0] ?? ir::NdNull, total);
+  w = PWalk { b: b, d: d, p: p, kinds: kinds, total: total, binds: [], set_seq: [for _ in kinds { 0 }], seq: 0, elms: [], why: "" };
+  stmt(w, def.code[0] ?? ir::NdNull, "");
+  if w.why != "" {
+    why = w.why;
+    return no_producer(d);
+  }
+  why = appended_only(b, d, w.p);
+  copy_producer(w.p)
+}
+
+// A producer of its own: the walk that made `p` frees it with itself.
+fn copy_producer(p: Producer) -> Producer {
+  Producer {
+    d: p.d,
+    frame: p.frame,
+    params: [for v in p.params { v }],
+    param_rust: [for r in p.param_rust { r }],
+    retbuf: p.retbuf,
+    vo: p.vo,
+    t_tp: p.t_tp,
+    d_tp: p.d_tp,
+    scalars: [for sc in p.scalars { PsScalar { off: sc.off, rust: sc.rust } }],
+    calls: [for v in p.calls { v }],
+    drops: [for t in p.drops { t }],
+    yields: [for y in p.yields { Yield { local: y.local, offs: [for o in y.offs { o }], calls: [for c in y.calls { c }] } }],
+    yield_paths: [for t in p.yield_paths { t }],
+    walked: [for wk in p.walked { Walked { off: wk.off, vtp: wk.vtp, locals: [for l in wk.locals { l }] } }],
+    elem: [for e in p.elem { Elem { vtp: e.vtp, etp: e.etp, whole: e.whole } }],
+  }
+}
+
+// ---- the program's plan ---------------------------------------------------------------------
+
+// A walk twin's key: the producer, the field's offset and vector type; its index is `k`.
+pub struct WalkKey {
+  pub pd: integer,
+  pub off: integer,
+  pub vtp: integer,
+}
+
+pub struct PsPlan {
+  pub asked: boolean,
+  pub producers: vector<Producer>,
+  pub consumers: vector<opt_decode_structure_scan::Consumer>,
+  pub roots: vector<integer>,
+  pub walks: vector<WalkKey>,
+}
+
+pub fn no_plan() -> PsPlan {
+  PsPlan { asked: false, producers: [], consumers: [], roots: [], walks: [] }
+}
+
+pub fn producer_of(p: PsPlan, d: integer) -> Producer? {
+  for pr in p.producers {
+    if pr.d == d {
+      return pr;
+    }
+  }
+  null
+}
+
+pub fn consumer_of(p: PsPlan, d: integer) -> opt_decode_structure_scan::Consumer? {
+  for c in p.consumers {
+    if c.d == d {
+      return c;
+    }
+  }
+  null
+}
+
+// The walk twin's index of `(pd, off, vtp)`, -1 none.
+pub fn walk_index(p: PsPlan, pd: integer, off: integer, vtp: integer) -> integer {
+  for k in p.walks {
+    if k.pd == pd && k.off == off && k.vtp == vtp {
+      return k#index;
+    }
+  }
+  -1
+}
+
+// Decide the plan from the decode-view plan's roots and region (`plan`).
+pub fn plan(b: ir::Bundle, dv: DvPlan) -> PsPlan {
+  p = no_plan();
+  p.asked = true;
+  if !enabled() || !opt_decode_view::any_root(dv) {
+    return p;
+  }
+  region: vector<integer> = [];
+  for f in dv.fns {
+    if f.region {
+      region += [f.d];
+    }
+  }
+  region.sort();
+  for d in region {
+    def = b.data.definitions[d]!;
+    if def.def_type != 1 {
+      continue;
+    }
+    // A producer calls itself: a decoder is recursive.
+    if !calls_def(def.code[0] ?? ir::NdNull, d) {
+      continue;
+    }
+    why = "";
+    pr = producer(b, dv, d, why);
+    if why == "" {
+      if trace_on() {
+        keys: vector<text> = [for w in pr.walked { "({w.off}, {w.vtp})" }];
+        trace("{def.name}: a producer, position {rep_tuple(pr)}, {len(pr.drops)} dropped, walks [{keys.join(", ")}]");
+      }
+      p.producers += [pr];
+    } else if trace_on() {
+      trace("{def.name}: no producer: {why}");
+    }
+  }
+  if len(p.producers) == 0 {
+    return p;
+  }
+  opt_decode_structure_scan::roots(b, dv, p);
+  p
+}
+
+// The marks the plan leaves in the code: each producer's dropped statements and walked
+// appends, each consumer's skipped statements and walks.
+pub fn marks(p: PsPlan) -> vector<Mark> {
+  out: vector<Mark> = [];
+  for pr in p.producers {
+    for path in pr.drops {
+      out += [Mark { d: pr.d, path: path, file: MARK_FILE, code: P_DROP }];
+    }
+    for path in pr.yield_paths {
+      out += [Mark { d: pr.d, path: path, file: MARK_FILE, code: P_YIELD + path#index }];
+    }
+  }
+  for c in p.consumers {
+    for path in c.skip {
+      out += [Mark { d: c.d, path: path, file: MARK_FILE, code: C_SKIP }];
+    }
+    for w in c.walks {
+      out += [Mark { d: c.d, path: w.path, file: MARK_FILE, code: C_WALK + w#index }];
+    }
+  }
+  out
+}
