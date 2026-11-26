@@ -272,6 +272,9 @@ pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::Type
       if nm != "" && el_schema::wants_vector_def(e, nm) {
         el_schema::make_vector_def(e, inner, nm, el::pos_at(e, el_ex_pattern::statement_end(e, at)), true, narrow_early: false);
       }
+      // (A tuple element, which `elem_name` names none of: `z = zip(a, b)` binding a
+      // `vector<(integer, text)>` makes its record, `vector<(…)>` and `main_vector<(…)>`.)
+      el_schema::tuple_wrapper(e, el_types::without_deps(inner), el::pos_at(e, el_ex_pattern::statement_end(e, at)));
     },
     _ => {}
   }

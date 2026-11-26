@@ -1241,6 +1241,11 @@ pub fn stream_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   sen = el_types::struct_enum_def(elem);
   rec_enum = sen >= 0 && !(elem is TyOptional);
   if !(plain_int || rec_enum) || at < 0 || (plain_int && md < 0) || len(ops) == 0 {
+    // (Refused, but the stream's buffer vector is registered first, as `materialise_stream`'s
+    // `vector_def` makes it — `vector<float>` for `match g_float() { [x, y] => … }`.)
+    if nm != "" && md < 0 && at >= 0 {
+      el_schema::make_vector_def(e, elem, nm, el::pos_at(e, at), true, store: false);
+    }
     el::refuse(e, "a match over an iterator of this element type: {type_kind(elem)}");
     return void;
   }
