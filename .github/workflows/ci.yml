@@ -1479,8 +1479,14 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Build the release loft binary the scan runs
         run: cargo build --release --bin loft
-      - name: Lifetime report over tests/scripts and the suite (at its baseline)
+      - name: Lifetime report over tests/scripts, the selfhost cells and the suite (every program clean)
         run: cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored
+      # Each suite cell that declares `@catches: LOFT_NO_<CURE>` is reported by the store records
+      # with that cure off (the static half of switch-ab's check), against a baseline that only
+      # shrinks: tests/catches_records.baseline.  ~10 s.
+      - name: The store records catch what each @catches cell says it catches
+        if: always()
+        run: python3 scripts/catches_records.py --loft target/release/loft
 
   # The front end's allocation pins (`tests/frontend_counts.rs`, `bench/frontend/allocations.tsv`):
   # an exact count per compile that may only fall.  ADVISORY (not in required-status-checks): a

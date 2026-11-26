@@ -1,0 +1,41 @@
+# Suite cells whose @catches switch the store records do not read as CAUGHT today:
+# <cell>\t<switch>\t<verdict>.  Written by scripts/catches_records.py --update; it only
+# shrinks (a cure whose defect is a stale value, not a store's lifetime, stays here).
+rules/binding/B-Copy/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft	LOFT_NO_OWNER_WITNESS	STATIC
+rules/binding/B-Copy/a-record-reassigned-from-a-value-branch-copies-the-chosen-arm.loft	LOFT_NO_OWNER_WITNESS	MISS
+rules/binding/B-Disturb/2358-a-view-of-a-ref-parameter-materialises-when-the-parameter-is-reassigned.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Disturb/a-view-is-copied-only-where-it-is-live-across-a-disturbance.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Disturb/a-view-of-an-element-outlives-a-removal.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Ref-Reshape/167-a-scalar-or-text-link-refuses-a-disturbance-of-its-container.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Ref-Reshape/a-link-across-a-vectors-growth-or-removal-is-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Ref-Reshape/a-link-and-a-plain-parameter-refuse-a-disturbance-a-view-would-survive-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Ref-Reshape/a-link-into-a-container-named-through-a-field-or-element-is-refused-across-its-disturbance.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/binding/B-Ref-Reshape/a-link-into-what-an-overwrite-releases-is-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft	LOFT_NO_TUPLE_PARAM_COPY	STATIC
+rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft	LOFT_NO_OWNER_WITNESS	MISS
+rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft	LOFT_NO_LAZY_BUFFER	CLEAN
+rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft	LOFT_NO_OWNER_WITNESS	STATIC
+rules/heap/H-Free/a-call-frees-the-record-it-made-for-an-argument-however-it-was-built.loft	LOFT_NO_SCALAR_VECTOR_EXEMPT	CLEAN
+rules/heap/H-Free/an-early-exit-frees-what-the-frame-owns-whoever-would-fill-it-later.loft	LOFT_NO_RET_SRC_OWNS	CLEAN
+rules/heap/H-Handle/a-file-dying-anywhere-releases-its-handle.loft	LOFT_NO_CLEAR_RELEASE	MISS
+rules/heap/H-Materialise/a-disturbed-keyed-view-keeps-the-value-at-its-bind.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/heap/H-Materialise/a-materialised-view-is-a-deep-copy-taken-at-the-bind.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/heap/H-ShortRef/a-view-keeps-its-value-while-its-container-grows.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/heap/H-View-Drop/a-view-of-a-member-that-owns-a-droppable-is-never-materialised-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/heap/H-View-Drop/a-view-of-a-member-without-a-droppable-materialises-where-one-with-is-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
+rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft	LOFT_NO_APPEND_STAGING	STATIC
+rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft	LOFT_NO_OWNER_WITNESS	STATIC
+rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft	LOFT_NO_APPEND_STAGING	CLEAN
+rules/ownership/O-Detach/a-rebind-or-a-build-reads-its-destination-through-any-view-first.loft	LOFT_NO_DETACH_VIEW_READS	STATIC
+rules/ownership/O-Detach/a-rebind-or-a-build-reads-its-destination-through-any-view-first.loft	LOFT_NO_TRANSITIVE_VIEW_READ	CLEAN
+rules/ownership/O-Witness/1510-a-mixed-own-view-locals-record-hooks-once.loft	LOFT_NO_OWNER_WITNESS	STATIC
+rules/ownership/O-Witness/a-discharged-projection-rebound-from-a-call-is-witnessed.loft	LOFT_NO_NCR_TEMP_VIEW	CLEAN
+rules/ownership/O-Witness/a-mixed-local-viewing-a-hash-element-releases-through-its-witness.loft	LOFT_NO_OWNER_WITNESS	CLEAN
+rules/ownership/O-Witness/a-mixed-local-viewing-a-sorted-element-releases-through-its-witness.loft	LOFT_NO_OWNER_WITNESS	CLEAN
+rules/ownership/O-Witness/a-mixed-local-viewing-a-spatial-element-releases-through-its-witness.loft	LOFT_NO_OWNER_WITNESS	CLEAN
+rules/ownership/O-Witness/a-mixed-local-viewing-an-index-element-releases-through-its-witness.loft	LOFT_NO_OWNER_WITNESS	CLEAN
+rules/rewrites/R-DeferredCopy/a-deferred-copy-is-taken-before-every-disturbance-of-its-place.loft	LOFT_NO_OWNER_WITNESS	MISS
+rules/rewrites/R-DeferredCopy/a-reference-derived-from-a-deferred-copy-moves-with-the-copy.loft	LOFT_NO_OWNER_WITNESS	MISS
+rules/rewrites/R-RefillText/a-kept-elements-text-write-blocks-the-mint-hoist-and-reads-stay-right.loft	LOFT_NO_WORK_BUFFER_POOL	CLEAN
+rules/types/N-Join/2478-an-inferred-local-bound-from-a-function-declared-below-joins-its-null.loft	LOFT_NO_LATE_CALL_JOIN	CLEAN
+rules/types/N-Shape/a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft	LOFT_NO_OWNER_WITNESS	STATIC

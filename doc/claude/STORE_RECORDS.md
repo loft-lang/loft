@@ -526,6 +526,13 @@ A fix that makes the runtime clean while the checker stays silent on the defect 
 incomplete: the next defect of the same shape is again found only by a run.  This holds for
 a defect found by any route: a failing run, the sweep, an issue, a consumer's report.
 
+CI holds all three on every PR, in the required `store lifetime scan` job: every program over
+`tests/scripts`, `selfhost/front/cells` and the suite reads clean (`records_lifetime_ratchet`),
+and every suite cell declaring `@catches: LOFT_NO_<CURE>` reads CAUGHT with that cure off
+(`scripts/catches_records.py`; the cures whose defect the records cannot see yet are listed in
+`tests/catches_records.baseline`, which only shrinks).  Locally, `find_problems.sh --changed` runs
+the first whenever the change touches the scope pass, the records or the value-record passes.
+
 ## What the IR does not say yet: how an assignment is lowered
 
 An IR `Set(v, value)` does not say what happens to stores.  The code generator decides it:
