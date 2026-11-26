@@ -1099,6 +1099,11 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               }
               if mv < 0 {
                 mv = el_vars::create_unique(vars, "mv_{bname}", ft);
+                // (The pass-1 capture's type is no fact on pass 2 — `add_variable` lets pass 2
+                // win: its borrow names this pass's subject, a `par` result renamed per pass.)
+                if !e.first_pass {
+                  el_vars::set_var_type(vars, mv, ft);
+                }
                 el_vars::set_defined(vars, mv);
                 // (`bind_match_field_capture`: a text payload is its capture's own — Rust records
                 // it as a text payload view — and any other capture views the subject's record.)

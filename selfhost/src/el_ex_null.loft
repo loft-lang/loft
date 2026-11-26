@@ -2992,6 +2992,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
     }
+    // (A `return null` under a plain enum's `?` is the enum's null, `OpConvEnumFromNull` of its
+    // store type (`null_of`).)
+    if v.tp is TyNull && result is TyOptional && match el_types::base(result) { TyEnum { is_ref: nre } => !nre, _ => false } {
+      enull = el_convert::null_of(e, el_types::base(result));
+      if enull != null {
+        return ex(ir::NdReturn { inner: enull! }, ir::TyNever);
+      }
+    }
     rc = stored(e, vars, v, result);
     if rc == null {
       refuse_known(e, v.tp, "a `return` value its declared type converts: {type_kind(v.tp)} to {type_kind(result)}");
