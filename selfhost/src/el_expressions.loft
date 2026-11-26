@@ -143,7 +143,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     vars.expect = result;
   }
   // (…and a KEYED result reaches them too: each arm's literal is built as the collection.)
-  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && (el_types::base(result) is TyVector || keyed_kind(result) && !(e.p.nodes[ttail] is SMatch)) {
+  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && (el_types::base(result) is TyVector || keyed_kind(el_types::base(result))) {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
   }

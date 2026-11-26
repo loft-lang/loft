@@ -1634,8 +1634,9 @@ pub fn arm_expect(e: el::El, vars: el_vars::Vars, arm: integer, expected: ir::Ty
     return;
   }
   // (A bare arm — a `match` arm's `[…]` — is the literal itself.)
-  at = if (e.p.nodes[arm] is SVecLit) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
-  // (A NESTED `if` arm under a keyed expectation takes it too: its own arms are read against it.)
+  at = if (e.p.nodes[arm] is SVecLit || e.p.nodes[arm] is SIf) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
+  // (A NESTED `if` arm under a keyed expectation takes it too — an `else if` is one — its own
+  // arms read against it.)
   if at >= 0 && e.p.nodes[at] is SIf && keyed_kind(el_types::base(expected)) {
     vars.expect_node = at;
     vars.expect = expected;
@@ -1734,8 +1735,21 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // An untyped `[]` then arm gives the `else` nothing to be read against (`true_type`
   // unknown, as a `null` arm's).
   then_empty = el_ex_pattern::syntax_tail_empty(e, then) && !(el_types::base(expected) is TyVector);
+  // (An `else if` is read as the `if` it is — under a keyed expectation, handed it: its own arms
+  // build the collection.)
   f = if e.p.nodes[other!] is SIf {
-    el_ex_assign::expression(e, vars, other!)
+    if keyed_kind(el_types::base(expected)) {
+      kon = vars.expect_node;
+      kot = vars.expect;
+      vars.expect_node = other!;
+      vars.expect = expected;
+      kfx = el_ex_assign::expression(e, vars, other!);
+      vars.expect_node = kon;
+      vars.expect = kot;
+      kfx
+    } else {
+      el_ex_assign::expression(e, vars, other!)
+    }
   } else {
     arm_expect(e, vars, other!, expected);
     fb = el_ex_assign::parse_block(e, vars, other!, "else", if then_empty || null_then || t.tp is TyNever || open_tuple(t.tp) { ir::TyUnknown { n: 0 } } else { arm_expectation(t.tp) });
