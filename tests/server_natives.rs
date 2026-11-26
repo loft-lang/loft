@@ -310,7 +310,8 @@ struct Ports {
 /// A request that keeps arriving, one byte per 100 ms (a fifth of the server's 500 ms read
 /// timeout), for up to 15 s; the answer must be a 408 that comes within 12 s.
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: de31aa067 — by hand: the pump's request budget set to 0 (no bound) → no
+/// answer after 15.4 s.
 fn slow_peer_is_told_408(port: u16) {
     use std::sync::atomic::{AtomicBool, Ordering};
     let mut slow = connect(port);
@@ -401,7 +402,8 @@ fn is_server_hello(first: &[u8]) -> bool {
 /// answered.  The control makes the refusal mean the suites, not a hello the server could not
 /// read.
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: 7fc098f4a — by hand: the CBC suites put back in the listener's EC and RSA
+/// lists (`loft_tls_accept`) → a ServerHello for 0xc009.
 fn suites_offered_by_a_listener(port: u16, cbc: &[u16], aead: u16) {
     let first = first_answer(port, &client_hello(&[aead]));
     assert!(

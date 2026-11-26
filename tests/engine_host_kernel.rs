@@ -3004,7 +3004,8 @@ fn main() {{
 /// meanwhile: about five seconds with the budget, the whole drip without one.  Both kernels:
 /// the interpreter's (`src/engine_host.rs`) and the compiled program's (`src/c/loft_engine.h`).
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: 5dca7ca2f — by hand, each kernel apart: the frame budget made 500 s →
+/// the next peer waited 18 s; the upgrade head's budget made 100× → it waited 20 s.
 #[test]
 fn a_message_that_trickles_in_holds_the_kernel_no_longer_than_its_budget() {
     if !fa::exists(loft_bin()) {
@@ -3090,7 +3091,8 @@ fn main() {
 /// client sends an unmasked one, and does not take its payload as a message, where a masked
 /// one is answered and the kernel serves on.  Both kernels.
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: 73a36d058 — by hand, each kernel apart: the `from_client && !masked`
+/// refusal disabled → `got:unmaskd` came back.
 #[test]
 fn an_unmasked_client_frame_closes_the_connection() {
     if !fa::exists(loft_bin()) {

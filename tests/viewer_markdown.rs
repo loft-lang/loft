@@ -351,7 +351,8 @@ fn markdown_renderer_pins_high_impact_features() {
 /// name files that exist (this checkout itself, reached from its parent, and `/etc/hosts`),
 /// so a viewer that opened them would answer 200, and one that merely missed them 404.
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: b385ccc28 — by hand: the three routes' `under_root` check removed →
+/// `/raw/../<checkout>/Cargo.toml` answered 200.
 #[test]
 fn the_viewer_serves_only_paths_under_the_project_root() {
     if registry_predates_dn1() || !fa::exists(loft_bin()) {
@@ -379,11 +380,7 @@ fn the_viewer_serves_only_paths_under_the_project_root() {
         "a `..` that stays inside the root reaches its file: {got:.300}\n{}",
         viewer.diagnose()
     );
-    let here = project_root();
-    let name = here
-        .file_name()
-        .and_then(|n| n.to_str())
-        .expect("the checkout's directory name");
+    let name = fa::file_name(project_root()).expect("the checkout's directory name");
     for outside in [
         format!("/raw/../{name}/Cargo.toml"),
         format!("/file/tests/../../{name}/README.md"),

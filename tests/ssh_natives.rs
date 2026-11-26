@@ -228,7 +228,8 @@ const HOST_KEYS_WANT: &[&str] = &[
 /// 1024-bit one is refused at connect, where the same server's 2048-bit key is accepted and
 /// logs in (the control that the RSA path itself works).
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: e3c19e2d0 — by hand: the rekey's key comparison in `ssh_kex` disabled →
+/// `OTHER true [REKEYED]`; the RSA floor lowered to 1024 bits → `RSA1024 1`.
 fn host_keys(backend: &str) {
     if !loft::platform::c_runtime_has_sockets() {
         return;

@@ -132,9 +132,10 @@ const WANT: [&str; 23] = [
     "AWAY 200 [GET  ]",
     "AWAY307 0",
     // Over https a redirect on the same server is followed; one to plain http is refused, as
-    // the request was made for a TLS channel (followed, it reads `DOWN 200`).
-    // @falsified-at: PENDING  The
+    // the request was made for a TLS channel (followed, it reads `DOWN 200`).  The
     // ClientHello reader answers no TLS at all.
+    // @falsified-at: 0d82e58af — failed as written (`DOWN 200`: the check read the Location
+    // after freeing it, fixed in 3403ce791); by hand: `down` forced to 0 → `DOWN 200`.
     "STAY 200 secure",
     "DOWN 0",
     "HELLO 0",
@@ -269,7 +270,8 @@ const SIGNALS: [u16; 2] = [0x00FF, 0x5600];
 /// The HTTP client offers forward-secret AEAD suites only: no CBC suite (SHA-1's among them)
 /// is in its ClientHello, so no server can choose one.
 ///
-/// @falsified-at: PENDING
+/// @falsified-at: cbfe505ab — by hand: the eight ECDHE CBC suites put back in the client's
+/// profile (`loft_tls_profile`) → "the client offers 0xc023".
 fn the_client_offers_only_aead_suites(backend: &str, offered: &[u16]) {
     let ciphers: Vec<u16> = offered
         .iter()
