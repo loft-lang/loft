@@ -1101,12 +1101,22 @@ fn run_cc(cmd: &mut Spawn) -> std::io::Result<loft::platform::process::Ran> {
     out
 }
 
-/// @PLN229 B1 — a split build (`LOFT_C_UNITS=1`): each unit of `text` (`loft::c::SPLIT_UNIT`
-/// lines) written beside `src_dir`'s source and compiled to an object on its own — the shared one
-/// owning the runtime's state (`LOFT_SPLIT_OWN`), every other using it (`LOFT_SPLIT_USE`) — a few
-/// at once (`LOFT_C_UNITS_JOBS`), then the objects linked into `binary`.  No whole-program
-/// optimisation (`-flto`): it would undo what compiling apart saves.  Answers the first unit's
-/// compile that fails, else the link's.  gcc and clang only (`Dialect::Gnu`).
+/// @PLN229 B1/B2 — a split build (`LOFT_C_UNITS=1`): each unit of `text` (`loft::c::SPLIT_UNIT`
+/// lines) compiled to an object on its own — the shared one owning the runtime's state
+/// (`LOFT_SPLIT_OWN`), every other using it (`LOFT_SPLIT_USE`) — then the objects linked into
+/// `binary`.  No whole-program optimisation (`-flto`): it would undo what compiling apart saves.
+///
+/// With `cache` (a directory), each object is kept there under its unit's [`build_key`] — its
+/// text, the compiler and its identity, every flag and its role — so a unit whose C did not
+/// change is linked from the cache, not compiled.  The key is the C a unit IS, never the sources
+/// it came from: a unit carries the types and prototypes of other files, so a change to one
+/// `.loft` file changes the C of every unit that names what it changed.  A unit's source is
+/// written as `u-<key>.c`, so the object (which records that name) is a function of its key
+/// alone and a binary links the same bytes whatever the cache held.
+///
+/// The units to compile run `LOFT_C_UNITS_JOBS` at a time (4 by default), largest first.
+/// Answers the first failing unit's compile (in unit order), else the link's.  gcc and clang
+/// only (`Dialect::Gnu`).
 fn split_build(
     cc: &str,
     flags: &[String],
@@ -1114,31 +1124,73 @@ fn split_build(
     text: &str,
     binary: &std::path::Path,
     link_args: &[String],
+    cache: Option<&std::path::Path>,
 ) -> std::io::Result<loft::platform::process::Ran> {
     let flags: Vec<String> = flags
         .iter()
         .filter(|f| !f.starts_with("-flto"))
         .cloned()
         .collect();
+    let cache = cache.filter(|dir| {
+        let made = fa::create_dir_all(dir).is_ok();
+        if made {
+            crate::native_utils::tighten_cache_dir(dir);
+        }
+        made
+    });
     let units: Vec<&str> = text
         .split(loft::c::SPLIT_UNIT)
         .filter(|u| !u.is_empty())
         .collect();
-    let mut jobs = Vec::with_capacity(units.len());
+    // In unit order: the object each unit links from (in `src_dir`), and the units to compile.
+    let mut objects: Vec<std::path::PathBuf> = Vec::with_capacity(units.len());
+    let mut scratch: Vec<std::path::PathBuf> = Vec::new();
+    let mut used: std::collections::HashSet<std::path::PathBuf> = std::collections::HashSet::new();
+    let mut jobs: Vec<SplitJob> = Vec::new();
     for (i, unit) in units.iter().enumerate() {
         let body = unit.split_once("*/\n").map_or(*unit, |(_, b)| b);
-        let c = src_dir.join(format!("unit{i}.c"));
-        let o = src_dir.join(format!("unit{i}.o"));
-        fa::write(&c, body)?;
         let role = if i == 0 {
             "-DLOFT_SPLIT_OWN"
         } else {
             "-DLOFT_SPLIT_USE"
         };
-        jobs.push((c, o, role));
+        let mut unit_flags = flags.clone();
+        unit_flags.push(role.to_string());
+        let key = build_key(body, cc, &unit_flags, &[]);
+        let o = src_dir.join(format!("u-{key}.o"));
+        if objects.contains(&o) {
+            // the same C in the same role twice: one object holds it
+            continue;
+        }
+        objects.push(o.clone());
+        scratch.push(o.clone());
+        let cached = cache.map(|dir| dir.join(format!("unit-{key}.o")));
+        if let Some(cached) = &cached {
+            used.insert(cached.clone());
+            // Copied, not linked in place: another build's sweep cannot take it from under
+            // the link.
+            if fa::exists(cached)
+                && crate::native_utils::cache_safe_to_execute(cached)
+                && fa::copy(cached, &o).is_ok()
+            {
+                crate::native_utils::touch_cached_binary(cached);
+                continue;
+            }
+        }
+        let c = src_dir.join(format!("u-{key}.c"));
+        fa::write(&c, body)?;
+        scratch.push(c.clone());
+        jobs.push(SplitJob {
+            order: i,
+            size: body.len(),
+            c,
+            o,
+            flags: unit_flags,
+            cached,
+        });
     }
     // At most 4 compiles at once unless `LOFT_C_UNITS_JOBS` says otherwise: every unit's compile
-    // parses the whole head (~150 MB of gcc for a small program), and a runner building many
+    // parses its head (~150 MB of gcc for a small program), and a runner building many
     // programs at once (the suite runs 8) multiplies it.  A single large build — the gate's
     // tools — sets it to the cores it has.
     let width = std::env::var("LOFT_C_UNITS_JOBS")
@@ -1146,40 +1198,21 @@ fn split_build(
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or(4);
-    for batch in jobs.chunks(width) {
-        let ran: Vec<std::io::Result<loft::platform::process::Ran>> = std::thread::scope(|s| {
-            let hs: Vec<_> = batch
-                .iter()
-                .map(|(c, o, role)| {
-                    let flags = &flags;
-                    s.spawn(move || {
-                        let mut cmd = cc_spawn(cc);
-                        cmd.push_args(flags)
-                            .push_arg(*role)
-                            .push_arg("-c")
-                            .push_arg(c);
-                        cmd.push_arg("-o").push_arg(o);
-                        run_cc(&mut cmd)
-                    })
-                })
-                .collect();
-            hs.into_iter()
-                .map(|h| {
-                    h.join()
-                        .unwrap_or_else(|_| Err(std::io::Error::other("a compile thread panicked")))
-                })
-                .collect()
-        });
-        for r in ran {
-            let r = r?;
-            if !r.status.success() {
-                return Ok(r);
+    if let Some(failed) = compile_units(cc, &mut jobs, width)? {
+        remove_scratch(&scratch);
+        return Ok(failed);
+    }
+    if let Some(dir) = cache {
+        for job in &jobs {
+            if let Some(cached) = &job.cached {
+                publish_object(&job.o, cached, dir);
             }
         }
+        sweep_unit_objects(dir, &used, UNIT_CACHE_KEEP);
     }
     let mut cmd = cc_spawn(cc);
     cmd.push_args(&flags);
-    for (_, o, _) in &jobs {
+    for o in &objects {
         cmd.push_arg(o);
     }
     cmd.push_arg("-o").push_arg(binary);
@@ -1188,13 +1221,126 @@ fn split_build(
     cmd.push_args(loft::platform::c_system_link_libs());
     cmd.push_args(loft::platform::c_main_stack_args(false));
     let out = run_cc(&mut cmd);
-    if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
-        for (c, o, _) in &jobs {
-            let _ = fa::remove_file(c);
-            let _ = fa::remove_file(o);
+    remove_scratch(&scratch);
+    out
+}
+
+/// One unit of a split build to compile: its place in the unit order (which failure is
+/// answered), its size (the largest start first), its source and object in the scratch
+/// directory, its flags (with its role) and the cache entry it is published to.
+struct SplitJob {
+    order: usize,
+    size: usize,
+    c: std::path::PathBuf,
+    o: std::path::PathBuf,
+    flags: Vec<String>,
+    cached: Option<std::path::PathBuf>,
+}
+
+/// Compile `jobs`, `width` at a time: a pool of workers each taking the next unit, the largest
+/// first, so a long unit does not hold back a batch.  Answers the failed compile of the unit
+/// first in unit order, `None` when every one compiled.
+fn compile_units(
+    cc: &str,
+    jobs: &mut [SplitJob],
+    width: usize,
+) -> std::io::Result<Option<loft::platform::process::Ran>> {
+    jobs.sort_by(|a, b| b.size.cmp(&a.size).then(a.order.cmp(&b.order)));
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let results: std::sync::Mutex<Vec<(usize, std::io::Result<loft::platform::process::Ran>)>> =
+        std::sync::Mutex::new(Vec::with_capacity(jobs.len()));
+    let jobs = &*jobs;
+    std::thread::scope(|s| {
+        for _ in 0..width.min(jobs.len()) {
+            s.spawn(|| {
+                loop {
+                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(job) = jobs.get(k) else { break };
+                    let mut cmd = cc_spawn(cc);
+                    cmd.push_args(&job.flags).push_arg("-c").push_arg(&job.c);
+                    cmd.push_arg("-o").push_arg(&job.o);
+                    let r = run_cc(&mut cmd);
+                    if let Ok(mut all) = results.lock() {
+                        all.push((job.order, r));
+                    }
+                }
+            });
+        }
+    });
+    let mut all = results
+        .into_inner()
+        .map_err(|_| std::io::Error::other("a compile thread panicked"))?;
+    if all.len() != jobs.len() {
+        return Err(std::io::Error::other("a compile thread panicked"));
+    }
+    all.sort_by_key(|(order, _)| *order);
+    for (_, r) in all {
+        let r = r?;
+        if !r.status.success() {
+            return Ok(Some(r));
         }
     }
-    out
+    Ok(None)
+}
+
+/// How many unit objects one cache directory keeps: the most recently USED, as the binary
+/// cache keeps its binaries (`NATIVE_CACHE_KEEP`).  A big program has ~100 units, so this holds
+/// the units of a few dozen of its versions.
+const UNIT_CACHE_KEEP: usize = 4096;
+
+/// Publish the object `built` as `cached`, atomically: staged under a private name in the
+/// cache directory, owner-only, then renamed, so a concurrent build sees either no object or
+/// the whole one.  Best-effort: a failure costs a compile later, never a wrong link.
+fn publish_object(built: &std::path::Path, cached: &std::path::Path, dir: &std::path::Path) {
+    let leaf = fa::file_name(cached).unwrap_or_default();
+    let staged = dir.join(format!(".{leaf}.{}.tmp", std::process::id()));
+    if fa::copy(built, &staged).is_ok() {
+        let _ = loft::platform::set_permission_bits(&staged, 0o600);
+        if fa::rename(&staged, cached).is_err() {
+            let _ = fa::remove_file(&staged);
+        }
+    } else {
+        let _ = fa::remove_file(&staged);
+    }
+}
+
+/// Keep the `keep` most recently used `unit-<key>.o` objects of `dir`, never one of `used`
+/// (this build's).
+fn sweep_unit_objects(
+    dir: &std::path::Path,
+    used: &std::collections::HashSet<std::path::PathBuf>,
+    keep: usize,
+) {
+    let Ok(entries) = fa::read_dir(fa::PathText::from_os(dir)) else {
+        return;
+    };
+    let used: Vec<fa::PathText> = used.iter().map(|u| fa::PathText::from_os(u)).collect();
+    let mut others: Vec<(Option<std::time::SystemTime>, fa::PathText)> = entries
+        .into_iter()
+        .filter(|p| {
+            p.parts().last().is_some_and(|n| n.starts_with("unit-"))
+                && fa::has_extension(p, "o")
+                && !used.contains(p)
+        })
+        .map(|p| (fa::metadata(&p).and_then(|m| m.modified()).ok(), p))
+        .collect();
+    let keep_others = keep.saturating_sub(used.len());
+    if others.len() > keep_others {
+        others.sort_by_key(|e| e.0);
+        let drop = others.len() - keep_others;
+        for (_, p) in others.drain(..drop) {
+            let _ = fa::remove_file(&p);
+        }
+    }
+}
+
+/// Remove a split build's scratch files, unless `LOFT_KEEP_NATIVE_C` keeps them.
+fn remove_scratch(files: &[std::path::PathBuf]) {
+    if std::env::var_os("LOFT_KEEP_NATIVE_C").is_none() {
+        for f in files {
+            let _ = fa::remove_file(f);
+        }
+    }
 }
 
 /// The compiler's command building `src` into `binary`, in its own dialect: gcc's links the
@@ -1380,7 +1526,9 @@ pub(crate) fn build(
         .map_err(|e| BuildError::Rejected(format!("cannot write {}: {e}", src.display())))?;
     let obj = scratch.join(format!("loft_native_obj_{pid}.obj"));
     let out = if text.contains(loft::c::SPLIT_UNIT) && dialect(&cc) == Dialect::Gnu {
-        split_build(&cc, &flags, &src_dir, &text, &binary, &link_args)
+        // A lint compiles afresh, so its warnings are seen; no cache, no shared objects.
+        let units = (!no_cache && !linting).then(|| cache_dir.join("units"));
+        split_build(&cc, &flags, &src_dir, &text, &binary, &link_args, units.as_deref())
     } else {
         let mut cmd = compile_command(&cc, &flags, &src, &binary, &obj, &link_args);
         run_cc(&mut cmd)
