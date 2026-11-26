@@ -418,6 +418,23 @@ pub fn name_in(el: El, source: integer, name: text, nr: integer) {
   }
 }
 
+// `vector_def`'s global wrapper: definition `d`, made under the requesting source, is the
+// standard library's — its name bound under source 0 (where absent, `insert_if_absent`), the
+// requesting source's binding dropped, so every file finds the one wrapper.
+pub fn make_global(el: El, d: integer) {
+  src = def(el, d).source;
+  nm = def(el, d).name;
+  el.b.data.definitions[d].source = STD_SOURCE;
+  if src != STD_SOURCE {
+    if el.names[key(src, nm)] != null && el.names[key(src, nm)]!.nr == d {
+      el.names[key(src, nm)] = null;
+    }
+    if el.names[key(STD_SOURCE, nm)] == null {
+      el.names += [DefName { key: key(STD_SOURCE, nm), nr: d }];
+    }
+  }
+}
+
 // A definition moved to another key of its source (`def_names.remove` / `insert`).
 pub fn rename_def(el: El, d: integer, name: text) {
   src = def(el, d).source;

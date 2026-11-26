@@ -1246,7 +1246,7 @@ pub fn empty_vector_arm(e: el::El, vars: el_vars::Vars, body: integer?, expected
     ein = match evt { TyVector { inner } => inner, _ => ir::TyVoid };
     enm = el_types::elem_name(e, ein);
     if enm != "" {
-      if el::def_nr(e, "main_vector<{enm}>") < 0 {
+      if el_schema::wants_vector_def(e, enm) {
         match e.p.nodes[body!] {
           SVecLit { at } => { el_schema::make_vector_def(e, ein, enm, el::pos_at(e, closing_bracket(e, at)), true, narrow_early: false); },
           _ => {}
@@ -2209,7 +2209,7 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   // `parse_append_vector` makes the definitions where a value literal does, at its `]` — not
   // before the literal, as a declared element type would.
   nm = el_types::elem_name(e, inner);
-  if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if nm != "" && el_schema::wants_vector_def(e, nm) {
     match e.p.nodes[n] {
       SVecLit { at } => { el_schema::make_vector_def(e, inner, nm, el::pos_at(e, closing_bracket(e, at)), true); },
       _ => {}
@@ -2619,11 +2619,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // library has not (`vector<i16>` beside the library's `vector<integer>`), and a vector
       // element's: the middle literal of a three-deep one.)
       ninner = match el_types::base(xs[-1]!.tp) { TyVector { inner: ni } => ni, _ => ir::TyVoid };
-      if e.first_pass && el_ex_place::vec_lit_len(e, it) > 0 && (ninner is TyVector || match ninner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false }) && el::def_nr(e, "main_vector<{el_types::elem_name(e, ninner)}>") < 0 {
+      if e.first_pass && el_ex_place::vec_lit_len(e, it) > 0 && (ninner is TyVector || match ninner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false }) && el_schema::wants_vector_def(e, el_types::elem_name(e, ninner)) {
         ntok = match e.p.nodes[it] { SVecLit { at: nat } => nat, _ => 0 };
         // (A declared outer vector's own definitions stand first: Rust registers them where the
         // declaration is read, before the literal's items.)
-        if declared is TyVector && el::def_nr(e, "main_vector<{el_types::elem_name(e, declared)}>") < 0 {
+        if declared is TyVector && el_schema::wants_vector_def(e, el_types::elem_name(e, declared)) {
           otok = match e.p.nodes[n] { SVecLit { at: oat } => oat, _ => 0 };
           vector_def(e, declared, el_types::elem_name(e, declared), otok, true);
         }
@@ -2764,7 +2764,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     if e.first_pass && below && el::def_nr(e, "main_vector<unknown>") < 0 {
       if ut >= 0 {
         um = el::add_def(e, "main_vector<unknown>", el::pos_at(e, closing_bracket(e, ut)), el::DT_STRUCT);
-        e.b.data.definitions[um].source = 0;
+        el::make_global(e, um);
         e.b.data.definitions[um].returned = [ir::TyReference { n: um, dep: [] }];
         e.b.data.definitions[um].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
       }
@@ -3531,7 +3531,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
   if e.first_pass && lit >= 0 {
     lnm = el_types::elem_name(e, inner);
     ltok = match e.p.nodes[lit] { SVecLit { at } => at, _ => -1 };
-    if lnm != "" && ltok >= 0 && el::def_nr(e, "main_vector<{lnm}>") < 0 && struct_ref(e, el_types::base(inner)) >= 0 {
+    if lnm != "" && ltok >= 0 && el_schema::wants_vector_def(e, lnm) && struct_ref(e, el_types::base(inner)) >= 0 {
       el_schema::make_vector_def(e, inner, lnm, el::pos_at(e, closing_bracket(e, ltok)), true);
     }
   }

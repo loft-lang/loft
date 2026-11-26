@@ -226,8 +226,11 @@ fn cascade_name(e: el::El, t: integer, h: Hook) -> text {
 
 
 // `drop_cascade_nr`: what dropping a value of `t` calls — its cascade, or its hook.
+// (`Data::drop_cascade_nr`: in the type's source first, as its hook is, `hook_of`.)
 fn target(e: el::El, t: integer, h: Hook) -> integer {
-  c = el::def_nr(e, cascade_name(e, t, h));
+  key = cascade_name(e, t, h);
+  own = el::source_nr(e, el::def(e, t).source, key);
+  c = if own >= 0 { own } else { el::def_nr(e, key) };
   if c >= 0 { c } else { el_types::hook_of(e, t, h.own) }
 }
 

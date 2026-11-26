@@ -1133,7 +1133,7 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
         match el_types::parse_type(e, tn) {
           TyVector { inner: vin } => {
             vnm = el_types::elem_name(e, vin);
-            if vnm != "" && el::def_nr(e, "main_vector<{vnm}>") < 0 {
+            if vnm != "" && el_schema::wants_vector_def(e, vnm) {
               el_schema::make_vector_def(e, vin, vnm, el::pos_at(e, el_ex_base::closing_bracket(e, lat)), true);
             }
           },

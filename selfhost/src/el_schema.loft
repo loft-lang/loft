@@ -99,7 +99,7 @@ pub fn fill_all(e: el::El) {
       match a.typedef[0] {
         TyVector { inner } => {
           nm = el_types::elem_name(e, inner);
-          if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+          if nm != "" && wants_vector_def(e, nm) {
             make_vector_def(e, inner, nm, eof, false, store: false);
           }
         },
@@ -281,6 +281,14 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
 // the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
 // and makes the `vector<T>` store type at once instead — `vector_store_type`).
+// `Data::vector_def` makes two definitions under two rules: `vector<T>` where this source (or
+// the standard library) has none, `main_vector<T>` where no source has one — it is global.  A
+// program's first `vector<lib::Pair>` makes its own `vector<Pair>` beside the library's and finds
+// the library's wrapper.
+pub fn wants_vector_def(e: el::El, nm: text) -> boolean {
+  el::def_nr(e, "vector<{nm}>") < 0 || el::def_nr(e, "main_vector<{nm}>") < 0
+}
+
 pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true, store: boolean = true) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
@@ -298,6 +306,10 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
       TyIterator { step: _ } => el::source_nr(e, 0, "iterator"),
       _ => el::source_nr(e, 0, nm)
     };
+  }
+  // (The global wrapper another source made is this one's too: its rows were made with it.)
+  if el::def_nr(e, "main_vector<{nm}>") >= 0 {
+    return;
   }
   // A narrow integer's element and `vector<…>` store types are made with the definitions, ahead
   // of every struct the schema fills.
@@ -322,7 +334,9 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
-  e.b.data.definitions[md].source = 0;
+  // (Global, as Rust's `vector_def` makes it: source 0 and bound there, so a program's
+  // `vector<lib::Pair>` finds the wrapper its library made.)
+  el::make_global(e, md);
   if typed {
     e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
   }

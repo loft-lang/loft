@@ -2323,7 +2323,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   if !empty_narrow {
     int4_rows(e, t);
   }
-  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if el_schema::wants_vector_def(e, nm) {
     tok = 0;
     match e.p.nodes[lit] {
       SVecLit { at } => { tok = at; },
@@ -2398,7 +2398,7 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
     // first, as Rust's `vector_def` registers them for any element: every definition after them
     // keeps Rust's number.
     rn = el_types::type_key_name(e, t);
-    if rn != "" && el::def_nr(e, "main_vector<{rn}>") < 0 {
+    if rn != "" && el_schema::wants_vector_def(e, rn) {
       rtd = el_types::tuple_def(e, elems, pos);
       el_schema::make_vector_def(e, t, rn, pos, true);
       rvd = el::def_nr(e, "vector<{rn}>");
@@ -2411,7 +2411,7 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
   }
   td = el_types::tuple_def(e, elems, pos);
   nm = "({sp})";
-  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if el_schema::wants_vector_def(e, nm) {
     el_schema::make_vector_def(e, t, nm, pos, true);
     vd = el::def_nr(e, "vector<{nm}>");
     if vd >= 0 {
@@ -2619,10 +2619,12 @@ pub struct Built {
 pub fn struct_literal_def(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
     SStructLit { name, member, base } => {
-      if member != "" || base != null {
+      if base != null {
         return -1;
       }
-      d = el::def_nr(e, name);
+      // (A library-qualified literal, `ltl::Pt { … }`, is that library's struct — as the lexer
+      // resolves the name for Rust; an enum-qualified variant names no `use`, `qualified_def`.)
+      d = el::qualified_def(e, name, member);
       if d >= 0 && el::def(e, d).def_type == el::DT_STRUCT { d } else { -1 }
     },
     _ => -1

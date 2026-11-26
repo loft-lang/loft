@@ -516,7 +516,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     fel = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
     fnm = el_types::elem_name(e, fel);
     fbe = match e.p.nodes[vars.body] { SBlock { end } => end, _ => -1 };
-    if fnm != "" && fbe >= 0 && el::def_nr(e, "main_vector<{fnm}>") < 0 {
+    if fnm != "" && fbe >= 0 && el_schema::wants_vector_def(e, fnm) {
       el_schema::make_vector_def(e, fel, fnm, el::pos_at(e, fbe), true, narrow_early: false);
     }
   }

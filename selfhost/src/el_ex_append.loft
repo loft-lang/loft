@@ -71,6 +71,11 @@ fn own_buffer_item(e: el::El, vars: el_vars::Vars, inner: ir::TypeT, elm: intege
     made_here = true;
     // (Laid out at once: the backing below is given its store type here, on this pass.)
     el_schema::lay_out_late(e, el::def_nr(e, "main_vector<{enm}>"));
+  } else if enm != "" && el_schema::wants_vector_def(e, enm) {
+    match e.p.nodes[lit] {
+      SVecLit { at: lat2 } => { el_schema::make_vector_def(e, bare, enm, el::pos_at(e, el_ex_base::closing_bracket(e, lat2)), true); },
+      _ => {}
+    }
   }
   rows = vector_rows(e, bare, 0, true);
   rd = heap_def(bare);
