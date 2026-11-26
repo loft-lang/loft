@@ -1889,10 +1889,15 @@ static int loft_sw_exists(loft_cx *cx, const char *path) {
     return f != 0;
 }
 
-/* `std::env::temp_dir`: TMPDIR, else /tmp. */
-static const char *loft_sw_tmp(loft_cx *cx) {
-    const char *t = getenv("TMPDIR");
-    return t && *t ? t : "/tmp";
+/* Where a swap's snapshot and a rebuild's output are staged: this user's private temporary
+ * directory (`loft_private_temp_dir`, the Rust side's `platform::scratch_dir`), malloc'd.  The
+ * successor reads the snapshot back and the ready file hands the process over, so neither name
+ * may be one another local user can take first. */
+static char *loft_sw_tmp(loft_cx *cx) {
+    loft_text td = loft_private_temp_dir(cx);
+    char *r = loft_cstr_own(cx, loft_view(cx, &td));
+    loft_text_free(cx, &td);
+    return r;
 }
 
 /* A snapshot and the layout sidecar a store image has beside it. */
@@ -2124,7 +2129,9 @@ static int64_t loft_kernel_swap_step(loft_cx *cx) {
         /* The frame boundary: meaning is frozen from here on, so this snapshot is THE world
          * state the new build resumes. */
         char base[1024];
-        snprintf(base, sizeof base, "%s/loft_swap_%ld", loft_sw_tmp(cx), (long) getpid());
+        char *tmp = loft_sw_tmp(cx);
+        snprintf(base, sizeof base, "%s/loft_swap_%ld", tmp, (long) getpid());
+        free(tmp);
         loft_sw.ready = loft_sw_join(cx, base, ".ready");
         remove(loft_sw.ready);
         loft_sw.snap = loft_sw_snapshot(cx, base);
@@ -2238,7 +2245,9 @@ static int loft_rb_spawn(loft_cx *cx, const char *driver, const char *src, char 
     }
     loft_rb.seq++;
     char base[1024];
-    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", loft_sw_tmp(cx), (long) getpid(), loft_rb.seq);
+    char *tmp = loft_sw_tmp(cx);
+    snprintf(base, sizeof base, "%s/loft_rebuild_%ld_%u", tmp, (long) getpid(), loft_rb.seq);
+    free(tmp);
     free(loft_rb.out);
     free(loft_rb.err);
     loft_rb.out = loft_sw_join(cx, base, ".out");

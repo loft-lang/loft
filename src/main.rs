@@ -2016,7 +2016,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
-            let tmp = std::env::temp_dir().join(format!(
+            let tmp = loft::platform::scratch_dir().join(format!(
                 "loft-self-update-{to}-{}-{nanos:09}",
                 std::process::id()
             ));
@@ -5065,7 +5065,7 @@ fn registry_list(installed_only: bool) {
 #[cfg(feature = "registry")]
 fn chrono_date() -> String {
     // Use file modification time of a temp file as a proxy for "now".
-    let tmp = std::env::temp_dir().join(".loft_date_probe");
+    let tmp = loft::platform::scratch_dir().join(".loft_date_probe");
     let _ = fa::write(&tmp, "");
     let date = fa::metadata(&tmp)
         .ok()
@@ -6331,7 +6331,8 @@ fn compat_test_verdict(name: &str, version: &str, published: &std::path::Path) -
         eprintln!("loft compat: `{name}` {version} ships no tests/ — nothing to check against");
         return TestVerdict::CouldNotRun;
     }
-    let base = std::env::temp_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
+    let base =
+        loft::platform::scratch_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
     let _ = fa::remove_dir_all(&base);
 
     // CONTROL: the published tests against the published source. Establishes that this corpus

@@ -2825,7 +2825,8 @@ fn swap_step_on(stores: &mut Stores, sw: &mut SwapPhase) -> i64 {
                 };
                 // The frame boundary: meaning is frozen from here on, so
                 // this snapshot is THE world state the new build resumes.
-                let base = std::env::temp_dir().join(format!("loft_swap_{}", std::process::id()));
+                let base = crate::platform::scratch_dir()
+                    .join(format!("loft_swap_{}", std::process::id()));
                 let ready = crate::file_access::with_extension(&base, "ready");
                 let _ = crate::file_access::remove_file(&ready);
                 let Some(snap) = write_world_snapshot(stores, w, kt, &base) else {

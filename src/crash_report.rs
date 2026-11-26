@@ -463,7 +463,7 @@ fn crash_file_from(setting: Option<String>) -> Option<CrashFile> {
             if crate::file_access::is_dir(dot_loft) {
                 dot_loft.join(name)
             } else {
-                std::env::temp_dir().join(name)
+                crate::platform::scratch_dir().join(name)
             }
         }
     };

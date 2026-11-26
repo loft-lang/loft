@@ -2637,3 +2637,75 @@ fn a_seed_or_a_bundle_never_moves_the_cache_back() {
     assert_eq!(index_kept, newer_index, "the cached index is unchanged");
     assert!(!placed, "and no package was imported");
 }
+
+// ── `loft install` reaches packages only through the signed index ─────────────────────────
+//
+// The flat `registry.txt` lists a name, a version and a URL — no hash and no signature — so a
+// package fetched from it is whatever that URL serves.  It serves `loft registry list` and
+// `check`; no environment switches `loft install` over to it.
+
+/// A package that only the flat list names is never fetched.  The list (`LOFT_REGISTRY`)
+/// names `flat 1.0.0` at a zip the fixture serves — a complete package, so an install that
+/// trusted the list would succeed — and the signed registry (`LOFT_REGISTRY_URL`) serves no
+/// index; `LOFT_LEGACY_REGISTRY`, the switch that once routed installs through the list, is
+/// set.  The install fails, the zip is never asked for, and no `flat` reaches the library
+/// directory or the registry cache.
+/// @falsified-at: f13fd9ac6 — by hand: the LOFT_LEGACY_REGISTRY route restored (download the
+/// listed zip, install it) → the install succeeded.
+#[test]
+fn install_never_fetches_a_package_only_the_unsigned_list_names() {
+    let tmp = tmpdir("install_unsigned_list");
+    let home = tmp.join("home");
+    let scratch = tmp.join("tmp");
+    fa::create_dir_all(&scratch).unwrap();
+    let zip = {
+        use std::io::Write as _;
+        let mut w = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+        let opts: zip::write::FileOptions<()> = zip::write::FileOptions::default();
+        w.start_file("flat-1.0.0/loft.toml", opts).unwrap();
+        w.write_all(b"[package]\nname = \"flat\"\nversion = \"1.0.0\"\n\n[library]\nentry = \"src/flat.loft\"\n")
+            .unwrap();
+        w.start_file("flat-1.0.0/src/flat.loft", opts).unwrap();
+        w.write_all(b"pub fn answer() -> integer { 42 }\n").unwrap();
+        w.finish().unwrap().into_inner()
+    };
+    let mut files = HashMap::new();
+    files.insert("/flat-1.0.0.zip".to_string(), zip);
+    let server = FixtureServer::new(files);
+    let list = tmp.join("registry.txt");
+    write_file(
+        &list,
+        &format!("flat 1.0.0 {}\n", server.url_for("/flat-1.0.0.zip")),
+    );
+    let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+        .arg("install")
+        .arg("flat")
+        .current_dir(&tmp)
+        .env("HOME", &home)
+        .env("LOFT_HOME", &home)
+        .env("TMPDIR", &scratch)
+        .env("XDG_CACHE_HOME", tmp.join("cache"))
+        .env("LOFT_REGISTRY", &list)
+        .env("LOFT_REGISTRY_URL", server.url_for("/index.json"))
+        .env("LOFT_LEGACY_REGISTRY", "1")
+        .env_remove("LOFT_OFFLINE")
+        .output()
+        .expect("run loft install");
+    let asked = server.asked.lock().unwrap().clone();
+    drop(server);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "the install fails: {err}");
+    assert!(
+        !asked.iter().any(|p| p.ends_with(".zip")),
+        "the package the flat list names is never fetched: {asked:?}"
+    );
+    assert!(
+        !fa::exists(home.join(".loft").join("lib").join("flat")),
+        "nothing installed"
+    );
+    assert!(
+        !fa::exists(home.join(".loft").join("registry").join("flat-1.0.0")),
+        "nothing cached"
+    );
+    let _ = fa::remove_dir_all(&tmp);
+}

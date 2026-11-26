@@ -1915,6 +1915,41 @@ static loft_text loft_os_temp_dir(loft_cx *cx) {
 #endif
 }
 
+/* platform::private_temp_dir: this user's own directory under the temporary directory —
+ * `loft-<uid>`, made with mode 0700 and used only while it is a real directory (not a link)
+ * owned by this user with no group or other bits; when that name is taken by anything else, a
+ * fresh `loft-<uid>-XXXXXX` this call makes, so nothing in it was placed there by someone else.
+ * The temporary directory itself when neither can be made, and on a host with no other users to
+ * keep out (Windows, where it is already the user's own; WASI; the ESP). */
+static loft_text loft_private_temp_dir(loft_cx *cx) {
+#if defined(LOFT_POSIX_HOST)
+    const char *t = getenv("TMPDIR");
+    const char *sys = t && *t ? t : "/tmp";
+    size_t len = strlen(sys), n;
+    while (len > 1 && sys[len - 1] == '/') len--;
+    n = len + 48;
+    char *dir = (char *) malloc(n);
+    if (!dir) { fputs("loft: out of memory\n", stderr); abort(); }
+    unsigned long owner = (unsigned long) geteuid();
+    snprintf(dir, n, "%.*s/loft-%lu", (int) len, sys, owner);
+    struct stat st;
+    int ok = mkdir(dir, 0700) == 0 && chmod(dir, 0700) == 0;
+    if (!ok)
+        ok = lstat(dir, &st) == 0 && S_ISDIR(st.st_mode) && st.st_uid == geteuid() && (st.st_mode & 077) == 0;
+    if (!ok) {
+        snprintf(dir, n, "%.*s/loft-%lu-XXXXXX", (int) len, sys, owner);
+        ok = mkdtemp(dir) != 0;
+    }
+    if (ok) {
+        loft_text r = loft_given(cx, dir);
+        free(dir);
+        return r;
+    }
+    free(dir);
+#endif
+    return loft_os_temp_dir(cx);
+}
+
 /* `dir_with_sub`: `base` in the portable form, `sub` joined to it as `Path::join` does. */
 static loft_text loft_dir_with_sub(loft_cx *cx, const char *base, loft_str sub) {
     if (!sub.len || loft_str_is_null(cx, sub) || !*base) return loft_given(cx, base);
@@ -1996,20 +2031,19 @@ static loft_text loft_program_directory(loft_cx *cx, loft_str sub) {
     return loft_dir_with_sub(cx, buf, sub);
 }
 
-/* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else the
- * temporary directory's. */
+/* os_cache_dir (cache::cache_base_dir): $XDG_CACHE_HOME/loft, else $HOME/.cache/loft, else
+ * `loft` in this user's private temporary directory (`loft_private_temp_dir`): a cache in the
+ * shared one is one another local user can fill first. */
 static loft_text loft_os_cache_dir(loft_cx *cx) {
     loft_text t = { 0, 0, 0 };
-    const char *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME"), *tmp = getenv("TMPDIR");
+    const char *x = getenv("XDG_CACHE_HOME"), *h = getenv("HOME");
     if (x) {
         loft_push_cstr(cx, &t, x);
     } else if (h) {
         loft_push_cstr(cx, &t, h);
         loft_push_cstr(cx, &t, "/.cache");
     } else {
-        /* `std::env::temp_dir`, as `loft_os_temp_dir` answers it on this host. */
-        loft_text td = loft_os_temp_dir(cx);
-        (void) tmp;
+        loft_text td = loft_private_temp_dir(cx);
         loft_text_append(cx, &t, loft_view(cx, &td));
         loft_text_free(cx, &td);
     }
