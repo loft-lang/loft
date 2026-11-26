@@ -264,9 +264,9 @@ fn a_working_set_loader_stays_inside_a_file_whose_numbers_are_wrong() {
 /// of another machine in a run says so on stderr — once, on both backends — and a read of this
 /// machine or over `https://` says nothing.  The hosts do not exist; every load answers `false`.
 ///
-/// @falsified-at: 61391784d + this change — by hand: with the note's call removed from
-/// `check_sidecar` (Rust) and `loft_pg_begin` (C) no line is printed; with the once-guard
-/// removed the line is printed twice.
+/// @falsified-at: 09a72334d — by hand: with the note's calls removed (Rust) no line is printed
+/// on `--interpret`; with only `loft_pg_begin`'s call removed (C) none on `--native`; with the
+/// once-guards removed the line is printed for each remote host.
 #[test]
 fn a_plain_http_read_of_another_machine_says_so_once() {
     let dir = std::env::temp_dir().join(format!("loft_plain_http_{}", std::process::id()));
