@@ -265,6 +265,26 @@ pub fn rebuild_stale(e: el::El) {
   }
 }
 
+// `instantiate_nested_generics` for a body this port refuses to fill: Rust fills it and then mints
+// an instance for each template call in it, so the nested instances are minted here from the
+// template's body and variable table with the binding applied (register, then refuse — each
+// nested one is filled, or refused and registered, by `instance_for`).  Only on the step that
+// binds the last variable (`closing`): before it, a nested instance's arguments are not final.
+fn mint_nested_of_refused(e: el::El, g: integer, h: integer, bound: ir::TypeT, closing: boolean) {
+  if !closing || e.first_pass {
+    return;
+  }
+  tv = el::def(e, g).variables;
+  f0 = ir::Function { name: tv.name, file: tv.file, variables: [], names: [], inline_refs: [] };
+  for v in tv.variables {
+    c = v;
+    c.type_def = [el_ex_object::substitute_var(v.type_def[0] ?? ir::TyVoid, h, bound)];
+    f0.variables += [c];
+  }
+  code0 = substitute_code(e, el::def(e, g).code[0] ?? ir::NdNull, h, bound);
+  nested_targets(e, code0, f0, h, bound);
+}
+
 // `fill_monomorph_body` for instance `d` of template `g` at `[h ↦ bound]`: the variable table,
 // the body and the passes this port carries; false, refused by name, where the body holds what
 // a later pass would rewrite.
@@ -288,6 +308,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
     // one a vector write is rewritten for.)
     if !bare_over(t, h) || (t is TyFunction && !v.argument) || (wrapper && !writes_carried(e, bound)) {
       why_local = if wrapper { "a vector store at {type_kind(el_types::base(bound))}" } else if t is TyFunction { "a function-typed local" } else { "{type_kind(t)}" };
+      mint_nested_of_refused(e, g, h, bound, closing);
       el::refuse(e, "a generic local over the type variable in another shape or of a function type: {why_local}");
       return false;
     }
@@ -315,6 +336,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   rows_known = stale_row != el::NO_TYPE && ((fresh_row >= 0 && fresh_row != el::NO_TYPE) || el_types::base(bound) is TyTuple);
   why = el_ex_object::instance_carried(e, tmpl.code[0] ?? ir::NdNull, h, if rows_known { el::NO_TYPE } else { stale_row }, tmpl.variables, writes: writes_carried(e, bound), lowers: tv_lowered(bound));
   if why != "" {
+    mint_nested_of_refused(e, g, h, bound, closing);
     el::refuse(e, "a generic body holding {why}");
     return false;
   }
@@ -331,6 +353,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
       welem = match el_types::base(substitute(el::def(e, wd).attributes[0]!.typedef[0] ?? ir::TyVoid, h, bound)) { TyVector { inner: wi } => wi, _ => ir::TyVoid };
       wr = vector_rows(e, el_types::without_deps(welem), 0, true);
       if wr == null {
+        mint_nested_of_refused(e, g, h, bound, closing);
         el::refuse(e, "a generic local over the type variable in another shape or of a function type");
         return false;
       }
@@ -367,6 +390,7 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
       why2 = "";
     }
     if why2 != "" {
+      mint_nested_of_refused(e, g, h, bound, closing);
       el::refuse(e, "a generic instance at {if textual { "text" } else { "a record" }} whose body holds {why2}");
       return false;
     }
