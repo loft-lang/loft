@@ -92,7 +92,11 @@ pub fn fill_all(e: el::El) {
   // it, at the position the lexer has reached: the end of the file.
   eof = el::pos_at(e, len(e.p.src) - 1);
   for d in e.b.data.definitions {
-    if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || d.source != e.source {
+    // (Rust's loop asks every definition; another source's own were asked at its file's end.  A
+    // generic instance and its variants live in the standard library's source but are this
+    // file's: `Bag<integer>`'s `items: vector<(integer, integer)>` takes its wrapper here.)
+    instance_part = d.instance_of >= 0 || (d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 && el::def(e, d.parent).instance_of >= 0);
+    if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || (d.source != e.source && !instance_part) {
       continue;
     }
     for a in d.attributes {
@@ -101,6 +105,23 @@ pub fn fill_all(e: el::El) {
           nm = el_types::elem_name(e, inner);
           if nm != "" && wants_vector_def(e, nm) {
             make_vector_def(e, inner, nm, eof, false, store: false);
+          }
+          // A tuple element (`vector_wrapper_name` of a tuple, `vector_def` with
+          // `ensure_tuple_defs`): the `__tuple<…>` record first, then `vector<(…)>` owned by it
+          // and `main_vector<(…)>`, as a literal of it makes them (`tuple_vector_rows`).
+          match inner {
+            TyTuple { elems: te } => {
+              tsp = el_types::tuple_spelling_e(e, te, ", ");
+              if tsp != "" && el::def_nr(e, "main_vector<({tsp})>") < 0 && !el_types::any_names_type_var(e, te) {
+                ttd = el_types::tuple_def(e, te, eof);
+                make_vector_def(e, inner, "({tsp})", eof, false, store: false);
+                tvd = el::def_nr(e, "vector<({tsp})>");
+                if tvd >= 0 && ttd >= 0 {
+                  e.b.data.definitions[tvd].parent = ttd;
+                }
+              }
+            },
+            _ => {}
           }
         },
         _ => {}
