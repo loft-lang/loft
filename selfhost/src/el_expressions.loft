@@ -545,15 +545,22 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           kco = keyed_field_copy_out(e, vars, kcb.operators[-1]!, result);
           if kco != null {
             kcb.operators[len(kcb.operators) - 1] = kco!;
-            // (The body keeps the borrows of the tail that are parameters — `b = x; b.fr_h`
-            // borrows `x` — a local's ends with the frame.)
-            kpd: vector<integer> = [];
-            for kd in el_types::deps(b.tp) {
-              if kd >= 0 && kd < len(vars.vars) && vars.vars[kd]!.argument {
-                kpd += [kd];
+            // (A root local bound straight from a parameter (`b = x; b.fr_h`): Rust's body keeps
+            // the parameter's borrow (`["x"]`), which the port does not derive — not carried,
+            // refused by name.)
+            for kr in keyed_copied_roots(e, vars, kcb.operators[-1]!) {
+              for kop in kcb.operators {
+                match el_ir::unspan(kop) {
+                  NdSet { var: ksv, inner: ksi } => {
+                    if ksv == kr && match el_ir::unspan(ksi) { NdVar { n: ksn } => ksn >= 0 && vars.vars[ksn]!.argument, _ => false } {
+                      el::refuse(e, "a keyed field returned off a local bound to a parameter");
+                    }
+                  },
+                  _ => {}
+                }
               }
             }
-            kcb.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), kpd)];
+            kcb.result = [el_types::without_deps(el_types::base(result))];
             code = ir::NdBlock { block: [kcb] };
             kcopied = true;
           }
@@ -1398,6 +1405,33 @@ pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::
     _ => {}
   }
   null
+}
+
+// The roots of the keyed field leaves `keyed_field_copy_out` copied (each `__blk_val_N`'s
+// `OpReplaceKeyed` source), through the tail's returns, blocks, inserts and arms.
+fn keyed_copied_roots(e: el::El, vars: el_vars::Vars, n: ir::Node) -> vector<integer> {
+  match n {
+    NdReturn { inner } => keyed_copied_roots(e, vars, inner),
+    NdDrop { inner } => keyed_copied_roots(e, vars, inner),
+    NdSpan { inner } => keyed_copied_roots(e, vars, inner),
+    NdIf { cond: _, t, f } => keyed_copied_roots(e, vars, t) + keyed_copied_roots(e, vars, f),
+    NdBlock { block } => if len(block[0].operators) > 0 { keyed_copied_roots(e, vars, block[0].operators[-1]!) } else { [] },
+    NdInsert { items } => {
+      if len(items) == 3 {
+        match items[1]! {
+          NdCall { def_nr, args } => {
+            if el::def(e, def_nr).name == "OpReplaceKeyed" && len(args) > 0 {
+              r = place_root(e, args[0]!);
+              return if r >= 0 { [r] } else { [] };
+            }
+          },
+          _ => {}
+        }
+      }
+      if len(items) > 0 { keyed_copied_roots(e, vars, items[-1]!) } else { [] }
+    },
+    _ => []
+  }
 }
 
 // `Parser::reads_a_stored_reference` (loft#1977): does the tail hand up, on some arm, the record
