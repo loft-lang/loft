@@ -150,6 +150,34 @@ fn synth_cascades(e: el::El, h: Hook) {
       targets += [t];
     }
   }
+  // `keyed_generator_types` (loft#1601): the frames walk `__frames_<keyed>` of each KEYED
+  // collection type whose records hold a generator — met in any definition's fields or any
+  // function's variables — declared ahead of the cascades that call it.  Not carried: declared
+  // with its `self`, its body not filled.
+  if generators {
+    seen: vector<text> = [];
+    for d in e.b.data.definitions {
+      kts: vector<ir::TypeT> = [for a in d.attributes { a.typedef[0] ?? ir::TyVoid }];
+      if d.def_type == el::DT_FUNCTION {
+        kts += [for v in d.variables.variables { v.type_def[0] ?? ir::TyVoid }];
+      }
+      for kt in kts {
+        kb = el_types::without_deps(el_types::base(kt));
+        keyed = kb is TyHash || kb is TySorted || kb is TyIndex || kb is TyRadix || kb is TyTrie;
+        if keyed && el_types::holds_generator(e, kt, []) {
+          wn = "__frames_{el_types::key_name(e, kb)}";
+          if !seen.contains(wn) {
+            seen += [wn];
+            if el::def_nr(e, wn) < 0 {
+              w = el::add_def(e, wn, el::pos_at(e, len(e.p.src) - 1), el::DT_FUNCTION);
+              el::set_returned(e, w, ir::TyVoid);
+              e.b.data.definitions[w].attributes += [el::attribute("self", kb)];
+            }
+          }
+        }
+      }
+    }
+  }
   made: vector<integer> = [];
   // Each cascade is declared in its type's own source (`declare_cascade`, loft#2436), where
   // every lookup of it finds it.
