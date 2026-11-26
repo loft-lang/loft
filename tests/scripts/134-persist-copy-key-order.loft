@@ -19,6 +19,11 @@
 //   LOFT_PERSIST_TEST_PATH   a first image, written before the reference is taken
 //   LOFT_PERSIST_TEST_COPY   a second image, written while it is held (key order)
 //   LOFT_PERSIST_TEST_MODE   "write" | "read"
+//
+// @FR-S-Image: `store_persist_copy` rebuilds a copy and the live trie does not move — a held record
+//   reads the same value after.
+// @FR-Col-Trie: exact lookup, an absent key and the prefix slice `t["aa"..]` answer the same on the
+//   live trie and its copy.
 
 struct PWord {
   w: text,

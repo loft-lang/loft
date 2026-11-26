@@ -13,6 +13,8 @@
 //
 // Env in:
 //   LOFT_PERSIST_TEST_IMG   the image to query
+//
+// @FR-S-Paged: `store_load_prefix` serves a trie prefix from the image by its own computed ranges.
 
 struct PWord {
   w: text,

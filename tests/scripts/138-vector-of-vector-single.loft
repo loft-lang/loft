@@ -12,6 +12,9 @@
 //
 // `single` is the crashing case; `integer`/`float` are kept as the must-stay-green
 // siblings (the fix must not disturb them).
+//
+// @FR-H-NewRec: each fresh element of `[a, b]` is written before any read, so `vv[1][2]` reads
+//   6.0f, not a stale sentinel.
 
 fn test_p380_vov_single() {
   a: vector<single> = [1.0f, 2.0f, 3.0f];

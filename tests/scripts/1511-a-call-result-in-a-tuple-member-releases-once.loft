@@ -28,6 +28,10 @@
 //   ARMED: nothing; a plain run scores it.
 //   HOLDS: leak (the store was freed on both trees; the loss was the hook, which no leak
 //     channel sees), panic, refusals.
+//
+// @FR-H-Drop: a call-minted tuple member runs its OpDrop hook once, at the tuple's death or
+//   displacement.
+// @FR-H-Move: `w = u` moves the owned tuple, so the member is released once, by its new owner.
 
 fn trace_path() -> text { return "loft_1511_trace.tmp"; }
 

@@ -25,6 +25,9 @@
 //     cannot distinguish which cell retained.
 //   HOLDS: leak, panic, refusals and expectations are equal on both trees; the controls
 //     (a local member, a through-the-buffer callee) read one hook on both.
+//
+// @FR-H-Drop: the call-minted member of an argument tuple runs its hook once, ids traced.
+// @FR-H-DropOnce: neither the lift nor the buffer releases the member a second time.
 fn trace_path() -> text { return "loft_1512_trace.tmp"; }
 
 fn note(s: text) {

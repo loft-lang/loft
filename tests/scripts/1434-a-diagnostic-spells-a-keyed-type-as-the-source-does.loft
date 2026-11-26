@@ -26,6 +26,9 @@
 //   match: the pre-fix build emits `hash<It,["k"]>?` where the `@EXPECT_WARNING` below says
 //   `hash<It[k]>?`, so the cell fails on the control by construction.  A falsify run would add
 //   nothing a reader cannot see from the two strings.
+//
+// @FR-N-Store: passing a nullable `hash<It[k]>?` to a `hash<It[k]>` parameter is a warning (pinned
+//   with its exact text).
 
 struct It { k: integer, v: integer }
 
