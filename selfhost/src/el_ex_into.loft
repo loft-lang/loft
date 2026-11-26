@@ -1213,7 +1213,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
         // place's root — or a local viewing its store — is evaluated into a `__ref_N` of the
         // value's type ahead of the first field write.  A read of the root through an
         // `OpGetField` at another field's offset than the destination's is spared.
-        if !e.first_pass && len(vars.lit_place) == 1 && (el_ex_call::scalar(el_types::base(at)) || el_types::base(at) is TyText) && literal_place_read(e, vars, fc!, v, vars.lit_place[0]!) {
+        if !e.first_pass && len(vars.lit_place) == 1 && (el_ex_call::scalar(el_types::base(at)) || el_types::base(at) is TyText) && literal_place_read(e, vars, fc!, if vars.lit_root >= 0 { vars.lit_root } else { v }, vars.lit_place[0]!) {
           lw = el_vars::work_ref(vars, x.tp);
           vars.lit_stage += [el_ir::v_set(lw, fc!)];
           fc = ir::NdVar { n: lw };

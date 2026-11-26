@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a value stored into a nullable narrow slot — a field, a local reassigned, an
+// element — converts to the slot's own `τ?` at the assignment seam: an integer that may not fit
+// is the checked cast (`dn4cast`) of the value as it is, the slot's range guard around it, and
+// one that fits is still guarded (`u8?` meets `0..=254`).  A compound step into a `vector<u8?>`
+// element holds the element's null.  An undeclared range counts its null as one more code, so a
+// `vector<integer limit(0, 255)?>` element takes two bytes where a `u8?` takes one.  A DENSE slot
+// reached through a receiver that may be absent (`ds[0].typedef`, a `u16`; a `vector<u8>` element)
+// is read through its dense op and takes the value as it is: no null guard.
+// Prints: 4721 [0,0] 1 null null null 25 250 null [null,25] [null,250]
+
+struct S { au: u8?, al: integer limit(0,255)?, ai: i16? }
+struct D { typedef: u16, k: integer }
+fn main() {
+  p = 250;
+  q: u8 = 25;
+  s = S { au: 1, al: 1, ai: 1 };
+  s.au = p + 10;
+  s.al = p + 10;
+  s.ai = p * 1000;
+  t = S { au: 1, al: 1, ai: 1 };
+  t.au = q;
+  t.al = p;
+  e: u8? = 1;
+  was = "{e}";
+  e = p + 10;
+  v: vector<u8?> = [250, 3];
+  v[0] += 10;
+  v[1] = q;
+  w: vector<integer limit(0,255)?> = [250, 3];
+  w[1] = p;
+  w[0] += 10;
+  ds = [D { typedef: 1, k: 2 }];
+  ds[0].typedef = (70000 + p & 65535) as u16;
+  ds[0].typedef += 7;
+  b: vector<u8> = [1, 2];
+  b[1] = ((p + 6 & 255) as u8?) ?? 0;
+  b[0] += 300;
+  println("{ds[0].typedef} {b} {was} {s.au} {s.al} {s.ai} {t.au} {t.al} {e} {v} {w}");
+}

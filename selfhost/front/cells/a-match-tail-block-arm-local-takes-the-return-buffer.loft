@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a match tail whose block arm ends in a local of the result's record (`{ r = f(1); r }`)
+// renames the return buffer onto that local, whatever literal or call arms stand beside it —
+// `ref_return`'s `ls` is the match type's deps, to which a literal's minted store and a fresh
+// call add none; and a variant joining the enum keeps what the arms so far borrow (`["r"]`).
+// Prints: B1 B1 O / O O O / B1 B1 B3 / B9 B9 O
+
+enum Own { Owned, B { base: integer } }
+fn j(a: Own, c: Own) -> Own { if a == c { B { base: 9 } } else { Owned } }
+fn fa(n: integer) -> Own { match n { 1 => B { base: 1 }, 2 => { r = fa(1); r }, _ => Owned } }
+fn fb(n: integer) -> Own { match n { 2 => { r = fb(1); r }, _ => Owned } }
+fn fc(n: integer) -> Own { match n { 1 => B { base: 1 }, 2 => { r = fc(1); r }, _ => B { base: 3 } } }
+fn fd(n: integer) -> Own { match n { 1 => j(fd(3), fd(3)), 2 => { r = fd(1); r }, _ => Owned } }
+fn show(o: Own) -> text { match o { Owned => "O", B { base } => "B{base}" } }
+fn main() {
+  println("{show(fa(1))} {show(fa(2))} {show(fa(3))}");
+  println("{show(fb(1))} {show(fb(2))} {show(fb(3))}");
+  println("{show(fc(1))} {show(fc(2))} {show(fc(3))}");
+  println("{show(fd(1))} {show(fd(2))} {show(fd(3))}");
+}

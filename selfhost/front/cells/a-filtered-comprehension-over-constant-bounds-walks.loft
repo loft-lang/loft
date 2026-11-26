@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `[for n in 1..10 if n % 2 == 0 { n }]` over constant bounds is walked, not
+// unrolled: its filter step does not fold to a boolean (`try_const_unroll_comprehension`).
+// Prints: [2,4,6,8]
+
+fn main() {
+  evens = [for n in 1..10 if n % 2 == 0 { n }];
+  println("{evens}");
+}

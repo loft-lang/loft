@@ -2294,7 +2294,36 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
           }
           continue;
         }
+        // (A vector slice in a hole is formatted from its iterator, element by element —
+        // `append_iter`'s "Append Iter" — not from a materialised copy.)
+        hole_slice = el_ex_vector::slice_target(e, he!);
+        outer_hs = vars.slice_node;
+        if hole_slice >= 0 {
+          vars.slice_node = hole_slice;
+        }
         x = un_ref(e, vars, el_ex_assign::expression(e, vars, he!));
+        vars.slice_node = outer_hs;
+        if match el_ir::unspan(x.code) { NdIter { var: _ } => x.tp is TyIterator, _ => false } {
+          sf = hole_spec(e, vars, spec, spec_end);
+          if sf == null {
+            return ex(ir::NdNull, ir::TyText { dep: [] });
+          }
+          sl = slice_append(e, vars, var, x, sf!);
+          if sl == null {
+            return ex(ir::NdNull, ir::TyText { dep: [] });
+          }
+          list += sl!;
+          safter = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
+          ss = text_part(e, safter);
+          if ss != "" {
+            list += [el_ir::cl(e, if el_vars::tp(vars, var) is TyRefVar { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: var }, ir::NdText { s: ss }])];
+          }
+          continue;
+        }
+        if !e.first_pass && match el_ir::unspan(x.code) { NdBlock { block: ivb } => ivb[0].name == "iter_vec", _ => false } {
+          el::refuse(e, "a formatted slice");
+          return ex(ir::NdNull, ir::TyText { dep: [] });
+        }
         f = hole_spec(e, vars, spec, spec_end);
         if f == null {
           return ex(ir::NdNull, ir::TyText { dep: [] });
@@ -2319,6 +2348,40 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
   list += [ir::NdVar { n: var }];
   tp = ir::TyText { dep: [var] };
   ex(el_ir::v_block(list, tp, "Formatted string"), tp)
+}
+
+// `append_iter` over a vector slice's iterator: `[`, the slice's start, `_count_N = 0`, a loop
+// reading each element into `_val_N` (the slice's `Vector Index` step), a `,` before all but the
+// first, the element formatted by the hole's spec, then `]`.  Rust writes the brackets and the
+// separator with `OpAppendText` whatever the buffer.
+fn slice_append(e: el::El, vars: el_vars::Vars, w: integer, x: Ex, f: Fmt) -> vector<ir::Node>? {
+  elem = match x.tp { TyIterator { step } => step, _ => ir::TyVoid };
+  init = ir::NdNull;
+  subj = ir::NdNull;
+  walk = -1;
+  match el_ir::unspan(x.code) { NdIter { var, create, init: ii } => { walk = var; subj = create; init = ii; }, _ => {} }
+  match elem {
+    TyReference { n: _ } => { match el_ir::unspan(subj) { NdVar { n: sv } => { elem = el_types::with_deps(elem, [sv]); }, _ => {} } },
+    _ => {}
+  }
+  cnt = el_vars::create_unique(vars, "count", count_type(e));
+  val = el_vars::create_unique(vars, "val", elem);
+  if e.first_pass {
+    return [];
+  }
+  nx = el_ex_vector::slice_read(e, vars, el_ex_vector::SliceStart { init: init, subj: subj, idx: walk, elem: elem });
+  if nx == null {
+    el::refuse(e, "a formatted slice of an element of this kind: {type_kind(elem)}");
+    return null;
+  }
+  wv = ir::NdVar { n: w };
+  steps: vector<ir::Node> = [
+    el_ir::v_set(val, nx!),
+    el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, "OpAppendText", [wv, ir::NdText { s: "," }]), ir::NdNull),
+    el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))
+  ];
+  append_spec(e, steps, w, ir::NdVar { n: val }, elem, el_vars::tp(vars, w) is TyRefVar, f);
+  [el_ir::cl(e, "OpAppendText", [wv, ir::NdText { s: "[" }]), init, el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, "OpAppendText", [wv, ir::NdText { s: "]" }])]
 }
 
 pub fn text_part(e: el::El, n: integer) -> text {
@@ -2359,6 +2422,10 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
     c = pad_char(e.p.src[i]!);
     if c >= 0 {
       f.pad = c;
+      i += 1;
+    } else if e.p.src[i]! is Space {
+      // (A space fill, `{x: >3}`, pads with spaces as the default does.)
+      f.pad = 32;
       i += 1;
     }
   }

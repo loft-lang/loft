@@ -1265,6 +1265,20 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   }
   if e.p.nodes[body!] is SBlock {
     b = el_ex_assign::parse_block(e, vars, body!, "match_arm", expected);
+    // (A block arm answering a vector where the siblings settled on its `?` is typed as that `?`,
+    // its borrows kept: `{ x = [n]; x }` is `vector<integer>["x"]?`.)
+    // (…and so is a plain scalar one, `{ x = n + 10; x }` beside `num(3)`'s `integer?`.)
+    if !e.first_pass && expected is TyOptional && ((el_types::base(expected) is TyVector && b.tp is TyVector) || (el_convert::plain_scalar(b.tp) && el_types::is_equal(e, b.tp, el_types::base(expected)))) {
+      match b.code {
+        NdBlock { block: vob } => {
+          vb0 = vob[0];
+          vt = ir::TyOptional { inner: b.tp };
+          vb0.result = [vt];
+          return ex(ir::NdBlock { block: [vb0] }, vt);
+        },
+        _ => {}
+      }
+    }
     // A block arm converts at its tail to the type its siblings settled on, as a block `else`
     // does (`@FR-C-Num`'s widening: `{ n }` beside `1.5`).
     if !e.first_pass && el_convert::plain_scalar(b.tp) && el_convert::plain_scalar(expected) && !el_types::is_unknown(expected) && !el_types::is_equal(e, b.tp, expected) && !(b.tp is TyOptional) {
@@ -1326,9 +1340,11 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
     return x;
   }
   // A record or text arm keeps its own borrows, which the match merges (`merge_dependencies`).
-  keeps = (el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference) || (el_types::base(expected) is TyText && el_types::base(x.tp) is TyText);
+  // (…and so does a vector arm: `list(0 - n)` keeps its own `["__ref_2"]` beside a first arm's
+  // `["__ref_1"]`, the join borrowing both.)
+  keeps = (el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference) || (el_types::base(expected) is TyText && el_types::base(x.tp) is TyText) || (el_types::base(expected) is TyVector && el_types::base(x.tp) is TyVector);
   at = if keeps { el_types::with_deps(expected, el_types::deps(x.tp)) } else { expected };
-  ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: at } } else { at })
+  ex(c!, if x.tp is TyOptional && !(at is TyOptional) { ir::TyOptional { inner: at } } else { at })
 }
 
 // The name a bare binding pattern binds (`n`), or "" — a lowercase name that names no
@@ -1660,7 +1676,10 @@ pub struct RangeWalk {
   pub next_init: vector<ir::Node>,
   pub idx: integer,
   pub constant: boolean,
-  pub empty: boolean
+  pub empty: boolean,
+  // The walk's type, `in_type`: a start of a declared narrow width (`u8`) where the walk stays
+  // inside it, else the count type.
+  pub elem: ir::TypeT
 }
 
 // `parse_in_range_body` for `lo..hi` with a literal start of zero or more and an exclusive end:
@@ -1678,12 +1697,23 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     },
     _ => {}
   }
-  if lo_n == null || hi_n == null {
+  // (`lo..`, an open range, counts to the largest integer, inclusive — the walk stops at it rather
+  // than stepping past it, `i#index == max` tested first.)
+  open = lo_n != null && hi_n == null;
+  if lo_n == null || (hi_n == null && !open) {
     el::refuse(e, "a range that is open, inclusive or starts at no literal");
     return null;
   }
+  if open {
+    incl = true;
+  }
   l = el_ex_assign::expression(e, vars, lo_n!);
-  h = el_ex_assign::expression(e, vars, hi_n!);
+  // (`in_type` is the start's type: one of a declared narrow width (`u8`, `i16`, …) types the
+  // walk, and an open range over it stops at that type's maximum (loft#2275).)
+  // (A nullable start keeps its `?` on the counters in Rust — the null is their not-started
+  // state — which this port does not carry: such a start keeps the count type.)
+  narrow_spec = if l.tp is TyOptional { null } else { match el_types::base(l.tp) { TyInteger { spec: nls } => if nls.forced_size > 0 && nls.forced_size < 8 { nls } else { null }, _ => null } };
+  h = if open && narrow_spec != null { ex(ir::NdLong { n: narrow_spec!.max }, el_types::without_deps(el_types::base(l.tp))) } else if open { ex(ir::NdLong { n: 9223372036854775807 }, ir::TyInteger { spec: wide_spec() }) } else { el_ex_assign::expression(e, vars, hi_n!) };
   if (!el_types::is_unknown(l.tp) && !(el_types::base(l.tp) is TyInteger)) || (!el_types::is_unknown(h.tp) && !(el_types::base(h.tp) is TyInteger)) {
     el::refuse(e, "a range over this type: {type_kind(l.tp)}");
     return null;
@@ -1693,13 +1723,33 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   // in `_range_start_N` / `_range_end_N`.
   lc = el_convert::const_int(e, l.code);
   hc = el_convert::const_int(e, h.code);
+  // (The counters keep the start's type; the loop variable holds every value the range yields,
+  // the union of its bounds' types (`@FR-I-Join`) unless the last value fits the start's type,
+  // `end_fits_start`.)
+  in_t = int_t;
+  elem_t = int_t;
+  if narrow_spec != null {
+    in_t = el_types::without_deps(el_types::base(l.tp));
+    elem_t = in_t;
+    last = if hc == null { null } else if incl { hc } else { hc! - 1 };
+    if !open && !(last != null && last! <= narrow_spec!.max && last! >= narrow_spec!.min) {
+      ju = el_ex_null::int_arm_union(e, in_t, h.tp);
+      if ju != null {
+        elem_t = match ju! { TyOptional { inner: jui } => jui, _ => ju! };
+      }
+    }
+  }
+  // (An open range from a computed start holds its end too, `_range_end_N = i64::MAX`.)
+  if open && lc == null {
+    hc = null;
+  }
   prelude: vector<ir::Node> = [];
   lo_node = if lc != null { el_ex_vector::int_node(lc!) } else { l.code };
   hi_node = if hc != null { el_ex_vector::int_node(hc!) } else { h.code };
   rs = -1;
   re = -1;
   if lc == null {
-    rs = el_vars::create_unique(vars, "range_start", int_t);
+    rs = el_vars::create_unique(vars, "range_start", in_t);
     prelude += [el_ir::v_set(rs, l.code)];
     lo_node = ir::NdVar { n: rs };
   }
@@ -1726,13 +1776,16 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
       }
       guard += [el_ir::v_if(s_null, el_ir::v_set(rs, if wide_start { ir::NdLong { n: past } } else { ir::NdInt { n: past } }), ir::NdNull)];
     } else {
-      empty = el_ir::v_block([el_ir::v_set(rs, ir::NdInt { n: 1 }), el_ir::v_set(re, ir::NdInt { n: 0 })], ir::TyVoid, "empty range");
+      // (Each written at its bound's width: a 64-bit start or end takes a long literal.)
+      ls_wide = match el_types::base(l.tp) { TyInteger { spec: lws } => lws.max > 2147483647, _ => false };
+      le_wide = match el_types::base(h.tp) { TyInteger { spec: hws } => hws.max > 2147483647, _ => false };
+      empty = el_ir::v_block([el_ir::v_set(rs, if ls_wide { ir::NdLong { n: 1 } } else { ir::NdInt { n: 1 } }), el_ir::v_set(re, if le_wide { ir::NdLong { n: 0 } } else { ir::NdInt { n: 0 } })], ir::TyVoid, "empty range");
       guard += [el_ir::v_if(s_null, empty, ir::NdNull)];
       guard += [el_ir::v_if(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromInt", [ir::NdVar { n: re }])]), empty, ir::NdNull)];
     }
     prelude += [el_ir::v_block(guard, ir::TyVoid, "Range null guard")];
   }
-  idx = loop_index(e, vars, id);
+  idx = loop_index(e, vars, id, tp: in_t);
   i = ir::NdVar { n: idx };
   // `rev(r)` (`want_reverse`): the same bounds and guard, walked from the end down.
   if rev {
@@ -1741,7 +1794,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     rnext: vector<ir::Node> = [];
     if incl {
       // `rev(a..=b)`: `_next_N` starts at `b`, is tested, yielded, then steps down.
-      rnx = el_vars::create_unique(vars, "next", int_t);
+      rnx = el_vars::create_unique(vars, "next", in_t);
       rn_v = ir::NdVar { n: rnx };
       rnext = [el_ir::v_set(rnx, hi_node)];
       rls += [el_ir::v_if(el_ir::cl(e, "OpLtInt", [rn_v, lo_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
@@ -1755,14 +1808,17 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     }
     rls += [i];
     rend = match el_ir::unspan(h.code) { NdVar { n } => if incl { -1 } else { n }, _ => -1 };
-    return RangeWalk { lo: lc, end_var: rend, prelude: prelude, steps: rls, counter: rcounter, next_init: rnext, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! };
+    return RangeWalk { lo: lc, end_var: rend, prelude: prelude, steps: rls, counter: rcounter, next_init: rnext, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc!, elem: elem_t };
   }
   // `plain_init`: only an `i32` literal start (`Value::Int`) seeds the counter at `lo - 1`; a
   // 64-bit literal takes the `next` counter, as a computed start does.
   plain = lc != null && lc! >= 0 && lo_node is NdInt;
   cmp = if incl { "OpLtInt" } else { "OpLeInt" };
   ls: vector<ir::Node> = [];
-  if incl && hc == null {
+  // (`end_can_reach_max`: tested first unless the end is an `i32` literal below the walk type's
+  // maximum.)
+  in_max = match el_types::base(in_t) { TyInteger { spec: ims } => ims.max, _ => 9223372036854775807 };
+  if incl && !(hc != null && hi_node is NdInt && hc! < in_max) {
     ls += [el_ir::v_if(el_ir::cl(e, "OpEqInt", [i, hi_node]), ir::NdBreak { n: 0 }, ir::NdNull)];
   }
   counter = el_ir::cl(e, "OpConvIntFromNull", []);
@@ -1772,7 +1828,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
     ls += [el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [i, ir::NdInt { n: 1 }]))];
     ls += [el_ir::v_if(el_ir::cl(e, cmp, [hi_node, i]), ir::NdBreak { n: 0 }, ir::NdNull)];
   } else {
-    nx = el_vars::create_unique(vars, "next", int_t);
+    nx = el_vars::create_unique(vars, "next", in_t);
     n_v = ir::NdVar { n: nx };
     next_init = el_ir::v_set(nx, lo_node);
     ls += [el_ir::v_if(el_ir::cl(e, cmp, [hi_node, n_v]), ir::NdBreak { n: 0 }, ir::NdNull)];
@@ -1780,7 +1836,7 @@ pub fn range_walk(e: el::El, vars: el_vars::Vars, id: text, source: integer, rev
   }
   ls += [i];
   end_var = match el_ir::unspan(h.code) { NdVar { n } => if incl { -1 } else { n }, _ => -1 };
-  RangeWalk { lo: lc, end_var: end_var, prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc! }
+  RangeWalk { lo: lc, end_var: end_var, prelude: prelude, steps: ls, counter: counter, next_init: if next_init == null { [] } else { [next_init!] }, idx: idx, constant: lc != null && hc != null, empty: !incl && lc != null && hc != null && lc! >= hc!, elem: elem_t }
 }
 
 // The statements that start a range walk: the hoisted bounds, `_next_N`'s first value, the index.
@@ -1802,7 +1858,7 @@ pub fn range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer, re
     return ex(ir::NdNull, ir::TyVoid);
   }
   rw = rwo!;
-  int_t = count_type(e);
+  int_t = rw.elem;
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1938,7 +1994,7 @@ pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer
     return ex(ir::NdNull, ir::TyVoid);
   }
   rw = rwo!;
-  int_t = count_type(e);
+  int_t = rw.elem;
   lv = loop_var(vars, h.src_id, h.id, int_t);
   vars.active_loops += [lv];
   vars.active_values += [ir::NdNull];
@@ -1963,8 +2019,8 @@ pub fn rev_range_for(e: el::El, vars: el_vars::Vars, h: ForHead, source: integer
 }
 
 // A loop's index: `id#index`, or a fresh `_index_N` for a `_` binding unless `named`.
-pub fn loop_index(e: el::El, vars: el_vars::Vars, id: text, named: boolean = false) -> integer {
-  int_t = count_type(e);
+pub fn loop_index(e: el::El, vars: el_vars::Vars, id: text, named: boolean = false, tp: ir::TypeT = ir::TyVoid) -> integer {
+  int_t = if tp is TyVoid { count_type(e) } else { tp };
   idx = if id == "_" && !named { el_vars::create_unique(vars, "index", int_t) } else { el_vars::add_variable(vars, "{id}#index", int_t) };
   el_vars::set_defined(vars, idx);
   idx
@@ -2057,7 +2113,7 @@ pub fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Nod
     TyOptional { inner: wi } => match wi {
       TyInteger { spec: ws } => {
         if el_types::narrow_width(ws) > 0 {
-          return el_ir::cl(e, if el_types::narrow_width(ws) == 1 { "OpSetByteNullable" } else { "OpSetShort" }, [at, ir::NdInt { n: 0 }, ir::NdInt { n: el_types::nullable_start(ws) }, x]);
+          return el_ir::cl(e, if el_types::nullable_width(ws) == 1 { "OpSetByteNullable" } else { "OpSetShort" }, [at, ir::NdInt { n: 0 }, ir::NdInt { n: el_types::nullable_start(ws) }, x]);
         }
       },
       _ => {}
@@ -2882,8 +2938,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
   // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.  So
   // does a vector element in value position — a `for`'s source, an argument, a subscript's
-  // receiver: `vector<vector<integer>>`.)
-  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && el_types::base(in_t) is TyVector)) {
+  // receiver: `vector<vector<integer>>` — and a scalar one whose rows the schema lays out after
+  // the pass (`[1.5, -1.0]`, `['a', 'b']`, `[true, false]`: a `for` over it walks its items,
+  // `literal_walk`, on this pass as on the second.)
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t)))) {
     rcodes: vector<ir::Node> = [];
     for x in xs {
       rcodes += [x.code];
@@ -3367,6 +3425,23 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
 
 
 // The block at syntax node `n` ends in a `[]` with no items (`block_tail_empty_literal`).
+// The `[]` node `syntax_tail_empty` finds at `n`'s tail, else -1.
+pub fn syntax_tail_lit(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SVecLit { items } => if len(items) == 0 { n } else { -1 },
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return -1;
+      }
+      match e.p.nodes[stmts[-1]!] {
+        SStmt { e: se, semi } => if semi || se == null { -1 } else { syntax_tail_lit(e, se!) },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
 pub fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] {
     // A match arm's body may be the literal itself (`_ => []`).
@@ -3394,9 +3469,14 @@ pub fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
 
 // An arm answering the untyped `[]`, built as an empty vector of `like`'s element; typed as
 // `as_tp`, or as the literal it now answers where that is void.
-pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT, elm: boolean = true) -> Ex {
+pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT, elm: boolean = true, syn: integer = -1) -> Ex {
   vt = el_types::without_deps(el_types::base(like));
   if e.first_pass {
+    // (Read against the vector type, the `[]` registers its element's rows where it is read, as
+    // a tail's does — `empty_literal_to`'s first-pass half.)
+    if syn >= 0 {
+      empty_literal_to(e, vars, vt, elm: false, lit: syntax_tail_lit(e, syn), mint: false);
+    }
     // (`parse_vector` with the element known mints the literal's `_vec_N` and `elm` on this
     // pass too, the temp typed by the vector's content.)
     fv = el_vars::create_unique(vars, "vec", vt);
@@ -3443,8 +3523,21 @@ fn holds_vector_literal(e: el::El, n: integer) -> boolean {
 
 // The untyped `[]` converted to vector type `t`: an empty value literal of its element, in a
 // store of its own (`Vector`), its `_vec_N` minted here as the conversion mints it.
-pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vector<integer> = [], elm: boolean = true) -> ir::Node {
+pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vector<integer> = [], elm: boolean = true, lit: integer = -1, mint: boolean = true) -> ir::Node {
   inner = match t { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
+  // (`convert` of the untyped `[]` to a declared vector registers the element's `vector<T>` and
+  // `main_vector<T>` on the first pass where the literal was read — the parser's position after
+  // its `]` — when no earlier site made them.)
+  if e.first_pass && lit >= 0 {
+    lnm = el_types::elem_name(e, inner);
+    ltok = match e.p.nodes[lit] { SVecLit { at } => at, _ => -1 };
+    if lnm != "" && ltok >= 0 && el::def_nr(e, "main_vector<{lnm}>") < 0 && struct_ref(e, el_types::base(inner)) >= 0 {
+      el_schema::make_vector_def(e, inner, lnm, el::pos_at(e, closing_bracket(e, ltok)), true);
+    }
+  }
+  if !mint {
+    return ir::NdNull;
+  }
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
   // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`);
   // `empty_vector_value`, the `[]` then arm built from its `else`, mints none.
@@ -3618,6 +3711,25 @@ pub fn is_file(e: el::El, t: ir::TypeT) -> boolean {
 
 // `branch_bound_syntax` asked of every block under `n`: is `name` bound to an `if` or a `match`
 // in a statement of the body or of any block inside it?
+// A statement anywhere under `n` binding `name` to a struct literal (`x = Out { … }`): the
+// local's store is the literal's own, minted where it is built.
+pub fn literal_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> boolean {
+  if n < 0 || depth > 64 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SLet { name: ln, e: le } => { if ln == name && le != null && e.p.nodes[le!] is SStructLit { return true; } },
+    SAssign { op, target, e: ae } => { if op == "=" && ae != null && e.p.nodes[ae!] is SStructLit && match e.p.nodes[target] { SName { name: tn, member } => tn == name && member == "", _ => false } { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if literal_bound_anywhere(e, c, name, depth + 1) {
+      return true;
+    }
+  }
+  false
+}
+
 fn branch_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> boolean {
   if n < 0 || depth > 64 {
     return false;

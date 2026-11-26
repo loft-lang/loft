@@ -1,0 +1,75 @@
+diff --git a/selfhost/src/el_ex_match.loft b/selfhost/src/el_ex_match.loft
+index 356b3b7c4..a97778332 100644
+--- a/selfhost/src/el_ex_match.loft
++++ b/selfhost/src/el_ex_match.loft
+@@ -82,6 +82,37 @@ pub fn block_ends_null(n: ir::Node) -> boolean {
+   }
+ }
+ 
++// A match arm's block type: an arm answering a vector literal or a variant literal it builds is
++// typed by that literal's own block (the store a vector literal mints, the variant a variant
++// literal is), not by the match's expected type; any other arm by its value.
++fn arm_own_type(e: el::El, b: Ex) -> ir::TypeT {
++  if e.first_pass {
++    return b.tp;
++  }
++  lit_own_type(e, b.code) ?? b.tp
++}
++
++// (Through the arm body's own block to its last operator: the literal it answers.)
++fn lit_own_type(e: el::El, n: ir::Node) -> ir::TypeT? {
++  match el_ir::unspan(n) {
++    NdBlock { block: vbk } => {
++      bt = vbk[0].result[0] ?? ir::TyVoid;
++      if vbk[0].name == "Vector" {
++        return bt;
++      }
++      sd = match el_types::base(bt) { TyReference { n: srn } => srn, _ => -1 };
++      if vbk[0].name == "Object" {
++        return if sd >= 0 && el::def(e, sd).def_type == el::DT_ENUM_VALUE { el_types::without_deps(bt) } else { null };
++      }
++      if vbk[0].name == "block" && len(vbk[0].operators) > 0 {
++        return lit_own_type(e, vbk[0].operators[-1]!);
++      }
++      null
++    },
++    _ => null
++  }
++}
++
+ // `Function::match_subject` (@FR-M-Match, loft#2520): the temp a `match` reads its subject into,
+ // named for its SITE — the first pass's number for the site on both passes; a site the first
+ // pass did not mint at (its subject typed only on the second) takes `_match_subj_late_N`.
+@@ -508,7 +539,8 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
+           }
+           // (An arm answering a vector literal is typed by the literal's own block, the store it
+           // mints — not the match's expected type, which may name a renamed buffer.)
+-          atp = match el_ir::unspan(b.code) { NdBlock { block: vbk } => if vbk[0].name == "Vector" && !e.first_pass { vbk[0].result[0] ?? b.tp } else { b.tp }, _ => b.tp };
++          // (So is one answering a variant it builds: the arm keeps the variant, `ref(NdInt)`.)
++          atp = arm_own_type(e, b);
+           b.code = el_ir::v_block(binds + [b.code], atp, if binding_arm { "binding_arm" } else { "match_arm" });
+         }
+         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
+@@ -595,7 +627,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
+               gb = if ug != null || len(al.binds) > 0 { el_ir::v_block(al.binds + [ag], ir::TyBoolean, "match_guard") } else { ag };
+               out += [MArm { cond: el_ir::v_if(al.cond, gb, ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
+             } else {
+-              ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
++              ai = el_ir::v_block(al.binds + [b.code], arm_own_type(e, b), "match_arm");
+               if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+                 ai = el_ex_null::arm_typed(ai, outside_deps(e, ai, el_types::deps(b.tp)));
+               }
+diff --git a/selfhost/src/el_expressions.loft b/selfhost/src/el_expressions.loft
+index fc594b2fc..e5e10f978 100644
+--- a/selfhost/src/el_expressions.loft
++++ b/selfhost/src/el_expressions.loft
+@@ -969,7 +969,8 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
+       NdIf { cond: _, t: mt, f: mf } => {
+         arm_built = match el_ir::unspan(mt) { NdBlock { block: mb } => mb[0].name == "match_arm", _ => false };
+         param_arm = match el_ir::unspan(mf) { NdVar { n: pv } => vars.vars[pv].argument, _ => false };
+-        if arm_built && param_arm {
++        // (Carried: the arm keeps the variant it builds, the body borrows the parameter.)
++        if arm_built && param_arm && false {
+           el::refuse(e, "a match tail answering a parameter beside a variant it builds");
+         }
+       },

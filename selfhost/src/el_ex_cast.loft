@@ -67,6 +67,39 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   if ten >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
     return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, el_types::base(to));
   }
+  // A text to a vector (`"[1.0, 2.0]" as vector<float>`): `Parser::cast`'s two-parameter
+  // `OpCast`, `OpCastVectorFromText(text, <the vector's known type>)` — the vector definition
+  // registered first (`check_vector`, where the lexer stands after the type), on the second
+  // pass only.  The cast allocates, so it answers the vector as written (`cast_allocated`).
+  match el_types::base(to) {
+    TyVector { inner: cvi } => {
+      if el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+        cvt = el_types::without_deps(el_types::base(to));
+        // (The first pass leaves the code as it was — `cast` returns before converting — so a
+        // bind of the cast reads its text source as the place it copies: `copy_bound`.)
+        if e.first_pass {
+          return ex(x.code, cvt);
+        }
+        narrow = match el_types::base(cvi) { TyInteger { spec: cvs } => el_types::narrow_width(cvs) > 0 || el_types::int4(cvs) || el_types::uint4(cvs), _ => false };
+        cnm = el_types::elem_name(e, cvi);
+        if narrow || cnm == "" {
+          el::refuse(e, "a text cast to a vector of this element: {type_kind(cvi)}");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        if el::def_nr(e, "vector<{cnm}>") < 0 {
+          el_schema::make_vector_def(e, cvi, cnm, el::pos_at(e, type_end(e, tn!) + 1), true);
+        }
+        cvd = el::def_nr(e, "vector<{cnm}>");
+        ckt = if cvd < 0 { el_schema::NO_TYPE } else { el::def(e, cvd).known_type };
+        if ckt == el_schema::NO_TYPE {
+          el::refuse(e, "a text cast to a vector of this element: {type_kind(cvi)}");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        return ex(el_ir::cl(e, "OpCastVectorFromText", [x.code, ir::NdInt { n: ckt }]), cvt);
+      }
+    },
+    _ => {}
+  }
   match to {
     TyOptional { inner } => {
       src = el_types::base(x.tp);
@@ -196,6 +229,32 @@ fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT, ae: intege
   }
   test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }])]), ir::NdInt { n: disc }]);
   ex(el_ir::v_if(test, x.code, el_ir::cl(e, "OpConvRefFromNull", [])), rt)
+}
+
+// The last token of the type a node spells: its closing `>` (a `>>` closing two), or its name.
+fn type_end(e: el::El, tn: integer) -> integer {
+  at = match e.p.nodes[tn] { STy { at: ta } => ta, _ => 0 };
+  depth = 0;
+  i = at;
+  while i < len(e.p.src) {
+    if e.p.src[i] is Lt {
+      depth += 1;
+    } else if e.p.src[i] is Gt || e.p.src[i] is GtGlued {
+      depth -= 1;
+      if depth <= 0 {
+        return i;
+      }
+    } else if e.p.src[i] is Shr {
+      depth -= 2;
+      if depth <= 0 {
+        return i;
+      }
+    } else if depth == 0 && i > at {
+      return i - 1;
+    }
+    i += 1;
+  }
+  at
 }
 
 fn ex_some(x: Ex) -> Ex? {

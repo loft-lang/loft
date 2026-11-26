@@ -401,6 +401,7 @@ pub fn jo_arm_copy(e: el::El, vars: el_vars::Vars, b: Ex) -> Ex? {
   el_vars::set_defined(vars, o);
   ops: vector<ir::Node> = [];
   rec = 0;
+  rows: VecRows? = null;
   if !e.first_pass {
     nm = el_types::elem_name(e, elm);
     rows = vector_rows(e, elm, 0, true);
@@ -412,6 +413,10 @@ pub fn jo_arm_copy(e: el::El, vars: el_vars::Vars, b: Ex) -> Ex? {
       el::refuse(e, "an owned copy of a yielded vector capture of this element type: {type_kind(elm)}");
       return null;
     }
+  }
+  // (A copy the first pass renamed the return buffer onto is that hidden parameter now: it is
+  // cleared and filled, no store minted for it.)
+  if !e.first_pass && !vars.vars[o].argument {
     r = rows!;
     db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
     el_vars::depend(vars, o, db);

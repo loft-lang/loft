@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `v[rev(0..=3)]` is `rev(v[0..=3])` — the walk starts at the slice's top and steps
+// down to its start (`parse_in_range` reads the `rev(` inside the brackets too).
+// Prints: 8421 / 8421
+
+fn main() {
+  pows = [1, 2, 4, 8, 16];
+  s = 0;
+  for e in pows[rev(0..=3)] { s = s * 10 + e; }
+  t = 0;
+  for e in rev(pows[0..=3]) { t = t * 10 + e; }
+  println("{s}");
+  println("{t}");
+}

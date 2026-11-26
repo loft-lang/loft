@@ -761,7 +761,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       el_ex_bind::noted_bind(e, vars, ab)
     },
     // (`q: &integer = a` is the link `q = &a`, annotated: `parse_assign`'s `&`-typed declaration.)
-    SLet { fixed, name, amp, tfixed, tp, e: rhs } => if amp && !fixed && !tfixed && tp != null && rhs != null { el_ex_bind::noted_bind(e, vars, el_ex_place::amp_declaration(e, vars, name, tp!, rhs!)) } else { el_ex_bind::noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || tfixed, name, tp, rhs)) },
+    SLet { fixed, name, amp, tfixed, tp, e: rhs } => if amp && !fixed && !tfixed && tp != null && rhs != null { el_ex_bind::noted_bind(e, vars, el_ex_place::amp_declaration(e, vars, name, tp!, rhs!)) } else { el_ex_bind::noted_bind(e, vars, el_ex_place::declaration(e, vars, fixed || amp || (tfixed && !tfixed_scalar(e, tp)), name, tp, rhs, value_const: tfixed && !amp)) },
     SCall { at, f, args } => el_ex_object::call_expression(e, vars, at, f, args),
     SString { parts } => {
       // (`@FR-F-Target`: a template whose expected type is a struct with a `lit` method builds
@@ -984,6 +984,20 @@ fn receiver_is_local(vars: el_vars::Vars, ops: vector<ir::Node>) -> boolean {
   false
 }
 
+// `x: const T = v` of a plain scalar or a plain enum: the declaration binds as an annotated
+// local does — `const` fixes the value, which a scalar holds by itself.
+fn tfixed_scalar(e: el::El, tp: integer?) -> boolean {
+  if tp == null {
+    return false;
+  }
+  t = el_types::parse_type(e, tp!);
+  if t == null {
+    return false;
+  }
+  b = el_types::base(t!);
+  el_convert::plain_scalar(b) || match b { TyEnum { is_ref } => !is_ref, _ => false }
+}
+
 pub fn copied_place(e: el::El, n: ir::Node) -> boolean {
   match el_ir::unspan(n) {
     NdVar { n: _ } => true,
@@ -1198,7 +1212,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       _ => {}
     }
   }
-  if fixed || rhs == null {
+  // (`const x = …` binds as any local does: what `const` fixes is the binding, which the
+  // contents' writes do not touch — `x.n = 2` and `x.v += [3]` are allowed.)
+  if rhs == null {
     el::refuse(e, "a const binding");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2763,6 +2779,16 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     // (`@FR-P-Opt-Ty`: an optional group's capture of a narrow field keeps the field's whole
     // range beside its null; a local bound to it takes that type, so nothing is guarded.)
     capture_bind = match el_ir::unspan(x.code) { NdVar { n: cbv } => el_vars::name_of(vars, cbv).starts_with("_mv_") && el_types::is_same(slot, x.tp), _ => false };
+    // (`convert` first: an integer that may not fit a narrow `τ?` local is the checked cast of the
+    // value as it is (`dn4cast`, the assignment seam), the slot's range guard around it.)
+    if g == null && !capture_bind && slot is TyOptional && !(x.tp is TyNull) && el_convert::narrowing_store(el_types::base(x.tp), el_types::base(slot)) {
+      vars.assign_seam = true;
+      cc = el_convert::convert_store(e, vars, x.code, x.tp, slot);
+      vars.assign_seam = false;
+      if cc != null {
+        x.code = cc!;
+      }
+    }
     if !capture_bind {
       x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
     }

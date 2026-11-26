@@ -932,7 +932,23 @@ pub fn postfix(e: el::El, vars: el_vars::Vars, at: integer, op: text, pe: intege
   senum = el_convert::struct_enum(b);
   code = if record || vec || senum { x.code } else { nullable_arith(e, x.code, true) };
   // An element under `!` is read with the nullable getter: the `!` answers its absence.
-  if record || senum {
+  // (A struct enum's `E?` FIELD is read through its slot's tag (`read_through_enum_slot`,
+  // `(L-Null-Which)`) as the `??` road reads it: the null sentinel where the first word is zero,
+  // the field otherwise — what the `!` then tests.  Its place is read as written: the `!` is the
+  // field's, not its element's.)
+  tagged = false;
+  if senum && x.tp is TyOptional {
+    match el_ir::unspan(code) {
+      NdCall { def_nr: sgd, args: sga } => {
+        if el::def(e, sgd).name == "OpGetField" && len(sga) == 3 {
+          code = el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [sga[0]!, sga[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), code);
+          tagged = true;
+        }
+      },
+      _ => {}
+    }
+  }
+  if (record || senum) && !tagged {
     code = el_ex_call::nullable_getter(e, code);
   }
   held = -1;
@@ -1678,7 +1694,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   forget_facts(vars, facts);
   // An untyped `[]` arm where the bind's target names the vector is built in its place.
   if el_types::base(expected) is TyVector && el_ex_pattern::syntax_tail_empty(e, then) {
-    t = el_ex_pattern::empty_arm(e, vars, t, expected, ir::TyVoid);
+    t = el_ex_pattern::empty_arm(e, vars, t, expected, ir::TyVoid, syn: then);
   }
   if other == null && t.tp is TyNever {
     // A then arm that only jumps, with nothing after it: a statement — after which the test
@@ -1839,9 +1855,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // vector's empty literal, built once the other arm is read.
   if then_empty && el_types::base(f.tp) is TyVector {
     // Built after the `else`, the arm takes the `else`'s type (`true_type = false_type`).
-    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp, elm: false);
+    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp, elm: false, syn: then);
   } else if el_ex_pattern::syntax_tail_empty(e, other!) && el_types::base(t.tp) is TyVector {
-    f = el_ex_pattern::empty_arm(e, vars, f, t.tp, ir::TyVoid);
+    f = el_ex_pattern::empty_arm(e, vars, f, t.tp, ir::TyVoid, syn: other!);
   }
   // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.
@@ -1956,8 +1972,57 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // the enum — join to the enum, which is the expression's type; the arms keep their own.
   ven = el_ex_deliver::variant_parent(e, t.tp);
   if ven >= 0 && !el_types::is_equal(e, t.tp, f.tp) && (el_ex_deliver::variant_parent(e, f.tp) == ven || el_types::struct_enum_def(f.tp) == ven) {
+    // (A variant beside the NULLABLE enum, `if c { TV { … } } else { o }`: the join is `E?`, its
+    // then arm keeping its variant, typed without the store its literal mints.)
+    if f.tp is TyOptional && el_types::struct_enum_def(el_types::base(f.tp)) == ven && !(t.tp is TyOptional) {
+      vjd = outside_deps(e, t.code, el_types::deps(t.tp));
+      for vd in el_types::deps(f.tp) {
+        if !vjd.contains(vd) {
+          vjd += [vd];
+        }
+      }
+      return ex(el_ir::v_if(c.code, arm_typed(t.code, outside_deps(e, t.code, el_types::deps(t.tp))), f.code), ir::TyOptional { inner: ir::TyEnum { n: ven, is_ref: true, dep: vjd } });
+    }
     t = ex(t.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(t.tp) });
     f = ex(f.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(f.tp) });
+  }
+  // (…and the enum beside one of its variants, `if c { t } else { TV { … } }`: the else arm was
+  // read against the then arm's enum (`arm_expectation`), so its block is the enum, the literal
+  // inside keeping its variant.)
+  fven = el_ex_deliver::variant_parent(e, f.tp);
+  // (Measured for a then arm that is a parameter or a field read: a local beside a variant
+  // literal (`if (s is V) { s } else { V { inner: s } }`), or a match whose first arm is itself an
+  // `if` beside a variant arm, Rust copies into the buffer arm by arm (`Bind`) — not carried,
+  // refused as before.  A local the first pass renamed onto the return buffer is a HIDDEN
+  // argument: no parameter.)
+  tleaf = match el_ir::unspan(el_ex_deliver::last_value(t.code)) { NdVar { n: tlv } => vars.vars[tlv]!.argument && !hidden_param(e, vars, tlv), NdCall { def_nr: tld } => el::def(e, tld).name == "OpGetField", _ => false };
+  if !tleaf {
+    fven = -1;
+  }
+  if fven >= 0 && ven < 0 && el_types::struct_enum_def(t.tp) == fven && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+    fet = ir::TyEnum { n: fven, is_ref: true, dep: el_types::deps(f.tp) };
+    f = ex(block_typed(f.code, fet), fet);
+  }
+  // (…and beside a NULLABLE enum, `if c { o } else { TV { … } }`, `o: E?`: the else arm read
+  // against `E?` is typed so, without the store its literal mints (`arm_join_type`), and the join
+  // is the then arm's `E?`, borrowing what either arm does.  An `else if` whose arms joined to
+  // the dense enum is read against `E?` arm by arm.)
+  if fven < 0 && ven < 0 && tleaf && t.tp is TyOptional && !(f.tp is TyOptional) && el_types::struct_enum_def(f.tp) >= 0 && el_types::struct_enum_def(el_types::base(t.tp)) == el_types::struct_enum_def(f.tp) && el_ir::unspan(f.code) is NdIf {
+    fven = el_types::struct_enum_def(f.tp);
+  }
+  if fven >= 0 && ven < 0 && t.tp is TyOptional && el_types::struct_enum_def(el_types::base(t.tp)) == fven && !(f.tp is TyOptional) {
+    if el_ir::unspan(f.code) is NdIf {
+      return ex(el_ir::v_if(c.code, t.code, opt_arms(e, f.code, fven)), ir::TyOptional { inner: ir::TyEnum { n: fven, is_ref: true, dep: el_types::deps(t.tp) } });
+    }
+    ofd = outside_deps(e, f.code, el_types::deps(f.tp));
+    ofet = ir::TyOptional { inner: ir::TyEnum { n: fven, is_ref: true, dep: ofd } };
+    ojd = el_types::deps(t.tp);
+    for od in ofd {
+      if !ojd.contains(od) {
+        ojd += [od];
+      }
+    }
+    return ex(el_ir::v_if(c.code, t.code, block_typed(f.code, ofet)), ir::TyOptional { inner: ir::TyEnum { n: fven, is_ref: true, dep: ojd } });
   }
   // An else that never finishes leaves the then arm's type (`merge_dependencies`).  A statement
   // `if` with a void then arm drops the else's value; a then arm's value beside a void else is
@@ -2229,6 +2294,17 @@ pub fn stmt_defines_var(op: ir::Node, v: integer) -> boolean {
 }
 
 // An arm block re-typed as borrowing exactly `deps`.
+// The arm blocks of an `if` chain read against a nullable enum `E?`: each typed `E?`, borrowing
+// what it does but the store its own literal mints.
+fn opt_arms(e: el::El, n: ir::Node, en: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: opt_arms(e, inner, en) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: opt_arms(e, t, en), f: opt_arms(e, f, en) },
+    NdBlock { block } => block_typed(n, ir::TyOptional { inner: ir::TyEnum { n: en, is_ref: true, dep: outside_deps(e, n, el_types::deps(block[0].result[0] ?? ir::TyVoid)) } }),
+    _ => n
+  }
+}
+
 pub fn arm_typed(arm: ir::Node, deps: vector<integer>) -> ir::Node {
   match arm {
     NdBlock { block } => {
@@ -2673,7 +2749,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       if vt is TyNull {
         return ex(ir::NdReturn { inner: el_ir::cl(e, "OpConvTextFromNull", []) }, ir::TyNever);
       }
-      el_expressions::text_return(e, vars, v.tp);
+      // (`if let Type::Text(ls) = &t`: a `text?` value — `return text_src(i, self.s)` — is no
+      // `Type::Text`, so `parse_return` publishes none of its borrows.)
+      // (A `??` here is typed `text?` by this port where Rust's is the bare text: it publishes
+      // its borrows.)
+      coalesced = match el_ir::unspan(v.code) { NdBlock { block: cb } => cb[0].name == "ncc" || cb[0].name == "ncr", _ => false };
+      if !(vt is TyOptional) || coalesced {
+        el_expressions::text_return(e, vars, v.tp, mid: true);
+      }
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);
     }
@@ -3565,6 +3648,19 @@ pub fn bind_tail_call(e: el::El, vars: el_vars::Vars, code: ir::Node, buf: integ
         return null;
       }
       bl.operators[-1] = el_ir::respan(bl.operators[-1], bound!);
+      ir::NdBlock { block: [bl] }
+    },
+    // (A body that is a plain block ending in the call — `{ { …; ex(n, 1) } }` — hands the call
+    // the buffer there, the block keeping its own type.)
+    NdBlock { block: ib } => {
+      if ib[0].name != "block" {
+        return null;
+      }
+      inner = bind_tail_call(e, vars, t, buf);
+      if inner == null {
+        return null;
+      }
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], inner!);
       ir::NdBlock { block: [bl] }
     },
     _ => null
