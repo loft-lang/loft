@@ -2719,6 +2719,13 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     el_vars::change_var_type(e, vars, v, el_types::with_deps(declared!, el_types::deps(el_types::base(x.tp))));
   }
   el_vars::drop_use(vars, v);
+  // A declared keyed local bound from a JOIN of keyed literals or owned locals copies it into a
+  // store of its own (`assign_keyed_rebind`: `v = null; OpReplaceKeyed(join, v, type)`), borrowing
+  // nothing.
+  if !e.first_pass && keyed_kind(el_types::base(declared!)) && !(declared! is TyOptional) && el_ir::unspan(c!) is NdIf && el_expressions::keyed_owned_leaves(e, vars, el_ir::unspan(c!)) {
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+    return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [c!, ir::NdVar { n: v }, ir::NdInt { n: el_schema::keyed_type(e, el_types::without_deps(el_types::base(declared!))) }])] }, ir::TyVoid);
+  }
   // The annotated local is the assignment's store (`narrow_store_checks`, then
   // `guard_declared_range`), as for a plain `=`.
   code = c!;
