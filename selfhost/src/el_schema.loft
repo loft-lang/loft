@@ -1038,7 +1038,7 @@ fn byte_name(m: integer, nullable: boolean) -> text {
 // — a lookup that makes nothing, for a read that must not mint a type out of order.
 // …and a NULLABLE narrow element's (`byte<0,true>`, `short<-32767,true>`), or -1.
 pub fn nullable_narrow_element(e: el::El, spec: ir::IntegerSpec) -> integer {
-  w = el_types::narrow_width(spec);
+  w = el_types::nullable_width(spec);
   m = el_types::nullable_start(spec);
   if w == 1 {
     return schema_type(e, byte_name(m, true));

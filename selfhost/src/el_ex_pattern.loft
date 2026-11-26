@@ -2113,7 +2113,7 @@ pub fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Nod
     TyOptional { inner: wi } => match wi {
       TyInteger { spec: ws } => {
         if el_types::narrow_width(ws) > 0 {
-          return el_ir::cl(e, if el_types::narrow_width(ws) == 1 { "OpSetByteNullable" } else { "OpSetShort" }, [at, ir::NdInt { n: 0 }, ir::NdInt { n: el_types::nullable_start(ws) }, x]);
+          return el_ir::cl(e, if el_types::nullable_width(ws) == 1 { "OpSetByteNullable" } else { "OpSetShort" }, [at, ir::NdInt { n: 0 }, ir::NdInt { n: el_types::nullable_start(ws) }, x]);
         }
       },
       _ => {}

@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a value stored into a nullable narrow slot — a field, a local reassigned, an
+// element — converts to the slot's own `τ?` at the assignment seam: an integer that may not fit
+// is the checked cast (`dn4cast`) of the value as it is, the slot's range guard around it, and
+// one that fits is still guarded (`u8?` meets `0..=254`).  A compound step into a `vector<u8?>`
+// element holds the element's null.  An undeclared range counts its null as one more code, so a
+// `vector<integer limit(0, 255)?>` element takes two bytes where a `u8?` takes one.
+// Prints: 1 null null null 25 250 null [null,25] [null,250]
+
+struct S { au: u8?, al: integer limit(0,255)?, ai: i16? }
+fn main() {
+  p = 250;
+  q: u8 = 25;
+  s = S { au: 1, al: 1, ai: 1 };
+  s.au = p + 10;
+  s.al = p + 10;
+  s.ai = p * 1000;
+  t = S { au: 1, al: 1, ai: 1 };
+  t.au = q;
+  t.al = p;
+  e: u8? = 1;
+  was = "{e}";
+  e = p + 10;
+  v: vector<u8?> = [250, 3];
+  v[0] += 10;
+  v[1] = q;
+  w: vector<integer limit(0,255)?> = [250, 3];
+  w[1] = p;
+  w[0] += 10;
+  println("{was} {s.au} {s.al} {s.ai} {t.au} {t.al} {e} {v} {w}");
+}
