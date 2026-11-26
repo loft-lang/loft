@@ -937,6 +937,57 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
       return code;
     }
   }
+  // `call ?? [literal]` — the `ncc` block a vector coalesce of a call lowers to — at the tail:
+  // each arm delivered into the buffer where it ends, the subject's present arm freeing the
+  // call's own buffer (`__ref_N`), the literal arm appended as built.  The block keeps its type;
+  // the body answers the buffer.
+  // (On the first pass the coalesce is read off its syntax — `call(…) ?? [literal]` — as its
+  // block is not built yet; the buffer is named there, as Rust's `Bind` names it.)
+  nts = tail_syntax(e, vars.body);
+  ncc_syn = nts >= 0 && match e.p.nodes[nts] { SBin { op: nop, l: nl, r: nr } => nop == "??" && e.p.nodes[nl] is SCall && e.p.nodes[nr] is SVecLit, _ => false };
+  if e.first_pass && !(result is TyOptional) && ba >= 0 && ncc_syn {
+    nret1 = el::def(e, d).returned[0] ?? ir::TyVoid;
+    if !el_types::deps(nret1).contains(ba) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(nret1, el_types::deps(nret1) + [ba])];
+    }
+    return code;
+  }
+  if !(result is TyOptional) && ba >= 0 && match tail { NdBlock { block: ncb } => ncb[0].name == "ncc" && len(ncb[0].operators) == 2, _ => false } {
+    nret = el::def(e, d).returned[0] ?? ir::TyVoid;
+    if !el_types::deps(nret).contains(ba) {
+      e.b.data.definitions[d].returned = [el_types::with_deps(nret, el_types::deps(nret) + [ba])];
+    }
+    if e.first_pass {
+      return code;
+    }
+    nrec = element_content(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+    nb = match tail { NdBlock { block: nbb } => nbb[0], _ => return code };
+    nsub = match el_ir::unspan(nb.operators[0]!) { NdSet { var: nsv } => nsv, _ => -1 };
+    nown = -1;
+    if nsub >= 0 {
+      for nd in el_types::deps(el_vars::tp(vars, nsub)) {
+        if nown < 0 && starts_with(el_vars::name_of(vars, nd), "__ref_") && !vars.vars[nd].argument {
+          nown = nd;
+        }
+      }
+    }
+    match el_ir::unspan(nb.operators[1]!) {
+      NdIf { cond: ncond, t: nt, f: nf } => {
+        nlit = match nf { NdBlock { block: nfb } => if nfb[0].name == "Vector" && len(nfb[0].operators) > 0 { match el_ir::unspan(nfb[0].operators[-1]!) { NdVar { n: nlv } => nlv, _ => -1 } } else { -1 }, _ => -1 };
+        if nrec >= 0 && nown >= 0 && nlit >= 0 && el_ir::unspan(nt) == ir::NdVar { n: nsub } {
+          nb0 = ir::NdVar { n: rb };
+          nta = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [nb0]), el_ir::cl(e, "OpAppendVector", [nb0, nt, ir::NdInt { n: nrec }]), el_ir::cl(e, "OpFreeRef", [ir::NdVar { n: nown }]), nb0] };
+          nfl = match nf { NdBlock { block: nfb2 } => nfb2[0], _ => return code };
+          nfl.operators[-1] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [nb0]), el_ir::cl(e, "OpAppendVector", [nb0, ir::NdVar { n: nlit }, ir::NdInt { n: nrec }]), nb0] };
+          nb.operators[1] = el_ir::respan(nb.operators[1]!, ir::NdIf { cond: ncond, t: nta, f: ir::NdBlock { block: [nfl] } });
+          bl.operators[-1] = el_ir::respan(bl.operators[-1]!, ir::NdBlock { block: [nb] });
+          bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb])];
+          return ir::NdBlock { block: [bl] };
+        }
+      },
+      _ => {}
+    }
+  }
   // `local ?? [literal]` over a nullable vector LOCAL: the local keeps its store (`Bind`) — where
   // present it is copied into the buffer and its store freed, the literal's `_vec_N` with it;
   // the literal arm is appended and its `_vec_N` freed.  The body answers the buffer.
