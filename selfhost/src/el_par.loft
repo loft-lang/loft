@@ -298,7 +298,9 @@ fn lane(ret: ir::TypeT) -> Lane {
     TySingle => return Lane { queue: "n_parallel_queue_narrow", get: "n_parallel_buf_get_single", drop: "n_parallel_buf_drop_narrow", label: " narrow", size: 4 },
     _ => {}
   }
-  match ret {
+  // (`ret_type = declared.base()`: a `τ?` answer rides τ's lane — the `?` is a marker over τ's own
+  // storage, its null in band: a text's null string, a reference's `nullref`, a float's NaN.)
+  match shape {
     TyInteger { spec } => {
       if el_ex_base::byte_width(spec, true) != 8 {
         return none;
@@ -314,7 +316,10 @@ fn lane(ret: ir::TypeT) -> Lane {
     // (`route_ref_queue`, `is_dbref`: a record answer is queued as its reference, the row size
     // unknown to the caller.)
     TyReference { n: _ } => Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 },
-    _ => none
+    // (`is_dbref`: a vector, a keyed collection and a struct enum ride the ref lane too.)
+    TyVector { inner: _ } => Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 },
+    TyEnum { n: _, is_ref } => if is_ref { Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 } } else { none },
+    _ => if el_ex_base::keyed_kind(shape) { Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 } } else { none }
   }
 }
 
