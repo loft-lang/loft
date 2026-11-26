@@ -492,6 +492,48 @@ impl Parser {
         }
     }
 
+    /// Keep, of the parameter-write facts `cache` holds after a check, those that can no longer
+    /// change ([`Parser::param_writes_final`]): of a function whose body this pass has read (the
+    /// standard library's, once the parser is past it) and whose every loft-bodied callee's
+    /// facts are final — a function on a call cycle never is.  The rest, derived from a pass-1
+    /// body or over a callee still to be read, is dropped and derived again when asked.
+    fn keep_final_param_writes(&mut self, mut cache: crate::fxhash::FxHashMap<u32, Vec<bool>>) {
+        let mut pending: Vec<u32> = cache
+            .keys()
+            .copied()
+            .filter(|f| !self.param_writes_final_keys.contains(f))
+            .collect();
+        pending.sort_unstable();
+        loop {
+            let mut grew = false;
+            let mut rest = Vec::with_capacity(pending.len());
+            for f in pending {
+                let def = self.data.def(f);
+                let read = self.pass2_bodies.contains(&f) || (!self.default && def.is_stdlib());
+                let finals = &self.param_writes_final_keys;
+                let data = &self.data;
+                let open_callee = def.code().any_node(&mut |v| {
+                    matches!(v, Value::Call(c, _)
+                        if (*c == f || *data.def(*c).code() != Value::Null) && !finals.contains(c))
+                });
+                if read && !open_callee {
+                    self.param_writes_final_keys.insert(f);
+                    grew = true;
+                } else {
+                    rest.push(f);
+                }
+            }
+            pending = rest;
+            if !grew {
+                break;
+            }
+        }
+        for f in pending {
+            cache.remove(&f);
+        }
+        self.param_writes_final = cache;
+    }
+
     /// After parsing a function body, check that each `&` (`RefVar`) argument is actually
     /// mutated somewhere in the body. If not, emit a compile error suggesting to drop the `&`.
     /// Also check for redundant `const` annotations on primitive parameters that are never
@@ -502,10 +544,9 @@ impl Parser {
     pub(super) fn check_ref_mutations(&mut self, arguments: &[Argument], body_refused: bool) {
         let code = self.data.def(self.context).code().clone();
         let mut written = crate::fxhash::FxHashSet::default();
-        // interprocedural param-write cache, local to this check.
-        // Re-created per function-body check; small cost, avoids
-        // persisting state across passes or across unrelated checks.
-        let mut callee_cache = crate::fxhash::FxHashMap::default();
+        // The interprocedural param-write facts: the final ones of the functions read before
+        // this one ([`Parser::param_writes_final`]), and what this check derives on top of them.
+        let mut callee_cache = std::mem::take(&mut self.param_writes_final);
         find_written_vars(
             &code,
             &self.data,
@@ -616,6 +657,7 @@ impl Parser {
             );
             find_field_written_vars(&unbound, &self.data, &mut through_written);
         }
+        self.keep_final_param_writes(callee_cache);
         let through: Vec<u16> = through_written
             .iter()
             .copied()

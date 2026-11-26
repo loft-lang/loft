@@ -184,6 +184,7 @@ programs are not zero; `make rewrite-census` fails when a set changes.  The phas
 | `(R-BufferReturn)` | `R-BufferReturn` c · `/bind` c |
 | `(R-ByteCopy)` | `R-ByteCopy` ir |
 | `(R-CSplit)` | `R-CSplit` c |
+| `(R-CTable)` | `R-CTable` c |
 | `(R-CTail)` | `R-CTail` c |
 | `(R-CallLine)` | not counted — executor: a frame's line derived from its call position |
 | `(R-Callee)` | `R-Callee` c |
@@ -5046,6 +5047,32 @@ Sites: `opt::frame_calls::GuardFree` (`registers_buffers`, `is_guard_free`), the
                  72.0 → 65.5 MB, its largest function 80 529 → 37 576 lines, 253
                  functions shortened.  Switch `LOFT_NO_C_TAIL=1`; `LOFT_TRACE_C_TAIL=1`
                  names each function shortened.  Site `src/c/tail.rs`.
+
+  (R-CTable)     the C of a function (R-CSplit) writes in parts writes each RUN of eight or
+                 more releases as data: one call, `loft_release_run(cx, loft_fr, <alphabet>,
+                 <run>, n)`, over two tables written once after the function's frame struct
+                 — the alphabet holds each distinct release of the function (its kind, its
+                 variable's offset in the frame, the witness offset of a distinct release,
+                 the slot a work text is parked in), and a run is the indices of its
+                 releases, a run that ends another reusing that run's tail.  A part keeps
+                 every exit's releases ((R-CTail) cannot share them across parts), so a
+                 long function's C is mostly releases: one statement each, at every exit.
+                 THE INVARIANT: (R-CTail)'s — the loop runs the releases the run held, in
+                 their order, so the rule moves where a release is WRITTEN, never which run;
+                 it asks nothing about what a release does and changes no answer, free or
+                 leak.
+                 PREMISES, each tested per statement, and a statement that fails one ends
+                 the run: (a) it is one of the four release forms the writer emits
+                 (`loft_free_var`, `loft_free_var_distinct`, `loft_wpark_put`,
+                 `loft_text_free`), alone on its line, its context `loft_fr->cx`; (b) every
+                 variable it names is a field of the frame struct (`loft_fr->NAME`), and a
+                 parking slot a file-scope static, so the tables name them by offset and
+                 address.  Only parted functions: their code is large, so the straight-line
+                 releases miss the instruction cache at each exit, where in a small hot
+                 function the statements are faster than the loop (1.4x per release up to
+                 64, the D0 measurement in plans/229-c-release-size.md).
+                 Switch `LOFT_NO_C_RELTABLE=1`.  Site `src/c/reltable.rs`, the loop
+                 `loft_release_run` (`loft_rt.h`).
 
   (R-CSplit)     the C of a function body over the SIZE BUDGET is written as a chain of
                  parts.  The budget is 300 runtime-call sites in one body — the measure

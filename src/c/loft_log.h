@@ -18,7 +18,7 @@
 typedef struct { char *key; int sev; } loft_log_level;
 typedef struct { char *file; int64_t line, window_us; uint32_t count, suppressed; } loft_log_rate;
 
-static struct {
+LOFT_STATE struct {
     int ready;
     char *conf, *path, *base;
     int64_t conf_mtime, checked_us;
@@ -521,12 +521,12 @@ static int loft_log_production_fault(loft_cx *cx, int sev, const char *label, co
  * discarded and logged — at the first discard and then at every doubling of the count, so a
  * loop writing a locked vector a million times leaves twenty lines — and the run continues.
  * Answers 0 outside production, where the write halts. */
+LOFT_STATE uint64_t loft_fs_loft_log_locked_write_discarded LOFT_INIT(0);
 static int loft_log_locked_write(loft_cx *cx, const char *advice) {
-    static uint64_t discarded = 0;
     uint64_t n;
     loft_log_init(cx);
     if (!loft_lg.production) return 0;
-    LOFT_PUB_ADD(discarded, 1, n);
+    LOFT_PUB_ADD(loft_fs_loft_log_locked_write_discarded, 1, n);
     if ((n & (n - 1)) == 0) {
         loft_text m = { 0, 0, 0 };
         static const char label[] = "[write_to_locked_store] ";
@@ -549,19 +549,19 @@ static int loft_log_locked_write(loft_cx *cx, const char *advice) {
  * (`src/store/dump.rs`).  `-DLOFT_STORE_DUMP_PLANT` flips one byte of the first block written:
  * the positive control `scripts/store_diff.py --plant` must report. */
 #if defined(LOFT_STORE_DUMP) && defined(LOFT_ALLOC_TRACE)
+LOFT_STATE FILE * loft_fs_loft_dump_file_f LOFT_INIT(0);
+LOFT_STATE int loft_fs_loft_dump_file_once LOFT_INIT(0);
 static FILE *loft_dump_file(loft_cx *cx) {
-    /* `@FR-C-Publish`: opened once, by the first thread that dumps (`loft_once_begin`). */
-    static FILE *f = 0;
-    static int once = 0;
-    if (loft_once_begin(&once)) {
+    /* `@FR-C-Publish`: opened loft_fs_loft_dump_file_once, by the first thread that dumps (`loft_once_begin`). */
+    if (loft_once_begin(&loft_fs_loft_dump_file_once)) {
         const char *path = getenv("LOFT_STORE_DUMP");
-        if (path && *path) f = fopen(path, "w");
-        loft_once_end(&once);
+        if (path && *path) loft_fs_loft_dump_file_f = fopen(path, "w");
+        loft_once_end(&loft_fs_loft_dump_file_once);
     }
-    return f;
+    return loft_fs_loft_dump_file_f;
 }
+LOFT_STATE int loft_fs_loft_store_dump_one_planted LOFT_INIT(0);
 static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
-    static int planted = 0;
     FILE *f = loft_dump_file(cx);
     if (!f || s->serial == 0) return;
     fprintf(f, "S %s %u %u %u\n", loft_trace_name(cx, s), (unsigned) s->known, (unsigned) s->size, /* LOFT_RAW_KNOWN: the store as it is in memory */
@@ -577,14 +577,14 @@ static void loft_store_dump_one(loft_cx *cx, loft_store_t *s) {
             for (uint32_t k = rec * 8; k < end * 8; k++) {
                 uint8_t byte = s->buf[k];
 #ifdef LOFT_STORE_DUMP_PLANT
-                if (!planted && k == rec * 8 + 8) { byte ^= 0x5A; planted = 1; }
+                if (!loft_fs_loft_store_dump_one_planted && k == rec * 8 + 8) { byte ^= 0x5A; loft_fs_loft_store_dump_one_planted = 1; }
 #endif
                 fprintf(f, "%02x", byte);
             }
             fputc('\n', f);
         }
     }
-    (void) planted;
+    (void) loft_fs_loft_store_dump_one_planted;
 }
 static void loft_store_dump(loft_cx *cx) {
     for (uint32_t nr = 0; nr < cx->nstores; nr++)

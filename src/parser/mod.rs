@@ -1752,6 +1752,13 @@ pub struct Parser {
     /// the pass-1 body; [`Parser::rebuild_stale_monomorphs`] redoes those at the end of
     /// the pass, when every template body exists.
     pub(crate) pass2_bodies: std::collections::HashSet<u32>,
+    /// @PLN229 A3 — the parameter-write facts (`callee_param_writes`) that can no longer change:
+    /// of a function whose body this pass has read and whose every callee's facts are final
+    /// too.  [`Parser::check_ref_mutations`] starts each function's walk from them, so a call
+    /// chain is walked once, not once per function above it (a 4 000-deep chain re-walked the
+    /// whole chain below every function).
+    pub(crate) param_writes_final: crate::fxhash::FxHashMap<u32, Vec<bool>>,
+    pub(crate) param_writes_final_keys: crate::fxhash::FxHashSet<u32>,
     /// loft#1023 — `(monomorph, template, bindings)` for each monomorph built
     /// from a template whose pass-2 body had not been parsed yet.
     pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>)>,
@@ -2469,6 +2476,8 @@ impl Parser {
             ncc_default_end: None,
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
+            param_writes_final: crate::fxhash::FxHashMap::default(),
+            param_writes_final_keys: crate::fxhash::FxHashSet::default(),
             stale_monomorphs: Vec::new(),
             refused_templates: std::collections::HashSet::new(),
             conv_owned_result: None,

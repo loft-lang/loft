@@ -22,16 +22,16 @@
 
 /* `LOFT_FAULT_LOG=<file>` — each store fault as one JSON line, the Rust runtime's
  * `fault_log` in the same format (`"backend":"c"`), beside the message printed anyway. */
+LOFT_STATE int loft_fs_loft_fault_file_once LOFT_INIT(0);
+LOFT_STATE FILE * loft_fs_loft_fault_file_f LOFT_INIT(NULL);
 static inline FILE *loft_fault_file(loft_cx *cx) {
-    /* `@FR-C-Publish`: opened once, by the first thread that faults (`loft_once_begin`). */
-    static int once = 0;
-    static FILE *f = NULL;
-    if (loft_once_begin(&once)) {
+    /* `@FR-C-Publish`: opened loft_fs_loft_fault_file_once, by the first thread that faults (`loft_once_begin`). */
+    if (loft_once_begin(&loft_fs_loft_fault_file_once)) {
         const char *p = getenv("LOFT_FAULT_LOG");
-        if (p && *p) f = fopen(p, "a");
-        loft_once_end(&once);
+        if (p && *p) loft_fs_loft_fault_file_f = fopen(p, "a");
+        loft_once_end(&loft_fs_loft_fault_file_once);
     }
-    return f;
+    return loft_fs_loft_fault_file_f;
 }
 static inline void loft_fault_str(loft_cx *cx, FILE *f, const char *s, size_t n) {
     size_t i;
@@ -356,11 +356,11 @@ static void loft_print(loft_cx *cx, loft_str s) {
 
 /* c_library_available (c_libs::library_available): a library this unit carries — the names
  * the unit lists after the runtime (`c_libraries` in mod.rs), bound by its `main`. */
-static const char *const *loft_cl = 0;
-static uint32_t loft_ncl = 0;
+LOFT_STATE const char *const *loft_cl LOFT_INIT(0);
+LOFT_STATE uint32_t loft_ncl LOFT_INIT(0);
 /* Each carried library's declared symbols, which a POSIX host asks the running program for
  * (`dlsym` over its own handle): a library missing one is not available. */
-static const char *const *const *loft_cls = 0;
+LOFT_STATE const char *const *const *loft_cls LOFT_INIT(0);
 /* Opening a library and finding a symbol in it, or in the running program (@PLN203 C5, C8):
  * `dlopen` / `dlsym` on a POSIX host; `LoadLibraryA` / `GetProcAddress` on Windows, where "the
  * program" is every module it has loaded (`dlopen(0)`'s global scope).  `LOFT_DL` says the host
@@ -425,10 +425,10 @@ static void *loft_dl_self_sym(loft_cx *cx, const char *sym) {
     }
     return 0;
 }
+LOFT_STATE char loft_fs_loft_dl_error_why[64];
 static const char *loft_dl_error(loft_cx *cx) {
-    static char why[64];
-    snprintf(why, sizeof why, "Windows error %lu", GetLastError());
-    return why;
+    snprintf(loft_fs_loft_dl_error_why, sizeof loft_fs_loft_dl_error_why, "Windows error %lu", GetLastError());
+    return loft_fs_loft_dl_error_why;
 }
 #endif
 /* `[c] optional-libs` (@PLN24 arc G): a library a package works without is never linked; it is
@@ -436,20 +436,20 @@ static const char *loft_dl_error(loft_cx *cx) {
  * entry: its declared name, its package, where to look (the file the package ships, else the
  * soname's spellings) and its package's declared symbols.  Bound by a unit's `main`. */
 typedef struct { const char *name, *pkg; const char *const *cands; const char *const *syms; } loft_c_optlib;
-static const loft_c_optlib *loft_col = 0;
-static uint32_t loft_ncol = 0;
+LOFT_STATE const loft_c_optlib *loft_col LOFT_INIT(0);
+LOFT_STATE uint32_t loft_ncol LOFT_INIT(0);
 
 #if defined(LOFT_DL)
 /* The handle of optional library `i`, opened once; null when none of its candidates opens. */
+LOFT_STATE void * loft_fs_loft_c_optlib_open_handles[64];
+LOFT_STATE uint8_t loft_fs_loft_c_optlib_open_tried[64];
 static void *loft_c_optlib_open(loft_cx *cx, uint32_t i) {
-    static void *handles[64];
-    static uint8_t tried[64];
     if (i >= 64) return 0;
-    if (!tried[i]) {
-        tried[i] = 1;
-        for (const char *const *c = loft_col[i].cands; *c && !handles[i]; c++) handles[i] = loft_dl_open(cx, *c, LOFT_DL_DEFAULT);
+    if (!loft_fs_loft_c_optlib_open_tried[i]) {
+        loft_fs_loft_c_optlib_open_tried[i] = 1;
+        for (const char *const *c = loft_col[i].cands; *c && !loft_fs_loft_c_optlib_open_handles[i]; c++) loft_fs_loft_c_optlib_open_handles[i] = loft_dl_open(cx, *c, LOFT_DL_DEFAULT);
     }
-    return handles[i];
+    return loft_fs_loft_c_optlib_open_handles[i];
 }
 #endif
 
@@ -458,11 +458,11 @@ static void *loft_c_optlib_open(loft_cx *cx, uint32_t i) {
  * that built it.  `shim` marks a `[c] shim`'s own library, which only a `--dynamic` build opens
  * (LOFT_BIND_SHIMS): a static one carries the shim inside.  Bound by a unit's `main`. */
 typedef struct { const char *pkg, *version, *file; uint8_t shim; } loft_c_boundlib;
-static const loft_c_boundlib *loft_cbl = 0;
-static uint32_t loft_ncbl = 0;
+LOFT_STATE const loft_c_boundlib *loft_cbl LOFT_INIT(0);
+LOFT_STATE uint32_t loft_ncbl LOFT_INIT(0);
 #if defined(LOFT_DL)
-static void *loft_cbl_handles[64];
-static uint32_t loft_ncbl_handles = 0;
+LOFT_STATE void *loft_cbl_handles[64];
+LOFT_STATE uint32_t loft_ncbl_handles LOFT_INIT(0);
 #endif
 #if defined(LOFT_HOSTED) && defined(LOFT_DL)
 /* A hosted unit has no `main` to bind its libraries: the interpreter opened the unit, and with
@@ -561,7 +561,7 @@ static void loft_eprint(loft_cx *cx, loft_str s) {
 /* The run's exit status: 1 once a fault was fatal, or surfaced under `--dev-soft-halt`. */
 /* Whether a fault made the program's status 1: set by whichever thread faults, read by `main`
  * at the end (`@FR-C-Publish`). */
-static int loft_had_fatal = 0;
+LOFT_STATE int loft_had_fatal LOFT_INIT(0);
 static void loft_set_fatal(loft_cx *cx) { LOFT_PUB_SET(loft_had_fatal, 1); }
 static int loft_fatal_status(loft_cx *cx) {
     int v;
@@ -572,7 +572,7 @@ static int loft_fatal_status(loft_cx *cx) {
 /* `--dev-soft-halt` (`LOFT_DEV_SOFT_HALT=1`, `ops::dev_soft_halt`): every recoverable fault is
  * surfaced on stderr as it happens and the run ends non-zero, as the interpreter does — a
  * triage flag; `(E-Report)` is otherwise unchanged. */
-static int loft_soft_halt_flag = -1;
+LOFT_STATE int loft_soft_halt_flag LOFT_INIT(-1);
 static LOFT_COLD int loft_soft_halt(loft_cx *cx) {
     if (loft_soft_halt_flag < 0) {
         const char *v = getenv("LOFT_DEV_SOFT_HALT");
@@ -815,7 +815,7 @@ static void loft_lazy_contain(loft_cx *cx, const char *label, const char *prefix
  * prints and ends the process; a later one waits for that end.  Not under the test runner, whose
  * faults jump back to the test rather than end anything. */
 /* `@FR-C-Publish`: claimed by one exchange; a later claimant waits for the end. */
-static long loft_halt_claimed = 0;
+LOFT_STATE long loft_halt_claimed LOFT_INIT(0);
 static void loft_halt_claim(loft_cx *cx) {
     long was;
     if (cx->in_test) return;
@@ -826,8 +826,8 @@ static void loft_halt_claim(loft_cx *cx) {
 
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
  * in a runtime built without one, where every fault halts. */
-static int (*loft_fault_logger)(loft_cx *cx, int sev, const char *label, const char *prefix, loft_str message,
-                                loft_str file, int64_t line) = 0;
+LOFT_STATE int (*loft_fault_logger)(loft_cx *cx, int sev, const char *label, const char *prefix, loft_str message,
+                                loft_str file, int64_t line) LOFT_INIT(0);
 
 static void loft_assert(loft_cx *cx, uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
@@ -851,7 +851,7 @@ static void loft_assert(loft_cx *cx, uint8_t test, loft_str message, loft_str fi
 
 /* A production run's discard of a locked write (`loft_log_locked_write`), bound by a unit's
  * `main`; null in a runtime built without one, where every locked write halts. */
-static int (*loft_locked_logger)(loft_cx *cx, const char *advice) = 0;
+LOFT_STATE int (*loft_locked_logger)(loft_cx *cx, const char *advice) LOFT_INIT(0);
 
 /* What locked a store (`Store::lock_origin`), kept in its `read_only` byte: the author's
  * `#lock = true`, a constant (`Store::lock_constant`), or bytes the program does not own
@@ -982,7 +982,7 @@ static void loft_trace_site(loft_cx *cx, FILE *f) {
     cx->trace_last_site = key;
     fprintf(f, fr->site ? "@ %u\n" : "@ ~%u\n", (unsigned) (key & 0x7FFFFFFFu));
 }
-static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f) = loft_trace_site;
+LOFT_STATE void (*loft_trace_site_hook)(loft_cx *cx, FILE *f) LOFT_INIT(loft_trace_site);
 #endif
 /* A test that failed left its frames pushed (`longjmp`); the next starts from none. */
 #define LOFT_FRAMES_RESET() (cx->nframes = 0)
@@ -1484,7 +1484,7 @@ static loft_ref loft_ref_null_reported(loft_cx *cx) {
  * site writes one Warn record `[<label>] <message>` at the site's file and line.  The logger is
  * the unit's (`loft_log_warn`), bound by its `main`; a runtime built without one says nothing,
  * and so does a test, which runs with no logger on the interpreter. */
-static void (*loft_warn_logger)(loft_cx *cx, loft_str, loft_str, int64_t) = 0;
+LOFT_STATE void (*loft_warn_logger)(loft_cx *cx, loft_str, loft_str, int64_t) LOFT_INIT(0);
 static LOFT_COLD void loft_fault_report(loft_cx *cx, const char *message, const char *file, uint32_t line) {
     if (loft_warn_logger && !cx->in_test)
         loft_warn_logger(cx, loft_lit(cx, message, strlen(message)), loft_lit(cx, file, strlen(file)), line);
@@ -1582,7 +1582,7 @@ static int loft_same_site(loft_cx *cx, const loft_free_site *a, const loft_free_
 #endif
 
 #ifdef LOFT_STRICT_STORES
-static uint64_t loft_strict_violations = 0;
+LOFT_STATE uint64_t loft_strict_violations LOFT_INIT(0);
 
 static LOFT_COLD void loft_strict_use_after_free(loft_cx *cx, loft_ref r) {
     uint64_t n = loft_strict_violations++;
@@ -1743,7 +1743,7 @@ typedef struct {
     /* `@FR-Art-Key` — where the running loft finds a component library, by its file name. */
     const unsigned char *(*component)(const char *file, size_t len, size_t *out_len);
 } loft_hosted_table;
-static const loft_hosted_table *loft_hosted = 0;
+LOFT_STATE const loft_hosted_table *loft_hosted LOFT_INIT(0);
 /* The depth of the routine a bridge call called, less one: set by the bridge, restored after. */
 /* A hand-over the interpreter refused holds for the rest of the bridge call: the routine runs on
  * compiled, and the interpreter takes the pause once it returns.  Asking again each round would
@@ -1933,7 +1933,9 @@ static void loft_perrs_deliver_vector(loft_cx *cx, loft_ref data, loft_ref to, i
  * STALE reference re-initialises a slot another store may have taken since — which is why each
  * different-site line names both sites.  Printed at exit (`loft_double_free_report`). */
 #ifdef LOFT_DOUBLE_FREE
-static uint64_t loft_df_same = 0, loft_df_other = 0, loft_df_revived = 0;
+LOFT_STATE uint64_t loft_df_same LOFT_INIT(0);
+LOFT_STATE uint64_t loft_df_other LOFT_INIT(0);
+LOFT_STATE uint64_t loft_df_revived LOFT_INIT(0);
 
 static void loft_note_double_free(loft_cx *cx, uint32_t nr) {
     const loft_free_site *w = loft_freed_site(cx, nr);
@@ -2138,7 +2140,7 @@ static void loft_gen_free(loft_cx *cx, loft_ref g);
 /* `Stores::release_file_leases` (loft_io.h, which sets it): a store that is freed returns the
  * leases its records hold.  A tentative definition, so a unit without the file layer — the
  * allocator and keyed harnesses — leaves it null. */
-static void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr);
+LOFT_STATE void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr);
 
 /* `@FR-R-Transient`: the arena a transient value lives in — a value built, read and dropped
  * without being stored, held outside every store.  One block per thread, then a chain of
@@ -2259,14 +2261,14 @@ static int loft_slice_give(loft_cx *cx, uint32_t nr) {
  * compiler defect, and the run fails at it as the interpreter's does — the slot number is all a
  * free checks, so a store made in between would be the one released.  `LOFT_ALLOW_REFREE` lets
  * it pass; a `-DLOFT_DOUBLE_FREE` build counts instead. */
+LOFT_STATE int loft_fs_loft_refree_allowed_on LOFT_INIT(-1);
 static int loft_refree_allowed(loft_cx *cx) {
-    static int on = -1;
     int v;
-    LOFT_PUB_GET(on, v);
+    LOFT_PUB_GET(loft_fs_loft_refree_allowed_on, v);
     if (v < 0) {
         const char *e = getenv("LOFT_ALLOW_REFREE");
         v = e && *e && strcmp(e, "0") != 0;
-        LOFT_PUB_SET(on, v);
+        LOFT_PUB_SET(loft_fs_loft_refree_allowed_on, v);
     }
     return v;
 }
@@ -3505,6 +3507,30 @@ LOFT_HOT_INLINE void loft_free_var_distinct(loft_cx *cx, loft_ref *v, loft_ref w
     v->store_nr = 0xFFFF;
 }
 
+/* `@FR-R-CTable`: a run of releases written as data (`c::reltable`).  `alpha` holds each
+ * distinct release of a parted function once — its kind, its variable's offset in the frame
+ * struct `fr`, and the witness offset (the distinct form) or the parking slot (a work text) —
+ * and `run` the indices of the `n` releases an exit runs, which run here in their order: the
+ * statements the run replaced, one after another. */
+typedef struct {
+    uint8_t kind;
+    uint32_t off;
+    uint32_t woff;
+    loft_text *slot;
+} loft_rel;
+static LOFT_NOINLINE void loft_release_run(loft_cx *cx, void *fr, const loft_rel *alpha, const uint16_t *run, uint32_t n) {
+    char *base = (char *) fr;
+    for (uint32_t i = 0; i < n; i++) {
+        const loft_rel *e = &alpha[run[i]];
+        switch (e->kind) {
+        case 0: loft_free_var(cx, (loft_ref *) (base + e->off)); break;
+        case 1: loft_free_var_distinct(cx, (loft_ref *) (base + e->off), *(loft_ref *) (base + e->woff)); break;
+        case 2: loft_wpark_put(cx, e->slot, (loft_text *) (base + e->off)); break;
+        default: loft_text_free(cx, (loft_text *) (base + e->off)); break;
+        }
+    }
+}
+
 /* `State::bind_fn_ref_result` / native's `cr_fnref_minted`: was the record a call through a
  * function value handed back MINTED by that call — a store made after `since` — rather than an
  * argument or a capture that predates it (or the closure's own record)?  A null is adopted as
@@ -3803,13 +3829,13 @@ typedef struct loft_tdesc_s {
 
 /* The program's type table, bound at start (`loft_bind_tables`) for what a store's FREE walks:
  * the `File` leases its records hold.  0 in a runtime built without a unit. */
-static const loft_tdesc *loft_T = 0;
-static uint32_t loft_T_n = 0;
+LOFT_STATE const loft_tdesc *loft_T LOFT_INIT(0);
+LOFT_STATE uint32_t loft_T_n LOFT_INIT(0);
 /* `@FR-H-Handle` (loft_io.h, which sets them): a `File` record's lease on its OS handle, taken
  * by a copy and returned by a record's death; the handle closes at the last return.  Null in a
  * unit without the file layer, which holds no `File`. */
-static void (*loft_file_lease_hook)(loft_cx *cx, loft_ref f);
-static void (*loft_file_release_hook)(loft_cx *cx, loft_ref f);
+LOFT_STATE void (*loft_file_lease_hook)(loft_cx *cx, loft_ref f);
+LOFT_STATE void (*loft_file_release_hook)(loft_cx *cx, loft_ref f);
 
 /* The hash's, the index's and the trees' halves of a copy and a release (loft_hash.h,
  * loft_btree.h, loft_radix.h). */
@@ -3830,7 +3856,7 @@ static void loft_copy_bytes(loft_cx *cx, loft_ref to, uint32_t to_off, loft_ref 
 
 /* `relink_group_views` (loft_keyed.h, which sets it): a tentative definition, so a unit without
  * the keyed collections — and so without linked groups — leaves it null. */
-static void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref to);
+LOFT_STATE void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref to);
 
 /* `@FR-L-OutOfLine`: the child records a copy or a release has met and not yet walked, and how
  * deep the walk is; the outermost call walks them as a loop, so a chain of any length takes no
@@ -4010,10 +4036,11 @@ static void loft_copy_claims_one(loft_cx *cx, const loft_tdesc *T, uint16_t tp, 
  * that `tp`'s tree holds no stored reference, which could name the source store. */
 /* `Stores::swap_stores_in_as`'s live-state gate (loft_lazy.h, which sets it): null in a unit
  * without the walk scratches and lazy bindings it reads. */
-static int (*loft_swap_blocked_hook)(loft_cx *cx);
+LOFT_STATE int (*loft_swap_blocked_hook)(loft_cx *cx);
 
 /* `reset_dest`: the destination must hold nothing but its root (a copy's); a keyed rebind's
  * destination is its collection's own store, whose old content leaves with the released slot. */
+LOFT_STATE int loft_fs_loft_swap_in_traced LOFT_INIT(-1);
 static int loft_swap_in(loft_cx *cx, uint16_t tp, loft_ref src, loft_ref dst, int reset_dest) {
     if (src.store_nr == dst.store_nr || src.store_nr >= cx->nstores || dst.store_nr >= cx->nstores) return 0;
     if (src.rec != 1 || src.pos != 8 || dst.rec != 1 || dst.pos != 8) return 0;
@@ -4045,12 +4072,11 @@ static int loft_swap_in(loft_cx *cx, uint16_t tp, loft_ref src, loft_ref dst, in
 #endif
     /* `LOFT_TRACE_STORE_SWAP=1` names each exchange as the interpreter does (`[swap-in]`). */
     {
-        static int traced = -1;
         int trace;
-        LOFT_PUB_GET(traced, trace);
+        LOFT_PUB_GET(loft_fs_loft_swap_in_traced, trace);
         if (trace < 0) {
             trace = getenv("LOFT_TRACE_STORE_SWAP") != NULL;
-            LOFT_PUB_SET(traced, trace);
+            LOFT_PUB_SET(loft_fs_loft_swap_in_traced, trace);
         }
         if (trace)
             fprintf(stderr, "[swap-in] store #%u takes the content of #%u (tp=%u); #%u released\n",
@@ -4101,8 +4127,8 @@ static int loft_swap_rebind(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_
  * `LOFT_COPY_CHECK` is set.  Defined further on: the keyed collections' lengths. */
 static int64_t loft_hash_len(loft_cx *cx, loft_ref c);
 static uint32_t loft_bt_len(loft_cx *cx, loft_ref data);
-static uint64_t loft_copy_seen[256];
-static uint32_t loft_ncopy_seen = 0;
+LOFT_STATE uint64_t loft_copy_seen[256];
+LOFT_STATE uint32_t loft_ncopy_seen LOFT_INIT(0);
 
 static void loft_copy_warn(loft_cx *cx, const char *label, const char *path, const char *what, int64_t sl, int64_t dl, uint16_t kt) {
     uint64_t h = UINT64_C(0xcbf29ce484222325);
@@ -6676,8 +6702,8 @@ static void loft_show_top(loft_cx *cx, loft_text *s, loft_show_fn f, loft_ref r,
 /* ── The host: arguments and the clock ─────────────────────────────────────────────────── */
 
 /* The program's own arguments, after its name (Stores::os_arguments). */
-static int loft_argc = 0;
-static char **loft_argv = 0;
+LOFT_STATE int loft_argc LOFT_INIT(0);
+LOFT_STATE char **loft_argv LOFT_INIT(0);
 
 /* arguments(): a fresh `vector<text>` of them. */
 static loft_ref loft_arguments(loft_cx *cx) {
@@ -6733,13 +6759,14 @@ static inline int64_t loft_web_byte_at(loft_cx *cx, int64_t idx, loft_str t) {
 }
 
 /* ticks(): microseconds since the program started, monotonic; LOFT_FAKE_TICKS_US pins it. */
-static int64_t loft_start_us = -1;
+LOFT_STATE int64_t loft_start_us LOFT_INIT(-1);
 
 /* The pinned clocks (LOFT_FAKE_TICKS_US, LOFT_FAKE_NOW_MS), read once — at `loft_start`, before
  * any thread runs, so a `par` worker or a `parallel` arm only reads them; a unit with no start
  * (the runner's shim) reads them at the first call. */
-static int loft_clock_fakes_read = 0;
-static int64_t loft_fake_ticks = LOFT_NULL, loft_fake_now = LOFT_NULL;
+LOFT_STATE int loft_clock_fakes_read LOFT_INIT(0);
+LOFT_STATE int64_t loft_fake_ticks LOFT_INIT(LOFT_NULL);
+LOFT_STATE int64_t loft_fake_now LOFT_INIT(LOFT_NULL);
 
 static int64_t loft_env_long(loft_cx *cx, const char *name) {
     const char *f = getenv(name);
@@ -7124,9 +7151,9 @@ static void loft_init(loft_cx *cx);
  * arms `alarm`, whose handler does only what a signal handler may (`write`, `_exit`); Windows
  * runs a watchdog thread that sleeps until the deadline.  Elsewhere (WASI has no signals and no
  * threads here) the bound is the driver's or the wasm host's. */
-static char loft_timeout_msg[96];
-static size_t loft_timeout_len = 0;
-static unsigned long loft_timeout_secs = 0;
+LOFT_STATE char loft_timeout_msg[96];
+LOFT_STATE size_t loft_timeout_len LOFT_INIT(0);
+LOFT_STATE unsigned long loft_timeout_secs LOFT_INIT(0);
 #if defined(LOFT_POSIX_HOST)
 #include <signal.h>
 #include <unistd.h>
@@ -7247,7 +7274,7 @@ static int loft_c_lib_exists(loft_cx *cx, const char *p) {
 }
 /* The handle each row of `loft_cbl` was opened as (null for a row not opened): where a library's
  * native part finds its symbols in a shipped program (`loft_ffi_sym`). */
-static void *loft_cbl_row_handle[64];
+LOFT_STATE void *loft_cbl_row_handle[64];
 
 /* `native_bind::search_dirs`: LOFT_LIB_PATH's directories, the executable's, the user's
  * `.loft/lib` (LOFT_HOME, else HOME) and the system root.  The first two may hold a library
@@ -7371,9 +7398,9 @@ static void loft_c_missing_library(loft_cx *cx, const loft_c_boundlib *l, const 
 
 /* `native_bind::bind`: open every library the program was shipped with, first found in search
  * order; a library found nowhere ends the program naming it. */
+LOFT_STATE loft_c_libdir loft_fs_loft_c_bind_libraries_dirs[32];
 static void loft_c_bind_libraries(loft_cx *cx) {
-    static loft_c_libdir dirs[32];
-    uint32_t nd = loft_c_lib_dirs(cx, dirs, 32);
+    uint32_t nd = loft_c_lib_dirs(cx, loft_fs_loft_c_bind_libraries_dirs, 32);
     for (uint32_t i = 0; i < loft_ncbl; i++) {
         const loft_c_boundlib *l = &loft_cbl[i];
 #if !defined(LOFT_BIND_SHIMS)
@@ -7384,9 +7411,9 @@ static void loft_c_bind_libraries(loft_cx *cx) {
         void *h = 0;
         for (uint32_t k = 0; k < nd && !h; k++) {
             for (int flat = 0; flat < 2 && !h; flat++) {
-                if (flat && !dirs[k].flat) break;
-                if (flat) snprintf(p, sizeof p, "%s/%s", dirs[k].path, l->file);
-                else snprintf(p, sizeof p, "%s/%s-%s/%s", dirs[k].path, l->pkg, l->version, l->file);
+                if (flat && !loft_fs_loft_c_bind_libraries_dirs[k].flat) break;
+                if (flat) snprintf(p, sizeof p, "%s/%s", loft_fs_loft_c_bind_libraries_dirs[k].path, l->file);
+                else snprintf(p, sizeof p, "%s/%s-%s/%s", loft_fs_loft_c_bind_libraries_dirs[k].path, l->pkg, l->version, l->file);
                 if (!loft_c_lib_exists(cx, p)) continue;
                 h = loft_dl_open(cx, p, LOFT_DL_GLOBAL);
                 if (!h) {
@@ -7397,7 +7424,7 @@ static void loft_c_bind_libraries(loft_cx *cx) {
                 }
             }
         }
-        if (!h) loft_c_missing_library(cx, l, dirs, nd, refused);
+        if (!h) loft_c_missing_library(cx, l, loft_fs_loft_c_bind_libraries_dirs, nd, refused);
         if (loft_ncbl_handles < 64) loft_cbl_handles[loft_ncbl_handles++] = h;
         if (i < 64) loft_cbl_row_handle[i] = h;
     }
@@ -7408,7 +7435,8 @@ static void loft_c_bind_libraries(loft_cx *cx) {
  * operating system's entropy, read ONCE, at start-up — a hash made or grown never touches
  * `/dev/urandom`.  A unit that never runs `loft_start` (a library replayed by a test) reads them
  * at its first seed instead.  Without an entropy source: the clock and an address. */
-static uint64_t loft_seed_k0 = 0, loft_seed_k1 = 0;
+LOFT_STATE uint64_t loft_seed_k0 LOFT_INIT(0);
+LOFT_STATE uint64_t loft_seed_k1 LOFT_INIT(0);
 static void loft_seed_keys(loft_cx *cx) {
     uint64_t k[2] = { 0, 0 };
     FILE *f = fopen("/dev/urandom", "rb");
