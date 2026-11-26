@@ -1085,6 +1085,78 @@ impl<'a> Cx<'a> {
         })
     }
 
+    /// @PLN229 B0 — tuple struct `id`'s name part: one letter per member's C shape, a nested
+    /// tuple or a transient record as a letter, its part's length and the part — so two shapes
+    /// never share a name, and the name does not depend on which tuple the writer met first.
+    fn tuple_code(&self, id: u32) -> String {
+        self.tuple_shapes(id)
+            .iter()
+            .map(|c| match c {
+                CType::Int => "l".to_string(),
+                CType::Int32 => "i".to_string(),
+                CType::Bool => "b".to_string(),
+                CType::Text => "t".to_string(),
+                CType::Ref => "r".to_string(),
+                CType::Enum => "e".to_string(),
+                CType::Float => "d".to_string(),
+                CType::Single => "f".to_string(),
+                CType::Char => "c".to_string(),
+                CType::Fn => "n".to_string(),
+                CType::TrVec => "v".to_string(),
+                CType::Void => "z".to_string(),
+                CType::Tuple(t) => {
+                    let inner = self.tuple_code(*t);
+                    format!("T{}{inner}", inner.len())
+                }
+                CType::Tr(g) => {
+                    let ident = self.type_ident(*g);
+                    format!("R{}{ident}", ident.len())
+                }
+            })
+            .collect()
+    }
+
+    /// @PLN229 B0 — `text` with every tuple struct named from its members' shapes
+    /// (`loft_tup_<code>`, [`Cx::tuple_code`]) in place of its number of first use
+    /// (`loft_tup<n>`, and a cast's `loft_tup<n>_as<m>`), in one pass: a unit's C then changes only
+    /// where a tuple it uses changes.  A unit with no tuple is returned as it is.
+    pub(crate) fn name_tuples(&self, text: String) -> String {
+        let n = self.tuples.borrow().len();
+        if n == 0 {
+            return text;
+        }
+        let codes: Vec<String> = (0..n as u32).map(|i| self.tuple_code(i)).collect();
+        // The number at the start of `s` that names a tuple, and how many bytes it takes.
+        let number = |s: &str| -> Option<(usize, usize)> {
+            let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+            let i = s[..digits].parse::<usize>().ok().filter(|&i| i < n)?;
+            Some((i, digits))
+        };
+        let mut out = String::with_capacity(text.len() + text.len() / 64);
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("loft_tup") {
+            let after = &rest[at + "loft_tup".len()..];
+            out.push_str(&rest[..at]);
+            out.push_str("loft_tup");
+            let Some((i, len)) = number(after) else {
+                rest = after;
+                continue;
+            };
+            out.push('_');
+            out.push_str(&codes[i]);
+            rest = &after[len..];
+            if let Some(cast) = rest.strip_prefix("_as")
+                && let Some((j, len)) = number(cast)
+            {
+                out.push_str("_as_");
+                out.push_str(&codes[j]);
+                rest = &cast[len..];
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// The number of the tuple struct with these element shapes, made on first use.
     pub(crate) fn tuple_id(&self, shapes: Vec<CType>) -> u32 {
         let mut t = self.tuples.borrow_mut();
@@ -2542,7 +2614,7 @@ fn emit_unit_with(
         })?;
         out.push_str(&written);
     }
-    Ok(out)
+    Ok(cx.name_tuples(out))
 }
 
 /// @PLN229 B1 — the opt-in split build (`LOFT_C_UNITS=1`): one C unit per source file, compiled

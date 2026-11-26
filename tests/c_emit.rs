@@ -8183,8 +8183,8 @@ fn a_programs_c_is_the_same_on_every_emission() {
 }
 
 /// loft#2250's numbering half on a corpus program whose functions take and return three value
-/// record types: its `loft_tupN` types were numbered three ways in twelve emissions.  Ten
-/// emissions must agree (under the defect, about one chance in a thousand that they do).
+/// record types: its tuple types were named three ways in twelve emissions.  Ten emissions
+/// must agree (under the defect, about one chance in a thousand that they do).
 #[test]
 fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -8209,7 +8209,7 @@ fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
         );
         let unit = fa::read_to_string(&c).expect("read the C");
         assert!(
-            unit.contains("loft_tup2;"),
+            unit.matches("} loft_tup_").count() >= 3,
             "the program has three tuple types"
         );
         match &first {
@@ -9254,4 +9254,105 @@ fn a_split_build_compiles_only_the_units_a_change_reaches() {
         cold + 1
     );
     let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN229 B0 — a tuple struct is named from its members' shapes (`loft_tup_<code>`), never
+/// numbered by first use: a program that meets another tuple first still names `pair`'s
+/// `(integer, float)` the same, so the units that use it are unchanged.
+#[test]
+fn a_tuple_struct_is_named_from_its_members_not_its_first_use() {
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("tuple-names");
+    let pair = "fn pair(n: integer) -> (integer, float) { (n * 2, n as float / 4.0) }\n";
+    let other = "fn other(x: float) -> (float, boolean) { (x / 2.0, x > 1.0) }\n";
+    let names = |name: &str, src: String| -> std::collections::BTreeSet<String> {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let c = dir.join(format!("{name}.c"));
+        let out = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_CACHE", "1")
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let mut found = std::collections::BTreeSet::new();
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("loft_tup") {
+            let tail = &rest[at..];
+            let end = tail
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(tail.len());
+            found.insert(tail[..end].to_string());
+            rest = &tail[end..];
+        }
+        found
+    };
+    let alone = names(
+        "alone",
+        format!("{pair}fn main() {{\n  (a, b) = pair(21);\n  println(\"{{a}} {{b}}\");\n}}\n"),
+    );
+    let after = names(
+        "after",
+        format!(
+            "{other}{pair}fn main() {{\n  (c, d) = other(3.0);\n  (a, b) = pair(21);\n  \
+             println(\"{{a}} {{b}} {{c}} {{d}}\");\n}}\n"
+        ),
+    );
+    assert!(alone.contains("loft_tup_ld"), "{alone:?}");
+    assert!(
+        after.contains("loft_tup_ld") && after.contains("loft_tup_db"),
+        "{after:?}"
+    );
+    let numbered = |s: &std::collections::BTreeSet<String>| {
+        s.iter()
+            .any(|n| n["loft_tup".len()..].starts_with(|c: char| c.is_ascii_digit()))
+    };
+    assert!(
+        !numbered(&alone) && !numbered(&after),
+        "{alone:?} {after:?}"
+    );
+}
+
+/// @PLN229 B2b — the shipped tier ignores the split switch: `--ship` with `LOFT_C_UNITS=1`
+/// writes ONE unit (no unit marks), as a semantics build with the switch writes several.
+#[test]
+fn a_shipped_build_is_one_unit_whatever_the_split_switch_says() {
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("ship-one-unit");
+    let file = dir.join("p.loft");
+    fa::write(&file, "fn main() {\n  println(\"hi {1 + 2}\");\n}\n").expect("write program");
+    let marks = |ship: bool| -> usize {
+        let c = dir.join(if ship { "ship.c" } else { "dev.c" });
+        let mut cmd = loft::platform::process::harness_command(loft);
+        cmd.env("LOFT_C_UNITS", "1").env("LOFT_NO_CACHE", "1");
+        if ship {
+            cmd.arg("--ship");
+        }
+        let out = cmd
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        fa::read_to_string(&c)
+            .expect("read the C")
+            .matches(loft::c::SPLIT_UNIT)
+            .count()
+    };
+    assert!(marks(false) > 1, "the switch splits a semantics build");
+    assert_eq!(marks(true), 0, "a shipped build is one unit");
 }
