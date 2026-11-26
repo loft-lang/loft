@@ -5,12 +5,12 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## State — START HERE
 
-- **int32** = 2ad23aaae (merges 779fe7ef3; the tester gated it CLEAN at e02be41a8: 1635/2269,
-  0 differ, pass 1 18093/20587).  The merger took int32 @ 5ace2eaf2 into the PR gathering.
-- **Gating:** 779fe7ef3..dd7e5f87a as ONE patch on e02be41a8 — the head clear and its narrowing
-  (3440f55ec, 9697ee9ff), a linked vector's element copied out (b504bdca1), a method call's record
-  answer held (86459b16a) keyed on a function call (f8f97e90d), a keyed lookup at a record tail
-  (dd7e5f87a).  Two earlier rounds of it lost programs; each loss is fixed in the stack.
+- **int32** = 5aa112b50 (CLEAN on the tester's stack ec2d7a451: 1638/2269, 0 differ).  The
+  tester's loft30-gate 13a8d4d67 (packages, generic instance registration) is merged in.
+- **Gating:** b5ad08833 (a library's element type, hook and qualified literal found from the
+  program: H-Drop/2436 and tests/docs/17-libraries.loft refused → agree), sent as a `selfhost/`
+  diff from 5aa112b50.  **Next try:** 07b68dd55 (an enum-qualified variant literal, `[Ch::Beta {…}]`,
+  built in place).  A try is a `selfhost/` diff on the tester's last clean base.
 - **The tester's backlog** is `refusal-worklist.md` on loft30-gate (re-ranked by topic):
   T1 records answered from something other than a literal (current), T2 `par` workers, T3 tuples.
   T8 is not a lever.  The tester ports generic-template REGISTRATION itself (el_types.loft,
@@ -37,14 +37,18 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   Rust keys on the WRITTEN `null` (3440f55ec → 9697ee9ff).
 - A method-spelled receiver is not always a call: `T.parse(…)` is a cast (86459b16a → f8f97e90d).
 - Lifting a refusal exposes OLDER differences: hold the enabling change back until they are fixed.
+- A shared predicate is Rust's: widening one for one road (OpVectorRef in
+  `copy_source_may_be_absent`) changes every road that reads it (96a436cc3 → 5aa112b50).  And a
+  container matrix crosses the LINKED layout: a keyed collection over the element anywhere.
+- A lookup from the program finds a library's definition only through the definition's own
+  source or source 0 (`hook_of`, `make_global`): cross "declared in a library" in any matrix.
 
 ## Open, measured (next)
 
-- T1: a keyed lookup off a call's answer (`hb(3).h[k]`): Rust's `return_source` road — the call
-  held in an `inline_container` `__ref_p2_N`, the lookup in `__ret_src_N`, the copy into a work
-  ref `__ref_2` the buffer is renamed onto on pass 1.  Probe `kh2`/`kh9` in the session's `p/`.
-- T1: 2561's `mid_call` (`return cells(3)[i]`, `OpVectorRef` under a `return`), `enum_local`/
-  `enum_call` (`OpGetField` of a `Shape?` element).
+- T1: 2561's last refusal, `enum_call` (`shapes(3)[i]` answered as `Shape?`): Rust names the
+  slot first (`enum_slot_read_named`, `__ref_2 = OpGetVector(inline_container …)`) and copies
+  behind its tag test.  The local form (`v[i]`, a `Shape?` field) agrees since aad53c89c.
+- A fieldless enum-qualified variant as a value (`[Ch::Alpha, …]`): refused "qualified name".
 - A local then-arm beside a variant (`if (s is V) { s } else { V {…} }`): Rust's `Bind` delivery.
 - `nr_g`: `[for x in a.. { x }]` with `a: u8` — schema rows 100/101 in the other order.
 - The tester's T9/T8 note: a record declared BELOW the function that builds it (`fn mk() -> X {
