@@ -668,9 +668,11 @@ fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
 /// or not, or moved, between the runs.  Keyed without the component, the second run adopted the
 /// first run's unit and, after an install, kept refusing.  The runs share the package, its
 /// `native-auto/`, a scratch `LOFT_HOME` and program cache, as two runs of one program on one
-/// machine do.  The uninstall and the move pass on the old key too — the interpreter refuses or
+/// machine do.  A move keeps the unit: it opens the component where the running loft finds it,
+/// so the key names the component's build, not its place (loft#2654).  The uninstall passes on
+/// the old key too — the interpreter refuses or
 /// finds the component at start, and the C backend keys its build on its C text, which holds what
-/// the search found — so those cells, and the C backend's, guard.  `@FR-Art-Key`.
+/// the search found — so that cell, and the C backend's, guard.  `@FR-Art-Key`.
 #[test]
 fn a_unit_is_keyed_on_the_components_it_binds() {
     // (what the run finds, whether its program calls the native, what it prints, whether it is
@@ -761,6 +763,27 @@ fn a_unit_is_keyed_on_the_components_it_binds() {
                     },
                     String::from_utf8_lossy(&out.stdout),
                     out.status.code()
+                );
+            }
+            // A moved component is the same build of it, so the unit the first run built is
+            // adopted: it opens the component where this run finds it, not where the first run
+            // did (loft#2654) — what lets a unit the release built run on a user's machine.
+            // The C backend keys its build on its C text, so only the interpreter adopts.
+            if matches!(second.0, Found::Moved) && backend == "--interpret" {
+                let units: Vec<String> = fa::read_dir(pkg.join("native-auto"))
+                    .expect("the package's native-auto")
+                    .into_iter()
+                    .filter_map(|e| fa::file_name(&e.os_spelling()))
+                    .filter(|n| {
+                        n.contains("loft_auto_cwrap")
+                            && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
+                    })
+                    .collect();
+                let _ = fa::remove_dir_all(&libs);
+                assert_eq!(
+                    units.len(),
+                    1,
+                    "{cell}: the moved run adopts the first run's unit: {units:?}"
                 );
             }
             let _ = fa::remove_dir_all(&libs);
