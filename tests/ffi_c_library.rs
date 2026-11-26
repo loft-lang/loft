@@ -593,10 +593,12 @@ fn the_release_builds_its_units_under_inert_switches_only() {
 
 /// `@FR-Art-Key`, `@FR-Art-Inert`: a library's compiled unit is keyed on every switch in force that
 /// can change the code it is generated with, and on none that cannot.  One plain package, one
-/// program, four runs on the interpreter in one `native-auto/`: no switch, an inert one
-/// (`LOFT_TIMEOUT`), a cure switch (`LOFT_NO_PUSH_FILL`, whose generated C differs) and a width
-/// (`LOFT_WIDTH=32`).  Each answers 135 (0 + 3 + … + 27); the plain and the inert run share one
-/// unit and the other two have one each, so three units.  The C backend keys its program build on
+/// program, five runs on the interpreter in one `native-auto/`: no switch, an inert one
+/// (`LOFT_TIMEOUT`, which the program cache leaves out too), a trace (`LOFT_TRACE_NATIVE_GATE`,
+/// which the program cache counts, since a traced run must parse, but which generates nothing),
+/// a cure switch (`LOFT_NO_PUSH_FILL`, whose generated C differs) and a width (`LOFT_WIDTH=32`).
+/// Each answers 135 (0 + 3 + … + 27); the plain, the inert and the traced run share one unit and
+/// the other two have one each, so three units.  The C backend keys its program build on
 /// its C text, so only the interpreter adopts a unit by this key.
 /// @falsified-at: ebe1bd76b — the four runs leave 1 unit, 3 wanted.
 #[test]
@@ -627,6 +629,7 @@ fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
     for (k, v) in [
         ("", ""),
         ("LOFT_TIMEOUT", "77"),
+        ("LOFT_TRACE_NATIVE_GATE", "1"),
         ("LOFT_NO_PUSH_FILL", "1"),
         ("LOFT_WIDTH", "32"),
     ] {
@@ -661,7 +664,7 @@ fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
     assert_eq!(
         units.len(),
         3,
-        "one unit for the plain and the inert run, one per code-changing switch: {units:?}"
+        "one unit for the plain, the inert and the traced run, one per code-changing switch: {units:?}"
     );
 }
 
