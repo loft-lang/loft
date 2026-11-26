@@ -104,7 +104,8 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
   el_vars::set_defined(vars, idx);
   len_var = el_vars::create_unique(vars, "par_len", int_t);
   el_vars::set_defined(vars, len_var);
-  bv = el_vars::add_variable(vars, "_{result}_par{w.loop_nr}", if ret is TyText { ir::TyText { dep: [] } } else { ret });
+  // (A text answer, `text?` alike, borrows nothing of the worker's frame.)
+  bv = el_vars::add_variable(vars, "_{result}_par{w.loop_nr}", if el_types::base(ret) is TyText { el_types::with_deps(ret, []) } else { ret });
   el_vars::set_defined(vars, bv);
   prior = el_vars::var(vars, result);
   el_vars::set_name(vars, result, bv);

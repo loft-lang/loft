@@ -575,8 +575,9 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           result = el_types::with_deps(result, joined);
         }
         // (`joined_deps` over `arm_join_type`: a vector result borrows what any arm's vector does,
-        // a store an arm mints itself left out.)
-        if el_types::base(result) is TyVector && el_types::base(b.tp) is TyVector && !e.first_pass {
+        // a store an arm mints itself left out — on both passes: the first pass's call borrows an
+        // argument, `call_dependencies`.)
+        if el_types::base(result) is TyVector && el_types::base(b.tp) is TyVector {
           vjoined = el_types::deps(result);
           for vx in outside_deps(e, b.code, el_types::deps(b.tp)) {
             if !vjoined.contains(vx) {
