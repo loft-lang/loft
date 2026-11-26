@@ -436,7 +436,7 @@ mod seal {
 
         #[test]
         fn an_offer_round_trips() {
-            let key: Key = std::array::from_fn(|i| i as u8 * 9);
+            let key: Key = std::array::from_fn(|i| (i * 7) as u8);
             assert_eq!(parse_offer(&offer(12, &key)), Some((12, key)));
             assert_eq!(
                 parse_offer("0123456789abcdef"),

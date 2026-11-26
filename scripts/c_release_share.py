@@ -32,9 +32,12 @@ def flush(name, body):
                     for x in run:
                         forms[(kind, rel.match(x).group(1), rel.match(x).group(2))] += 1
             run = []
+if sys.argv[1:2] in (['--help'], ['-h']):
+    print(__doc__)
+    sys.exit(0)
 for f in sys.argv[1:]:
     name, body = None, []
-    for l in open(f, errors='replace'):
+    for l in open(f, encoding='utf-8', errors='replace'):
         l = l.rstrip('\n')
         if head.match(l):
             flush(name, body); name, body = l, []
