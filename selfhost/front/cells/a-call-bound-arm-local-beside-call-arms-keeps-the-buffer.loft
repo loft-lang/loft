@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector branch tail whose arms are calls beside a block arm ending in a local
+// bound from a call (`{ x = list(n); x }`).  `ref_return`'s `ls` holds the named local first
+// (`arm_join_type` drops only what a later arm MINTS), the local is `Bind` (bound from a fresh
+// call), so every call's work ref binds to `__retbuf` (`substitute`) and the buffer is not
+// renamed; the local is copied in at its arm and its call's store freed — a nullable local where
+// present, the sentinel where null.
+// Prints: [3,3] [1,1] [4,4] [3,3] [6,6] null [5,5] [7] [8,9] [2,2,2]
+
+enum Nd { A, B { n: integer }, C { n: integer } }
+fn list(n: integer) -> vector<integer> { [n, n] }
+fn listq(n: integer) -> vector<integer>? { if n < 0 { null } else { [n, n] } }
+fn d1(v: Nd) -> vector<integer> { match v { A => list(3), C { n } => { x = list(n); x }, _ => list(1) } }
+fn q1(v: Nd) -> vector<integer>? { match v { A => listq(3), C { n } => { x = listq(n); x }, _ => listq(1) } }
+fn q2(v: Nd) -> vector<integer>? { match v { A => [7], C { n } => { x = listq(n); x += [n]; x }, _ => [8, 9] } }
+fn i1(v: Nd) -> vector<integer>? { if v is A { listq(3) } else { x = listq(5); x } }
+fn main() {
+  println("{d1(A)} {d1(B { n: 2 })} {d1(C { n: 4 })} {q1(A)} {q1(C { n: 6 })} {q1(C { n: 0 - 2 })} {i1(B { n: 1 })} {q2(A)} {q2(B { n: 1 })} {q2(C { n: 2 })}");
+}
