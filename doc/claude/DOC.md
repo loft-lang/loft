@@ -21,6 +21,8 @@ The page title and short name come from two header comments at the top of the fi
 
 `@NAME` appears in the navigation bar and as the `<h1>`. `@TITLE` appears on the index card grid.
 
+A page is also a test program, so it names the rules its asserted output pins, one header line each: `// @FR-<Rule>: what of the rule this page pins`. No rendering shows it: the prose, print and PDF renderers drop the line, and the Run panel's copy of the source carries a bare `//` in its place so its line numbers stay the file's own (`opens_rule_citation`).
+
 The first prose block after the header comments becomes the page introduction.
 
 Files with a `00-` prefix are excluded from page generation. `doc/00-vs-rust.html` is maintained by hand. **Important:** when new topic pages are added (new numbered `.loft` files), the nav bar inside `doc/00-vs-rust.html` must be updated manually to include the new links — it is not regenerated automatically.

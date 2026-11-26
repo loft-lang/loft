@@ -617,7 +617,9 @@ scripts/suite_curate.py dups [<rule>]     # programs whose code sits mostly insi
 `tests/docs` and `selfhost/front/cells` cites the `@FR-` rule it tests; a test of a language rule
 belongs in the suite under that rule.  `index/uncited_tests.baseline` holds the count of those
 that do not, per home, and `every_test_program_names_its_rule` fails when one rises: lower it with
-`uncited --write-baseline` in the commit that links a program, until it is zero.
+`uncited --write-baseline` in the commit that links a program, until it is zero.  A
+`tests/docs` page cites in its header, one `// @FR-<Rule>: …` line per rule, which the
+documentation generator keeps off every rendered page ([DOC.md](DOC.md)).
 
 A link is GOOD when breaking the rule would make the program's assertions or expected output
 fail; a program that merely touches the construct is not linked to it, and a link names the one
