@@ -1053,6 +1053,14 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
       // (A LINKED vector's element read — `OpVectorRef`, where a keyed collection over the
       // element type exists — is the `OpGetVector` Rust classifies before its linked-layout
       // rewrite: the same projection.)
+      // (A keyed lookup — `OpGetRecord` — projects into an owned temporary where its collection is
+      // read off a call's answer, `hb(3).h[k]`: the copy road.  Off a local it is `Bind`, which
+      // the record delivery copies into the buffer as it stands.)
+      if nm == "OpGetRecord" && len(args) > 0 {
+        // (…a call, or the `inline_container` the call was lifted into when its field was read.)
+        kr = read_root(e, args[0]!);
+        return el_ex_assign::call_rooted(e, vars, args[0]!) || match kr { NdBlock { block: krb } => krb[0].name == "inline_container", _ => false };
+      }
       if (nm != "OpGetField" && nm != "OpGetVector" && nm != "OpVectorRef") || len(args) == 0 {
         return false;
       }
