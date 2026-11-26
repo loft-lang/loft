@@ -2,14 +2,16 @@
 
 **The rule (owner, 2026-11-26):** a definition only the port registers is the port creating a new
 language instead of porting one; a try that adds one is `TRYRESULT issues` (refusal-worklist.md).
-These are the ones left, measured at try 2be44f5a6 (on 8e161452b), 71 rows (85 at
-8e161452b).  Each family names who removes it; a row goes once a try shows it gone.
+These are the ones left, measured at try bc8b9e94a (on 2be44f5a6), 62 rows (85 at
+8e161452b).  A row goes once a try shows it gone.
 
-**Removed by the tester (refused before read, no lowering):** a `[…]` whose destination is a keyed
-collection — a refused `&` of a keyed collection keeps its link type (el_ex_vector), a keyed
-subject's non-empty `??` default (el_ex_call), a literal whose position expects a keyed collection
-that `keyed_tail_literal` declines (el_ex_assign).  The porter's keyed-literal lowering replaces
-the last two refusals.
+**Removed so far (tester):**
+- a `[…]` whose destination is a keyed collection, refused before it is read (a refused `&` of a
+  keyed collection keeps its link type; a keyed `??` default; a literal at a keyed expectation that
+  `keyed_tail_literal` declines) — the porter's keyed-literal lowering replaces the last two;
+- every generic function instance: a tuple's identity spelled from its members (`tuple_identity`),
+  type variables bound through a tuple's members, and `sort` / `map` / `filter` Rust builds in place
+  refused where the port's in-place build declines (`rust_builds_in_place`, concrete types only).
 
 ## vector type — 54
 
@@ -69,20 +71,6 @@ the last two refusals.
 | 2337-an-empty-literal-arm-builds-its-fields-collection.loft | `vector<K>` |
 | 923-nullable-vector-element-schema.loft | `main_vector<>` |
 | 923-nullable-vector-element-schema.loft | `vector<>` |
-
-## generic function instance — 9
-
-| program | definition |
-|---|---|
-| a-reference-parameter-reaches-the-whole-surface.loft | `i_4text_t_6vector_sort` |
-| a-reference-parameter-reaches-the-whole-surface.loft | `i_7integer_t_6vector_sort` |
-| a-generic-at-a-tuple-answers-the-boxed-record-and-its-callback-is-its-twins-type.loft | `i_40integer#__tuple<integer,integer(0, 255)>_n_pick` |
-| a-generic-over-a-vector-of-tuples-of-its-type-variables.loft | `i_7integer_n_setfirst` |
-| c91-every-type-is-equatable.loft | `i_35__tuple<(integer, integer),integer>_n_same` |
-| every-type-has-one-layout-whichever-spelling-asks.loft | `i_50__tuple<integer(0, 255),integer,integer(0, 65535)>_n_sz` |
-| 1202-a-captured-record-enum-is-not-the-callers-to-take.loft | `i_7integer_t_6vector_map` |
-| 100-enhancements.loft | `i_15integer#integer_t_6vector_map` |
-| 100-enhancements.loft | `i_7integer_t_6vector_filter` |
 
 ## lambda / closure — 3
 
