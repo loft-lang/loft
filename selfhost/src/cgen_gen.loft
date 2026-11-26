@@ -55,7 +55,7 @@ pub fn gen_yield(x: Cx, w: W, value: ir::Node, ind: integer) {
   } else {
     e = cgen_fn::expr(x, w, value, ind);
     if c == "text" {
-      line(w, ind, "loft_text_set((loft_text *) out, {as_view(w, e)});");
+      line(w, ind, "loft_text_set(cx, (loft_text *) out, {as_view(w, e)});");
     } else {
       line(w, ind, "*({held(c)} *) out = {as_shape(w, e, c)};");
     }
@@ -78,9 +78,9 @@ pub fn gen_yield(x: Cx, w: W, value: ir::Node, ind: integer) {
     }
     shape = w.shapes[t] ?? "";
     if shape == "ref" {
-      line(w, ind, "{w.names[t]!} = loft_ref_null();");
+      line(w, ind, "{w.names[t]!} = loft_ref_null(cx);");
     } else if shape == "fn" {
-      line(w, ind, "{w.names[t]!}.clos = loft_ref_null();");
+      line(w, ind, "{w.names[t]!}.clos = loft_ref_null(cx);");
     }
   }
   flush(w, ind);
@@ -473,8 +473,8 @@ pub fn gen_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     g = if v >= 0 { w.names[v]! } else { as_ref(w, cgen_fn::expr(x, w, args[0]!, ind)) };
     t = temp(w, c);
     if c == "text" {
-      line(w, ind, "loft_text_set(&{t}, loft_null_text());");
-      line(w, ind, "loft_gen_next({g}, &{t});");
+      line(w, ind, "loft_text_set(cx, &{t}, loft_null_text(cx));");
+      line(w, ind, "loft_gen_next(cx, {g}, &{t});");
       return held_value(w, t, "text");
     }
     // An exhausted generator answers null members: a text member reads its null, set in the
@@ -488,19 +488,19 @@ pub fn gen_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     } else {
       null_keeping_texts(w, t, c, ind);
       for l in leaves {
-        line(w, ind, "loft_text_set(&{l}, loft_null_text());");
+        line(w, ind, "loft_text_set(cx, &{l}, loft_null_text(cx));");
       }
     }
-    line(w, ind, "loft_gen_next({g}, &{t});");
+    line(w, ind, "loft_gen_next(cx, {g}, &{t});");
     return E { code: t, kind: kind_of(c), tup: if is_tuple(c) { c } else { "" } };
   }
   if name == "OpCoroutineRetain" && len(args) == 1 {
     g = cgen_fn::expr(x, w, args[0]!, ind);
-    return E { code: "loft_gen_retain({as_ref(w, g)})", kind: K_REF };
+    return E { code: "loft_gen_retain(cx, {as_ref(w, g)})", kind: K_REF };
   }
   if name == "OpCoroutineExhausted" && len(args) == 1 {
     g = cgen_fn::expr(x, w, args[0]!, ind);
-    return E { code: "loft_gen_exhausted({as_ref(w, g)})", kind: K_BOOL };
+    return E { code: "loft_gen_exhausted(cx, {as_ref(w, g)})", kind: K_BOOL };
   }
   done = false;
   none()
@@ -645,8 +645,8 @@ pub fn write_gen(x: Cx, w: W, name: text, list: text) -> Written {
   // `@FR-G-Arg-Rebind`: a frame that ran to its end gives back its argument holds.
   holds = held_args(x, w);
   for n in holds {
-    line(w, 1, "loft_release_frame_hold(fr->hold_{n});");
-    line(w, 1, "fr->hold_{n} = loft_ref_null();");
+    line(w, 1, "loft_release_frame_hold(cx, fr->hold_{n});");
+    line(w, 1, "fr->hold_{n} = loft_ref_null(cx);");
   }
   if w.why != "" {
     return Written { text: "", refused: w.why };
@@ -673,7 +673,7 @@ pub fn write_gen(x: Cx, w: W, name: text, list: text) -> Written {
   for n in holds {
     decls += " loft_ref hold_{n};";
   }
-  decls += " }} loft_gen{d};\nstatic void loft_resume{d}(void *frp, void *out);\nstatic void loft_genfree{d}(void *frp);\n";
+  decls += " }} loft_gen{d};\nstatic void loft_resume{d}(loft_cx *cx, void *frp, void *out);\nstatic void loft_genfree{d}(loft_cx *cx, void *frp);\n";
   // A generator with a link names its locals IN the frame: a link to one points at the frame
   // field, which lives across resumes, where a restored copy would not.
   in_frame = false;
@@ -688,7 +688,7 @@ pub fn write_gen(x: Cx, w: W, name: text, list: text) -> Written {
       saves += ["fr->{f.name} = {f.name};"];
     }
   }
-  bodies = "\n#define LOFT_SAVE{d} do {{ {saves.join(" ")} }} while (0)\nstatic void loft_resume{d}(void *frp, void *out) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n";
+  bodies = "\n#define LOFT_SAVE{d} do {{ {saves.join(" ")} }} while (0)\nstatic void loft_resume{d}(loft_cx *cx, void *frp, void *out) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n";
   for f in fields {
     if in_frame {
       bodies += "#define {f.name} (fr->{f.name})\n";
@@ -710,7 +710,7 @@ pub fn write_gen(x: Cx, w: W, name: text, list: text) -> Written {
   }
   bodies += release(x, w, fields, holds);
   creator = creator_text(w, fields, holds);
-  creator += "    return loft_gen_new(fr, loft_resume{d}, loft_genfree{d});\n";
+  creator += "    return loft_gen_new(cx, fr, loft_resume{d}, loft_genfree{d});\n";
   // A tuple shape among the fields is numbered by the unit's tuple structs.
   Written { text: resolve_tuples(x, creator), refused: "", name: name, ret: "loft_ref", list: resolve_tuples(x, list), storage: "static", generator: true, gen_decls: resolve_tuples(x, decls), gen_bodies: resolve_tuples(x, bodies) }
 }
@@ -719,16 +719,16 @@ pub fn write_gen(x: Cx, w: W, name: text, list: text) -> Written {
 // its tuples hold, and its copies of text arguments — and the stores it owns.
 fn release(x: Cx, w: W, fields: vector<Field>, holds: vector<text>) -> text {
   d = w.index;
-  out = "static void loft_genfree{d}(void *frp) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n    if (!fr->done) {{\n";
+  out = "static void loft_genfree{d}(loft_cx *cx, void *frp) {{\n    loft_gen{d} *fr = (loft_gen{d} *) frp;\n    if (!fr->done) {{\n";
   for f in fields {
     if f.shape == "text" && !f.param {
-      out += "        loft_text_free(&fr->{f.name});\n";
+      out += "        loft_text_free(cx, &fr->{f.name});\n";
     }
     if is_tuple(f.shape) && !f.param {
       leaves: vector<text> = [];
       tuple_text_leaves("fr->{f.name}", f.shape, leaves);
       for l in leaves {
-        out += "        loft_text_free(&{l});\n";
+        out += "        loft_text_free(cx, &{l});\n";
       }
     }
   }
@@ -743,7 +743,7 @@ fn release(x: Cx, w: W, fields: vector<Field>, holds: vector<text>) -> text {
     n = ab[0]!;
     for s in stores {
       if s == n {
-        out += "        if (fr->{n}.rec != 0 && fr->{n}.store_nr != fr->{ab[1]!}.store_nr) {{ loft_free_ref(fr->{n}); }} fr->{n} = loft_ref_null();\n";
+        out += "        if (fr->{n}.rec != 0 && fr->{n}.store_nr != fr->{ab[1]!}.store_nr) {{ loft_free_ref(cx, fr->{n}); }} fr->{n} = loft_ref_null(cx);\n";
       }
     }
     paired += [n];
@@ -758,16 +758,16 @@ fn release(x: Cx, w: W, fields: vector<Field>, holds: vector<text>) -> text {
     if skip {
       continue;
     }
-    out += "        if (fr->{n}.rec != 0) {{ loft_free_ref(fr->{n}); fr->{n} = loft_ref_null(); }}\n";
+    out += "        if (fr->{n}.rec != 0) {{ loft_free_ref(cx, fr->{n}); fr->{n} = loft_ref_null(cx); }}\n";
   }
   out += "    }}\n";
   for f in fields {
     if f.shape == "text" && f.param {
-      out += "    loft_text_free(&fr->own_{f.name});\n";
+      out += "    loft_text_free(cx, &fr->own_{f.name});\n";
     }
   }
   for n in holds {
-    out += "    loft_release_frame_hold(fr->hold_{n});\n";
+    out += "    loft_release_frame_hold(cx, fr->hold_{n});\n";
   }
   out + "    free(fr);\n}}\n"
 }
@@ -780,7 +780,7 @@ fn creator_text(w: W, fields: vector<Field>, holds: vector<text>) -> text {
   for f in fields {
     if f.param {
       if f.shape == "text" {
-        out += "    fr->own_{f.name} = loft_text_own({f.name});\n    fr->{f.name} = loft_view(&fr->own_{f.name});\n";
+        out += "    fr->own_{f.name} = loft_text_own(cx, {f.name});\n    fr->{f.name} = loft_view(cx, &fr->own_{f.name});\n";
       } else {
         out += "    fr->{f.name} = {f.name};\n";
       }
@@ -792,7 +792,7 @@ fn creator_text(w: W, fields: vector<Field>, holds: vector<text>) -> text {
     }
   }
   for n in holds {
-    out += "    fr->hold_{n} = loft_hold_for_frame({n}) ? {n} : loft_ref_null();\n";
+    out += "    fr->hold_{n} = loft_hold_for_frame(cx, {n}) ? {n} : loft_ref_null(cx);\n";
   }
   out
 }

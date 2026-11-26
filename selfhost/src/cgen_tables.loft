@@ -329,12 +329,12 @@ fn deliver_code(x: Cx) -> text {
   out = "";
   for d in x.delivers {
     if d {
-      out += "static const char *loft_dlv{d#index}(loft_text *o, loft_ref r);\n";
+      out += "static const char *loft_dlv{d#index}(loft_cx *cx, loft_text *o, loft_ref r);\n";
     }
   }
   for d in x.delivers {
     if d {
-      out += "static const char *loft_dlv{d#index}(loft_text *o, loft_ref r) {{\n{deliver_body(x, d#index)}}}\n";
+      out += "static const char *loft_dlv{d#index}(loft_cx *cx, loft_text *o, loft_ref r) {{\n{deliver_body(x, d#index)}}}\n";
     }
   }
   out
@@ -344,29 +344,29 @@ fn deliver_body(x: Cx, tp: integer) -> text {
   t = x.b.types[tp]!;
   match t.parts[0] {
     // `BaseKind::from_type_id`: a long and an integer are 8 bytes, the rest their own.
-    PtBase => if tp == 2 || tp == 6 { dlv_raw(4) } else if tp == 4 { dlv_raw(1) } else if tp == 5 { "    loft_dlv_text(o, r);\n    return 0;\n" } else { dlv_raw(8) },
+    PtBase => if tp == 2 || tp == 6 { dlv_raw(4) } else if tp == 4 { dlv_raw(1) } else if tp == 5 { "    loft_dlv_text(cx, o, r);\n    return 0;\n" } else { dlv_raw(8) },
     PtByte { start: _, nullable: _ } => dlv_raw(1),
     PtEnum { values: _ } => dlv_raw(1),
-    PtShort { start: _, nullable: _ } => "    loft_dlv_short(o, r, 0, 1);\n    return 0;\n",
-    PtShortRaw { start, nullable: _ } => "    loft_dlv_short(o, r, {start}, 0);\n    return 0;\n",
+    PtShort { start: _, nullable: _ } => "    loft_dlv_short(cx, o, r, 0, 1);\n    return 0;\n",
+    PtShortRaw { start, nullable: _ } => "    loft_dlv_short(cx, o, r, {start}, 0);\n    return 0;\n",
     PtInt { start: _, nullable: _ } => dlv_raw(4),
     PtStruct { fields } => dlv_fields(fields),
     PtEnumValue { value: _, fields } => dlv_fields(fields),
-    PtVector { content } => "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, v, 8 + {x.b.types[content]!.size} * i, 0 }};\n        const char *e = loft_dlv{content}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
-    PtArray { content } => "    uint32_t v = loft_u32(loft_store_of(r), r.rec, r.pos), n = v ? loft_u32(loft_store_of(r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, loft_u32(loft_store_of(r), v, 8 + 4 * i), 8, 0 }};\n        const char *e = loft_dlv{content}(o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
+    PtVector { content } => "    uint32_t v = loft_u32(cx, loft_store_of(cx, r), r.rec, r.pos), n = v ? loft_u32(cx, loft_store_of(cx, r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, v, 8 + {x.b.types[content]!.size} * i, 0 }};\n        const char *e = loft_dlv{content}(cx, o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
+    PtArray { content } => "    uint32_t v = loft_u32(cx, loft_store_of(cx, r), r.rec, r.pos), n = v ? loft_u32(cx, loft_store_of(cx, r), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ r.store_nr, loft_u32(cx, loft_store_of(cx, r), v, 8 + 4 * i), 8, 0 }};\n        const char *e = loft_dlv{content}(cx, o, x);\n        if (e) return e;\n    }}\n    return 0;\n",
     _ => "    (void) o; (void) r;\n    return {c_string("type {tp} ({t.name}) is a store-internal kind — not in the serializable subset (cursor-walked in a later phase)")};\n",
   }
 }
 
 fn dlv_raw(n: integer) -> text {
-  "    loft_dlv_raw(o, r, {n});\n    return 0;\n"
+  "    loft_dlv_raw(cx, o, r, {n});\n    return 0;\n"
 }
 
 fn dlv_fields(fields: vector<ir::DbField>) -> text {
   s = "    const char *e;\n";
   for f in fields {
     if deliver_is_data(f) {
-      s += "    if ((e = loft_dlv{f.content}(o, loft_field(r, {f.position}))) != 0) return e;\n";
+      s += "    if ((e = loft_dlv{f.content}(cx, o, loft_field(cx, r, {f.position}))) != 0) return e;\n";
     }
   }
   s + "    (void) o; (void) r;\n    return 0;\n"
@@ -377,7 +377,7 @@ fn dlv_fields(fields: vector<ir::DbField>) -> text {
 // through the C runtime; trailing zero words are left off.
 fn const_code(x: Cx) -> text {
   out = "";
-  init = "static void loft_init(void) {{\n";
+  init = "static void loft_init(loft_cx *cx) {{\n";
   for on in x.consts {
     if !on {
       continue;
@@ -389,7 +389,7 @@ fn const_code(x: Cx) -> text {
     for c in x.b.consts {
       if c.d == d {
         out += "static const uint32_t loft_cwords{d}[] = {{ {c.words} }};\nstatic loft_ref loft_const{d};\n";
-        init += "    loft_const{d} = loft_const_store(loft_cwords{d}, {c.n});\n";
+        init += "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {c.n});\n";
         from_image = true;
       }
     }
@@ -411,7 +411,7 @@ fn const_code(x: Cx) -> text {
       words += ["{word(bytes, i, 0)}u", "{word(bytes, i, 4)}u"];
     }
     out += "static const uint32_t loft_cwords{d}[] = {{ {words.join(", ")} }};\nstatic loft_ref loft_const{d};\n";
-    init += "    loft_const{d} = loft_const_store(loft_cwords{d}, {n});\n";
+    init += "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {n});\n";
   }
   out + init + "}}\n"
 }

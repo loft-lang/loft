@@ -82,7 +82,7 @@ fn idents(s: text) -> vector<integer> {
 
 // `is_release`: one release call, one line, no block of its own (`RELEASES`).
 fn is_release(t: text) -> boolean {
-  t.ends_with(");") && !t.contains("{{") && (t.starts_with("loft_free_var(&") || t.starts_with("loft_free_var_distinct(&") || t.starts_with("loft_text_free(&") || t.starts_with("loft_wpark_put(&"))
+  t.ends_with(");") && !t.contains("{{") && (t.starts_with("loft_free_var(cx, &") || t.starts_with("loft_free_var_distinct(cx, &") || t.starts_with("loft_text_free(cx, &") || t.starts_with("loft_wpark_put(cx, &"))
 }
 
 // `nested_declared`: the name a nested declaration line declares — `<type words> <name>` then

@@ -440,6 +440,16 @@ struct W {
   vr_fwd: integer,
 }
 
+// `@PLN226`: an argument list with the store context first (`c::cx_args`).
+pub fn cx_args(args: vector<text>) -> text {
+  if len(args) == 0 { "cx" } else { "cx, {args.join(", ")}" }
+}
+
+// `@PLN226`: a parameter list with the store context first (`c::cx_params`).
+pub fn cx_params(params: vector<text>) -> text {
+  if len(params) == 0 { "loft_cx *cx" } else { "loft_cx *cx, {params.join(", ")}" }
+}
+
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
 // no C statement can be, replaced by the frees when the function is assembled.
 EPILOGUE_MARK = "@@loft-epilogue@@";
@@ -458,7 +468,7 @@ fn var_addr(w: W, v: integer) -> text {
 fn held_value(w: W, t: text, shape: text) -> E {
   if shape == "text" {
     w.pending += [t];
-    return E { code: "loft_view(&{t})", kind: K_VIEW };
+    return E { code: "loft_view(cx, &{t})", kind: K_VIEW };
   }
   if shape == "void" {
     return E { code: "(void) 0", kind: K_VOID };
@@ -470,7 +480,7 @@ fn held_value(w: W, t: text, shape: text) -> E {
 fn flush(w: W, ind: integer) {
   w.pending_work = [];
   for t in w.pending {
-    line(w, ind, "loft_text_free(&{t});");
+    line(w, ind, "loft_text_free(cx, &{t});");
   }
   w.pending = [];
 }
@@ -480,10 +490,10 @@ fn flush(w: W, ind: integer) {
 fn epilogue(w: W, ind: integer) {
   // A `return` from inside a held loop: the cursors go back before the frame does.
   for i in rev(0..len(w.file_holds)) {
-    line(w, ind, "loft_fcur_release(&{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
+    line(w, ind, "loft_fcur_release(cx, &{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
   }
   for t in w.split_tabs {
-    line(w, ind, "loft_stab_free(&st{t.var});");
+    line(w, ind, "loft_stab_free(cx, &st{t.var});");
   }
   line(w, ind, EPILOGUE_MARK);
 }
@@ -491,10 +501,10 @@ fn epilogue(w: W, ind: integer) {
 // The text temporary a view `loft_view(&t)` reads, when the current statement made it and may
 // hand its buffer on (`pending_text_temp`); "" for any other code.
 fn pending_text_temp(w: W, code: text) -> text {
-  if !code.starts_with("loft_view(&") || !code.ends_with(")") || (env_variable("LOFT_NO_C_TEXT_MOVE") ?? "0") != "0" {
+  if !code.starts_with("loft_view(cx, &") || !code.ends_with(")") || (env_variable("LOFT_NO_C_TEXT_MOVE") ?? "0") != "0" {
     return "";
   }
-  t = code[11..code.size() - 1];
+  t = code[15..code.size() - 1];
   made = false;
   for p in w.pending {
     if p == t {
@@ -999,7 +1009,7 @@ fn as_int(w: W, e: E) -> text {
   if e.kind == K_INT {
     e.code
   } else if e.kind == K_INT32 {
-    "loft_w64({e.code})"
+    "loft_w64(cx, {e.code})"
   } else if e.kind == K_BOOL || e.kind == K_CHAR {
     "((int64_t) ({e.code}))"
   } else {
@@ -1011,7 +1021,7 @@ fn as_int(w: W, e: E) -> text {
 // @PLN204 — a value as a 32-bit integer: a 32-bit one as it is, any other narrowed
 // (`loft_n32`, a value that does not fit reading null).
 fn as_int32(w: W, e: E) -> text {
-  if e.kind == K_INT32 { e.code } else { "loft_n32({as_int(w, e)})" }
+  if e.kind == K_INT32 { e.code } else { "loft_n32(cx, {as_int(w, e)})" }
 }
 
 fn as_enum(w: W, e: E) -> text {
@@ -1044,7 +1054,7 @@ fn as_char(w: W, e: E) -> text {
   } else if e.kind == K_INT {
     "((uint32_t) ({e.code}))"
   } else if e.kind == K_INT32 {
-    "((uint32_t) loft_w64({e.code}))"
+    "((uint32_t) loft_w64(cx, {e.code}))"
   } else {
     refuse(w, "a character expected, a {kind_name(e.kind)} found");
     ""

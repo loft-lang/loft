@@ -209,6 +209,10 @@ pub struct Cx {
   pub sql_plans: vector<boolean>,
   // The types a `deliver` walks (`Cx::deliver_types`), per type number: one `loft_dlv{tp}`.
   pub delivers: vector<boolean>,
+  // The roots a fault site, a frame and a line mark name a source from (`Cx::source_roots`,
+  // `Data::source_roots`): the program's directory and the standard library's.
+  pub main_dir: text,
+  pub std_dir: text,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -259,6 +263,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     lazy_fetchers: 0,
     sql_plans: [for _ in 0..len(b.types) { false }],
     delivers: [for _ in 0..len(b.types) { false }],
+    main_dir: program_dir(main_file(b)),
+    std_dir: std_dir(b),
   }
 }
 
@@ -308,11 +314,120 @@ fn bind_tables() -> text {
 // A function with no parameter, no answer and no statement (`function` + `framed`): the body
 // always inlined into its frame wrapper, the wrapper declared inline.  Answers the two
 // declarations and the two definitions.
-fn empty_function(d: ir::Definition, decls: &text, bodies: &text) {
+fn empty_function(b: ir::Bundle, d: ir::Definition, decls: &text, bodies: &text) {
   name = d.name;
-  decls += "LOFT_HOT_INLINE void {name}__fr(void);\nstatic inline void {name}(void);\n";
-  bodies += "\nLOFT_HOT_INLINE void {name}__fr(void) {{\n}}\n";
-  bodies += "\nstatic inline void {name}(void) {{\n    loft_frame_push({c_string(original_name(d))}, {c_string(d.position.file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr();\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n}}\n";
+  file = name_from(d.position.file, program_dir(main_file(b)), std_dir(b));
+  decls += "LOFT_HOT_INLINE void {name}__fr(loft_cx *cx);\nstatic inline void {name}(loft_cx *cx);\n";
+  bodies += "\nLOFT_HOT_INLINE void {name}__fr(loft_cx *cx) {{\n}}\n";
+  bodies += "\nstatic inline void {name}(loft_cx *cx) {{\n    loft_frame_push(cx, {c_string(original_name(d))}, {c_string(file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr(cx);\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n}}\n";
+}
+
+// The directory of path `p` (`Path::parent`), "" for a bare name.
+fn parent_of(p: text) -> text {
+  at = -1;
+  for c in p {
+    if c == '/' {
+      at = c#index;
+    }
+  }
+  if at < 0 { "" } else if at == 0 { "/" } else { p[0..at] }
+}
+
+// The file `main` was read from (`Data::source_roots`' `file_of(def_nr("n_main"))`).
+fn main_file(b: ir::Bundle) -> text {
+  m = main_index(b);
+  if m < 0 { "" } else { b.data.definitions[m]!.position.file }
+}
+
+// The directory the standard library was read from: that of the first standard-library
+// definition with a file (`STD_SOURCE`, source 0).
+fn std_dir(b: ir::Bundle) -> text {
+  for d in b.data.definitions {
+    if d.source == 0 && d.position.file != "" {
+      return parent_of(d.position.file);
+    }
+  }
+  ""
+}
+
+// `source_name::program_dir`: the program's project root — the nearest directory at or above
+// its `main`'s that holds a `loft.toml` (`resolution_scope::project_root`) — else `main`'s own
+// directory.  The Rust side starts from the canonical directory; a path is taken here as the
+// definitions spell it, which agrees wherever no part of it is a symbolic link.
+fn program_dir(main_file: text) -> text {
+  if main_file == "" {
+    return "";
+  }
+  start = if is_dir(main_file) { main_file } else { parent_of(main_file) };
+  if start == "" {
+    start = directory();
+  }
+  cur = start;
+  for _ in 0..4096 {
+    if exists("{cur}/loft.toml") {
+      return cur;
+    }
+    up = parent_of(cur);
+    if up == "" || up == cur {
+      break;
+    }
+    cur = up;
+  }
+  parent_of(main_file)
+}
+
+// `file` below directory `dir`: the rest after `dir/`, null when it is not below it.
+fn beneath(file: text, dir: text) -> text? {
+  d = dir;
+  while d.ends_with("/") {
+    d = d[0..d.size() - 1];
+  }
+  if d == "" || !file.starts_with("{d}/") {
+    return null;
+  }
+  file[d.size() + 1..file.size()]
+}
+
+// The name a fault site, a frame and a line mark give source `file` (`source_name::name`):
+// from its root, never from where the unit was built, so a unit is the same text wherever it
+// is built.  The standard library's files under `default/`, the program's from its directory,
+// a package's from the directory that holds the package, anything else by its file name.
+pub fn source_name(x: Cx, file: text) -> text {
+  name_from(file, x.main_dir, x.std_dir)
+}
+
+// `source_name` against the roots `main_dir` and `std_dir`.
+fn name_from(file: text, main_dir: text, std_dir: text) -> text {
+  if !file.starts_with("/") {
+    return file;
+  }
+  std_rest = beneath(file, std_dir);
+  if std_rest != null {
+    return "default/{std_rest}";
+  }
+  main_rest = beneath(file, main_dir);
+  if main_rest != null {
+    return main_rest;
+  }
+  cur = parent_of(file);
+  while cur != "" && cur != "/" {
+    if exists("{cur}/loft.toml") {
+      holder = parent_of(cur);
+      rest = beneath(file, holder);
+      if rest != null {
+        return rest;
+      }
+      break;
+    }
+    cur = parent_of(cur);
+  }
+  at = -1;
+  for c in file {
+    if c == '/' {
+      at = c#index;
+    }
+  }
+  file[at + 1..file.size()]
 }
 
 // The number of the definition named `name`, -1 for none.
@@ -392,18 +507,26 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   // The program's `main` by its C name: a name two definitions share is spelt apart
   // (`c_name`'s `_m<hash>`).
   main_c = cgen_names::c_name(b, cgen_names::duplicate_fn_names(b), mi);
-  call = "{main_c}();";
-  if len(main.attributes) > 0 {
-    a = main.attributes[0]!;
+  pre = "";
+  post = "";
+  args: vector<text> = [];
+  for a in main.attributes {
+    if a.hidden {
+      // A heap-returning `main`'s return buffer (`program_main`'s hidden parameters).
+      return refuse("main: a main that returns a value through a buffer");
+    }
     takes_texts = match binds::base(a.typedef[0] ?? ir::TyVoid) {
       TyVector { inner, dep: _ } => binds::base(inner) is TyText,
       _ => false,
     };
-    if len(main.attributes) != 1 || a.hidden || !takes_texts {
+    if !takes_texts {
       return refuse("main: a main that takes arguments other than `vector<text>`");
     }
-    call = "{{ loft_ref loft_main_args = loft_arguments(); {main_c}(loft_main_args); loft_free_ref(loft_main_args); }}";
+    pre += "loft_ref loft_main_args = loft_arguments(cx); ";
+    args += ["loft_main_args"];
+    post += "loft_free_ref(cx, loft_main_args); ";
   }
+  call = "{{ {pre}{main_c}({cgen_w::cx_args(args)}); {post}}}";
   if !empty_body(main.code) {
     // U-1: the unit of every function `main` reaches (`emit_unit_for`).
     a = cgen_unit::assemble(b, mi, cgen_clibs::tables(b), type_name_table(b.types), MAX_CALL_DEPTH);
@@ -420,16 +543,16 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
     }
     unit = "{a.defines}{RUNTIME_START}{cgen_split::above_define()}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
     anchor = if load::program_relative(b) { 1 } else { 0 };
-    unit += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+    unit += "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    loft_set_anchor(cx, {anchor});\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n";
     return Unit { code: cgen_tidy::drop_unnamed(unit, RUNTIME_END), refused: "" };
   }
   decls = "";
   bodies = "";
-  empty_function(main, decls, bodies);
-  written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
+  empty_function(b, main, decls, bodies);
+  written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(loft_cx *cx) {{\n}}\n{decls}{bodies}{bind_tables()}";
   out = "{unit_defines()}{RUNTIME_START}{cgen_split::above_define()}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
   anchor = if load::program_relative(b) { 1 } else { 0 };
-  out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main_c}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+  out += "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    loft_set_anchor(cx, {anchor});\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n";
   // The finished program names what it uses: what nothing names is not written.
   Unit { code: cgen_tidy::drop_unnamed(out, RUNTIME_END), refused: "" }
 }

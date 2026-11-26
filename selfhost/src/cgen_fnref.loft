@@ -225,8 +225,8 @@ pub fn take_parked(w: W, lp: ir::Block, ind: integer) {
     return;
   }
   for v in kept_by(w, lp) {
-    w.decls += ["static LOFT_TLS loft_ref {park(w, v)} = {{ 0xFFFF, 0, 0, 0 }};"];
-    line(w, ind, "loft_park_take(&{park(w, v)}, &{w.names[v]!});");
+    w.decls += ["static loft_ref {park(w, v)} = {{ 0xFFFF, 0, 0, 0 }};"];
+    line(w, ind, "loft_park_take(cx, &{park(w, v)}, &{w.names[v]!});");
   }
 }
 
@@ -236,9 +236,9 @@ pub fn release_kept(w: W, lp: ir::Block, ind: integer) {
   parked = (env_variable("LOFT_NO_FNREF_PARK") ?? "0") == "0" && w.gen_elem == "";
   for v in kept_by(w, lp) {
     if parked {
-      line(w, ind, "loft_park_put(&{park(w, v)}, &{w.names[v]!});");
+      line(w, ind, "loft_park_put(cx, &{park(w, v)}, &{w.names[v]!});");
     } else {
-      line(w, ind, "loft_free_var(&{w.names[v]!});");
+      line(w, ind, "loft_free_var(cx, &{w.names[v]!});");
     }
   }
 }

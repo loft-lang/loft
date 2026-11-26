@@ -80,11 +80,11 @@ fn worker_call(x: Cx, d: integer, esz: integer, extra: vector<text>) -> WorkerCa
           out.vectors += [v];
         },
         TyReference { n: _, dep: _ } => {
-          out.args += ["loft_ref_null()"];
+          out.args += ["loft_ref_null(cx)"];
         },
         TyEnum { n: _, is_ref, dep: _ } => {
           if is_ref {
-            out.args += ["loft_ref_null()"];
+            out.args += ["loft_ref_null(cx)"];
           } else {
             out.why = "a par worker with a hidden parameter of another kind";
             return out;
@@ -99,23 +99,23 @@ fn worker_call(x: Cx, d: integer, esz: integer, extra: vector<text>) -> WorkerCa
     }
     if visible == 0 {
       c = cgen_types::ctype(t) ?? "";
-      bits = "loft_par_arg(loft_e, {esz})";
+      bits = "loft_par_arg(cx, loft_e, {esz})";
       row = if c == "ref" {
         "loft_e"
       } else if c == "text" {
-        "loft_get_text(loft_e, 0)"
+        "loft_get_text(cx, loft_e, 0)"
       } else if c == "int" {
-        "loft_i64_bits({bits})"
+        "loft_i64_bits(cx, {bits})"
       } else if c == "float" {
-        "loft_f64({bits})"
+        "loft_f64(cx, {bits})"
       } else if c == "single" {
-        "loft_f32((uint32_t) {bits})"
+        "loft_f32(cx, (uint32_t) {bits})"
       } else if c == "char" {
         "(uint32_t) {bits}"
       } else if c == "bool" || c == "enum" {
         "(uint8_t) {bits}"
       } else if c == "fn" {
-        "loft_fn_of((int64_t) (uint32_t) {bits})"
+        "loft_fn_of(cx, (int64_t) (uint32_t) {bits})"
       } else {
         ""
       };
@@ -139,9 +139,9 @@ fn worker_call(x: Cx, d: integer, esz: integer, extra: vector<text>) -> WorkerCa
 // `par_discard`'s row: the worker's result dropped with what it owns.
 fn discard(call: text, shape: text) -> text {
   if shape == "text" {
-    "{{ loft_text loft_t = {call}; loft_text_free(&loft_t); }}"
+    "{{ loft_text loft_t = {call}; loft_text_free(cx, &loft_t); }}"
   } else if shape == "ref" {
-    "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; if (loft_fnref_minted(loft_r, loft_s, loft_ref_null())) loft_free_ref(loft_r); }}"
+    "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; if (loft_fnref_minted(cx, loft_r, loft_s, loft_ref_null(cx))) loft_free_ref(cx, loft_r); }}"
   } else {
     "(void) {call};"
   }
@@ -160,7 +160,7 @@ fn row_store(name: text, call: text, shape: text, threaded: boolean, why: &text)
     return "loft_b[loft_i].t = {call};";
   }
   if shape == "ref" {
-    return "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(loft_b[loft_i].r, loft_s, loft_ref_null()); }}";
+    return "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}";
   }
   if shape == "fn" && !threaded {
     return "loft_b[loft_i].fn = {call};";
@@ -189,21 +189,21 @@ pub fn par_native(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
   if name == "n_parallel_buf_get_text" && len(args) == 1 {
     i = cgen_fn::expr(x, w, args[0], ind);
     t = temp(w, "text");
-    line(w, ind, "loft_text_free(&{t});");
-    line(w, ind, "{t} = loft_par_get_text({as_int(w, i)});");
+    line(w, ind, "loft_text_free(cx, &{t});");
+    line(w, ind, "{t} = loft_par_get_text(cx, {as_int(w, i)});");
     return held_value(w, t, "text");
   }
   if name == "n_parallel_buf_get_narrow" && len(args) == 3 {
     i = cgen_fn::arg(x, w, args, 0, ind);
     n = cgen_fn::arg(x, w, args, 1, ind);
     s = cgen_fn::arg(x, w, args, 2, ind);
-    return E { code: "loft_par_get_narrow({as_int(w, i)}, {as_int(w, n)}, {as_int(w, s)})", kind: K_INT };
+    return E { code: "loft_par_get_narrow(cx, {as_int(w, i)}, {as_int(w, n)}, {as_int(w, s)})", kind: K_INT };
   }
   if (name == "n_parallel_buf_drop" || name == "n_parallel_buf_drop_text" || name == "n_parallel_buf_drop_narrow" || name == "n_parallel_buf_drop_fn") && len(args) == 0 {
-    return E { code: "loft_par_drop(0)", kind: K_VOID };
+    return E { code: "loft_par_drop(cx, 0)", kind: K_VOID };
   }
   if name == "n_parallel_buf_drop_ref" && len(args) == 0 {
-    return E { code: "loft_par_drop(1)", kind: K_VOID };
+    return E { code: "loft_par_drop(cx, 1)", kind: K_VOID };
   }
   null
 }
@@ -250,7 +250,7 @@ fn queue(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     refuse(w, "a par worker whose result has no C shape");
     return none();
   }
-  call = "{cgen_names::c_name(x.b, x.dups, d)}({wc.args.join(", ")})";
+  call = "{cgen_names::c_name(x.b, x.dups, d)}({cx_args(wc.args)})";
   why = "";
   store = row_store(name, call, shape, false, why);
   if why != "" {
@@ -289,7 +289,7 @@ fn queue(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     return threaded_site(x, w, name, input, esz, args[3], d, shapes, extra, wc.texts, shape, kt, size, ind);
   }
   n = temp(w, "int");
-  line(w, ind, "{n} = loft_vec_len({input});");
+  line(w, ind, "{n} = loft_vec_len(cx, {input});");
   line(w, ind, "{{");
   dense = if name == "n_parallel_discard" { "" } else { dense_row(shape) };
   row_c = if dense == "" { "loft_par_slot" } else { dense };
@@ -297,24 +297,24 @@ fn queue(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   line(w, ind + 1, "{row_c} *loft_b = {if name == "n_parallel_discard" { "0" } else { "{push}({n})" }};");
   line(w, ind + 1, "(void) loft_b;");
   line(w, ind + 1, "for (int64_t loft_i = 0; loft_i < {n}; loft_i++) {{");
-  line(w, ind + 2, "loft_ref loft_e = loft_vec_get({input}, {esz}, loft_i);");
+  line(w, ind + 2, "loft_ref loft_e = loft_vec_get(cx, {input}, {esz}, loft_i);");
   line(w, ind + 2, "(void) loft_e;");
   for t in wc.texts {
     line(w, ind + 2, "loft_text {t} = {{ 0, 0, 0 }};");
   }
   for v in wc.vectors {
-    line(w, ind + 2, "loft_ref {v} = loft_ref_null();");
-    line(w, ind + 2, "loft_database(&{v}, 8);");
+    line(w, ind + 2, "loft_ref {v} = loft_ref_null(cx);");
+    line(w, ind + 2, "loft_database(cx, &{v}, 8);");
   }
   line(w, ind + 2, store);
   for t in wc.texts {
-    line(w, ind + 2, "loft_text_free(&{t});");
+    line(w, ind + 2, "loft_text_free(cx, &{t});");
   }
   for v in wc.vectors {
     if name == "n_parallel_discard" {
-      line(w, ind + 2, "loft_free_ref({v});");
+      line(w, ind + 2, "loft_free_ref(cx, {v});");
     } else {
-      line(w, ind + 2, "if (loft_b[loft_i].r.store_nr == {v}.store_nr) loft_b[loft_i].adopted = 1; else loft_free_ref({v});");
+      line(w, ind + 2, "if (loft_b[loft_i].r.store_nr == {v}.store_nr) loft_b[loft_i].adopted = 1; else loft_free_ref(cx, {v});");
     }
   }
   line(w, ind + 1, "}}");
@@ -333,7 +333,7 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   x.par_sites += 1;
   fields: vector<text> = [for i in 0..len(extra) { "loft_c->x{i}" }];
   wc = worker_call(x, d, esz, fields);
-  call = "{cgen_names::c_name(x.b, x.dups, d)}({wc.args.join(", ")})";
+  call = "{cgen_names::c_name(x.b, x.dups, d)}({cx_args(wc.args)})";
   why = "";
   store = row_store(name, call, shape, true, why);
   dense = if name == "n_parallel_discard" { "" } else { dense_row(shape) };
@@ -343,34 +343,34 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   for i in 0..len(extra) {
     decl += "    {held(if i < len(shapes) { shapes[i]! } else { "int" })} x{i};\n";
   }
-  decl += "}} loft_parctx{id};\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi);\n";
+  decl += "}} loft_parctx{id};\nstatic void loft_parbody{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi);\n";
   if kt >= 0 {
-    decl += "static void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn);\n";
+    decl += "static void loft_paradopt{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn);\n";
   }
   x.gen_decls += decl;
-  body = "\nstatic void loft_parbody{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    {row_c} *loft_b = loft_c->b;\n    (void) loft_b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_e = loft_vec_get(loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n";
+  body = "\nstatic void loft_parbody{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    {row_c} *loft_b = loft_c->b;\n    (void) loft_b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_e = loft_vec_get(cx, loft_c->in, {esz}, loft_i);\n        (void) loft_e;\n";
   for t in texts {
     body += "        loft_text {t} = {{ 0, 0, 0 }};\n";
   }
   body += "        {store}\n";
   for t in texts {
-    body += "        loft_text_free(&{t});\n";
+    body += "        loft_text_free(cx, &{t});\n";
   }
   body += "    }}\n}}\n";
   if kt >= 0 {
     cgen_tables::describe_type(x, kt);
-    body += "\nstatic void loft_paradopt{id}(void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_r = loft_b[loft_i].r;\n        if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u, 0 }};\n        loft_copy_bytes(loft_d, 0, loft_r, 0, {size});\n        loft_copy_claims(loft_types, {kt}, loft_r, loft_d);\n        loft_b[loft_i].r = loft_d;\n        loft_b[loft_i].adopted = 0;\n    }}\n}}\n";
+    body += "\nstatic void loft_paradopt{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_r = loft_b[loft_i].r;\n        if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u, 0 }};\n        loft_copy_bytes(cx, loft_d, 0, loft_r, 0, {size});\n        loft_copy_claims(cx, loft_types, {kt}, loft_r, loft_d);\n        loft_b[loft_i].r = loft_d;\n        loft_b[loft_i].adopted = 0;\n    }}\n}}\n";
   }
   x.gen_bodies += body;
   t = as_int(w, cgen_fn::expr(x, w, threads, ind));
   n = temp(w, "int");
-  line(w, ind, "{n} = loft_vec_len({input});");
+  line(w, ind, "{n} = loft_vec_len(cx, {input});");
   line(w, ind, "{{");
   slots = if name == "n_parallel_discard" { "0" } else { "{push}({n})" };
   res = "{{ 0xFFFF, 0, 0, 0 }}";
   if kt >= 0 {
-    line(w, ind + 1, "loft_ref loft_res = loft_ref_null();");
-    line(w, ind + 1, "loft_database(&loft_res, (uint32_t) ({n} * {size}));");
+    line(w, ind + 1, "loft_ref loft_res = loft_ref_null(cx);");
+    line(w, ind + 1, "loft_database(cx, &loft_res, (uint32_t) ({n} * {size}));");
     res = "loft_res";
   }
   init = "loft_parctx{id} loft_c = {{ {input}, {slots}, {res}";
@@ -379,10 +379,10 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   }
   line(w, ind + 1, init + " }};");
   if kt >= 0 {
-    line(w, ind + 1, "loft_par_hold(loft_res);");
-    line(w, ind + 1, "loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id}, loft_res.store_nr);");
+    line(w, ind + 1, "loft_par_hold(cx, loft_res);");
+    line(w, ind + 1, "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id}, loft_res.store_nr);");
   } else {
-    line(w, ind + 1, "loft_par_run({n}, {t}, loft_parbody{id}, &loft_c, 0, 0);");
+    line(w, ind + 1, "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, 0, 0);");
   }
   line(w, ind, "}}");
   if name == "n_parallel_discard" {
@@ -423,7 +423,7 @@ fn fold(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   }
   r = temp(w, "int");
   line(w, ind, "{{");
-  line(w, ind + 1, "uint64_t loft_n = (uint64_t) loft_vec_len({input});");
+  line(w, ind + 1, "uint64_t loft_n = (uint64_t) loft_vec_len(cx, {input});");
   line(w, ind + 1, "uint64_t loft_t = (uint64_t) (int64_t) (int32_t) {threads};");
   line(w, ind + 1, "if (loft_t < 1) loft_t = 1;");
   line(w, ind + 1, "if (loft_t > (loft_n > 1 ? loft_n : 1)) loft_t = loft_n > 1 ? loft_n : 1;");
@@ -432,7 +432,7 @@ fn fold(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   line(w, ind + 2, "for (uint64_t loft_k = 0; loft_k < loft_t; loft_k++) {{");
   line(w, ind + 3, "int64_t loft_p = {init};");
   line(w, ind + 3, "for (uint64_t loft_i = loft_k * loft_n / loft_t; loft_i < (loft_k + 1) * loft_n / loft_t; loft_i++)");
-  line(w, ind + 4, "loft_p = {f}(loft_p, loft_i64_bits(loft_par_arg(loft_vec_get({input}, 8, (int64_t) loft_i), 8)));");
+  line(w, ind + 4, "loft_p = {f}(loft_p, loft_i64_bits(cx, loft_par_arg(cx, loft_vec_get(cx, {input}, 8, (int64_t) loft_i), 8)));");
   line(w, ind + 3, "{r} = {f}({r}, loft_p);");
   line(w, ind + 2, "}}");
   line(w, ind + 1, "}}");

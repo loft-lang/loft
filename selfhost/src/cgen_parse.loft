@@ -320,7 +320,7 @@ pub fn parse_table(x: Cx) -> text {
   if last < 0 {
     return "";
   }
-  out + "static const loft_ptype loft_ptypes[{last + 1}] = {{ {rows.join(", ")} }};\nstatic const loft_tdesc *loft_parse_types(void) {{ return loft_types; }}\n"
+  out + "static const loft_ptype loft_ptypes[{last + 1}] = {{ {rows.join(", ")} }};\nstatic const loft_tdesc *loft_parse_types(loft_cx *cx) {{ return loft_types; }}\n"
 }
 
 // `loft_is_main_vector`: the types a vector variable's own store is minted as
@@ -333,9 +333,9 @@ pub fn main_vector_test(x: Cx) -> text {
     }
   }
   if len(cases) == 0 {
-    return "static int loft_is_main_vector(uint16_t tp) {{\n    (void) tp;\n    return 0;\n}}\n";
+    return "static int loft_is_main_vector(loft_cx *cx, uint16_t tp) {{\n    (void) tp;\n    return 0;\n}}\n";
   }
-  "static int loft_is_main_vector(uint16_t tp) {{\n    switch (tp) {{\n{cases.join("\n")}\n        return 1;\n    default:\n        return 0;\n    }}\n}}\n"
+  "static int loft_is_main_vector(loft_cx *cx, uint16_t tp) {{\n    switch (tp) {{\n{cases.join("\n")}\n        return 1;\n    default:\n        return 0;\n    }}\n}}\n"
 }
 
 // `json_layout`: the offsets of the JsonValue tree — each variant's payload, a JsonField's name

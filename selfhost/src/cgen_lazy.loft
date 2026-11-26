@@ -68,7 +68,7 @@ pub fn declare_tables(w: W) {
 // `epilogue`'s table part: every table released at an exit.
 pub fn free_tables(w: W, ind: integer) {
   for t in w.split_tabs {
-    line(w, ind, "loft_stab_free(&st{t.var});");
+    line(w, ind, "loft_stab_free(cx, &st{t.var});");
   }
 }
 
@@ -103,7 +103,7 @@ pub fn lazy_op(x: Cx, w: W, name: text, args: vector<ir::Node>, done: &boolean) 
     vec = lazy_vector(x, w, args[0]!, "OpGetVectorNullable");
     if vec >= 0 {
       done = true;
-      return E { code: "loft_ls_next(&ls{vec}, &lsd{vec})", kind: K_VIEW };
+      return E { code: "loft_ls_next(cx, &ls{vec}, &lsd{vec})", kind: K_VIEW };
     }
   }
   if name == "OpLeInt" {
@@ -172,7 +172,7 @@ pub fn table_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, d
         done = true;
         i = as_int(w, cgen_fn::expr(x, w, inner[2]!, ind));
         // `@FR-E-Report` — the unguarded read reports an index naming no part.
-        code = if reader == "OpGetVector" { "loft_stab_get_at(&st{t}, {i}, {cgen_fn::site(w)})" } else { "loft_stab_get(&st{t}, {i})" };
+        code = if reader == "OpGetVector" { "loft_stab_get_at(cx, &st{t}, {i}, {cgen_fn::site(w)})" } else { "loft_stab_get(cx, &st{t}, {i})" };
         return E { code: code, kind: K_VIEW };
       },
       _ => return none(),
@@ -239,7 +239,7 @@ fn table_bind(x: Cx, w: W, t: opt_split_table::SplitTable, value: ir::Node, ind:
     return;
   }
   view = as_view(w, cgen_fn::expr(x, w, src, ind));
-  line(w, ind, "loft_stab_fill(&st{t.var}, {view}, {t.separator}u);");
+  line(w, ind, "loft_stab_fill(cx, &st{t.var}, {view}, {t.separator}u);");
   flush(w, ind);
 }
 
@@ -270,11 +270,11 @@ fn lazy_bind(x: Cx, w: W, l: opt_lazy_split::LazySplit, value: ir::Node, ind: in
   in_place = p >= 0 && (w.params[p] ?? false) && !(w.links[p] ?? false) && (w.shapes[p] ?? "") == "text" && !char_walk::text_written(x.b, code, p);
   view = as_view(w, cgen_fn::expr(x, w, src, ind));
   if in_place {
-    line(w, ind, "ls{v} = loft_ls_of({view}, {l.separator}u);");
+    line(w, ind, "ls{v} = loft_ls_of(cx, {view}, {l.separator}u);");
   } else {
     own = temp(w, "text");
-    line(w, ind, "loft_text_set(&{own}, {view});");
-    line(w, ind, "ls{v} = loft_ls_of(loft_view(&{own}), {l.separator}u);");
+    line(w, ind, "loft_text_set(cx, &{own}, {view});");
+    line(w, ind, "ls{v} = loft_ls_of(cx, loft_view(cx, &{own}), {l.separator}u);");
   }
   line(w, ind, "lsd{v} = 0;");
   flush(w, ind);

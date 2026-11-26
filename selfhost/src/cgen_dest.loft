@@ -194,7 +194,7 @@ fn level(x: Cx, w: W, levels: vector<opt_destination::Level>, at: integer, names
     w.no_memo += 1;
     r = cgen_fn::expr(x, w, filled[k]!, ind + 1);
     w.no_memo -= 1;
-    line(w, ind + 1, "loft_remove_claims(loft_types, {vt}, {as_ref(w, r)});");
+    line(w, ind + 1, "loft_remove_claims(cx, loft_types, {vt}, {as_ref(w, r)});");
   }
   cgen_fn::stmt(x, w, lv.else_v, ind + 1);
   line(w, ind, "}}");

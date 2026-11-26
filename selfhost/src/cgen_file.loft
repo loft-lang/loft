@@ -246,7 +246,7 @@ pub fn open_hold(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
   w.decls += ["loft_fcur {c};"];
   w.decls += ["loft_fpos {c}p;"];
   file = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: f }, ind));
-  line(w, ind, "{c}p = loft_fcur_hold(&{c}, {file});");
+  line(w, ind, "{c}p = loft_fcur_hold(cx, &{c}, {file});");
   w.file_holds += [FileHold { file: f, name: c, depth: len(w.loops) }];
   true
 }
@@ -255,7 +255,7 @@ pub fn open_hold(x: Cx, w: W, lp: ir::Block, ind: integer) -> boolean {
 pub fn close_hold(w: W, ind: integer) {
   c = w.file_holds[len(w.file_holds) - 1].name;
   w.file_holds = w.file_holds[0..len(w.file_holds) - 1];
-  line(w, ind, "loft_fcur_release(&{c}, {c}p);");
+  line(w, ind, "loft_fcur_release(cx, &{c}, {c}p);");
 }
 
 // `release_holds`: give back the cursor of every hold of a loop at depth `from` or deeper,
@@ -264,7 +264,7 @@ pub fn release_holds(w: W, from: integer, ind: integer) {
   for i in rev(0..len(w.file_holds)) {
     if w.file_holds[i]!.depth >= from {
       c = w.file_holds[i]!.name;
-      line(w, ind, "loft_fcur_release(&{c}, {c}p);");
+      line(w, ind, "loft_fcur_release(cx, &{c}, {c}p);");
     }
   }
 }
@@ -284,11 +284,11 @@ pub fn held_read(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> boolean {
   c = w.file_holds[at].name;
   shape = read_shape(x, w, args);
   if shape != 0 {
-    line(w, ind, "loft_fcur_read(&{c}, &{c}p, {if shape < 0 { -shape } else { shape }}, {if shape < 0 { 1 } else { 0 }}, &{w.names[var]!});");
+    line(w, ind, "loft_fcur_read(cx, &{c}, &{c}p, {if shape < 0 { -shape } else { shape }}, {if shape < 0 { 1 } else { 0 }}, &{w.names[var]!});");
     return true;
   }
   if float_shape(x, w, args) {
-    line(w, ind, "loft_fcur_readf(&{c}, &{c}p, &{w.names[var]!});");
+    line(w, ind, "loft_fcur_readf(cx, &{c}, &{c}p, &{w.names[var]!});");
     return true;
   }
   false

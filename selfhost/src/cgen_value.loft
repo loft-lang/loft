@@ -271,7 +271,7 @@ pub fn slice_carrier_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, d
     }
     cgen_tables::describe_type(x, tp);
     cgen_tables::copy_type(x, tp);
-    return E { code: "loft_slice_take(loft_types, &{w.names[var]!}, {cgen_ref::enum_parent_size(x.b, tp)}, {tp})", kind: K_VOID };
+    return E { code: "loft_slice_take(cx, loft_types, &{w.names[var]!}, {cgen_ref::enum_parent_size(x.b, tp)}, {tp})", kind: K_VOID };
   }
   if name == "OpSetInt4" && len(args) == 3 && args[1]! == ir::NdInt { n: 0 } && args[2]! == ir::NdInt { n: 0 } {
     done = true;

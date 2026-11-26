@@ -366,14 +366,14 @@ pub fn binding(x: Cx, d: integer) -> Written {
     if pick == "s" {
       args += ["({cty}) a{i}"];
     } else if pick == "t" {
-      body += "    char *s{i} = loft_cstr_own(a{i});\n";
+      body += "    char *s{i} = loft_cstr_own(cx, a{i});\n";
       args += ["s{i}"];
       frees += ["    free(s{i});"];
     } else {
-      args += ["({cty}) loft_cvec_ptr(a{i})"];
+      args += ["({cty}) loft_cvec_ptr(cx, a{i})"];
       if pick == "vc" {
         cn = if len(args) < len(sig.texts) { sig.texts[len(args)]! } else { "int64_t" };
-        args += ["({cn}) loft_vec_len(a{i})"];
+        args += ["({cn}) loft_vec_len(cx, a{i})"];
       }
     }
   }
@@ -385,16 +385,17 @@ pub fn binding(x: Cx, d: integer) -> Written {
   call = "loft_cfp({args.join(", ")})";
   when = bound_by(x.b, file);
   if is_lazy(x.b, file) {
-    decl = "    static {rt} (*loft_cfp)({params_text}) = 0;\n    if (!loft_cfp) {{ void *loft_p = loft_c_lazy_sym({sym}, {c_string(owner_pkg(x.b, file))}); memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    if (!loft_cfp) loft_c_missing_symbol({sym});";
+    // The symbol found once, published to every thread (`LOFT_PUB_GET` / `LOFT_PUB_SET`).
+    decl = "    static void *loft_cfs = 0;\n    {rt} (*loft_cfp)({params_text});\n    void *loft_p;\n    LOFT_PUB_GET(loft_cfs, loft_p);\n    if (!loft_p) {{ loft_p = loft_c_lazy_sym(cx, {sym}, {c_string(owner_pkg(x.b, file))}); LOFT_PUB_SET(loft_cfs, loft_p); }}\n    memcpy(&loft_cfp, &loft_p, sizeof loft_p);\n    if (!loft_cfp) loft_c_missing_symbol(cx, {sym});";
   } else if when != "" {
-    decl = "#if defined({when})\n    static {rt} (*loft_cfp)({params_text}) = 0;\n    if (!loft_cfp) {{ void *loft_p = loft_c_bound_sym({sym}); memcpy(&loft_cfp, &loft_p, sizeof loft_p); }}\n    if (!loft_cfp) loft_c_missing_symbol({sym});\n#else\n    extern {rt} ({def.c_symbol})({params_text});\n    {rt} (*const loft_cfp)({params_text}) = ({def.c_symbol});\n#endif";
+    decl = "#if defined({when})\n    static void *loft_cfs = 0;\n    {rt} (*loft_cfp)({params_text});\n    void *loft_p;\n    LOFT_PUB_GET(loft_cfs, loft_p);\n    if (!loft_p) {{ loft_p = loft_c_bound_sym(cx, {sym}); LOFT_PUB_SET(loft_cfs, loft_p); }}\n    memcpy(&loft_cfp, &loft_p, sizeof loft_p);\n    if (!loft_cfp) loft_c_missing_symbol(cx, {sym});\n#else\n    extern {rt} ({def.c_symbol})({params_text});\n    {rt} (*const loft_cfp)({params_text}) = ({def.c_symbol});\n#endif";
   } else {
     decl = "    extern {rt} ({def.c_symbol})({params_text});";
     call = "({def.c_symbol})({args.join(", ")})";
   }
   out = "{decl}\n{body}" + result(sig.ret, ret, call, frees);
   name = cgen_names::c_name(x.b, x.dups, d);
-  list = if len(decl_params) == 0 { "void" } else { decl_params.join(", ") };
+  list = cx_params(decl_params);
   Written { text: out, refused: "", name: name, ret: held(ret), list: list, storage: "LOFT_HOT_INLINE" }
 }
 
@@ -412,7 +413,7 @@ fn result(c_ret: CT, ret: text, call: text, frees: vector<text>) -> text {
     return out;
   }
   if c_ret.kind == "ptr" && ret == "text" {
-    out += "    loft_text r = loft_text_from_cstr({call});\n";
+    out += "    loft_text r = loft_text_from_cstr(cx, {call});\n";
     for f in frees {
       out += "{f}\n";
     }
@@ -638,7 +639,7 @@ pub fn forwarded(x: Cx, d: integer) -> Written {
     params += [if link { "{held(c)} *a{i}" } else { "{passed(c)} a{i}" }];
     args += ["a{i}"];
   }
-  call = "{in_binary(def.native)}({args.join(", ")})";
+  call = "{in_binary(def.native)}({cx_args(args)})";
   body = if ret == "void" { "    {call};\n" } else { "    return {call};\n" };
-  Written { text: body, refused: "", name: cgen_names::c_name(x.b, x.dups, d), ret: held(ret), list: if len(params) == 0 { "void" } else { params.join(", ") }, storage: "static inline" }
+  Written { text: body, refused: "", name: cgen_names::c_name(x.b, x.dups, d), ret: held(ret), list: cx_params(params), storage: "static inline" }
 }

@@ -1266,23 +1266,23 @@ fn materialise(x: Cx, w: W, dv: DcVar, ind: integer, ks: vector<ir::Node>, index
     tests: vector<text> = [];
     for k in ks {
       kc = match loop_shape::unspan(k) { NdVar { n } => "(int64_t) {w.names[n]!}", NdInt { n } => "INT64_C({n})", _ => "0" };
-      tests += ["loft_dc_is_elem({name}, {vn}, {dv.elem_size}, {kc})"];
+      tests += ["loft_dc_is_elem(cx, {name}, {vn}, {dv.elem_size}, {kc})"];
     }
     cond = "{flag} && ({tests.join(" || ")})";
   }
   line(w, ind, "if ({cond}) {{");
-  line(w, ind + 1, "loft_ref loft_dcc = loft_ref_null();");
-  line(w, ind + 1, "loft_bind_copy(loft_types, {dv.tp}, &loft_dcc, {name});");
+  line(w, ind + 1, "loft_ref loft_dcc = loft_ref_null(cx);");
+  line(w, ind + 1, "loft_bind_copy(cx, loft_types, {dv.tp}, &loft_dcc, {name});");
   for dd in moved {
     dn = w.names[dd]!;
-    line(w, ind + 1, "{dn} = loft_dc_remap(loft_types, {dv.tp}, {name}, loft_dcc, {dn});");
+    line(w, ind + 1, "{dn} = loft_dc_remap(cx, loft_types, {dv.tp}, {name}, loft_dcc, {dn});");
   }
   line(w, ind + 1, "{name} = loft_dcc;");
   line(w, ind + 1, "{own} = loft_dcc;");
   line(w, ind + 1, "{flag} = 0;");
   for r in w.rec_ptrs {
     if r.var == dv.x || has_int(dv.derived, r.var) {
-      line(w, ind + 1, "{r.pa} = loft_rec_ptr({w.names[r.var]!});");
+      line(w, ind + 1, "{r.pa} = loft_rec_ptr(cx, {w.names[r.var]!});");
     }
   }
   line(w, ind, "}}");

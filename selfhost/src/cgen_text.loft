@@ -183,7 +183,7 @@ fn format_long(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) ->
   pair = [args[1], args[3]];
   val = cgen_fn::arg(x, w, pair, 0, ind);
   width = cgen_fn::arg(x, w, pair, 1, ind);
-  E { code: "loft_format_long(&{dest}, {as_int(w, val)}, {radix}, {as_int(w, width)}, {token}, {plus}, {note}, {dir})", kind: K_VOID }
+  E { code: "loft_format_long(cx, &{dest}, {as_int(w, val)}, {radix}, {as_int(w, width)}, {token}, {plus}, {note}, {dir})", kind: K_VOID }
 }
 
 // The text operators and printing (`text_operator` and the text arms after it); `done` says
@@ -235,14 +235,14 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
               w.pending += [t];
             }
             val = cgen_fn::expr(x, w, ops[len(ops) - 1], ind);
-            return E { code: "loft_text_concat(&{dest}, {as_view(w, val)})", kind: K_VOID };
+            return E { code: "loft_text_concat(cx, &{dest}, {as_view(w, val)})", kind: K_VOID };
           }
         }
       },
       _ => {},
     }
     val = text_read(x, w, args[1], false, ind);
-    return E { code: "loft_text_concat(&{dest}, {as_view(w, val)})", kind: K_VOID };
+    return E { code: "loft_text_concat(cx, &{dest}, {as_view(w, val)})", kind: K_VOID };
   }
   if name == "OpFormatInt" || name == "OpFormatLong" {
     return format_long(x, w, name, args, ind);
@@ -262,7 +262,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     pair = [args[1], args[2]];
     val = text_operand(x, w, pair, 0, ind);
     width = text_operand(x, w, pair, 1, ind);
-    return E { code: "loft_format_text(&{dest}, {as_view(w, val)}, {as_int(w, width)}, {dir}, {token})", kind: K_VOID };
+    return E { code: "loft_format_text(cx, &{dest}, {as_view(w, val)}, {as_int(w, width)}, {dir}, {token})", kind: K_VOID };
   }
   if (name == "OpFormatFloat" || name == "OpFormatSingle") && count == 7 {
     dest = text_dest(w, args[0]);
@@ -279,7 +279,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     dir = cgen_fn::arg(x, w, four, 3, ind);
     value = if name == "OpFormatSingle" { "(double) {as_single(w, val)}" } else { as_float(w, val) };
     single = if name == "OpFormatSingle" { 1 } else { 0 };
-    return E { code: "loft_format_float(&{dest}, {value}, {as_int(w, width)}, {as_int(w, prec)}, {token}, {plus}, (int) {as_int(w, dir)}, {single})", kind: K_VOID };
+    return E { code: "loft_format_float(cx, &{dest}, {value}, {as_int(w, width)}, {as_int(w, prec)}, {token}, {plus}, (int) {as_int(w, dir)}, {single})", kind: K_VOID };
   }
   if name == "OpFreeText" {
     if count != 1 {
@@ -295,7 +295,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
           tuple_text_leaves("{w.names[var]!}.f{idx}", members[idx]!, leaves);
           frees: vector<text> = [];
           for t in leaves {
-            frees += ["loft_text_free(&{t})"];
+            frees += ["loft_text_free(cx, &{t})"];
           }
           return E { code: if len(frees) == 0 { "((void) 0)" } else { "({frees.join(", ")})" }, kind: K_VOID };
         }
@@ -306,12 +306,12 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     v = loop_shape::var_of(loop_shape::unspan(args[0]));
     if v >= 0 && (w.borrowed[v] ?? false) {
       if tested_roots(w, v) != null {
-        return E { code: "loft_text_free(&loft_own{v})", kind: K_VOID };
+        return E { code: "loft_text_free(cx, &loft_own{v})", kind: K_VOID };
       }
       return E { code: "((void) 0)", kind: K_VOID };
     }
     dest = text_dest(w, args[0]);
-    return E { code: "loft_text_free(&{dest})", kind: K_VOID };
+    return E { code: "loft_text_free(cx, &{dest})", kind: K_VOID };
   }
   if name == "OpPrint" {
     if count != 1 {
@@ -319,7 +319,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
       return none();
     }
     a = text_operand(x, w, args, 0, ind);
-    return E { code: "loft_print({as_view(w, a)})", kind: K_VOID };
+    return E { code: "loft_print(cx, {as_view(w, a)})", kind: K_VOID };
   }
   if (name == "OpLengthText" || name == "OpSizeText") && count == 1 {
     a = cgen_fn::arg(x, w, args, 0, ind);
@@ -331,20 +331,20 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     return E { code: "{dest}.len = 0", kind: K_VOID };
   }
   if name == "OpConvTextFromNull" && count == 0 {
-    return E { code: "loft_null_text()", kind: K_VIEW };
+    return E { code: "loft_null_text(cx)", kind: K_VIEW };
   }
   if name == "OpConvBoolFromNull" && count == 0 {
     return E { code: "LOFT_BOOL_NULL", kind: K_BOOL };
   }
   if (name == "OpCastIntFromText" || name == "OpCastLongFromText") && count == 1 {
     t = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "loft_int_of_text_at({as_view(w, t)}, {cgen_fn::site(w)})", kind: K_INT };
+    return E { code: "loft_int_of_text_at(cx, {as_view(w, t)}, {cgen_fn::site(w)})", kind: K_INT };
   }
   if name == "OpGetTextSub" && count == 3 {
     t = cgen_fn::arg(x, w, args, 0, ind);
     from = cgen_fn::arg(x, w, args, 1, ind);
     till = cgen_fn::arg(x, w, args, 2, ind);
-    return E { code: "loft_text_sub({as_view(w, t)}, {as_int(w, from)}, {as_int(w, till)})", kind: K_VIEW };
+    return E { code: "loft_text_sub(cx, {as_view(w, t)}, {as_int(w, from)}, {as_int(w, till)})", kind: K_VIEW };
   }
   if name == "OpConvCharacterFromNull" && count == 0 {
     return E { code: "((uint32_t) 0)", kind: K_CHAR };
@@ -353,36 +353,36 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
     t = cgen_fn::arg(x, w, args, 0, ind);
     i = cgen_fn::arg(x, w, args, 1, ind);
     if name == "OpTextCharacter" {
-      return E { code: "loft_text_char_at({as_view(w, t)}, {as_int(w, i)}, {cgen_fn::site(w)})", kind: K_CHAR };
+      return E { code: "loft_text_char_at(cx, {as_view(w, t)}, {as_int(w, i)}, {cgen_fn::site(w)})", kind: K_CHAR };
     }
-    return E { code: "loft_text_char({as_view(w, t)}, {as_int(w, i)})", kind: K_CHAR };
+    return E { code: "loft_text_char(cx, {as_view(w, t)}, {as_int(w, i)})", kind: K_CHAR };
   }
   if (name == "OpAppendCharacter" || name == "OpAppendStackCharacter") && count == 2 {
     // `@FR-R-PushFill`'s text clause: a push into a text a loop holds a window for.
     held = cgen_win::text_window(w, loop_shape::var_of(loop_shape::unspan(args[0])));
     if held.name != "" {
       pushed = cgen_fn::expr(x, w, args[1], ind);
-      return E { code: "loft_tw_push(&{held.name}, &{held.place}, {as_char(w, pushed)})", kind: K_VOID };
+      return E { code: "loft_tw_push(cx, &{held.name}, &{held.place}, {as_char(w, pushed)})", kind: K_VOID };
     }
     dest = text_dest(w, args[0]);
     c = cgen_fn::expr(x, w, args[1], ind);
-    return E { code: "loft_push_code(&{dest}, {as_char(w, c)})", kind: K_VOID };
+    return E { code: "loft_push_code(cx, &{dest}, {as_char(w, c)})", kind: K_VOID };
   }
   if name == "OpCastTextFromBool" && count == 1 {
     v = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "loft_bool_text({as_bool(w, v)})", kind: K_VIEW };
+    return E { code: "loft_bool_text(cx, {as_bool(w, v)})", kind: K_VIEW };
   }
   if name == "OpConvBoolFromText" && count == 1 {
     t = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "(!loft_str_is_null({as_view(w, t)}))", kind: K_COND };
+    return E { code: "(!loft_str_is_null(cx, {as_view(w, t)}))", kind: K_COND };
   }
   if name == "OpCastFloatFromText" && count == 1 {
     t = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "loft_float_of_text({as_view(w, t)})", kind: K_FLOAT };
+    return E { code: "loft_float_of_text(cx, {as_view(w, t)})", kind: K_FLOAT };
   }
   if name == "OpCastSingleFromText" && count == 1 {
     t = cgen_fn::expr(x, w, args[0], ind);
-    return E { code: "loft_single_of_text({as_view(w, t)})", kind: K_SINGLE };
+    return E { code: "loft_single_of_text(cx, {as_view(w, t)})", kind: K_SINGLE };
   }
   done = false;
   none()
@@ -558,7 +558,7 @@ pub fn borrowed_bind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
           refuse(w, "a borrowed text would view a temporary");
           return;
         }
-        borrowed_assign(x, w, var, value, "loft_get_text({as_ref(w, r)}, {fld})", ind);
+        borrowed_assign(x, w, var, value, "loft_get_text(cx, {as_ref(w, r)}, {fld})", ind);
         return;
       }
     },
@@ -609,7 +609,7 @@ fn borrowed_assign(x: Cx, w: W, var: integer, value: ir::Node, view: text, ind: 
   for p in roots! {
     tests += ["{as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: p }, ind))}.store_nr != {b}.store_nr"];
   }
-  line(w, ind, "{{ loft_str lt = {view}; if ({tests.join(" && ")}) {name} = lt; else {{ loft_text_set(&loft_own{var}, lt); {name} = loft_view(&loft_own{var}); }} }}");
+  line(w, ind, "{{ loft_str lt = {view}; if ({tests.join(" && ")}) {name} = lt; else {{ loft_text_set(cx, &loft_own{var}, lt); {name} = loft_view(cx, &loft_own{var}); }} }}");
 }
 
 // `held_texts`: the texts the function holds, each freed by its epilogue — its text locals,
@@ -674,7 +674,7 @@ pub fn expand_epilogues(w: W) -> text {
     if l.trim() == EPILOGUE_MARK {
       indent = l[0..l.size() - EPILOGUE_MARK.size()];
       for t in texts {
-        out += "{indent}loft_text_free(&{t});\n";
+        out += "{indent}loft_text_free(cx, &{t});\n";
       }
       continue;
     }
@@ -697,7 +697,7 @@ fn occurrences(whole: text, part: text) -> integer {
 
 // `park_work_texts` (`@FR-R-WorkPark`): a frame's work texts keep their room between its
 // calls — each taken from a slot of its own at entry and parked there at each release.
-pub fn park_work_texts(w: W, d: ir::Definition, body: text) -> text {
+pub fn park_work_texts(w: W, d: ir::Definition, c_name: text, body: text) -> text {
   if (env_variable("LOFT_NO_WORK_PARK") ?? "0") != "0" {
     return body;
   }
@@ -712,10 +712,12 @@ pub fn park_work_texts(w: W, d: ir::Definition, body: text) -> text {
     if occurrences(out, decl) != 1 {
       continue;
     }
-    slot = "loft_wp{w.index}_{v}";
+    // Named from the function's own C name, never its definition number, which moves when a
+    // definition is added before it; unique at file scope, where the C splitter may move it.
+    slot = "loft_wp_{c_name}_{v}";
     at = out.find(decl) ?? continue;
-    out = "{out[0..at]}    static LOFT_TLS loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(&{slot});\n{out[at + decl.size()..out.size()]}";
-    out = out.replace("loft_text_free(&{name});", "loft_wpark_put(&{slot}, &{name});");
+    out = "{out[0..at]}    static loft_text {slot} = {{ 0, 0, 0 }};\n    loft_text {name} = loft_wpark_take(cx, &{slot});\n{out[at + decl.size()..out.size()]}";
+    out = out.replace("loft_text_free(cx, &{name});", "loft_wpark_put(cx, &{slot}, &{name});");
   }
   out
 }

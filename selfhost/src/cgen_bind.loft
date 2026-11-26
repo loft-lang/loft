@@ -82,7 +82,7 @@ fn record_of(shape: ir::TypeT) -> integer {
 fn fresh_unless_owned(x: Cx, w: W, f: ir::Function, var: integer, value: ir::Node, first: boolean, name: text, ind: integer) {
   witnessed = binds::owner_witness(f, var) != null;
   if (first && witnessed) || (!first && !binds::owns_displaced_store(x.b, f, var, value)) {
-    line(w, ind, "{name} = loft_ref_null();");
+    line(w, ind, "{name} = loft_ref_null(cx);");
   }
 }
 
@@ -134,15 +134,15 @@ pub fn link_rebind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
     src = if releases { slot_self_step(b, value, var) } else { null };
     if src != null {
       moved = cgen_fn::expr(x, w, src!, ind);
-      line(w, ind, "loft_slot_move(loft_types, {stp}, {cell}, {as_ref(w, moved)});");
+      line(w, ind, "loft_slot_move(cx, loft_types, {stp}, {cell}, {as_ref(w, moved)});");
       flush(w, ind);
       return;
     }
     old = temp(w, "ref");
     line(w, ind, "{old} = (*{cell});");
-    line(w, ind, "loft_slot_write(loft_types, {stp}, &(*{cell}), {r}, {if owned { 1 } else { 0 }});");
+    line(w, ind, "loft_slot_write(cx, loft_types, {stp}, &(*{cell}), {r}, {if owned { 1 } else { 0 }});");
     if displaces {
-      line(w, ind, "loft_free_displaced({old}, (*{cell}));");
+      line(w, ind, "loft_free_displaced(cx, {old}, (*{cell}));");
     }
     flush(w, ind);
     return;
@@ -152,7 +152,7 @@ pub fn link_rebind(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) {
     old = temp(w, "ref");
     line(w, ind, "{old} = {name};");
     line(w, ind, "{name} = {r};");
-    line(w, ind, "loft_free_displaced({old}, {name});");
+    line(w, ind, "loft_free_displaced(cx, {old}, {name});");
   } else {
     line(w, ind, "{name} = {r};");
   }
@@ -208,15 +208,15 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
   // schema names the collection's type.
   if is_null && binds::owns_keyed_store(tp) {
     if first {
-      line(w, ind, "{name} = loft_ref_null();");
+      line(w, ind, "{name} = loft_ref_null(cx);");
     }
     if !(binds::is_inline_ref(f, var) || binds::is_overwritten_view(f, var)) {
       keyed = lower::hash_type_of(b, v.type_def);
       if keyed == null {
-        line(w, ind, "loft_database(&{name}, 8);");
+        line(w, ind, "loft_database(cx, &{name}, 8);");
       } else {
         cgen_tables::describe_type(x, keyed!);
-        line(w, ind, "loft_database_typed(&{name}, {cgen_ref::enum_parent_size(b, keyed!)}, {keyed!});");
+        line(w, ind, "loft_database_typed(cx, &{name}, {cgen_ref::enum_parent_size(b, keyed!)}, {keyed!});");
       }
     }
     return;
@@ -240,9 +240,9 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     if mints {
       known = lower::main_vector_of(b, [base]) ?? 65535;
       size = cgen_ref::enum_parent_size(b, known);
-      line(w, ind, "{name} = loft_ref_null();");
+      line(w, ind, "{name} = loft_ref_null(cx);");
       cgen_tables::describe_type(x, known);
-      line(w, ind, "loft_database_typed(&{name}, {size}, {known});");
+      line(w, ind, "loft_database_typed(cx, &{name}, {size}, {known});");
       return;
     }
   }
@@ -268,7 +268,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
         r = temp(w, "ref");
         line(w, ind, "{r} = {as_ref(w, e)};");
         fresh_unless_owned(x, w, f, var, value, first, name, ind);
-        line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
+        line(w, ind, "loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});");
         flush(w, ind);
         return;
       }
@@ -309,9 +309,9 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     line(w, ind, "{old} = {name};");
     line(w, ind, "{r} = {as_ref(w, e)};");
     line(w, ind, "if ({r}.store_nr != 0xFFFF && ({r}.store_nr == {witness}.store_nr)) {{");
-    line(w, ind + 1, "{name} = loft_ref_null();");
+    line(w, ind + 1, "{name} = loft_ref_null(cx);");
     cgen_tables::copy_type(x, bytes);
-    line(w, ind + 1, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
+    line(w, ind + 1, "loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});");
     line(w, ind, "}} else {{ {name} = {r}; }}");
     if rebind_owned {
       keep = "{old}.store_nr != {name}.store_nr";
@@ -319,7 +319,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       if buf != null {
         keep += " && {old}.store_nr != {w.names[buf!]!}.store_nr";
       }
-      line(w, ind, "if ({keep}) loft_free_ref({old});");
+      line(w, ind, "if ({keep}) loft_free_ref(cx, {old});");
     }
     flush(w, ind);
     return;
@@ -353,23 +353,23 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       line(w, ind, "if ({src_held}.store_nr != 0xFFFF && {src_held}.store_nr == {name}.store_nr && {src_held}.rec == {name}.rec && {src_held}.pos == {name}.pos) {{");
       line(w, ind, "}} else");
     }
-    line(w, ind, "if (loft_fnref_minted({src_held}, (uint64_t) {since}, {w.names[fv]!}.clos)) {{");
-    line(w, ind + 1, "loft_fnref_adopt({src_held});");
+    line(w, ind, "if (loft_fnref_minted(cx, {src_held}, (uint64_t) {since}, {w.names[fv]!}.clos)) {{");
+    line(w, ind + 1, "loft_fnref_adopt(cx, {src_held});");
     entry = binds::entry_witness(f, var);
     if !witnessed && !v.argument {
-      line(w, ind + 1, "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src_held}.store_nr) loft_free_ref({dst});");
+      line(w, ind + 1, "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src_held}.store_nr) loft_free_ref(cx, {dst});");
     } else if !witnessed && entry != null {
-      line(w, ind + 1, "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src_held}.store_nr && {dst}.store_nr != {w.names[entry!]!}.store_nr) loft_free_ref({dst});");
+      line(w, ind + 1, "if ({dst}.store_nr != 0xFFFF && {dst}.store_nr != {src_held}.store_nr && {dst}.store_nr != {w.names[entry!]!}.store_nr) loft_free_ref(cx, {dst});");
     }
     line(w, ind + 1, "{name} = {src_held};");
     line(w, ind, "}} else {{");
     if witnessed && !first {
-      line(w, ind + 1, "{name} = loft_ref_null();");
+      line(w, ind + 1, "{name} = loft_ref_null(cx);");
     }
     cgen_tables::describe_type(x, known);
-    line(w, ind + 1, "loft_database_typed(&{name}, {size}, {known});");
+    line(w, ind + 1, "loft_database_typed(cx, &{name}, {size}, {known});");
     cgen_tables::copy_type(x, known);
-    line(w, ind + 1, "loft_copy_record(loft_types, {known}, {src_held}, {name}, 4);");
+    line(w, ind + 1, "loft_copy_record(cx, loft_types, {known}, {src_held}, {name}, 4);");
     line(w, ind, "}}");
     flush(w, ind);
     return;
@@ -388,10 +388,10 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     }
     fresh_unless_owned(x, w, f, var, value, first, name, ind);
     entry = binds::entry_witness(f, var);
-    null_keeps_entry = if entry == null { "" } else { "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {w.names[entry!]!}.store_nr) {name} = loft_ref_null(); else " };
+    null_keeps_entry = if entry == null { "" } else { "if ({r}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {w.names[entry!]!}.store_nr) {name} = loft_ref_null(cx); else " };
     if !frees {
       cgen_tables::copy_type(x, bytes);
-      line(w, ind, "{null_keeps_entry}loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
+      line(w, ind, "{null_keeps_entry}loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});");
       flush(w, ind);
       return;
     }
@@ -417,10 +417,10 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     };
     if is_call && swap_safe(b, bytes, []) {
       cgen_tables::copy_type(x, bytes);
-      line(w, ind, "{null_keeps_entry}if (!({keep} && loft_swap_rebind({bytes}, {r}, &{name}))) {{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref({r}); }}");
+      line(w, ind, "{null_keeps_entry}if (!({keep} && loft_swap_rebind(cx, {bytes}, {r}, &{name}))) {{ loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref(cx, {r}); }}");
     } else {
       cgen_tables::copy_type(x, bytes);
-      line(w, ind, "{null_keeps_entry}{{ loft_bind_copy(loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref({r}); }}");
+      line(w, ind, "{null_keeps_entry}{{ loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r}); if ({keep}) loft_free_ref(cx, {r}); }}");
     }
     flush(w, ind);
     return;
@@ -434,7 +434,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     line(w, ind, "{r} = {as_ref(w, e)};");
     fresh_unless_owned(x, w, f, var, value, first, name, ind);
     cgen_tables::copy_type(x, bytes);
-    line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
+    line(w, ind, "loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});");
     flush(w, ind);
     return;
   }
@@ -446,10 +446,10 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     old = temp(w, "ref");
     line(w, ind, "{r} = {as_ref(w, e)};");
     line(w, ind, "{old} = {name};");
-    line(w, ind, "{name} = loft_ref_null();");
+    line(w, ind, "{name} = loft_ref_null(cx);");
     cgen_tables::copy_type(x, bytes);
-    line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {r});");
-    line(w, ind, "if ({old}.store_nr != 0xFFFF) loft_free_ref({old});");
+    line(w, ind, "loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});");
+    line(w, ind, "if ({old}.store_nr != 0xFFFF) loft_free_ref(cx, {old});");
     flush(w, ind);
     return;
   }
@@ -461,7 +461,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       bytes = b.data.definitions[hd!]!.known_type;
       fresh_unless_owned(x, w, f, var, value, first, name, ind);
       cgen_tables::copy_type(x, bytes);
-      line(w, ind, "loft_bind_copy(loft_types, {bytes}, &{name}, {w.names[src]!});");
+      line(w, ind, "loft_bind_copy(cx, loft_types, {bytes}, &{name}, {w.names[src]!});");
       return;
     }
   }
@@ -488,7 +488,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
       if buf != null {
         keep += " && {old}.store_nr != {w.names[buf!]!}.store_nr";
       }
-      line(w, ind, "if ({keep}) loft_free_ref({old});");
+      line(w, ind, "if ({keep}) loft_free_ref(cx, {old});");
       flush(w, ind);
       return;
     }

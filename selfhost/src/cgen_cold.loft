@@ -322,7 +322,7 @@ pub fn cold_if(x: Cx, w: W, k: integer, cond: ir::Node, other: ir::Node, ind: in
   }
   test = as_cond(w, cgen_fn::expr(x, w, cond, ind));
   line(w, ind, "if (LOFT_UNLIKELY({bare(test)})) {{");
-  line(w, ind + 1, "{w.cold[k].name}({args.join(", ")});");
+  line(w, ind + 1, "{w.cold[k].name}({cx_args(args)});");
   cgen_fn::stmt(x, w, ir::NdReturn { inner: w.cold[k].answer }, ind + 1);
   if loop_shape::unspan(other) != NdNull {
     line(w, ind, "}} else {{");

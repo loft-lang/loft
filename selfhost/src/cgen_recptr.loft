@@ -168,17 +168,17 @@ fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: inte
   // `record_ptr_line`: an element of a held vector takes its address from the header.
   he = if from > 0 { held_element_bind(x, w, ops[from - 1]!) } else { no_elem() };
   if he.header == "" {
-    line(w, ind, "{pa} = loft_rec_ptr({rec});");
+    line(w, ind, "{pa} = loft_rec_ptr(cx, {rec});");
   } else {
-    addr = if he.raw { "loft_vh_at_addr({he.header}, {he.size}, {he.index})" } else { "loft_vh_addr({he.header}, {he.size}, {he.index})" };
+    addr = if he.raw { "loft_vh_at_addr(cx, {he.header}, {he.size}, {he.index})" } else { "loft_vh_addr(cx, {he.header}, {he.size}, {he.index})" };
     if he.ncc != "" {
-      line(w, ind, "if (LOFT_LIKELY({he.ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr({rec});");
+      line(w, ind, "if (LOFT_LIKELY({he.ncc}.rec != 0)) {pa} = {addr}; else {pa} = loft_rec_ptr(cx, {rec});");
     } else {
       line(w, ind, "{pa} = {addr};");
     }
     def = x.b.data.definitions[w.index]!;
     site = "{cgen_names::original_name(def)}:{def.variables.variables[r]!.name}";
-    line(w, ind, "LOFT_PROVED({pa} == loft_rec_ptr({rec}), {c_string(site)});");
+    line(w, ind, "LOFT_PROVED({pa} == loft_rec_ptr(cx, {rec}), {c_string(site)});");
   }
   writes = false;
   for op in ops {
@@ -188,7 +188,7 @@ fn bind(x: Cx, w: W, r: integer, ops: vector<ir::Node>, from: integer, ind: inte
   }
   // The lock flag only matters to a write through the address.
   if writes {
-    line(w, ind, "{pl} = loft_rec_locked({rec});");
+    line(w, ind, "{pl} = loft_rec_locked(cx, {rec});");
   }
   w.rec_ptrs += [RecPtr { var: r, pa: pa, pl: pl, texts: texts }];
 }
@@ -274,15 +274,15 @@ pub fn rec_ptr_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: inte
     }
     done = true;
     fld = cgen_fn::literal(w, args[1], "field") ?? return none();
-    read = "loft_pa_text({w.rec_ptrs[held].pa}, {fld}, {w.names[root_var]!}.store_nr)";
+    read = "loft_pa_text(cx, {w.rec_ptrs[held].pa}, {fld}, {w.names[root_var]!}.store_nr)";
     view = w.field_view;
     w.field_view = false;
     if view {
       return E { code: read, kind: K_VIEW };
     }
     t = temp(w, "text");
-    line(w, ind, "loft_text_free(&{t});");
-    line(w, ind, "{t} = loft_text_own({read});");
+    line(w, ind, "loft_text_free(cx, &{t});");
+    line(w, ind, "{t} = loft_text_own(cx, {read});");
     return held_value(w, t, "text");
   }
   getter = ((name == "OpGetInt" || name == "OpGetFloat" || name == "OpGetSingle" || name == "OpGetEnum" || name == "OpGetInt4" || name == "OpGetInt4Raw" || name == "OpGetInt4Full") && count == 2) || ((name == "OpGetByte" || name == "OpGetByteNullable" || name == "OpGetShort" || name == "OpGetShortRaw" || name == "OpGetShortFull") && count == 3);
@@ -308,16 +308,16 @@ pub fn rec_ptr_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: inte
   done = true;
   if getter {
     if name == "OpGetInt" {
-      return E { code: "loft_pa_i64({pa}, {off})", kind: K_INT };
+      return E { code: "loft_pa_i64(cx, {pa}, {off})", kind: K_INT };
     }
     if name == "OpGetFloat" {
-      return E { code: "loft_pa_f64({pa}, {off})", kind: K_FLOAT };
+      return E { code: "loft_pa_f64(cx, {pa}, {off})", kind: K_FLOAT };
     }
     if name == "OpGetSingle" {
-      return E { code: "loft_pa_f32({pa}, {off})", kind: K_SINGLE };
+      return E { code: "loft_pa_f32(cx, {pa}, {off})", kind: K_SINGLE };
     }
     if name == "OpGetEnum" {
-      return E { code: "loft_pa_enum({pa}, {off})", kind: K_ENUM };
+      return E { code: "loft_pa_enum(cx, {pa}, {off})", kind: K_ENUM };
     }
     if count == 2 {
       f = if name == "OpGetInt4" { "loft_pa_int4" } else if name == "OpGetInt4Raw" { "loft_pa_int4_raw" } else { "loft_pa_int4_full" };
@@ -333,5 +333,5 @@ pub fn rec_ptr_access(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: inte
   code = if name == "OpSetInt" { as_int(w, val) } else if name == "OpSetFloat" { as_float(w, val) } else if name == "OpSetSingle" { as_single(w, val) } else { as_enum(w, val) };
   t = temp(w, shape);
   line(w, ind, "{t} = ({ty}) ({code});");
-  E { code: "loft_pa_set_at({pa}, {w.rec_ptrs[at].pl}, {off}, &{t}, sizeof({ty}), {w.names[root]!}, {cgen_fn::site(w)})", kind: K_VOID }
+  E { code: "loft_pa_set_at(cx, {pa}, {w.rec_ptrs[at].pl}, {off}, &{t}, sizeof({ty}), {w.names[root]!}, {cgen_fn::site(w)})", kind: K_VOID }
 }

@@ -12,7 +12,7 @@
 
 use cgen_transient;
 use ir;
-use cgen::(Cx, new_cx, STACK_OVERFLOW_HELP);
+use cgen::(Cx, new_cx, STACK_OVERFLOW_HELP, source_name);
 use cgen_w::*;
 use cgen_fn;
 use cgen_clibs;
@@ -87,19 +87,19 @@ fn hands_up(t: ir::TypeT) -> boolean {
 fn wrapper(x: Cx, d: integer, wr: Written) -> text {
   def = x.b.data.definitions[d]!;
   frame_name = if def.name.starts_with("n_") { def.name[2..def.name.size()] } else { def.name };
-  push = "    loft_frame_push({c_string(frame_name)}, {c_string(def.position.file)}, {def.position.line});\n    LOFT_HOLD_MARK(hm);\n";
+  push = "    loft_frame_push(cx, {c_string(frame_name)}, {c_string(source_name(x, def.position.file))}, {def.position.line});\n    LOFT_HOLD_MARK(hm);\n";
   ret_up = len(def.returned) > 0 && hands_up(def.returned[0]!);
   guard_free = !ret_up && (env_variable("LOFT_NO_GUARD_FREE") ?? "0") == "0" && opt_frame_calls::is_guard_free(x.b, x.guard, d);
   release = "";
   if !ret_up && !guard_free {
     push += "    size_t fm = loft_nfnrefs;\n";
-    release = "    if (loft_nfnrefs != fm) loft_fnref_release(fm);\n";
+    release = "    if (loft_nfnrefs != fm) loft_fnref_release(cx, fm);\n";
   }
   call = "{wr.name}__fr({arg_names(wr.list).join(", ")})";
   if wr.ret == "void" {
-    return "{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n";
+    return "{push}    {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n";
   }
-  "{push}    {wr.ret} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n    return r;\n"
+  "{push}    {wr.ret} r = {call};\n{release}    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n    return r;\n"
 }
 
 // `resolve_hot_helpers`: the helper markers resolved — `static inline` / `LOFT_HOT_INLINE` for a
@@ -316,27 +316,27 @@ fn reflects(b: ir::Bundle, reached: vector<boolean>) -> boolean {
 // `REFLECT_ENTRY`: `reflect_type` and `type_named` over the emitted table (`loft_reflect.h`).
 fn reflect_entry() -> text {
   lines = [
-    "static loft_ref loft_reflect_type(int64_t kt) {{",
+    "static loft_ref loft_reflect_type(loft_cx *cx, int64_t kt) {{",
     "    uint16_t k = (uint16_t) kt;",
-    "    if (k < loft_nrtypes) return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);",
+    "    if (k < loft_nrtypes) return loft_reflect_build(cx, &loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);",
     "    char b[16];",
     "    snprintf(b, sizeof b, \"#%u\", (unsigned) k);",
-    "    return loft_reflect_build(&loft_rlay, &loft_rnone, b);",
+    "    return loft_reflect_build(cx, &loft_rlay, &loft_rnone, b);",
     "}}",
     "",
-    "static loft_ref loft_reflect_field(loft_ref value, int64_t position, int64_t kt) {{",
-    "    return loft_reflect_field_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, value.pos, (uint16_t) kt, position);",
+    "static loft_ref loft_reflect_field(loft_cx *cx, loft_ref value, int64_t position, int64_t kt) {{",
+    "    return loft_reflect_field_at(cx, &loft_rlay, loft_rtypes, loft_nrtypes, value, value.pos, (uint16_t) kt, position);",
     "}}",
     "",
-    "static loft_ref loft_reflect_field_path(loft_ref value, loft_ref path, int64_t kt) {{",
-    "    return loft_reflect_field_path_at(&loft_rlay, loft_rtypes, loft_nrtypes, value, path, (uint16_t) kt);",
+    "static loft_ref loft_reflect_field_path(loft_cx *cx, loft_ref value, loft_ref path, int64_t kt) {{",
+    "    return loft_reflect_field_path_at(cx, &loft_rlay, loft_rtypes, loft_nrtypes, value, path, (uint16_t) kt);",
     "}}",
     "",
-    "static loft_ref loft_type_named(loft_str name) {{",
+    "static loft_ref loft_type_named(loft_cx *cx, loft_str name) {{",
     "    for (uint32_t k = 0; k < loft_nrtypes; k++)",
     "        if (strlen(loft_rtypes[k].lookup) == name.len && memcmp(loft_rtypes[k].lookup, name.p, name.len) == 0)",
-    "            return loft_reflect_build(&loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);",
-    "    return loft_ref_null();",
+    "            return loft_reflect_build(cx, &loft_rlay, &loft_rtypes[k], loft_rtypes[k].name);",
+    "    return loft_ref_null(cx);",
     "}}",
   ];
   "\n{lines.join("\n")}\n"
@@ -459,7 +459,7 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
   }
   // The closure release only where something calls it.
   drops = "";
-  if fr_bodies.find("loft_drop_closure(") != null || bodies.find("loft_drop_closure(") != null || dispatch.code.find("loft_drop_closure(") != null || x.tr.bodies.find("loft_drop_closure(") != null {
+  if fr_bodies.find("loft_drop_closure(cx, ") != null || bodies.find("loft_drop_closure(cx, ") != null || dispatch.code.find("loft_drop_closure(cx, ") != null || x.tr.bodies.find("loft_drop_closure(cx, ") != null {
     drops = cgen_fnval::drop_code(x, opt_names::written_functions_from(b, root, drivers));
   }
   // The dispatchers name their signatures' shapes: a tuple among them is numbered there.
@@ -472,7 +472,7 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     typedefs += cgen_parse::parse_table(x) + cgen_parse::main_vector_test(x);
   }
   if cgen_store::upgrades(x) {
-    typedefs += "static const loft_ptype *loft_up_ptypes(void) {{ return loft_ptypes; }}\n";
+    typedefs += "static const loft_ptype *loft_up_ptypes(loft_cx *cx) {{ return loft_ptypes; }}\n";
   }
   if reflects(b, reached) {
     typedefs += b.reflect + reflect_entry();
@@ -516,7 +516,7 @@ fn lazy_driver_table(x: Cx, why: &text) -> text {
       }
     }
     i = dr#index;
-    out += "static int64_t loft_lazydrv{i}(loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ return {cgen_names::c_name(x.b, x.dups, dr.d)}(c, s, ki, kt); }}\n";
+    out += "static int64_t loft_lazydrv{i}(loft_cx *cx, loft_ref c, loft_str s, int64_t ki, loft_str kt) {{ return {cgen_names::c_name(x.b, x.dups, dr.d)}(c, s, ki, kt); }}\n";
     rows += ["{{ {c_string(dr.element)}, loft_lazydrv{i} }}"];
   }
   table = if len(rows) == 0 { "{{ 0, 0 }}" } else { rows.join(", ") };

@@ -923,7 +923,7 @@ pub fn spec_chain(x: Cx, w: W, var: integer, value: ir::Node, ind: integer) -> b
     r = temp(w, "int");
     // A product by a literal keeps `loft_mul`, whose bounds fold against the constant.
     if n.name == "OpMulInt" && !n.proven && (a.starts_with("INT64_C(") || b.starts_with("INT64_C(")) {
-      line(w, ind, "{r} = loft_mul({a}, {b});");
+      line(w, ind, "{r} = loft_mul(cx, {a}, {b});");
       line(w, ind, "{bad} |= ({r} == LOFT_NULL);");
       vals += [r];
       continue;
@@ -1028,7 +1028,7 @@ fn chain_bound(x: Cx, w: W, f: ChainFrame, v: ir::Node, counters: boolean, inv: 
         if rhs == "" {
           return "";
         }
-        return if name.starts_with("OpMul") { "loft_gc_mul({lhs}, {rhs}, &loft_gc_ok)" } else { "loft_gc_add({lhs}, {rhs}, &loft_gc_ok)" };
+        return if name.starts_with("OpMul") { "loft_gc_mul(cx, {lhs}, {rhs}, &loft_gc_ok)" } else { "loft_gc_add(cx, {lhs}, {rhs}, &loft_gc_ok)" };
       }
       if count == 1 && name == "OpMinSingleInt" {
         return chain_bound(x, w, f, args[0], counters, inv);
@@ -1311,7 +1311,7 @@ fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
     seeds += [s];
     ends += [h];
   }
-  lo = if rc.next >= 0 { w.names[rc.next]! } else { "loft_gc_add({w.names[rc.index]!}, INT64_C(1), &loft_gc_ok)" };
+  lo = if rc.next >= 0 { w.names[rc.next]! } else { "loft_gc_add(cx, {w.names[rc.index]!}, INT64_C(1), &loft_gc_ok)" };
   hi = as_int(w, cgen_fn::expr(x, w, rc.hi, ind));
   flush(w, ind);
   w.chain_guards += 1;
@@ -1321,23 +1321,23 @@ fn chain_guard(x: Cx, w: W, lp: ir::Block, ind: integer) -> Guard? {
   line(w, ind + 1, "int loft_gc_ok = 1;");
   line(w, ind + 1, "int64_t loft_gc_lo = {lo}, loft_gc_hi = {hi};");
   line(w, ind + 1, "if (loft_gc_lo == LOFT_NULL || loft_gc_hi == LOFT_NULL) loft_gc_ok = 0;");
-  line(w, ind + 1, "int64_t loft_gc_cb = loft_gc_add(loft_gc_max(loft_gc_abs(loft_gc_lo, &loft_gc_ok), loft_gc_abs(loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);");
+  line(w, ind + 1, "int64_t loft_gc_cb = loft_gc_add(cx, loft_gc_max(cx, loft_gc_abs(cx, loft_gc_lo, &loft_gc_ok), loft_gc_abs(cx, loft_gc_hi, &loft_gc_ok)), INT64_C(1), &loft_gc_ok);");
   vars_at = 0;
   for v in inv {
     if v >= 0 {
-      line(w, ind + 1, "int64_t loft_gc_v{vars_at} = loft_gc_abs({w.names[v]!}, &loft_gc_ok);");
+      line(w, ind + 1, "int64_t loft_gc_v{vars_at} = loft_gc_abs(cx, {w.names[v]!}, &loft_gc_ok);");
       vars_at += 1;
     }
   }
   held_at = 0;
   for v in inv {
     if v < 0 {
-      line(w, ind + 1, "int64_t loft_gc_s{held_at} = loft_gc_abs({w.scalars[-v - 1]!.name}, &loft_gc_ok);");
+      line(w, ind + 1, "int64_t loft_gc_s{held_at} = loft_gc_abs(cx, {w.scalars[-v - 1]!.name}, &loft_gc_ok);");
       held_at += 1;
     }
   }
   for s in seeds {
-    line(w, ind + 1, "int64_t loft_gc_nc{s#index} = loft_gc_add(loft_gc_max({s}, {ends[s#index]!}), INT64_C(1), &loft_gc_ok);");
+    line(w, ind + 1, "int64_t loft_gc_nc{s#index} = loft_gc_add(cx, loft_gc_max(cx, {s}, {ends[s#index]!}), INT64_C(1), &loft_gc_ok);");
   }
   for c in g.chains {
     line(w, ind + 1, "(void) {c};");
@@ -1424,7 +1424,7 @@ pub fn chain_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: inte
   if len(args) == 1 {
     a = as_int(w, cgen_fn::arg(x, w, args, 0, ind));
     plain = "(-({a}))";
-    checked = "loft_neg({a})";
+    checked = "loft_neg(cx, {a})";
   } else {
     first = cgen_fn::arg(x, w, args, 0, ind);
     second = cgen_fn::arg(x, w, args, 1, ind);
@@ -1432,13 +1432,13 @@ pub fn chain_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: inte
     b = as_int(w, second);
     if name.starts_with("OpAdd") {
       plain = "(({a}) + ({b}))";
-      checked = "loft_add({a}, {b})";
+      checked = "loft_add(cx, {a}, {b})";
     } else if name.starts_with("OpMin") {
       plain = "(({a}) - ({b}))";
-      checked = "loft_sub({a}, {b})";
+      checked = "loft_sub(cx, {a}, {b})";
     } else {
       plain = "(({a}) * ({b}))";
-      checked = "loft_mul({a}, {b})";
+      checked = "loft_mul(cx, {a}, {b})";
     }
   }
   E { code: if guard == "" { plain } else { "({guard} ? {plain} : {checked})" }, kind: K_INT }

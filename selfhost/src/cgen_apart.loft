@@ -140,7 +140,7 @@ pub fn vec_op(x: Cx, w: W, name: text, v: ir::Node, args: vector<ir::Node>, ind:
   if rv >= 0 && is_vec(w, rv) {
     done = true;
     i = as_int(w, cgen_fn::expr(x, w, opt_apart_vector::read_idx(v), ind));
-    code = if opt_apart_vector::read_nullable(b, v) { "loft_apv_get(&loft_apv{rv}, {i})" } else { "loft_apv_get_at(&loft_apv{rv}, {i}, {cgen_fn::site(w)})" };
+    code = if opt_apart_vector::read_nullable(b, v) { "loft_apv_get(cx, &loft_apv{rv}, {i})" } else { "loft_apv_get_at(cx, &loft_apv{rv}, {i}, {cgen_fn::site(w)})" };
     return E { code: code, kind: K_FLOAT };
   }
   wv = opt_apart_vector::write(b, v);
@@ -149,14 +149,14 @@ pub fn vec_op(x: Cx, w: W, name: text, v: ir::Node, args: vector<ir::Node>, ind:
     pair = [opt_apart_vector::read_idx(v), opt_apart_vector::write_val(v)];
     i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
     y = as_float(w, cgen_fn::arg(x, w, pair, 1, ind));
-    line(w, ind, "loft_apv_set_at(&loft_apv{wv}, {i}, {y}, {cgen_fn::site(w)});");
+    line(w, ind, "loft_apv_set_at(cx, &loft_apv{wv}, {i}, {y}, {cgen_fn::site(w)});");
     return E { code: "((void) 0)", kind: K_VOID };
   }
   pv = opt_apart_vector::push(b, v);
   if pv >= 0 && is_vec(w, pv) {
     done = true;
     y = as_float(w, cgen_fn::expr(x, w, opt_apart_vector::push_val(v), ind));
-    line(w, ind, "loft_apv_push(&loft_apv{pv}, {y});");
+    line(w, ind, "loft_apv_push(cx, &loft_apv{pv}, {y});");
     return E { code: "((void) 0)", kind: K_VOID };
   }
   uv = opt_apart_vector::unary_v(b, v);
@@ -167,7 +167,7 @@ pub fn vec_op(x: Cx, w: W, name: text, v: ir::Node, args: vector<ir::Node>, ind:
       return E { code: "((int64_t) loft_apv{uv}.n)", kind: K_INT };
     }
     if op == "clear" {
-      line(w, ind, "loft_apv_clear(&loft_apv{uv});");
+      line(w, ind, "loft_apv_clear(cx, &loft_apv{uv});");
     }
     return E { code: "((void) 0)", kind: K_VOID };
   }
@@ -199,13 +199,13 @@ fn vec_stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
   }
   init = opt_length::buffer_init(x.b, v);
   if len(init) > 0 && is_vec(w, init[0]!) {
-    line(w, ind, "loft_apv_clear(&loft_apv{init[0]!});");
+    line(w, ind, "loft_apv_clear(cx, &loft_apv{init[0]!});");
     return true;
   }
   match loop_shape::unspan(v) {
     NdSet { var, inner: _ } => {
       if is_vec(w, var) {
-        line(w, ind, "loft_apv_clear(&loft_apv{var});");
+        line(w, ind, "loft_apv_clear(cx, &loft_apv{var});");
         return true;
       }
       w.apv.companions[var] ?? false
@@ -403,7 +403,7 @@ pub fn rec_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, don
     done = true;
     l = layout_of(x, w, src);
     dst = as_ref(w, cgen_fn::expr(x, w, args[1]!, ind));
-    line(w, ind, "loft_apart_write_fresh({dst}, {buf(w, src)}, {slots_c(l)}, {sizes_c(l)}, {len(l.fields)}); /* @FR-R-Apart boundary */");
+    line(w, ind, "loft_apart_write_fresh(cx, {dst}, {buf(w, src)}, {slots_c(l)}, {sizes_c(l)}, {len(l.fields)}); /* @FR-R-Apart boundary */");
     return void_e();
   }
   none()
@@ -437,7 +437,7 @@ fn rec_set(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
       }
       k = w.apr.elem_field[var]!;
       esize = layout_of(x, w, owner).fields[k]!.esize;
-      line(w, ind, "loft_apo{var} = loft_apr_push(&{buf(w, owner)}[{k}], {esize}u);");
+      line(w, ind, "loft_apo{var} = loft_apr_push(cx, &{buf(w, owner)}[{k}], {esize}u);");
       true
     },
     _ => false,
@@ -452,7 +452,7 @@ pub fn rotate(x: Cx, w: W, src: ir::Node, vec: text, size: integer, k: integer, 
     return "";
   }
   l = layout_of(x, w, sv);
-  "loft_rotate_from_parts({vec}, {buf(w, sv)}, {slots_c(l)}, {len(l.fields)}, {size}u, INT64_C({k}), {plan_c}, {count})"
+  "loft_rotate_from_parts(cx, {vec}, {buf(w, sv)}, {slots_c(l)}, {len(l.fields)}, {size}u, INT64_C({k}), {plan_c}, {count})"
 }
 
 // --- Instance 2 -------------------------------------------------------------------------------
@@ -653,7 +653,7 @@ fn av_twin_call(x: Cx, w: W, g: integer, args: vector<ir::Node>, dest: text, ind
   t = cgen_names::plain(g);
   t.apv = true;
   cgen::request_twin(x, t);
-  line(w, ind, "{cgen_names::twin_name(x.b, x.dups, t)}({xs.join(", ")});");
+  line(w, ind, "{cgen_names::twin_name(x.b, x.dups, t)}({cx_args(xs)});");
 }
 
 fn peel_link(t: ir::TypeT) -> ir::TypeT {
@@ -678,7 +678,7 @@ pub fn av_op(x: Cx, w: W, v: ir::Node, ind: integer, done: &boolean) -> E {
     if f >= 0 {
       done = true;
       ie = cgen_fn::expr(x, w, opt_apart_value::elem_idx(v), ind);
-      return E { code: "loft_ap_get({av_val(w, rv)}.f{f}, {l.fields[f]!.len}, {as_int(w, ie)})", kind: K_FLOAT };
+      return E { code: "loft_ap_get(cx, {av_val(w, rv)}.f{f}, {l.fields[f]!.len}, {as_int(w, ie)})", kind: K_FLOAT };
     }
   }
   wv = opt_apart_value::write_var(b, v);
@@ -690,7 +690,7 @@ pub fn av_op(x: Cx, w: W, v: ir::Node, ind: integer, done: &boolean) -> E {
       pair = [opt_apart_value::elem_idx(v), opt_apart_value::write_val(v)];
       i = as_int(w, cgen_fn::arg(x, w, pair, 0, ind));
       y = as_float(w, cgen_fn::arg(x, w, pair, 1, ind));
-      line(w, ind, "loft_ap_set({av_val(w, wv)}.f{f}, {l.fields[f]!.len}, {i}, {y});");
+      line(w, ind, "loft_ap_set(cx, {av_val(w, wv)}.f{f}, {l.fields[f]!.len}, {i}, {y});");
       return E { code: "((void) 0)", kind: K_VOID };
     }
   }
@@ -819,7 +819,7 @@ pub fn av_return(x: Cx, w: W, inner: ir::Node, ind: integer) -> boolean {
   vals: vector<text> = [for f in l.fields { "{dest}.f{f#index}" }];
   lens: vector<text> = [for f in l.fields { "{f.len}u" }];
   bn = w.names[w.av_rb]!;
-  line(w, ind, "{bn} = loft_ap_store({bn}, {bytes}, {l.rec_tp}, {len(l.fields)}, (const uint32_t[]){{ {offs.join(", ")} }}, (const double *const[]){{ {vals.join(", ")} }}, (const uint32_t[]){{ {lens.join(", ")} }}); /* @FR-R-Apart boundary */");
+  line(w, ind, "{bn} = loft_ap_store(cx, {bn}, {bytes}, {l.rec_tp}, {len(l.fields)}, (const uint32_t[]){{ {offs.join(", ")} }}, (const double *const[]){{ {vals.join(", ")} }}, (const uint32_t[]){{ {lens.join(", ")} }}); /* @FR-R-Apart boundary */");
   // The buffer by its own C name: `expr` answers an apart variable's value, and a local promoted
   // onto the buffer is one.
   raw_expr(w, bn, "ref");

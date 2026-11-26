@@ -91,7 +91,7 @@ fn class_code(name: text) -> text {
   if lo >= 0 {
     rows += ["{{ {lo}u, {hi}u }}"];
   }
-  "static const uint32_t loft_ur_{name}[][2] = {{ {rows.join(", ")} }};\nstatic uint8_t loft_uc_{name}(uint32_t c) {{ return loft_in_ranges(c, loft_ur_{name}, {len(rows)}); }}\n"
+  "static const uint32_t loft_ur_{name}[][2] = {{ {rows.join(", ")} }};\nstatic uint8_t loft_uc_{name}(loft_cx *cx, uint32_t c) {{ return loft_in_ranges(cx, c, loft_ur_{name}, {len(rows)}); }}\n"
 }
 
 // `case_code`: the table of every code point whose mapping is not itself, and its reader.
@@ -111,7 +111,7 @@ fn case_code(upper: boolean) -> text {
     rows += ["{{ {u}u, {c_string(mapped)} }}"];
   }
   inverse = if upper { 0 } else { 1 };
-  "static const loft_umap loft_um_{name}[] = {{ {rows.join(", ")} }};\nstatic loft_text loft_text_{name}(loft_str s) {{ return loft_text_case(s, loft_um_{name}, {len(rows)}, {inverse}); }}\n"
+  "static const loft_umap loft_um_{name}[] = {{ {rows.join(", ")} }};\nstatic loft_text loft_text_{name}(loft_cx *cx, loft_str s) {{ return loft_text_case(cx, s, loft_um_{name}, {len(rows)}, {inverse}); }}\n"
 }
 
 // `unicode_code`: every registered table and the function that reads it.

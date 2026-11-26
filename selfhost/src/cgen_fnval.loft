@@ -140,7 +140,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
       args += ["&{w}"];
       buffers += [w];
     } else if a.work_buffer {
-      args += ["loft_ref_null()"];
+      args += ["loft_ref_null(cx)"];
     } else if !(t is TyOptional) && heap_type(t) {
       if vec_buf >= 0 && ret == "ref" {
         uses_vec_buf = true;
@@ -150,7 +150,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
         rb_used = true;
         args += ["rb"];
       } else {
-        args += ["loft_ref_null()"];
+        args += ["loft_ref_null(cx)"];
       }
     } else {
       return "a function value {def.name} with a hidden {a.name} buffer";
@@ -183,7 +183,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
   if mask != 0 {
     request_twin(x, arm);
   }
-  call = "{cgen_names::twin_name(x.b, x.dups, arm)}({args.join(", ")})";
+  call = "{cgen_names::twin_name(x.b, x.dups, arm)}({cx_args(args)})";
   out += "    case INT64_C({d}): {{";
   for w in buffers {
     out += " loft_text {w} = {{ 0, 0, 0 }};";
@@ -196,7 +196,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
   }
   vec_tp = if uses_vec_buf && ret == "ref" { vec_buf } else { -1 };
   if vec_tp >= 0 {
-    out += " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {x.b.types[vec_tp]!.size}, {vec_tp});";
+    out += " loft_ref hb = loft_ref_null(cx); loft_database_wrapper(cx, loft_types, &hb, {x.b.types[vec_tp]!.size}, {vec_tp});";
   }
   if ret == "void" {
     out += " {call};";
@@ -204,13 +204,13 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
     out += " {held(ret)} r = {call};";
   }
   if vec_tp >= 0 {
-    out += " loft_fnref_buf(r, hb);";
+    out += " loft_fnref_buf(cx, r, hb);";
   }
   if hold {
-    out += " loft_fnref_mint(r, sn, f.clos);";
+    out += " loft_fnref_mint(cx, r, sn, f.clos);";
   }
   for w in buffers {
-    out += " loft_text_free(&{w});";
+    out += " loft_text_free(cx, &{w});";
   }
   out += if ret == "void" { " return; }}\n" } else { " return r; }}\n" };
   ""
@@ -249,7 +249,7 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
     if buf {
       list += ["loft_ref rb"];
     }
-    out += "\nstatic {held(ret)} loft_call{id}{if buf { "b" } else { "" }}({list.join(", ")}) {{\n    switch (f.d) {{\n";
+    out += "\nstatic {held(ret)} loft_call{id}{if buf { "b" } else { "" }}({cx_params(list)}) {{\n    switch (f.d) {{\n";
     want = linked_key(key);
     places: vector<boolean> = [for p in ps { p.mode == 2 }];
     for v in x.fn_values {
@@ -275,7 +275,7 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
     if ret == "void" {
       out += "}}\n";
     } else if ret == "text" {
-      out += "    return loft_text_own(loft_null_text());\n}}\n";
+      out += "    return loft_text_own(cx, loft_null_text(cx));\n}}\n";
     } else {
       out += "    {{ {held(ret)} r = {initial(ret)}; return r; }}\n}}\n";
     }
@@ -285,7 +285,7 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
 
 // `drop_code`: `loft_drop_closure`, a value's closure record released through its cascade.
 pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
-  out = "\nstatic void loft_drop_closure(loft_fn f) {{\n    if (!loft_store_live(f.clos)) return;\n    switch (f.d) {{\n";
+  out = "\nstatic void loft_drop_closure(loft_cx *cx, loft_fn f) {{\n    if (!loft_store_live(cx, f.clos)) return;\n    switch (f.d) {{\n";
   for v in x.fn_values {
     if !v {
       continue;
