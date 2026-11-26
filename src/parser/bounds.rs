@@ -9,7 +9,7 @@
 use super::{Data, DefType, Level, Parser, Type};
 
 impl Parser {
-    /// @PLN125 A2c — what each associated type of `g_nr`'s bounds binds to, for the
+    /// @PLN125 A2c, `@FR-G-Companion` — what each associated type of `g_nr`'s bounds binds to, for the
     /// implementor `concrete_nr`.  One `(placeholder, companion)` pair per associated type
     /// that can be inferred; the empty vector when the bounds declare none.
     ///

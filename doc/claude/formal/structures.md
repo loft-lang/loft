@@ -397,8 +397,12 @@ image writer may lay them out again for locality without any reader noticing.
                  (the two share the root's type, so they share its layout).  It serves a hash
                  by S-Digest and S-Probe, a trie and a spatial by S-Tree, and a range of an
                  integer key of a sorted or an ordered by binary search (S-Vector); it serves no
-                 index.  A byte past the end of the image reads as 0, and every walk is bounded
-                 by the counts in the bytes it read.
+                 index.  The sorted and the ordered are served to a RANGE read
+                 (`store_load_range`) only: a lazy BINDING (`store_bind_lazy`), which fetches
+                 one key per lookup, binds the kinds served by key — a hash, a trie, a spatial —
+                 and refuses the others at the bind, where the program can read why.  A byte
+                 past the end of the image reads as 0, and every walk is bounded by the counts
+                 in the bytes it read.
   (S-Paged-Same) a paged lookup answers, for every key, the record a whole-image load of the
                  same image answers for that key, with the same field values — the storage-
                  independence half of Col-Axis.  Each key field is decoded by the reader of its
