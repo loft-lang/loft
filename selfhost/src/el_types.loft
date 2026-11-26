@@ -1513,6 +1513,21 @@ pub fn close_open(e: el::El, t: ir::TypeT, bindings: vector<TypeBinding>) -> ir:
   }
 }
 
+// port: data.rs stored_ref_read (`@FR-E-Eq`, @C91)
+// What a read of a stored `reference<E>` field hands on: for a struct-enum `E`, a value of `E`
+// (its deps, the pointer marker included, unchanged); anything else as it is.  The field keeps
+// its `Reference` former.
+pub fn stored_ref_read(e: el::El, t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => {
+      enum_ref = dep.contains(MARKER) && n >= 0 && n < len(e.b.data.definitions) && match el::def(e, n).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => is_ref, _ => false };
+      if enum_ref { ir::TyEnum { n: n, is_ref: true, dep: dep } } else { t }
+    },
+    TyOptional { inner } => ir::TyOptional { inner: stored_ref_read(e, inner) },
+    _ => t
+  }
+}
+
 // `Type::any_node` asking for definition `h`: does `t` name it anywhere.
 fn names_def(t: ir::TypeT, h: integer) -> boolean {
   match t {
