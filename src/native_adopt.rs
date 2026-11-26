@@ -16,8 +16,8 @@ use crate::host_abi::LAYOUT_FP_SYMBOL;
 use crate::host_abi::{HOST_ABI, HostTable, LibArg};
 use crate::keys::DbRef;
 use crate::opt::native_key::{
-    artifact_sources, auto_cdylib_stem, contributing_fingerprint, library_export_set, mix_fp,
-    platform_cdylib_name, source_content_hash, source_newer_than,
+    artifact_sources, auto_cdylib_stem, component_fingerprint, contributing_fingerprint,
+    library_export_set, mix_fp, platform_cdylib_name, source_content_hash, source_newer_than,
 };
 use std::collections::HashSet;
 
@@ -864,9 +864,13 @@ pub fn adopt_shared_cdylib(
             crate::cache::loft_exe_identity(),
         )
     };
+    // …and the components its C binds: installed or not, and which library (@PLN205).
     let fp = mix_fp(
-        mix_fp(loft_fp, program_fp),
-        contributing_fingerprint(contributing),
+        mix_fp(
+            mix_fp(loft_fp, program_fp),
+            contributing_fingerprint(contributing),
+        ),
+        component_fingerprint(contributing),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast

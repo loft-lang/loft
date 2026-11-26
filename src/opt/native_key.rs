@@ -225,6 +225,33 @@ pub(crate) fn contributing_fingerprint(contributing: &[String]) -> u64 {
     h.finish()
 }
 
+/// The components the artifact's C binds (@PLN205): each one a contributing package names with
+/// `[native] component`, with the library `components::path` finds for it and the loft-ffi
+/// fingerprint stamped beside that library (`.loft-build-fp`), or as absent.  The C bakes in
+/// what it found: the library's path, or a refusal naming the component.  Keyed without it, a
+/// unit built before the component was installed was adopted by every later run, which kept
+/// refusing after the install.
+pub(crate) fn component_fingerprint(contributing: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut ids: Vec<(String, Option<String>, Option<u64>)> = contributing
+        .iter()
+        .filter_map(|dir| crate::native_build::component_of(dir))
+        .map(|name| {
+            let lib = crate::components::path(&name);
+            let stamp = lib
+                .as_deref()
+                .and_then(|l| std::path::Path::new(l).parent())
+                .and_then(crate::cache::native_artifact_stamped_fp);
+            (name, lib, stamp)
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ids.hash(&mut h);
+    h.finish()
+}
+
 /// @PLN11 Arc N / N3 (Step 4) — a content hash of every `.loft` / `loft.toml` source
 /// under `pkg_dirs` (build/artifact dirs skipped, files visited in sorted order for a
 /// stable digest).  Used to detect "did this library's source change since the last
