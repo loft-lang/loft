@@ -1326,7 +1326,9 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
     return x;
   }
   // A record or text arm keeps its own borrows, which the match merges (`merge_dependencies`).
-  keeps = (el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference) || (el_types::base(expected) is TyText && el_types::base(x.tp) is TyText);
+  // (…and so does a vector arm: `list(0 - n)` keeps its own `["__ref_2"]` beside a first arm's
+  // `["__ref_1"]`, the join borrowing both.)
+  keeps = (el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference) || (el_types::base(expected) is TyText && el_types::base(x.tp) is TyText) || (el_types::base(expected) is TyVector && el_types::base(x.tp) is TyVector);
   at = if keeps { el_types::with_deps(expected, el_types::deps(x.tp)) } else { expected };
   ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: at } } else { at })
 }
