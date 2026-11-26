@@ -33,6 +33,7 @@ use el_ex_copy;
 use el_ex_deliver;
 use el_ex_tuple;
 use el_ex_into;
+use el_ex_name;
 
 // `Parser::parse_code`: the body of the current definition, its result its declared return.
 // `rewrite_tail_tuple_with_work_ref`: the tail of a function answering a boxed tuple, built
@@ -611,9 +612,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // (…a `-> E?` struct enum's tail too, an element or a field read as the `E?` its slot holds:
   // the buffer takes the copy behind the slot's tag test, `view_tail`.)
   // (The first pass's element read is not built yet: the projection test of `mv_tail` decides.)
-  // (On the second pass only a slot rooted at a LOCAL: a slot read off a call's answer is named
-  // first in Rust, `enum_slot_read_named` — not carried, refused as before.)
-  mv_result = el_ex_copy::record_result(result) || (result is TyOptional && el_types::struct_enum_def(result) >= 0 && (e.first_pass || match el_ir::unspan(raw_tail(code)) { NdCall { def_nr: mvd } => el::def(e, mvd).name == "OpGetField" && place_root(e, raw_tail(code)) >= 0 && !vars.vars[place_root(e, raw_tail(code))]!.argument, _ => false }));
+  // (On the second pass a slot rooted at a local, or read off a call's answer — named first,
+  // `enum_slot_name`.)
+  mv_result = el_ex_copy::record_result(result) || (result is TyOptional && el_types::struct_enum_def(result) >= 0 && (e.first_pass || match el_ir::unspan(raw_tail(code)) { NdCall { def_nr: mvd, args: mva } => el::def(e, mvd).name == "OpGetField" && (place_root(e, raw_tail(code)) >= 0 && !vars.vars[place_root(e, raw_tail(code))]!.argument || len(mva) == 3 && el_ir::unspan(mva[0]!) is NdCall), _ => false }));
   vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && mv_result;
   if !(el_types::base(result) is TyVector) {
     vars.ret_src = raw_tail(code);
@@ -1480,6 +1481,21 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   }
   enum_result = el_types::struct_enum_def(result) >= 0;
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
+  // `read_through_enum_slot` (`(L-Null-Which)`): an `E?` slot read off a CALL's record is not
+  // read twice (tag, then value) off the call — the call is named once, in a work ref minted
+  // before this road's own, and the slot re-read off the name (`enum_slot_read_named`).  A
+  // projection's name borrows its container: it frees nothing.
+  named = enum_slot_name(e, vars, value, enum_result && result is TyOptional);
+  nbase = ir::NdNull;
+  if named >= 0 {
+    match el_ir::unspan(value) {
+      NdCall { args: nga } => {
+        nbase = nga[0]!;
+        value = el_ir::cl(e, "OpGetField", [ir::NdVar { n: named }, nga[1]!, nga[2]!]);
+      },
+      _ => {}
+    }
+  }
   w = el_vars::work_ref(vars, if enum_result { ir::TyReference { n: td, dep: [] } } else { el_types::without_deps(el_types::base(result)) });
   // (A `-> E?` struct enum's work ref is `Bind`, substituted by the buffer, on both passes.)
   if enum_result && result is TyOptional {
@@ -1527,6 +1543,9 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
       _ => {}
     }
   }
+  if copied != null && named >= 0 {
+    copied = el_ir::v_block([el_ir::v_set(named, nbase), copied!], el_types::with_deps(el_types::without_deps(result), [named]), "enum_slot_read_named");
+  }
   if copied == null {
     el::refuse(e, "a record tail reading into a local, copied from a source read once");
     return code;
@@ -1536,6 +1555,38 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   }
   bl.operators[-1] = if through_return { el_ir::respan(last, ir::NdReturn { inner: copied! }) } else { copied! };
   ir::NdBlock { block: [bl] }
+}
+
+// The work ref naming the call an `E?` slot is read off (`OpGetField(f(…)[i], 0, T)`), minted
+// on the second pass for `read_through_enum_slot`; -1 where the slot is read off a place a
+// test may read twice, or the call answers no record.
+fn enum_slot_name(e: el::El, vars: el_vars::Vars, value: ir::Node, wanted: boolean) -> integer {
+  if e.first_pass || !wanted || el_ex_name::repeatable_place(e, el_ir::unspan(value)) {
+    return -1;
+  }
+  match el_ir::unspan(value) {
+    NdCall { def_nr: gd, args: ga } => {
+      if el::def(e, gd).name != "OpGetField" || len(ga) != 3 {
+        return -1;
+      }
+      match el_ir::unspan(ga[0]!) {
+        NdCall { def_nr: cd } => {
+          hd = match el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid) { TyReference { n: hn } => hn, _ => -1 };
+          if hd < 0 {
+            return -1;
+          }
+          nv = el_vars::work_ref(vars, ir::TyReference { n: hd, dep: [] });
+          el_vars::mark_inline(vars, nv, "read_through_enum_slot");
+          if el_ex_base::projection_op(el::def(e, cd).name) {
+            el_vars::set_skip_free(vars, nv, "read_through_enum_slot");
+          }
+          nv
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
 }
 
 // Is the place this read chain starts at an `ncr` block (a `!` read)?

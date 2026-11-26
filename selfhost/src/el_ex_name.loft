@@ -375,13 +375,16 @@ pub fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir
   ex(ir::NdInsert { items: cond + [test] }, ir::TyBoolean)
 }
 
-// `Parser::is_repeatable_place`: a local, or a field read of one, which a test may read twice.
+// `Parser::is_repeatable_place`: a local, or a projection chain off one (a field, an element —
+// either IR spelling of a projection, a call or a stack tuple's `TupleGet`), which a test may
+// read twice.
 pub fn repeatable_place(e: el::El, n: ir::Node) -> boolean {
   at = n;
   while !(at is NdVar) {
     match at {
+      NdTupleGet { var: _ } => { return true; },
       NdCall { def_nr, args } => {
-        if el::def(e, def_nr).name != "OpGetField" || len(args) == 0 {
+        if !el_ex_base::projection_op(el::def(e, def_nr).name) || len(args) == 0 {
           return false;
         }
         at = el_ir::unspan(args[0]!);
