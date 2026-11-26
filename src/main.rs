@@ -5898,6 +5898,53 @@ fn fetch_release_for_compat(name: &str, v: &str) -> Result<(), String> {
     }
 }
 
+/// The releases of `name` an advisory withdraws — the advisory feed refuses to install them,
+/// as `loft install` would ([`loft::registry_advisories::assess`]) — each with the refusal.
+/// No release can be fetched to compare against, and none is a promise a dependent can still
+/// rely on, so the check names them and compares an installable release in their place.  No
+/// feed to read withdraws nothing: the fetch then says why it failed.
+#[cfg(feature = "registry")]
+fn withdrawn_releases(
+    name: &str,
+    versions: &[String],
+) -> std::collections::BTreeMap<String, String> {
+    let feed = loft::registry_advisories::load_or_fetch(&loft::registry_advisories::LoadOptions {
+        allow_unsigned: COMPAT_ALLOW_UNSIGNED.load(std::sync::atomic::Ordering::Relaxed),
+        offline: std::env::var("LOFT_OFFLINE").is_ok(),
+        refresh: false,
+    });
+    let Ok(Some(feed)) = feed else {
+        return std::collections::BTreeMap::new();
+    };
+    versions
+        .iter()
+        .filter_map(|v| {
+            loft::registry_advisories::assess(name, v, &feed)
+                .refusal
+                .map(|why| (v.clone(), why))
+        })
+        .collect()
+}
+
+/// The release to compare in place of the withdrawn `v`: the nearest newer one that is neither
+/// withdrawn nor already in `taken`, else the nearest older one — so a withdrawn floor is
+/// replaced by the oldest release still installable above it.
+#[cfg(feature = "registry")]
+fn in_place_of(
+    v: &str,
+    versions: &[String],
+    taken: &[String],
+    withdrawn: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let at = versions.iter().position(|x| x == v)?;
+    let free = |x: &&String| !taken.contains(x) && !withdrawn.contains_key(x.as_str());
+    versions[at + 1..]
+        .iter()
+        .find(free)
+        .or_else(|| versions[..at].iter().rev().find(free))
+        .cloned()
+}
+
 /// Step 7 — verify a package's ENTIRE claim: every release the registry lists at or above its floors, under a wall-clock
 /// budget, with overrun reported as failure rather than smuggled in as success.
 ///
@@ -5932,9 +5979,14 @@ fn compat_check_full(name: &str, versions: &[String], floors: Floors) -> i32 {
     };
 
     let mut t = FullTally::default();
+    let withdrawn = withdrawn_releases(name, versions);
     // Oldest first, so a timeout leaves the DEEPEST part of the claim — the part a floor is
     // actually asserting, and the part nobody else looks at — already proven.
     for v in versions {
+        if let Some(why) = withdrawn.get(v) {
+            println!("  {v}: withdrawn, not compared ({why})");
+            continue;
+        }
         if started.elapsed().as_secs() >= budget {
             let checked = t.checked;
             let remaining = versions.len() - checked;
@@ -6170,6 +6222,29 @@ fn compat_check(name: &str, own_version: Option<&str>, floors: Floors, full: boo
         sample.push(chosen);
     }
 
+    // A withdrawn release cannot be fetched and binds no dependent any more; another release
+    // takes its place at once, so the run still compares as many against this loft.
+    let withdrawn = withdrawn_releases(name, &versions);
+    let mut kept: Vec<String> = Vec::new();
+    for v in sample {
+        let Some(why) = withdrawn.get(&v) else {
+            kept.push(v);
+            continue;
+        };
+        let taken: Vec<String> = kept.iter().chain(std::iter::once(&v)).cloned().collect();
+        match in_place_of(&v, &versions, &taken, &withdrawn) {
+            Some(r) => {
+                println!(
+                    "compat check `{name}`: {v} is withdrawn ({why}); comparing {r} in its place"
+                );
+                kept.push(r);
+            }
+            None => println!(
+                "compat check `{name}`: {v} is withdrawn ({why}); no release takes its place"
+            ),
+        }
+    }
+    let sample = kept;
     println!(
         "compat check `{name}`: {} of {} release(s) sampled{}",
         sample.len(),
@@ -12368,6 +12443,58 @@ fn add_package_paths(
         if !search.pop() {
             return;
         }
+    }
+}
+
+#[cfg(all(test, feature = "registry"))]
+mod compat_withdrawn_tests {
+    use super::in_place_of;
+
+    /// A withdrawn release is replaced by the nearest newer one still installable and not
+    /// already sampled, else the nearest older one; with none left, by nothing.
+    #[test]
+    fn a_withdrawn_release_is_replaced_by_the_nearest_installable_one() {
+        let v: Vec<String> = ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let gone = |xs: &[&str]| -> std::collections::BTreeMap<String, String> {
+            xs.iter()
+                .map(|x| (x.to_string(), "advisory".to_string()))
+                .collect()
+        };
+        let taken = |xs: &[&str]| -> Vec<String> { xs.iter().map(ToString::to_string).collect() };
+        assert_eq!(
+            in_place_of("0.2.0", &v, &taken(&["0.3.0", "0.2.0"]), &gone(&["0.2.0"])).as_deref(),
+            Some("0.2.1"),
+            "the next newer release"
+        );
+        assert_eq!(
+            in_place_of(
+                "0.2.0",
+                &v,
+                &taken(&["0.2.0", "0.2.1"]),
+                &gone(&["0.2.0", "0.2.2"])
+            )
+            .as_deref(),
+            Some("0.3.0"),
+            "past a sampled and a withdrawn one"
+        );
+        assert_eq!(
+            in_place_of("0.3.0", &v, &taken(&["0.3.0"]), &gone(&["0.3.0"])).as_deref(),
+            Some("0.2.2"),
+            "the newest is replaced by the nearest older one"
+        );
+        assert_eq!(
+            in_place_of(
+                "0.2.0",
+                &v,
+                &taken(&["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0"]),
+                &gone(&["0.2.0"])
+            ),
+            None,
+            "nothing left to compare"
+        );
     }
 }
 
