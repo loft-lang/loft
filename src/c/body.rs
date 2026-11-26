@@ -9792,7 +9792,12 @@ impl<'a> FnWriter<'a> {
     /// keeps every call plain, as native's coroutine bodies do.
     fn ranged_call(&mut self, d: u32, args: &[Value], inv: bool) -> bool {
         let data = self.cx.data;
+        // A twin is named by a mask beside the arguments, and a call of more than 63 arguments
+        // has no twin name (the call site refuses one), so the ranged twin, an optimisation,
+        // is not chosen there: the plain call is emitted instead of a refusal (a function of
+        // 300 parameters, `tests/limits_full/the-counts-within-the-limit-compile.loft`).
         if !crate::opt::range::ranged_calls_enabled()
+            || args.len() > 63
             || crate::env_once!(std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"))
             || self.gen_elem.is_some()
             || (d as usize) >= data.definitions.len()
