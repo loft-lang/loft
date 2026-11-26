@@ -24,7 +24,7 @@ one refusal short of it":
 | T5 | lambdas and captures | 18 / 12 | 85 | a lambda that captures a local of its function (17); a lambda answering a record or a collection beside a shared capture (9); a short lambda with no `fn(…)` its position expects | — |
 | T6 | generics (was R4) | 21 / 13 | 70 | a type with arguments, keys, a limit or a member (18: `Tree`, `Bag`, `B` 9 defs each, `Wrap` 8); a generic instance at text whose body holds an answer other than a parameter (12 hidden); an operator on a type variable its bounds do not declare | el_types.loft:685 |
 | T7 | a vector answered from a tail (was R3) | 7 / 6 | 43 | a function returning a vector from this tail (25: `null` 18 defs, `block Append Vector` 8, `an owned local` 8, `block block` 6); a `return` with a value of this type (22); a function returning a keyed collection (8) | el_ex_deliver.loft:606, :657, :712 |
-| T8 | a call of a local, or answering a heap value of a type pass 1 left open | 2 / 12 | 57 | a call that is not of a function by its bare name (33 programs, 96 defs: `a local of type TyUnknown` 80); a call returning a heap value: TyUnknown (27 programs, 49 defs) | el_ex_object.loft:1848, el_ex_call.loft:1873, :1990 |
+| T8 | MEASURED: no family of its own, a second refusal another one causes (§ T8) | — | 57 | a call that is not of a function by its bare name: a local of type TyUnknown (80 defs); a call returning a heap value: TyUnknown (49 defs) | el_ex_object.loft:1848, el_ex_call.loft:1990 |
 | T9 | record literals (was R8) | 3 / 16 | 83 | a literal of something other than a declared struct (25 programs, 63 defs); a struct field of this type (26); a field the struct does not declare (18); a value struct or a struct template (16) | el_ex_into.loft:101, el_ex_object.loft:432 |
 | — | a vector match over this element type (was R6) | — | 7 | 43 defs: a narrow integer element, TyTuple, TyOptional | el_ex_match.loft:1412 |
 | R9 | the definitions a refused construct never registers (tester) | — | 157 | 1689 Rust-only and 108 port-only definitions; 1453 beside by numbers only (2339 at 635b29b75) | per site, below |
@@ -33,11 +33,7 @@ one refusal short of it":
 **Recommended order:** T1 and T2 first: the most programs admitted per refusal kind, and T1 is
 the porter's current topic.  Then T3, tuples, as ONE topic: by far the most programs met (119)
 and the most admitted (28, and 30 more one refusal short), but 93 kinds, so it is cut into its
-families and each try measured.  T8 is the hidden lever: 96 + 49 refused definitions, though it
-admits few programs alone, because a call of a TyUnknown local is a pass-1 typing gap (a local
-whose type pass 1 has not settled when the call is lowered) and fixing it there may clear
-several families at once.  Measure that claim first: run `kr-tools/where.py` on its family
-and read pass 1's type of the called local.
+families and each try measured.  T8 is not a lever: its refusals follow from others (§ T8), so it leaves the ranking.
 
 **Cleared since 635b29b75:** R1 (names across a used library: 2 programs and 11 definitions
 left, `a method call`, plus the lib constants `CRYSTAL_HALO_K` / `CRYSTAL_CHUNK_SHIFT` as `a name
@@ -49,13 +45,51 @@ refusal-worklist-history.md.
   a-tail-match-answer-materialised-into-a-work-ref-is-freed-once (4 + 4 `return`),
   2488-a-branch-that-can-leave-copies-each-arm-into-the-return-buffer (3).
 - T2: tests/scripts/1948-a-par-worker-may-answer-null (9), L-Null-Text/null-text-through-a-par-result.
-- T8: a-lambda-reads-its-captures-inside-a-comprehension-and-leaves-them-alive (12),
-  1715-a-null-that-arrived-as-a-value-shares-its-backing-with-a-closure (9),
-  1624-a-captured-default-arm-is-delivered-into-the-buffer (7);
-  heap value: what-an-advance-produces-is-the-consumers (8), 03-crystal-incr (5).
 
 The sections below name what Rust does for each older item (the routine to port, under the
 corresponding-routine ruling); their counts are those of 635b29b75.
+
+## T8, measured (2026-11-26, try dc356f49d)
+
+The two TyUnknown families are knock-on refusals: the type is unknown because something earlier was
+refused.  They are not a pass-1 typing gap.
+
+**A call of a local of type TyUnknown (80 sites):** 78 of the 80 follow an earlier refusal in the
+same definition, 70 of them of the lambda bound to that local ("a lambda that captures a local of
+its function" 33, "a lambda answering a record or a collection beside a shared capture" 29, "a
+short lambda with no `fn(…)` its position expects" 8).  The refused lambda leaves its local
+untyped, so the call of it on the next line is refused too.  The definition is already refused,
+so clearing this changes no verdict and no definition count: these sites belong to T5.  Probe
+(both refusals on line 2; drop `q();` and only the lambda's remains):
+`struct Rw { k: integer, v: integer }` /
+`fn run() -> integer { m: hash<Rw[k]> = [Rw { k: 1, v: 11 }]; q = fn() { m = [Rw { k: 9, v: 99 }]; }; q(); len(m) }`.
+
+**A call returning a heap value: TyUnknown (49 sites):** 33 have no earlier refusal of their own.
+In every one of them the CALLEE is refused in a way that leaves its return type unresolved:
+- 13: a generator whose element type the port refuses at the signature ("an iterator of an element
+  other than a plain scalar, a text, a record or a tuple of those", line 0).  Probe:
+  `fn gen(n: integer) -> iterator<vector<integer>> { for i in 0..n { yield [i * 7, 31]; } }` and
+  `fn main() { t = 0; for v in gen(3) { t += len(v); } println("{t}"); }` (`main` is refused only for
+  the call);
+- 6 + more: a record named in the callee's signature and declared BELOW the callee.  Probe:
+  `fn mk(n: integer) -> X { X { a: n } }` / `struct X { a: integer }` /
+  `fn main() { x = mk(41); println("{x.a}"); }`: `mk` is refused as "a literal of something other
+  than a declared struct", and `main` for the call;
+- the rest: a generic type (`a type with arguments…`) or a callee whose own call is refused the
+  same way.
+A callee refused in its BODY, with a return type the port resolves, does not cause this: a
+`vector match over TyTuple` in `fn mk(n: integer) -> X` (X above it) leaves its callers elaborated.
+So register-then-refuse already holds for signatures; the gap is what the port cannot RESOLVE.
+
+**Where that points:** T9's "a literal of something other than a declared struct" is mostly the
+same cause: 29 of its 63 definitions name a struct declared below the literal.  The port has
+Rust's forward stub (`claim_declared_type_names`, `DT_UNKNOWN`, adopted in place by
+`parse_struct`, el_definitions.loft ~635), but `literal_def` (el_ex_object.loft:336) accepts only
+`DT_STRUCT` / a record variant, so a literal met before the struct's declaration (pass 1 reaches
+the function before the struct) is refused.  Rust's routing (objects.rs ~3064) has the same
+`Struct | EnumValue` condition, so how Rust's pass 1 treats a literal of a stub is the routine
+to port.  To confirm on a pass-1 trace before porting.  Porting it clears these T9 definitions
+together with the callers refused for the call.
 
 ## R3 — a vector returned from a tail
 
@@ -125,6 +159,11 @@ touches (R9), except where the R-item itself is the cause (R2's constants, R4's 
 the item's port shows as definitions won, not hidden behind shifted numbers.
 
 ## R9 — what a refused construct never registers (tester)
+
+**Standing (owner, 2026-11-26):** between the porter's tries the tester keeps shrinking the diff
+of refused programs: every difference in a refused program that is not the refused construct
+itself, whether a knock-on refusal, a definition one side registers, or numbers shifted by a
+dropped definition.
 
 A construct the port refuses before it registers its definitions shifts the number of every
 definition after it, so those definitions differ in numbers only (`beside numbers`).  The fix at
