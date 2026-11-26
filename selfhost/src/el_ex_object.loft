@@ -1821,6 +1821,31 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     }
     return rf;
   }
+  // A call through a LINK to a function value (`pd: &fn(…)`, `pd()`): the function the link names
+  // read into a `__fnlink_N`, then called through it (`fnlink`, `@FR-B-Ref-Uniform`).
+  if source < 0 && name != "" && el_vars::var(vars, name) >= 0 && match el_vars::tp(vars, el_vars::var(vars, name)) { TyRefVar { inner: lfi } => el_types::base(lfi) is TyFunction, _ => false } {
+    lnk = el_vars::var(vars, name);
+    // (The temp is the second pass's — minted after the frame's closure records — typed with the
+    // borrows the link's function carries.)
+    lft = match el_vars::tp(vars, lnk) { TyRefVar { inner: lfi2 } => el_types::base(lfi2), _ => ir::TyVoid };
+    // (The first pass reads the call through the link itself: its arguments and the buffers
+    // the call mints — a text answer's `__work_N` — in order, the temp not yet.)
+    if e.first_pass {
+      // (Read as the function it links, for this call only: `call_ref` asks the variable's type.)
+      ltp = el_vars::tp(vars, lnk);
+      el_vars::set_var_type(vars, lnk, lft);
+      lpr = call_ref(e, vars, lnk, args);
+      el_vars::set_var_type(vars, lnk, ltp);
+      return lpr;
+    }
+    lw = el_vars::create_unique(vars, "__fnlink", lft);
+    el_vars::set_defined(vars, lw);
+    lcr = call_ref(e, vars, lw, args);
+    if el_types::is_unknown(lcr.tp) {
+      return lcr;
+    }
+    return ex(el_ir::v_block([el_ir::v_set(lw, ir::NdVar { n: lnk }), lcr.code], lcr.tp, "fnlink"), lcr.tp);
+  }
   // A call through an ELEMENT of a vector of function values (`fs[1](4)`): the element read into
   // a `__fn_ref_tmp`, then called through it (`fn_call_tmp`), as a function-valued field is.
   // (So is a call answering a function value, `pass(fn(x) { … })(2)`, `@FR-L-CapKeep`: the

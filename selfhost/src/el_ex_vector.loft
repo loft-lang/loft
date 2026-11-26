@@ -1619,6 +1619,21 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if keyed_kind(el_types::base(a.tp)) && !(a.tp is TyOptional) && a.code is NdVar && len(el_types::deps(a.tp)) > 0 {
       return a;
     }
+    // A link to a FUNCTION-value local (`pd = &g`) is the local's slot the same way
+    // (`@FR-B-Ref-Intro`: `&τ` for every τ): `OpCreateStack(g)`, typed `&fn(…)` — and such a
+    // link met again (a `&fn(…)` declaration reads its `&g` as a link) is that link.
+    if match a.tp { TyRefVar { inner: fri } => el_types::base(fri) is TyFunction, _ => false } && calls(e, el_ir::unspan(a.code), "OpCreateStack") {
+      return a;
+    }
+    match a.code {
+      NdVar { n: fv } => {
+        if el_types::base(a.tp) is TyFunction && !(a.tp is TyOptional) && !vars.vars[fv].argument && !(el_vars::tp(vars, fv) is TyRefVar) {
+          // (The local's own type: what its function borrows, not the read's `[g]`.)
+          return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_vars::tp(vars, fv) });
+        }
+      },
+      _ => {}
+    }
     // A link to a record LOCAL (`pc = &c`) is the local's slot (`OpCreateStack`), typed as a
     // link borrowing it; its fields are reached as the record's are (`@FR-C-Ref`).
     match a.code {
