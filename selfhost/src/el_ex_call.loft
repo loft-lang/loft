@@ -196,6 +196,7 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   if why != "" {
     if nm != "" && el::def_nr(e, nm) < 0 {
       e.refused_instances += [signature_instance(e, g, b!, nm)];
+      mint_wrappers_of_refused(e, g, b!.vars, b!.types);
     }
     el::refuse(e, why);
     return -1;
@@ -265,6 +266,39 @@ pub fn rebuild_stale(e: el::El) {
   }
 }
 
+// `instance_vector_wrapper` for a body this port refuses to fill: Rust fills it, and each local
+// whose type is a vector backing's wrapper over a bound variable (`main_vector<T>`) has the
+// wrapper over the substituted element minted (`vector_def`), as the filled path's variable
+// table does here (`vector_rows`).  Register, then refuse.
+fn mint_wrappers_of_refused(e: el::El, g: integer, vars: vector<integer>, bounds: vector<ir::TypeT>) {
+  if e.first_pass {
+    return;
+  }
+  vi = 0;
+  while vi < len(el::def(e, g).variables.variables) {
+    t = el::def(e, g).variables.variables[vi]!.type_def[0] ?? ir::TyVoid;
+    wn = match el_types::base(t) { TyReference { n } => if el::def(e, n).name.starts_with("main_vector<") { n } else { -1 }, _ => -1 };
+    if wn >= 0 {
+      elem = match el::def(e, wn).attributes[0]!.typedef[0] ?? ir::TyVoid { TyVector { inner } => inner, _ => ir::TyVoid };
+      over = false;
+      for h in vars {
+        if type_mentions(elem, h) {
+          over = true;
+        }
+      }
+      if over {
+        for h in vars {
+          elem = substitute(elem, h, bounds[h#index] ?? ir::TyVoid);
+        }
+        if !el_types::names_type_var(e, elem) {
+          vector_rows(e, el_types::without_deps(elem), 0, true);
+        }
+      }
+    }
+    vi += 1;
+  }
+}
+
 // `instantiate_nested_generics` for a body this port refuses to fill: Rust fills it and then mints
 // an instance for each template call in it, so the nested instances are minted here from the
 // template's body and variable table with the binding applied (register, then refuse — each
@@ -275,6 +309,7 @@ fn mint_nested_of_refused(e: el::El, g: integer, h: integer, bound: ir::TypeT, c
   if !closing || e.first_pass {
     return;
   }
+  mint_wrappers_of_refused(e, g, [h], [bound]);
   tv = el::def(e, g).variables;
   f0 = ir::Function { name: tv.name, file: tv.file, variables: [], names: [], inline_refs: [] };
   for v in tv.variables {
