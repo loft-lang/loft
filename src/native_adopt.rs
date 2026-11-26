@@ -17,7 +17,8 @@ use crate::host_abi::{HOST_ABI, HostTable, LibArg};
 use crate::keys::DbRef;
 use crate::opt::native_key::{
     artifact_sources, auto_cdylib_stem, component_fingerprint, contributing_fingerprint,
-    library_export_set, mix_fp, platform_cdylib_name, source_content_hash, source_newer_than,
+    generation_switches, library_export_set, mix_fp, platform_cdylib_name, source_content_hash,
+    source_newer_than,
 };
 use std::collections::HashSet;
 
@@ -864,13 +865,18 @@ pub fn adopt_shared_cdylib(
             crate::cache::loft_exe_identity(),
         )
     };
-    // …and the components its C binds: installed or not, and which library (@PLN205).
+    // …and the components its C binds: installed or not, and which library (@PLN205), and every
+    // switch in force that can change the code it is generated with.  `@FR-Art-Key`: everything a
+    // unit is built from is in its key.
     let fp = mix_fp(
         mix_fp(
-            mix_fp(loft_fp, program_fp),
-            contributing_fingerprint(contributing),
+            mix_fp(
+                mix_fp(loft_fp, program_fp),
+                contributing_fingerprint(contributing),
+            ),
+            component_fingerprint(contributing),
         ),
-        component_fingerprint(contributing),
+        generation_switches(),
     );
     // loft#715 — and put that key in the artifact's NAME, so two contexts can
     // never name the same file.  The fingerprint alone was not enough: the fast
@@ -884,7 +890,7 @@ pub fn adopt_shared_cdylib(
     // two overlapping processes to show, which is why it read as 1 start in 12.
     //
     // Content-addressing removes the class rather than narrowing the window: a
-    // context only ever opens its own file, lock or no lock.
+    // context only ever opens its own file, lock or no lock.  `@FR-Art-Name`.
     let stem = format!("{}_{fp:016x}", auto_cdylib_stem(pkg_dir));
     let so = out_dir.join(platform_cdylib_name(&stem));
 
@@ -901,7 +907,8 @@ pub fn adopt_shared_cdylib(
     // does not hold the failure is silent corruption, so the cheap verification
     // is worth more than the argument.  A mismatch falls through to REBUILD,
     // which is the same thing a name miss already does — and REBUILD is why this
-    // probe, too, must not load `so` itself (loft#999).
+    // probe, too, must not load `so` itself (loft#999).  `@FR-Art-Name`; and `@FR-Art-Stale`: a
+    // unit older than an edit to a source it carries is not adopted (`source_newer_than`).
     // The probe OPENS the artifact, so whatever it links must be loadable first.
     crate::opt::native_key::load_linked_packages(data, export_set);
     if crate::file_access::exists(&so)

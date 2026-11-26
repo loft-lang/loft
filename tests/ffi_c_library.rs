@@ -548,7 +548,48 @@ fn a_component_built_against_another_loft_ffi_is_refused_without_build_advice() 
     }
 }
 
-/// A library's compiled unit is keyed on every switch in force that
+/// `@FR-Art-Inert`: the release builds the library units it publishes under inert switches only.
+/// A switch the release sets that is not on `INERT_SWITCHES` is in those units' keys and in no
+/// user's, so no user would ever adopt a published unit — they would all rebuild, and a machine
+/// with no C compiler would interpret, with nothing reporting it.  Every `LOFT_*` name the
+/// release workflow or its library-artifact script sets is on the list.
+#[test]
+fn the_release_builds_its_units_under_inert_switches_only() {
+    let root = root();
+    let mut named = Vec::new();
+    for (file, sep) in [
+        (".github/workflows/release.yml", ':'),
+        ("scripts/release-lib-artifacts.sh", '='),
+    ] {
+        let text = fa::read_to_string(root.join(file)).expect(file);
+        let mut at = 0;
+        while let Some(i) = text[at..].find("LOFT_") {
+            let start = at + i;
+            let end = start
+                + text[start..]
+                    .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                    .unwrap_or(text.len() - start);
+            if text[end..].starts_with(sep) {
+                named.push((file, text[start..end].to_string()));
+            }
+            at = end;
+        }
+    }
+    assert!(
+        !named.is_empty(),
+        "the release sets no LOFT_ switch: the scan reads nothing"
+    );
+    let live: Vec<_> = named
+        .iter()
+        .filter(|(_, n)| !loft::opt::native_key::INERT_SWITCHES.contains(&n.as_str()))
+        .collect();
+    assert!(
+        live.is_empty(),
+        "the release builds its units under switches that are in their keys: {live:?}"
+    );
+}
+
+/// `@FR-Art-Key`, `@FR-Art-Inert`: a library's compiled unit is keyed on every switch in force that
 /// can change the code it is generated with, and on none that cannot.  One plain package, one
 /// program, four runs on the interpreter in one `native-auto/`: no switch, an inert one
 /// (`LOFT_TIMEOUT`), a cure switch (`LOFT_NO_PUSH_FILL`, whose generated C differs) and a width
@@ -629,8 +670,7 @@ fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
 /// `native-auto/`, a scratch `LOFT_HOME` and program cache, as two runs of one program on one
 /// machine do.  The uninstall and the move pass on the old key too — the interpreter refuses or
 /// finds the component at start, and the C backend keys its build on its C text, which holds what
-/// the search found — so those cells, and the C backend's, guard.  No formal rule covers an
-/// artifact's key.
+/// the search found — so those cells, and the C backend's, guard.  `@FR-Art-Key`.
 #[test]
 fn a_unit_is_keyed_on_the_components_it_binds() {
     // (what the run finds, whether its program calls the native, what it prints, whether it is
