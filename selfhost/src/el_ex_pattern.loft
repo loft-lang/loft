@@ -1265,6 +1265,20 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   }
   if e.p.nodes[body!] is SBlock {
     b = el_ex_assign::parse_block(e, vars, body!, "match_arm", expected);
+    // (A block arm answering a vector where the siblings settled on its `?` is typed as that `?`,
+    // its borrows kept: `{ x = [n]; x }` is `vector<integer>["x"]?`.)
+    // (…and so is a plain scalar one, `{ x = n + 10; x }` beside `num(3)`'s `integer?`.)
+    if !e.first_pass && expected is TyOptional && ((el_types::base(expected) is TyVector && b.tp is TyVector) || (el_convert::plain_scalar(b.tp) && el_types::is_equal(e, b.tp, el_types::base(expected)))) {
+      match b.code {
+        NdBlock { block: vob } => {
+          vb0 = vob[0];
+          vt = ir::TyOptional { inner: b.tp };
+          vb0.result = [vt];
+          return ex(ir::NdBlock { block: [vb0] }, vt);
+        },
+        _ => {}
+      }
+    }
     // A block arm converts at its tail to the type its siblings settled on, as a block `else`
     // does (`@FR-C-Num`'s widening: `{ n }` beside `1.5`).
     if !e.first_pass && el_convert::plain_scalar(b.tp) && el_convert::plain_scalar(expected) && !el_types::is_unknown(expected) && !el_types::is_equal(e, b.tp, expected) && !(b.tp is TyOptional) {
@@ -1330,7 +1344,7 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   // `["__ref_1"]`, the join borrowing both.)
   keeps = (el_types::base(expected) is TyReference && el_types::base(x.tp) is TyReference) || (el_types::base(expected) is TyText && el_types::base(x.tp) is TyText) || (el_types::base(expected) is TyVector && el_types::base(x.tp) is TyVector);
   at = if keeps { el_types::with_deps(expected, el_types::deps(x.tp)) } else { expected };
-  ex(c!, if x.tp is TyOptional { ir::TyOptional { inner: at } } else { at })
+  ex(c!, if x.tp is TyOptional && !(at is TyOptional) { ir::TyOptional { inner: at } } else { at })
 }
 
 // The name a bare binding pattern binds (`n`), or "" — a lowercase name that names no
@@ -3660,6 +3674,25 @@ pub fn is_file(e: el::El, t: ir::TypeT) -> boolean {
 
 // `branch_bound_syntax` asked of every block under `n`: is `name` bound to an `if` or a `match`
 // in a statement of the body or of any block inside it?
+// A statement anywhere under `n` binding `name` to a struct literal (`x = Out { … }`): the
+// local's store is the literal's own, minted where it is built.
+pub fn literal_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> boolean {
+  if n < 0 || depth > 64 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SLet { name: ln, e: le } => { if ln == name && le != null && e.p.nodes[le!] is SStructLit { return true; } },
+    SAssign { op, target, e: ae } => { if op == "=" && ae != null && e.p.nodes[ae!] is SStructLit && match e.p.nodes[target] { SName { name: tn, member } => tn == name && member == "", _ => false } { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if literal_bound_anywhere(e, c, name, depth + 1) {
+      return true;
+    }
+  }
+  false
+}
+
 fn branch_bound_anywhere(e: el::El, n: integer, name: text, depth: integer) -> boolean {
   if n < 0 || depth > 64 {
     return false;

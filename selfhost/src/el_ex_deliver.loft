@@ -235,15 +235,18 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   // …and onto a branch tail's first leaf (`Rename` in `arm_delivery`'s leaf walk): every other
   // arm is delivered into that parameter — a call handed its own `__ref_N` builds there, a local
   // or a projection is copied in — and the body answers the buffer.
-  if ba < 0 && !e.first_pass && !(result is TyOptional) {
+  // (A `vector<T>?` result alike, its `null` arm the sentinel, the body the buffer's `?`.)
+  if ba < 0 && !e.first_pass {
     vb = el_ex_null::vector_buffer(e, vars);
     rbl = match code { NdBlock { block } => block[0], _ => return code };
     rtail = if len(rbl.operators) > 0 { el_ir::unspan(rbl.operators[-1]) } else { ir::NdNull };
     rrec = element_content(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
-    if vb >= 0 && rb >= 0 && rrec >= 0 && built_arm(e, vars, rtail) && deliverable_arms(e, vars, rtail) {
+    ropt = result is TyOptional;
+    if vb >= 0 && rb >= 0 && rrec >= 0 && built_arm(e, vars, rtail) && deliverable_arms(e, vars, rtail) && (!ropt || rtail is NdIf) {
       rborrowed = [rb] + projection_params(e, vars, rtail, []);
       rbl.operators[-1] = deliver_arms(e, vars, rbl.operators[-1], vb, rrec);
-      rbl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), rborrowed)];
+      rdense = el_types::with_deps(el_types::without_deps(el_types::base(result)), rborrowed);
+      rbl.result = [if ropt { ir::TyOptional { inner: rdense } } else { rdense }];
       return ir::NdBlock { block: [rbl] };
     }
   }
@@ -998,10 +1001,25 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
       }
     }
     want = el_types::without_deps(el_types::base(result));
+    // (`ref_return`'s `ls` order, measured whatever the arm order: the named locals first, then
+    // the work refs, ascending — `["x", "__ref_1", "__ref_2"]`.)
+    named_leaves = [for nl in leaves if !starts_with(el_vars::name_of(vars, nl), "__ref_") && !starts_with(el_vars::name_of(vars, nl), "__rref_") { nl }];
+    ref_leaves: vector<integer> = [];
+    for rl in leaves {
+      if !named_leaves.contains(rl) {
+        ref_leaves = el_vars::sorted_in(ref_leaves, rl);
+      }
+    }
+    leaves = named_leaves + ref_leaves;
     for lf in leaves {
       // (`wrong_shape_for_buffer`: only a local of the return's own type can BE the buffer.)
       // (A local viewing another local is no store of its own to rename onto: `Bind`.)
       shaped = el_types::is_equal(e, el_types::without_deps(el_types::base(el_vars::tp(vars, lf))), want) && !(el_vars::tp(vars, lf) is TyOptional) && !starts_with(el_vars::name_of(vars, lf), "___blk_val") && !el_ex_copy::views_a_local(vars, lf);
+      // (A named local rebuilt into a second store — `x += [k]` — or bound from a fresh call keeps
+      // its own store, `Bind`, as the plain tail's rename rungs decline it.)
+      if shaped && !starts_with(el_vars::name_of(vars, lf), "__ref_") && !starts_with(el_vars::name_of(vars, lf), "__vdb_") && (el_ex_copy::child_allocs(e, vars, code, lf) >= 2 || bound_from_call(code, lf)) {
+        shaped = false;
+      }
       if shaped && !bound && attr_nr(el::def(e, d), "__retbuf") >= 0 && !el_expressions::buffer_bound(e) {
         rename_onto(e, vars, rb, lf);
       } else {
@@ -1322,7 +1340,7 @@ pub fn last_value(n: ir::Node) -> ir::Node {
 }
 
 // Does the arm bind `v` among its statements (a local of its own)?
-fn arm_defines(n: ir::Node, v: integer) -> boolean {
+pub fn arm_defines(n: ir::Node, v: integer) -> boolean {
   match n {
     NdSpan { inner } => arm_defines(inner, v),
     NdBlock { block } => {
