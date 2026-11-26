@@ -1568,6 +1568,12 @@ pub fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
     },
     TyRefVar { inner } => ir::TyRefVar { inner: substitute(inner, h, bound) },
     TyFunction { args, result, dep, consts } => ir::TyFunction { args: [for a in args { substitute(a, h, bound) }], result: substitute(result, h, bound), dep: dep, consts: consts },
+    // `Type::substitute` is the one keystone every former descends through (Plan-17 for the
+    // tuple, loft#1032 for the iterator): `[T ↦ integer]` reaches `(T, U)` and `iterator<T>`,
+    // so a call's predicted `vector<(T, U)>` is `vector<(integer, text)>`.
+    TyTuple { elems } => ir::TyTuple { elems: [for m in elems { substitute(m, h, bound) }] },
+    TyIterator { step, inner } => ir::TyIterator { step: substitute(step, h, bound), inner: substitute(inner, h, bound) },
+    TyRewritten { inner } => ir::TyRewritten { inner: substitute(inner, h, bound) },
     _ => t
   }
 }
