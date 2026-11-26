@@ -109,20 +109,7 @@ pub fn fill_all(e: el::El) {
           // A tuple element (`vector_wrapper_name` of a tuple, `vector_def` with
           // `ensure_tuple_defs`): the `__tuple<…>` record first, then `vector<(…)>` owned by it
           // and `main_vector<(…)>`, as a literal of it makes them (`tuple_vector_rows`).
-          match inner {
-            TyTuple { elems: te } => {
-              tsp = el_types::tuple_spelling_e(e, te, ", ");
-              if tsp != "" && el::def_nr(e, "main_vector<({tsp})>") < 0 && !el_types::any_names_type_var(e, te) {
-                ttd = el_types::tuple_def(e, te, eof);
-                make_vector_def(e, inner, "({tsp})", eof, false, store: false);
-                tvd = el::def_nr(e, "vector<({tsp})>");
-                if tvd >= 0 && ttd >= 0 {
-                  e.b.data.definitions[tvd].parent = ttd;
-                }
-              }
-            },
-            _ => {}
-          }
+          tuple_wrapper(e, inner, eof);
         },
         _ => {}
       }
@@ -459,6 +446,45 @@ pub fn nullable_record_of(e: el::El, t: ir::TypeT) -> integer { el_types::nullab
 
 pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
   el_types::nullable_enum_for(e, sd, el::pos_at(e, len(e.p.src) - 1))
+}
+
+// `vector_def` for a TUPLE element (`vector_wrapper_name` of a tuple, `ensure_tuple_defs`): the
+// `__tuple<…>` records of the element, inner first, then `vector<(…)>` owned by the element's
+// and `main_vector<(…)>`, at `pos`, where they are not made yet — as a literal of it makes them
+// (`tuple_vector_rows`).  Nothing for an element that is no tuple, or one naming a variable.
+pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position) {
+  match inner {
+    TyTuple { elems: te } => {
+      tsp = el_types::tuple_spelling_e(e, te, ", ");
+      if tsp != "" && el::def_nr(e, "main_vector<({tsp})>") < 0 && !el_types::any_names_type_var(e, te) {
+        for m in te {
+          tuple_wrapper_records(e, m, pos);
+        }
+        ttd = el_types::tuple_def(e, te, pos);
+        make_vector_def(e, inner, "({tsp})", pos, false, store: false);
+        tvd = el::def_nr(e, "vector<({tsp})>");
+        if tvd >= 0 && ttd >= 0 {
+          e.b.data.definitions[tvd].parent = ttd;
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// The `__tuple<…>` records a tuple member holds, inner first (`ensure_tuple_defs`).
+fn tuple_wrapper_records(e: el::El, t: ir::TypeT, pos: ir::Position) {
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        tuple_wrapper_records(e, m, pos);
+      }
+      el_types::tuple_def(e, elems, pos);
+    },
+    TyOptional { inner } => tuple_wrapper_records(e, inner, pos),
+    TyVector { inner } => tuple_wrapper_records(e, inner, pos),
+    _ => {}
+  }
 }
 
 // A `main_vector<T>` wrapper made on the second pass (by a parameter's type) and asked for

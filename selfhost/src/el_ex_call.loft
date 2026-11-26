@@ -274,9 +274,14 @@ fn mint_wrappers_of_refused(e: el::El, g: integer, vars: vector<integer>, bounds
   if e.first_pass {
     return;
   }
+  // `fill_monomorph_body` substitutes the whole variable table: an OPEN instance a variable's
+  // type writes is closed there (`subst_type`, minting `Bag<integer>` for `b: Bag<T>`), and a
+  // backing's wrapper over a bound variable is the one over the substituted element.
+  binds: vector<el_types::TypeBinding> = [for h in vars { el_types::TypeBinding { holder: h, bound: bounds[h#index] ?? ir::TyVoid } }];
   vi = 0;
   while vi < len(el::def(e, g).variables.variables) {
     t = el::def(e, g).variables.variables[vi]!.type_def[0] ?? ir::TyVoid;
+    el_types::close_open(e, t, binds);
     wn = match el_types::base(t) { TyReference { n } => if el::def(e, n).name.starts_with("main_vector<") { n } else { -1 }, _ => -1 };
     if wn >= 0 {
       elem = match el::def(e, wn).attributes[0]!.typedef[0] ?? ir::TyVoid { TyVector { inner } => inner, _ => ir::TyVoid };
@@ -291,7 +296,12 @@ fn mint_wrappers_of_refused(e: el::El, g: integer, vars: vector<integer>, bounds
           elem = substitute(elem, h, bounds[h#index] ?? ir::TyVoid);
         }
         if !el_types::names_type_var(e, elem) {
-          vector_rows(e, el_types::without_deps(elem), 0, true);
+          // (A tuple element is named from its members, `vector_rows` names none.)
+          if el_types::without_deps(elem) is TyTuple {
+            el_schema::tuple_wrapper(e, el_types::without_deps(elem), el::def(e, g).position);
+          } else {
+            vector_rows(e, el_types::without_deps(elem), 0, true);
+          }
         }
       }
     }

@@ -1455,14 +1455,14 @@ fn tuple_identity(e: el::El, members: vector<ir::TypeT>) -> text {
 }
 
 // A template's variable bound to a type: the header holder and its argument.
-pub struct TypeBinding { holder: integer, bound: ir::TypeT }
+pub struct TypeBinding { pub holder: integer, pub bound: ir::TypeT }
 
 // port: data.rs close_open
 // `t` with `bindings` applied and every OPEN instance it writes closed — replaced by the instance
 // its arguments name once the bindings decide them (`Tree<text>`'s `kids: vector<Tree<T>>` is
 // `vector<Tree<text>>`).  A bound value is not walked again, so an open instance a binding brings
 // in stays as it is, as Rust's collect-before-apply has it.
-fn close_open(e: el::El, t: ir::TypeT, bindings: vector<TypeBinding>) -> ir::TypeT {
+pub fn close_open(e: el::El, t: ir::TypeT, bindings: vector<TypeBinding>) -> ir::TypeT {
   match t {
     TyReference { n, dep } => {
       for b in bindings {
