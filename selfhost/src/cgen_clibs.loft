@@ -539,9 +539,13 @@ pub fn tables(b: ir::Bundle) -> text {
       links += [lib.export_dynamic];
     }
   }
+  // A shim is linked into the binary; a program only compares a name with it
+  // (`c_library_available`), so its entry is the file's name, the same in every checkout
+  // (REPRODUCIBLE_OUTPUT.md).  This writer writes program units only, never a hosted one,
+  // which would open the shim by its path.
   for lib in b.c_libraries {
     if lib.shim != "" {
-      carried += [c_string(lib.name)];
+      carried += [c_string(file_name(lib.name))];
       syms += [[]];
     }
   }
