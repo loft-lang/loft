@@ -929,6 +929,16 @@ struct SliceArmAlt {
   binds: vector<ir::Node>
 }
 
+// A slice element read for a variant pattern; on the first pass, where the element's place
+// type may not be laid out yet and the read is null, the element's place itself — so a field
+// binding still borrows the subject's root (`@FR-P-Cap-View`, `["t"]`), as Rust types it there.
+// (There the read can be a placeholder call no definition answers yet, `def_nr: -1`.)
+fn rooted_elem(e: el::El, elm: ir::TypeT, at: ir::Node, sv: integer) -> ir::Node {
+  r = slice_elem(e, elm, at);
+  placeholder = match el_ir::unspan(r) { NdNull => true, NdCall { def_nr: rd } => rd < 0, _ => false };
+  if e.first_pass && placeholder { if el_ir::unspan(at) is NdNull { ir::NdVar { n: sv } } else { at } } else { r }
+}
+
 pub fn sibling_variants(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
   ea = struct_enum_of(e, el_types::base(a));
   ea >= 0 && ea == struct_enum_of(e, el_types::base(b))
@@ -1568,7 +1578,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   // reference of its own, `__ref_1`, which is not carried — that stays refused below.)
   subj_param = match el_ir::unspan(x.code) { NdVar { n: xs } => vars.vars[xs].argument, _ => false };
   record_tail = el_types::base(result) is TyReference && !bind && subj_param;
-  if !sunk && !record_tail {
+  // (A RECORD match BOUND to a local (`one = match v { [first, ..] => first, _ => P {…} }`)
+  // answers its arms as they stand: the local views the element binding, typed by it
+  // (`["first#1"]`), and each literal arm builds its own record.)
+  bound_record = bind && el_types::base(result) is TyReference && !(result is TyOptional);
+  if !sunk && !record_tail && !bound_record {
   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     // (Delivered arm by arm into the buffer, as Rust's `Materialize` of a match tail is — the
     // return-promotion report asks no ladder there, also where this port refuses the arms.)
@@ -1912,7 +1926,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: sn#index }])]);
       sp = seg_pats[sn#index] ?? -1;
       if sp >= 0 {
-        va = el_ex_pattern::slice_variant(e, vars, sp, sed, slice_elem(e, elm, at), names);
+        va = el_ex_pattern::slice_variant(e, vars, sp, sed, rooted_elem(e, elm, at, sv), names);
         if va == null {
           return null;
         }
@@ -2287,7 +2301,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
     if (head_pat[h#index] ?? -1) >= 0 {
       hpn = head_pat[h#index] ?? -1;
-      va = if el_ex_pattern::single_alt_group(e, hpn) { el_ex_pattern::single_alt(e, vars, hpn, sed, elm, sv, src, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }, names) } else { el_ex_pattern::slice_variant(e, vars, hpn, sed, slice_elem(e, elm, at), names) };
+      va = if el_ex_pattern::single_alt_group(e, hpn) { el_ex_pattern::single_alt(e, vars, hpn, sed, elm, sv, src, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }, names) } else { el_ex_pattern::slice_variant(e, vars, hpn, sed, rooted_elem(e, elm, at, sv), names) };
       if va == null {
         return null;
       }
@@ -2311,7 +2325,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }]);
     if (tail_pat[t#index] ?? -1) >= 0 {
       tpn = tail_pat[t#index] ?? -1;
-      va = if el_ex_pattern::single_alt_group(e, tpn) { el_ex_pattern::single_alt(e, vars, tpn, sed, elm, sv, src, ir::NdInt { n: t#index - len(tail) }, names) } else { el_ex_pattern::slice_variant(e, vars, tpn, sed, slice_elem(e, elm, at), names) };
+      va = if el_ex_pattern::single_alt_group(e, tpn) { el_ex_pattern::single_alt(e, vars, tpn, sed, elm, sv, src, ir::NdInt { n: t#index - len(tail) }, names) } else { el_ex_pattern::slice_variant(e, vars, tpn, sed, rooted_elem(e, elm, at, sv), names) };
       if va == null {
         return null;
       }
