@@ -4,6 +4,9 @@
 // P105 FIXED: nested struct field access on vector elements
 // P106 FIXED: same root cause as P105 — OpGetField now emitted for inline fields
 // C54 FIXED: ** operator mapped to pow()
+//
+// @FR-L-Struct: `sl.segs[0].start.x` / `.end_p.y` read the embedded structs' fields at their offsets.
+// @FR-H-NewRec: `svo.items += [...]` adds one element with its fields written (len 1, ix 3, iy 4).
 
 struct SvMat {
   vals: vector<float>,

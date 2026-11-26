@@ -29,6 +29,10 @@
 // this file could have carried and did not: `e = make()[k] ?? d; e`, a keyed element bound
 // before the return, which answered an EMPTY record because the container was only named
 // on the second parser pass.
+//
+// @FR-B-View-Depth: `make()[k]` is a view of the keyed container, whatever its kind.
+// @FR-O-Borrow: the element carries its container in its deps, so the caller's collection survives.
+// @FR-O-Move: returning a view of a container the function frees delivers an owned copy (7).
 
 struct I882H2 { q: integer, r: integer }
 struct I882H1 { q: integer, r: integer }

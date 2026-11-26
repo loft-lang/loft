@@ -39,6 +39,9 @@
 //
 // Every case below is checked against the same body written out by hand, so the
 // test asserts the VALUE and not merely the absence of a crash.
+//
+// @FR-G-Mono: each specialisation renders with its concrete type's formatter, not the template's.
+// @FR-F-Render: the values match the hand forms (7, 2.5, x, true, q, P(1,z), [1,2,3]).
 
 struct P {
   a: integer,
