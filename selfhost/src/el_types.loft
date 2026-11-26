@@ -847,7 +847,9 @@ pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text 
   for t in elems {
     m = tuple_member(t);
     if m == "" {
-      m = match t { TyReference { n, dep } => if n >= 0 && len(dep) == 0 && el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") { el::def(e, n).name } else { "" }, _ => "" };
+      // (A type variable's placeholder is spelled as its row is registered, `__typevar_<name>`,
+      // as `elem_name` spells a bare one: `vector<(__typevar_T#4, __typevar_U#1)>`.)
+      m = match t { TyReference { n, dep } => if n >= 0 && len(dep) == 0 && el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") { if type_var(e, t) >= 0 { "__typevar_{el::def(e, n).name}" } else { el::def(e, n).name } } else { "" }, _ => "" };
     }
     // A narrow integer member is spelled by its range (`integer(0, 255)`).
     if m == "" {
@@ -971,7 +973,7 @@ fn any_unresolved(ts: vector<ir::TypeT>) -> boolean {
 
 // port: data.rs mentions_type_var
 // Does `t` name a type variable's placeholder, or an open instance, anywhere in it?
-fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
+pub fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
   match t {
     TyReference { n } => is_type_var_placeholder(e, n) || is_open_instance(e, n),
     TyEnum { n } => is_open_instance(e, n),
