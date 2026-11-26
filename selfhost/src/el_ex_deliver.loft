@@ -261,6 +261,11 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     if vb >= 0 && rb >= 0 && rrec >= 0 && built_arm(e, vars, rtail) && deliverable_arms(e, vars, rtail) && (!ropt || rtail is NdIf) {
       rborrowed = [rb] + projection_params(e, vars, rtail, []);
       rbl.operators[-1] = deliver_arms(e, vars, rbl.operators[-1], vb, rrec);
+      // (A dense result beside a `null` arm opens by clearing the local the buffer was renamed
+      // onto, its first statement inside that `Insert` — Rust's head clear of a renamed buffer.)
+      if !ropt && null_arm(e, rtail) && vb != rb && len(rbl.operators) > 0 {
+        rbl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: vb }]), rbl.operators[0]] };
+      }
       rdense = el_types::with_deps(el_types::without_deps(el_types::base(result)), rborrowed);
       rbl.result = [if ropt { ir::TyOptional { inner: rdense } } else { rdense }];
       return ir::NdBlock { block: [rbl] };
@@ -1249,6 +1254,9 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   // parameter, which a call arm already builds into and a local arm is.)
   vb = el_ex_null::vector_buffer(e, vars);
   dbuf = if vb >= 0 && vb != rb { vb } else { rb };
+  // (A dense result beside a `null` arm opens by clearing the buffer — Rust's head clear, its
+  // first statement inside that `Insert` — whether it kept `__retbuf` or was renamed.)
+  null_head = !(result is TyOptional) && null_arm(e, tail) && len(bl.operators) > 0;
   delivered = deliver_arms(e, vars, tail, dbuf, rec);
   answered = el_types::with_deps(el_types::without_deps(el_types::base(result)), borrowed);
   if mwrap != null {
@@ -1260,6 +1268,9 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
     bl.operators[-1] = delivered;
   }
   bl.result = [if result is TyOptional { ir::TyOptional { inner: answered } } else { answered }];
+  if null_head {
+    bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: dbuf }]), bl.operators[0]] };
+  }
   ir::NdBlock { block: [bl] }
 }
 
