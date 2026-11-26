@@ -4,6 +4,8 @@
 // Gate E cell: a lambda capturing a `&integer` parameter copies the value the link names when
 // the closure is built (`OpSetInt(___clos_1, 0, x)`), so a later write through the link is
 // not seen by the closure.
+// @FR-L-CapRef: a captured `&integer` is copied at the build, so the later write is not seen (6 + 10 = 16).
+// @FR-F-ParamRef: `x = 10` on the `&integer` parameter writes the caller's `x` (10).
 // Prints: 16 10
 
 fn scalar(x: &integer) -> integer { g = fn() -> integer { x * 2 }; x = 10; g() + x }

@@ -19,6 +19,9 @@
 // Both halves are asserted: that the program compiles at all, and that each
 // call lands in ITS OWN package. The variants' field sets differ, so a call
 // reaching the wrong package would read the wrong offset.
+//
+// @FR-Disp-Key: each package's `Box` enum keys its own `area`.
+// @FR-F-OneBody: `area(a, 5)` and `a.area(5)` reach the same body (106, 206).
 use dupenum_a::*;
 use dupenum_b::*;
 

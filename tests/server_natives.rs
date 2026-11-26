@@ -142,8 +142,12 @@ fn main() {
     }
   }
   println("TLSPUMP{events}");
-  if server_natives::tcp_accept(r) {
-    server_natives::tcp_respond(200, "rsa {server_natives::tcp_path()}");
+  // Five bare handshakes come first (the client's cipher-suite probes), then the request.
+  for i in 0..6 {
+    if server_natives::tcp_accept(r) {
+      server_natives::tcp_respond(200, "rsa {server_natives::tcp_path()}");
+      break;
+    }
   }
   println("DONE");
 }
@@ -303,6 +307,119 @@ struct Ports {
     rsa: u16,
 }
 
+/// A request that keeps arriving, one byte per 100 ms (a fifth of the server's 500 ms read
+/// timeout), for up to 15 s; the answer must be a 408 that comes within 12 s.
+///
+/// @falsified-at: de31aa067 — by hand: the pump's request budget set to 0 (no bound) → no
+/// answer after 15.4 s.
+fn slow_peer_is_told_408(port: u16) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let mut slow = connect(port);
+    let mut drip = slow.try_clone().expect("a second handle on the socket");
+    let answered = Arc::new(AtomicBool::new(false));
+    let stop = Arc::clone(&answered);
+    let dripping = std::thread::spawn(move || {
+        let _ = drip.write_all(b"GET /slow HTTP/1.1\r\nX-Pad: ");
+        let end = Instant::now() + Duration::from_secs(15);
+        while Instant::now() < end && !stop.load(Ordering::Relaxed) {
+            if drip.write_all(b"a").is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+    let started = Instant::now();
+    let mut answer = Vec::new();
+    let _ = slow.read_to_end(&mut answer);
+    answered.store(true, Ordering::Relaxed);
+    let took = started.elapsed();
+    let _ = dripping.join();
+    assert!(
+        answer.starts_with(b"HTTP/1.1 408 "),
+        "a request still arriving after its budget is told so: {:?} after {took:?}",
+        String::from_utf8_lossy(&answer)
+    );
+    assert!(
+        took < Duration::from_secs(12),
+        "and the pump gives up on it within its budget, not when the peer stops: {took:?}"
+    );
+}
+
+/// The CBC suites of TLS 1.2 with forward secrecy, ECDSA's and RSA's (SHA-1's and SHA-2's),
+/// and one AEAD suite of each.
+const EC_CBC: [u16; 4] = [0xC009, 0xC00A, 0xC023, 0xC024];
+const RSA_CBC: [u16; 4] = [0xC013, 0xC014, 0xC027, 0xC028];
+const EC_AEAD: u16 = 0xC02B;
+const RSA_AEAD: u16 = 0xC02F;
+
+/// A TLS 1.2 ClientHello offering `suites` only, with the extensions an ECDHE handshake needs
+/// (P-256 and X25519, uncompressed points, ECDSA and RSA signatures over SHA-256).
+fn client_hello(suites: &[u16]) -> Vec<u8> {
+    let mut body = vec![0x03, 0x03];
+    body.extend([0x5a_u8; 32]);
+    body.push(0);
+    body.extend(u16::try_from(suites.len() * 2).unwrap().to_be_bytes());
+    for s in suites {
+        body.extend(s.to_be_bytes());
+    }
+    body.extend([1, 0]);
+    let ext: [u8; 28] = [
+        0x00, 0x0a, 0x00, 0x06, 0x00, 0x04, 0x00, 0x17, 0x00, 0x1d, // supported_groups
+        0x00, 0x0b, 0x00, 0x02, 0x01, 0x00, // ec_point_formats
+        0x00, 0x0d, 0x00, 0x08, 0x00, 0x06, 0x04, 0x03, 0x04, 0x01, 0x08, 0x04, // sigalgs
+    ];
+    body.extend(u16::try_from(ext.len()).unwrap().to_be_bytes());
+    body.extend(ext);
+    let mut hs = vec![1, 0];
+    hs.extend(u16::try_from(body.len()).unwrap().to_be_bytes());
+    hs.extend(body);
+    let mut record = vec![0x16, 0x03, 0x01];
+    record.extend(u16::try_from(hs.len()).unwrap().to_be_bytes());
+    record.extend(hs);
+    record
+}
+
+/// The first bytes the listener on `port` answers `hello` with: a ServerHello starts a
+/// handshake record (22) whose first message is of type 2, the listener having chosen one of the
+/// suites offered.
+fn first_answer(port: u16, hello: &[u8]) -> Vec<u8> {
+    let mut s = connect(port);
+    s.write_all(hello).expect("the ClientHello");
+    let mut first = Vec::new();
+    let mut b = [0u8; 1];
+    while first.len() < 6 && matches!(s.read(&mut b), Ok(1)) {
+        first.push(b[0]);
+    }
+    first
+}
+
+fn is_server_hello(first: &[u8]) -> bool {
+    first.len() == 6 && first[0] == 0x16 && first[5] == 2
+}
+
+/// A TLS listener offers forward-secret AEAD suites only: a client that offers nothing but the
+/// CBC suites (SHA-1's among them) is refused, where the same hello offering one AEAD suite is
+/// answered.  The control makes the refusal mean the suites, not a hello the server could not
+/// read.
+///
+/// @falsified-at: 7fc098f4a — by hand: the CBC suites put back in the listener's EC and RSA
+/// lists (`loft_tls_accept`) → a ServerHello for 0xc009.
+fn suites_offered_by_a_listener(port: u16, cbc: &[u16], aead: u16) {
+    let first = first_answer(port, &client_hello(&[aead]));
+    assert!(
+        is_server_hello(&first),
+        "a listener on {port} answers a hello offering {aead:#06x}: {first:02x?}"
+    );
+    for suite in cbc {
+        let first = first_answer(port, &client_hello(&[*suite]));
+        assert!(
+            !is_server_hello(&first),
+            "a listener on {port} refuses a hello offering only the CBC suite {suite:#06x}: \
+             {first:02x?}"
+        );
+    }
+}
+
 /// The client's side of the script, in the program's order; it panics on the first answer
 /// that differs.
 fn client(p: &Ports) {
@@ -410,6 +527,11 @@ fn client(p: &Ports) {
         "an oversized request is told so: {}",
         String::from_utf8_lossy(&answer)
     );
+    // A peer that sends its request a byte at a time, each byte well inside the read timeout,
+    // for longer than a request may take to arrive: the pump answers it 408 once the request's
+    // five seconds are spent, and serves on.  A pump that bounds only each read waits on such
+    // a peer for as long as it keeps sending, and answers it nothing.
+    slow_peer_is_told_408(p.plain);
     // A peer that connects and says nothing, held open across the next exchange: the pump
     // gives it one read timeout and serves on.  A pump that waits for its request never
     // answers `a1` (this client's own read timeout ends the test).
@@ -433,6 +555,8 @@ fn client(p: &Ports) {
     let (head, body) = read_response(&mut s);
     assert!(head.starts_with("HTTP/1.1 200 OK\r\n"), "{head}");
     assert_eq!(body, b"secure /secure");
+    // The listener's cipher suites, through the pump: see `suites_offered_by_a_listener`.
+    suites_offered_by_a_listener(p.ec, &EC_CBC, EC_AEAD);
     let mut s = tls_client(p.ec);
     upgrade(&mut s, &[]);
     assert_eq!(text_frame(&mut s), "welcome 0");
@@ -444,7 +568,8 @@ fn client(p: &Ports) {
     s.conn.send_close_notify();
     let _ = s.flush();
     drop(s);
-    // TLS over the RSA certificate.
+    // TLS over the RSA certificate: its suites first, then a request.
+    suites_offered_by_a_listener(p.rsa, &RSA_CBC, RSA_AEAD);
     let mut s = tls_client(p.rsa);
     s.write_all(b"GET /rsa HTTP/1.1\r\n\r\n").expect("write");
     let (_, body) = read_response(&mut s);

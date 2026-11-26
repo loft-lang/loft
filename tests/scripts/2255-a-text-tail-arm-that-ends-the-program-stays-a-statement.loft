@@ -21,6 +21,9 @@
 //   exit moves.
 // An `if` chain tail whose `else` panics is a value too: `(C-Never)` says a halt fits anywhere a
 // value does (loft#2260, its own cells in the suite's `C-Never`).
+//
+// @FR-C-Never: a panicking arm fits where the text value goes; the other arms still deliver.
+// @FR-M-Expr: each taken arm's text is the match's, and so the function's, value.
 
 enum Sh { A { n: integer }, B, C }
 

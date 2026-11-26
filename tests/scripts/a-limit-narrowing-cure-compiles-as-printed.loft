@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-I-Narrow: a narrowing into a limit slot needs an explicit cure, and each printed cure compiles.
+// @FR-I-Narrow-Opt: a narrowing into the nullable slot is the checked cast: out of range reads null.
 //
 // The narrowing refusal on an inline `integer limit(lo, hi)` slot names its cures in the type's
 // own spelling, and that spelling has to be one the parser reads: it printed

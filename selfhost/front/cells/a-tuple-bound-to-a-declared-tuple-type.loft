@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a tuple bound to a local declared a tuple of other member types converts member by member: a literal's where they stand (an integer to a float, null to the member's null), a tuple local's through a __tconv_N (tuple_convert).
+// @FR-C-Tuple: a tuple bound to a declared tuple type converts member by member.
+// @FR-C-Num: an integer member widens into a float member (`tf.0`, `x.1`).
 // Prints: 5 9 2 250 -1 3 ab
 fn main() {
   tf: (float, integer) = (5, 9);

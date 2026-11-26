@@ -96,6 +96,15 @@ CITES it, so "which sites enforce this rule?" is a grep: `scripts/rule_tags.py` 
 and `B-Ref`/`D-op`/`D-own` are family prefixes, not rules — [formal/README.md § Rule
 tags](doc/claude/formal/README.md), [formal/IMPLEMENTATIONS.md](doc/claude/formal/IMPLEMENTATIONS.md).
 
+**No test runs without a link to a rule** (owner): every test program names, in its header,
+the `@FR-` rule its assertions or expected output guard; a language rule's test is a suite
+cell under that rule.  One that names none is READ before anything moves
+(`suite_curate.py attribute`, `verdict`): it links, or it describes behaviour no rule states
+(a new rule is its formal text, citations at the sites that enforce it and a falsified guard —
+the owner's call), or it moves to the suite's attic, which is still tested nightly.  The
+count of unlinked programs is a ratchet ([TESTING.md § Curating the
+suite](doc/claude/TESTING.md)).
+
 ## Architecture — execution path
 
 ```
@@ -166,7 +175,9 @@ src/main.rs            CLI; loads default/ then user file
 1. **Never commit on `main`** — land on a feature branch, reach main only via a GitHub PR (never a
    local `git merge`).
 2. **Push proactively — it's a SAFETY rule.** Once a change settles (compiles / tests green), commit
-   + push to the feature branch so it isn't lost. Separate from opening a PR.
+   + push to the feature branch so it isn't lost. Separate from opening a PR.  A detached
+   worktree's commits count too: they join the existing branch (rule 5) by merge, not
+   cherry-pick, so every `@falsified-at` sha stays reachable.
 3. **Never create a branch or open a loft PR without an explicit user ask** ("create PR",
    "switch branch"). "fix X" / "push" / "retry" are NOT such asks; a prior ask doesn't carry
    over, and "the work looks finished" is not one either — the owner decides when an arc is

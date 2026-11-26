@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `x: const T = v` of a plain scalar or a plain enum binds as an annotated local
+// does, the local marked value-const (`@FR-Const-Value`, `parse_assign_inner`).
+// Prints: 1 2.5 Green Red
+
+enum Col { Red, Green }
+fn main() {
+  a: const integer = 1;
+  b: const float = 2.5;
+  e: const Col = Col.Green;
+  f: const Col? = Col.Red;
+  println("{a} {b} {e} {f}");
+}

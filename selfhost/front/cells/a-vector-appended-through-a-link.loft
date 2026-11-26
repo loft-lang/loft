@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector appended through a link to a vector (`dst += k`) is `OpAppendVector` on the vector the link names.
+// @FR-B-Ref-Uniform: `dst += k` through a `&vector` parameter appends to the vector it names.
+// @FR-F-ParamGrow: the caller sees the grown vector.
 // Prints: [0,1,2,2,4]
 
 fn piece(n: integer) -> vector<integer> { [n, n * 2] }

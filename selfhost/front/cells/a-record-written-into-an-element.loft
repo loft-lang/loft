@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a record written into a vector element at an index nothing proves is copied into the element (copy_ref): from a local, a call (its store freed), another element; into a field's element.
+// @FR-H-Write: a record written into an element or a field is what that place holds after.
+// @FR-H-CopySelf: `v[1] = v[0]`, a different place in the same store, copies (both read 9).
 // Prints: 9 9 60 4 50
 struct Pt { x: integer, y: integer }
 struct Box { items: vector<Pt>, one: Pt }

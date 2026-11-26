@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @PLN125 arc A step A2c — an associated type BINDS to the implementor's
-// companion, and a generic may use it.
+// companion, and a generic may use it (`@FR-G-Companion`).
 //
 // A1 reserved `type X`, A2a made an implementor's return type part of
 // satisfaction, and A2b let a signature spell `Self.X`. Up to there the

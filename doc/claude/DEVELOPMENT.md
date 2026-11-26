@@ -124,8 +124,11 @@ verification complete — both backends, the matrix built and hand-checked, guar
 side-findings filed rather than left implicit.  What must hold BEFORE opening is cheap to check
 and is the whole list: the head is current on `origin/main`, everything is pushed, the tree is
 clean, derived artefacts are REGENERATED rather than picked (audit rows re-measured,
-`falsified_docs.baseline`, the browser bundle), and each fix in the arc carries the
-verification it owed when it landed.  **When asked for a PR, say what it will NOT close**: the
+`falsified_docs.baseline`, the browser bundle), each fix in the arc carries the
+verification it owed when it landed, and the registry is re-signed:
+`scripts/registry-heartbeat.sh` on the machine with the registry key (it does nothing when
+it ran within the day; the PR check `registry re-signed this week` blocks at 7 days —
+[PKG_REGISTRY_TRUST.md § The heartbeat](PKG_REGISTRY_TRUST.md#the-heartbeat--a-signed-updated-at-least-weekly)).  **When asked for a PR, say what it will NOT close**: the
 `make work` output — the unclaimed issues and every claim still held — goes in the answer
 before the PR is opened, so the owner does not have to find a missed ticket in the full issue
 list.  That is a report, not a condition: the owner prefers a clean slate and may still ask
@@ -580,8 +583,9 @@ Keep the **installed** loft current: a stale one answers for an old source tree.
 
 ### Remote CI
 
-`main` requires six checks: **Test (ubuntu-latest)**, **Test (macos-latest)**, **Test
-(windows-latest)**, **Clippy**, **Format** and **Language suite (ubuntu-latest)**.  They are
+`main` requires seven checks: **Test (ubuntu-latest)**, **Test (macos-latest)**, **Test
+(windows-latest)**, **Clippy**, **Format**, **Language suite (ubuntu-latest)** and **store
+lifetime scan (ubuntu)** (every corpus program reads clean in the store records).  They are
 set in the classic branch protection, not in the `Use branches` ruleset (which holds linear
 history), so the ruleset endpoint does not list them; read them with
 `gh api repos/loft-lang/loft/branches/main/protection --jq '.required_status_checks.contexts'`.

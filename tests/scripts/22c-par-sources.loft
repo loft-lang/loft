@@ -11,6 +11,9 @@
 // two-pass result-var fix: a global-counter-named `b_var` mis-typed `r` across
 // many mixed par loops (`r.len()` on a text result seen as integer).  The
 // per-loop-keyed name keeps the var two-pass-stable.
+//
+// @FR-C-Par: every iterable source is flattened and each body reads its own element's result.
+// @FR-C-Det: a pure worker's results sum as the sequential loop's do, at every result type.
 
 struct Rec {
   k: integer,

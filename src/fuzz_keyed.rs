@@ -261,7 +261,7 @@ pub fn check_generated_with(src: &str, poison: bool) -> Result<(), String> {
     p.data = data;
     p.database = db;
 
-    let tmp = std::env::temp_dir().join(format!(
+    let tmp = crate::platform::scratch_dir().join(format!(
         "loft_f2_{}_{}.loft",
         std::process::id(),
         TMP_SEQ.fetch_add(1, Ordering::Relaxed)

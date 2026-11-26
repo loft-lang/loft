@@ -495,7 +495,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         // An untyped `[]` arm is read against the match's vector type (`parse_vector` with the
         // arm's expectation): built as an empty vector of its element, in a store of its own.
         if body != null && el_types::base(expected) is TyVector && el_ex_pattern::syntax_tail_empty(e, body!) {
-          b = el_ex_pattern::empty_arm(e, vars, b, expected, ir::TyVoid);
+          b = el_ex_pattern::empty_arm(e, vars, b, expected, ir::TyVoid, syn: body!);
         }
         // The bindings' spellings name what they named before the arm.
         for al in rev(aliases) {
@@ -508,7 +508,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           }
           // (An arm answering a vector literal is typed by the literal's own block, the store it
           // mints — not the match's expected type, which may name a renamed buffer.)
-          atp = match el_ir::unspan(b.code) { NdBlock { block: vbk } => if vbk[0].name == "Vector" && !e.first_pass { vbk[0].result[0] ?? b.tp } else { b.tp }, _ => b.tp };
+          atp = arm_own_tp(e, b);
           b.code = el_ir::v_block(binds + [b.code], atp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
@@ -528,9 +528,11 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
             tuple_joined = true;
           }
         } else if !unsettled(result) && sibling_variants(e, b.tp, result) && !el_types::is_equal(e, el_types::base(b.tp), el_types::base(result)) {
-          // Two variants of one enum join to the enum, borrowing nothing (`@FR-C-Var`) — `?` where
-          // either arm may be absent (`@FR-N-Join`): two variant-or-null `if` arms.
-          sje = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: [] };
+          // Two variants of one enum join to the enum (`@FR-C-Var`) — `?` where either arm may be
+          // absent (`@FR-N-Join`): two variant-or-null `if` arms.  The join keeps what the arms
+          // so far borrow (`enum_tp.with_deps_of(&joined)`: naming the type more widely does not
+          // change which store the value borrows); this arm's own borrows join below.
+          sje = ir::TyEnum { n: struct_enum_of(e, el_types::base(b.tp)), is_ref: true, dep: el_types::deps(result) };
           result = if b.tp is TyOptional || result is TyOptional { ir::TyOptional { inner: sje } } else { sje };
         } else if arm_settles(result, b.tp) {
           // An arm's dep on a store it mints itself (a literal's work ref) is no borrow of the
@@ -571,6 +573,17 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           }
           result = el_types::with_deps(result, joined);
         }
+        // (`joined_deps` over `arm_join_type`: a vector result borrows what any arm's vector does,
+        // a store an arm mints itself left out.)
+        if el_types::base(result) is TyVector && el_types::base(b.tp) is TyVector && !e.first_pass {
+          vjoined = el_types::deps(result);
+          for vx in outside_deps(e, b.code, el_types::deps(b.tp)) {
+            if !vjoined.contains(vx) {
+              vjoined += [vx];
+            }
+          }
+          result = el_types::with_deps(result, vjoined);
+        }
         if el_types::is_heap_record(el_types::base(result)) && el_types::is_heap_record(el_types::base(b.tp)) {
           joined = el_types::deps(result);
           for x2 in outside_deps(e, b.code, el_types::deps(b.tp)) {
@@ -595,7 +608,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
               gb = if ug != null || len(al.binds) > 0 { el_ir::v_block(al.binds + [ag], ir::TyBoolean, "match_guard") } else { ag };
               out += [MArm { cond: el_ir::v_if(al.cond, gb, ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
             } else {
-              ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
+              ai = el_ir::v_block(al.binds + [b.code], arm_own_tp(e, b), "match_arm");
               if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
                 ai = el_ex_null::arm_typed(ai, outside_deps(e, ai, el_types::deps(b.tp)));
               }
@@ -625,8 +638,11 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
       out[oa#index].tp = result;
     }
   }
-  // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`).
-  if null_arm && el_types::base(result) is TyReference && !(result is TyOptional) {
+  // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`) — over a scalar or a
+  // text subject.  An enum's `match` (plain or struct) widens only where `null_arm_widens` says,
+  // a non-null scalar: its record join keeps the arms' type (`match c { Red => FInt { … },
+  // Green => null }` is `ref(FInt)`), the declared `E?` answering the null.
+  if null_arm && !enum_subject && sd < 0 && el_types::base(result) is TyReference && !(result is TyOptional) {
     result = ir::TyOptional { inner: result };
   }
   // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand
@@ -920,6 +936,46 @@ pub fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
 // variant record belongs to — or -1.
 // Are `a` and `b` both of one struct enum — each the enum or one of its variants?
+// A match arm's block type: an arm answering a vector literal is typed by the literal's own
+// block (the store it mints), one answering a VARIANT literal by that variant, its own store
+// left out (`NdInt { n: m } => NdInt { … }` is `ref(NdInt)` beside a sibling's enum); any other
+// by its value — not by the match's expected type, which may name a renamed buffer or the enum.
+fn arm_own_tp(e: el::El, b: Ex) -> ir::TypeT {
+  if e.first_pass {
+    return b.tp;
+  }
+  match el_ir::unspan(b.code) {
+    NdBlock { block: vbk } => {
+      bt = vbk[0].result[0] ?? b.tp;
+      if vbk[0].name == "Vector" {
+        return bt;
+      }
+      if vbk[0].name == "Object" && match el_types::base(bt) { TyReference { n: von } => el::def(e, von).def_type == el::DT_ENUM_VALUE, _ => false } {
+        return el_types::without_deps(bt);
+      }
+      b.tp
+    },
+    _ => b.tp
+  }
+}
+
+// One alternative of a vector match arm: its test and the bindings it makes (linked into the
+// first alternative's names).
+struct SliceArmAlt {
+  cond: ir::Node?,
+  binds: vector<ir::Node>
+}
+
+// A slice element read for a variant pattern; on the first pass, where the element's place
+// type may not be laid out yet and the read is null, the element's place itself — so a field
+// binding still borrows the subject's root (`@FR-P-Cap-View`, `["t"]`), as Rust types it there.
+// (There the read can be a placeholder call no definition answers yet, `def_nr: -1`.)
+fn rooted_elem(e: el::El, elm: ir::TypeT, at: ir::Node, sv: integer) -> ir::Node {
+  r = slice_elem(e, elm, at);
+  placeholder = match el_ir::unspan(r) { NdNull => true, NdCall { def_nr: rd } => rd < 0, _ => false };
+  if e.first_pass && placeholder { if el_ir::unspan(at) is NdNull { ir::NdVar { n: sv } } else { at } } else { r }
+}
+
 pub fn sibling_variants(e: el::El, a: ir::TypeT, b: ir::TypeT) -> boolean {
   ea = struct_enum_of(e, el_types::base(a));
   ea >= 0 && ea == struct_enum_of(e, el_types::base(b))
@@ -1377,9 +1433,90 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if len(pats) != 1 || (guard != null && len(vars.cursor) > 0) {
+        if (len(pats) != 1 || guard != null) && len(vars.cursor) > 0 {
           el::refuse(e, "a vector match arm with alternatives or a guard");
           return void;
+        }
+        // `[9, ..] | [1, ..] => …` (or `,`): each alternative its own arm, tested in turn; the
+        // first binds the arm's names, a later one binds its own and links each into the
+        // first's (`a#1 = a#2`); the guard and the body are read once, against the first's.
+        if len(pats) > 1 {
+          altn: vector<el_vars::VarName> = [];
+          alts: vector<SliceArmAlt> = [];
+          first_names: vector<text> = [];
+          for apn in pats {
+            if !(e.p.nodes[apn] is PSlice) {
+              el::refuse(e, "a vector match arm with alternatives or a guard");
+              return void;
+            }
+            aelems = match e.p.nodes[apn] { PSlice { elems: ae } => ae, _ => [] };
+            an_names: vector<el_vars::VarName> = [];
+            asa = slice_arm(e, vars, sv, src, elm, aelems, an_names);
+            if asa == null {
+              return void;
+            }
+            abinds = asa!.binds;
+            if apn#index == 0 {
+              altn = an_names;
+              first_names = [for fnm in an_names { fnm.name }];
+            } else {
+              if len(an_names) != len(first_names) || len([for anm in an_names if !first_names.contains(anm.name) { 1 }]) > 0 {
+                el::refuse(e, "a vector match arm whose alternatives bind different names");
+                return void;
+              }
+              for anm in an_names {
+                av = el_vars::var(vars, anm.name);
+                f0 = anm.nr;
+                if av >= 0 && f0 >= 0 {
+                  abinds += [el_ir::v_set(f0, ir::NdVar { n: av })];
+                }
+              }
+              for anm in rev(an_names) {
+                el_vars::restore_name(vars, anm.name, anm.nr);
+              }
+            }
+            alts += [SliceArmAlt { cond: asa!.cond, binds: abinds }];
+            shapes += [asa!.shape];
+            prechain += asa!.pre;
+          }
+          ag: ir::Node? = null;
+          if guard != null {
+            agx = el_ex_assign::expression(e, vars, guard!);
+            if !e.first_pass && !(agx.tp is TyBoolean) {
+              el::refuse(e, "a match guard that is not a boolean: {type_kind(agx.tp)}");
+              return void;
+            }
+            ag = agx.code;
+            shapes = shapes[..len(shapes) - len(pats)];
+          }
+          aexpected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
+          ab = el_ex_pattern::empty_vector_arm(e, vars, body, aexpected) ?? el_ex_pattern::arm_body(e, vars, body, aexpected);
+          if !e.first_pass && el_ex_null::ends_in_halt(e, ab.code) {
+            el::refuse(e, "a vector match arm that halts");
+            return void;
+          }
+          if arm_settles(result, ab.tp) {
+            result = ab.tp;
+          }
+          result = join_fn_arm(result, ab);
+          for anm in rev(altn) {
+            el_vars::restore_name(vars, anm.name, anm.nr);
+          }
+          for al in alts {
+            acond = al.cond;
+            acode = ab.code;
+            if ag != null {
+              agc = if len(al.binds) > 0 { el_ir::v_block(al.binds + [ag!], ir::TyBoolean, "match_guard") } else { ag! };
+              acond = if acond == null { agc } else { el_ir::v_if(acond!, agc, ir::NdBoolean { b: false }) };
+            } else if len(al.binds) > 0 {
+              acode = el_ir::v_block(al.binds + [ab.code], ab.tp, "slice_binding");
+            }
+            out += [SMArm { guard: acond, code: acode }];
+          }
+          if el_types::base(result) is TyText && len(alts) > 0 && answers_binding(ab.code, alts[0]!.binds) {
+            result = el_types::with_deps(result, [sv]);
+          }
+          continue;
         }
         pn = pats[0]!;
         names: vector<el_vars::VarName> = [];
@@ -1478,7 +1615,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   // reference of its own, `__ref_1`, which is not carried — that stays refused below.)
   subj_param = match el_ir::unspan(x.code) { NdVar { n: xs } => vars.vars[xs].argument, _ => false };
   record_tail = el_types::base(result) is TyReference && !bind && subj_param;
-  if !sunk && !record_tail {
+  // (A RECORD match BOUND to a local (`one = match v { [first, ..] => first, _ => P {…} }`)
+  // answers its arms as they stand: the local views the element binding, typed by it
+  // (`["first#1"]`), and each literal arm builds its own record.)
+  bound_record = bind && el_types::base(result) is TyReference && !(result is TyOptional);
+  if !sunk && !record_tail && !bound_record {
   if !e.first_pass && len(vars.cursor) == 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) {
     // (Delivered arm by arm into the buffer, as Rust's `Materialize` of a match tail is — the
     // return-promotion report asks no ladder there, also where this port refuses the arms.)
@@ -1822,7 +1963,7 @@ pub fn cursor_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm
       at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: base }, ir::NdInt { n: sn#index }])]);
       sp = seg_pats[sn#index] ?? -1;
       if sp >= 0 {
-        va = el_ex_pattern::slice_variant(e, vars, sp, sed, slice_elem(e, elm, at), names);
+        va = el_ex_pattern::slice_variant(e, vars, sp, sed, rooted_elem(e, elm, at, sv), names);
         if va == null {
           return null;
         }
@@ -2197,7 +2338,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }]);
     if (head_pat[h#index] ?? -1) >= 0 {
       hpn = head_pat[h#index] ?? -1;
-      va = if el_ex_pattern::single_alt_group(e, hpn) { el_ex_pattern::single_alt(e, vars, hpn, sed, elm, sv, src, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }, names) } else { el_ex_pattern::slice_variant(e, vars, hpn, sed, slice_elem(e, elm, at), names) };
+      va = if el_ex_pattern::single_alt_group(e, hpn) { el_ex_pattern::single_alt(e, vars, hpn, sed, elm, sv, src, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }, names) } else { el_ex_pattern::slice_variant(e, vars, hpn, sed, rooted_elem(e, elm, at, sv), names) };
       if va == null {
         return null;
       }
@@ -2221,7 +2362,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
     at = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: t#index - len(tail) }]);
     if (tail_pat[t#index] ?? -1) >= 0 {
       tpn = tail_pat[t#index] ?? -1;
-      va = if el_ex_pattern::single_alt_group(e, tpn) { el_ex_pattern::single_alt(e, vars, tpn, sed, elm, sv, src, ir::NdInt { n: t#index - len(tail) }, names) } else { el_ex_pattern::slice_variant(e, vars, tpn, sed, slice_elem(e, elm, at), names) };
+      va = if el_ex_pattern::single_alt_group(e, tpn) { el_ex_pattern::single_alt(e, vars, tpn, sed, elm, sv, src, ir::NdInt { n: t#index - len(tail) }, names) } else { el_ex_pattern::slice_variant(e, vars, tpn, sed, rooted_elem(e, elm, at, sv), names) };
       if va == null {
         return null;
       }

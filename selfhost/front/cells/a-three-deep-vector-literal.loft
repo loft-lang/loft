@@ -4,6 +4,8 @@
 // Gate E cell: a three-deep vector literal — full-width and `i32` — registers its middle
 // literal's `vector<…>` at that literal's `]`, builds the middle and outer rows from their
 // content before the wrapper, and types the middle literal's element temp as its vector items.
+// @FR-T-Chk-Vec: a three-deep literal is checked level by level against the declared vector type.
+// @FR-I-Lit: its integer literals take the `i32` element width.
 // Prints: 3 1 222222 333333
 
 fn main() {

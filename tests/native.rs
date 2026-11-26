@@ -203,28 +203,34 @@ fn run_all_on_c(jobs: &[(PathBuf, CRun)]) -> std::io::Result<()> {
     let failures: Mutex<Vec<(usize, String)>> = Mutex::new(Vec::new());
     std::thread::scope(|s| {
         for _ in 0..c_lanes(jobs.len()) {
-            s.spawn(|| {
-                loop {
-                    let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    let Some((entry, how)) = jobs.get(i) else {
-                        break;
-                    };
-                    let began = std::time::Instant::now();
-                    let verdict = run_on_c(entry, *how);
-                    println!(
-                        "  {:6.1}s  {} {}",
-                        began.elapsed().as_secs_f64(),
-                        if verdict.is_ok() { "ok  " } else { "FAIL" },
-                        entry.display()
-                    );
-                    if let Err(e) = verdict {
-                        failures
-                            .lock()
-                            .unwrap_or_else(|p| p.into_inner())
-                            .push((i, e));
+            // Each lane parses and checks its programs in this process, so it gets the CLI's
+            // stack (`common::cli_stack`): on the default 2 MiB a program at the nesting bound
+            // (`tests/limits_full`) overflowed the whole test binary.
+            std::thread::Builder::new()
+                .stack_size(common::cli_stack())
+                .spawn_scoped(s, || {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some((entry, how)) = jobs.get(i) else {
+                            break;
+                        };
+                        let began = std::time::Instant::now();
+                        let verdict = run_on_c(entry, *how);
+                        println!(
+                            "  {:6.1}s  {} {}",
+                            began.elapsed().as_secs_f64(),
+                            if verdict.is_ok() { "ok  " } else { "FAIL" },
+                            entry.display()
+                        );
+                        if let Err(e) = verdict {
+                            failures
+                                .lock()
+                                .unwrap_or_else(|p| p.into_inner())
+                                .push((i, e));
+                        }
                     }
-                }
-            });
+                })
+                .expect("spawn a C lane");
         }
     });
     let mut failures = failures.into_inner().unwrap_or_else(|p| p.into_inner());

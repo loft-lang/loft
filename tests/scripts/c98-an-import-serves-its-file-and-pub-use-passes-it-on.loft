@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Surface: pub use passes names on, and a bare use reaches the library only through its qualifier.
 //
 // @ARGS: --lib tests/lib
 // @falsified-by: tests/falsified/c98-import-rules.patch — interpret exit 1 -> 0, native exit 1 -> 0

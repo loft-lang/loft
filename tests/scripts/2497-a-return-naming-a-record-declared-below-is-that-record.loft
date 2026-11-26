@@ -25,6 +25,9 @@
 //                        the caller takes it (walk, bind and index, length); the walk
 //                        (plain, `par`).
 // Axes it HOLDS FIXED:   every type is declared below every function that names it.
+//
+// @FR-O-Buffer: the annotated local is the caller's return buffer, so no store leaks per call.
+// @FR-F-Ret: each way of building the answer hands the caller its own vector of records.
 
 fn c_inf(k: integer) -> vector<Memo> {
   out = base(k);

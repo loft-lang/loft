@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a vector slice in a format hole is written from its iterator (`append_iter`,
+// "Append Iter"): `[`, each element by the hole's spec, `,` between, `]` — scalars and records.
+// Prints: a [2,4] b / [004,008,016] / [{x:3}]
+// Rule: @FR-F-Interp, @FR-Slice-Value.
+
+struct P { x: integer }
+fn main() {
+  pows = [1, 2, 4, 8, 16];
+  println("a {pows[1..3]} b");
+  t = "{pows[2..]:03}";
+  println(t);
+  ps = [P { x: 3 }, P { x: 5 }];
+  println("{ps[..1]}");
+}

@@ -21,6 +21,9 @@ pub mod lanes;
 #[allow(dead_code)]
 pub mod corpus;
 
+#[allow(dead_code)]
+pub mod c_sanitized;
+
 /// Hold this while a corpus program RUNS: a cross-process advisory lock keyed by the program's
 /// absolute path (loft#1724).
 ///
@@ -85,6 +88,17 @@ pub fn deadline_scale() -> u64 {
     if shared { 3 } else { 1 }
 }
 
+/// The stack the CLI's own thread has: 8 MiB, or `RUST_MIN_STACK` when that is larger.  A
+/// harness thread that compiles a corpus program needs it, since the front end recurses per
+/// nesting level and a program at the nesting bound (`tests/limits_full`) needs several MiB.
+#[allow(dead_code)]
+pub fn cli_stack() -> usize {
+    std::env::var("RUST_MIN_STACK")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .map_or(8 << 20, |v| v.max(8 << 20))
+}
+
 /// Run `f` on a thread with the `loft` CLI's own stack: 8 MiB, or `RUST_MIN_STACK` when a
 /// sanitizer job raises it.  A test thread has 2 MiB on Linux and less on Windows, and the
 /// front end spends ~22 KiB of stack per nesting level of an expression, so a corpus program
@@ -93,13 +107,9 @@ pub fn deadline_scale() -> u64 {
 /// test fails exactly as it would have.
 #[allow(dead_code)]
 pub fn on_cli_stack<T: Send>(f: impl FnOnce() -> T + Send) -> T {
-    let stack = std::env::var("RUST_MIN_STACK")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .map_or(8 << 20, |v| v.max(8 << 20));
     std::thread::scope(|sc| {
         let run = std::thread::Builder::new()
-            .stack_size(stack)
+            .stack_size(cli_stack())
             .spawn_scoped(sc, f)
             .expect("spawn the CLI-stack thread");
         match run.join() {

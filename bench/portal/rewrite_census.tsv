@@ -785,6 +785,7 @@
 20_interpreter	-	c	R-Base/guard	2
 20_interpreter	-	c	R-BoundedNest/kernel	1
 20_interpreter	-	c	R-CSplit	1
+20_interpreter	-	c	R-CTable	1
 20_interpreter	-	c	R-CompleteWrite	15
 20_interpreter	-	c	R-Counter	39
 20_interpreter	-	c	R-DischargeInto	1
@@ -949,6 +950,7 @@ arguments	401c30426	c	R-Base	6
 arguments	401c30426	c	R-Base/counter	15
 arguments	401c30426	c	R-BoundedNest/kernel	1
 arguments	401c30426	c	R-CSplit	2
+arguments	401c30426	c	R-CTable	8
 arguments	401c30426	c	R-CTail	5
 arguments	401c30426	c	R-CharWalk	2
 arguments	401c30426	c	R-CompleteWrite	11
@@ -1005,6 +1007,7 @@ assets	ca791ae33+shapes@0.5.4	c	R-Base/counter	3
 assets	ca791ae33+shapes@0.5.4	c	R-Base/guard	1
 assets	ca791ae33+shapes@0.5.4	c	R-BoundedNest/kernel	1
 assets	ca791ae33+shapes@0.5.4	c	R-CSplit	1
+assets	ca791ae33+shapes@0.5.4	c	R-CTable	3
 assets	ca791ae33+shapes@0.5.4	c	R-CTail	1
 assets	ca791ae33+shapes@0.5.4	c	R-CompleteWrite	30
 assets	ca791ae33+shapes@0.5.4	c	R-Const	1
@@ -1079,6 +1082,7 @@ cbor	401c30426	c	R-BoundAppend	1
 cbor	401c30426	c	R-BoundedNest/kernel	1
 cbor	401c30426	c	R-ByteCopy	2
 cbor	401c30426	c	R-CSplit	4
+cbor	401c30426	c	R-CTable	51
 cbor	401c30426	c	R-CTail	11
 cbor	401c30426	c	R-CompleteWrite	32
 cbor	401c30426	c	R-Counter	287
@@ -1422,6 +1426,7 @@ glb	ca791ae33	c	R-BoundedNest/kernel	1
 glb	ca791ae33	c	R-BufferReturn	11
 glb	ca791ae33	c	R-BufferReturn/bind	7
 glb	ca791ae33	c	R-CSplit	1
+glb	ca791ae33	c	R-CTable	3
 glb	ca791ae33	c	R-CTail	3
 glb	ca791ae33	c	R-CompleteWrite	52
 glb	ca791ae33	c	R-Counter	245
@@ -1644,6 +1649,7 @@ hex_body	ecc2b2e31	c	R-BoundedNest/kernel	1
 hex_body	ecc2b2e31	c	R-BufferReturn	31
 hex_body	ecc2b2e31	c	R-BufferReturn/bind	3
 hex_body	ecc2b2e31	c	R-CSplit	2
+hex_body	ecc2b2e31	c	R-CTable	47
 hex_body	ecc2b2e31	c	R-CTail	4
 hex_body	ecc2b2e31	c	R-CharWalk	1
 hex_body	ecc2b2e31	c	R-CompleteWrite	16
@@ -2008,6 +2014,7 @@ hex_form	ecc2b2e31	c	R-BoundedNest/kernel	1
 hex_form	ecc2b2e31	c	R-BufferReturn	13
 hex_form	ecc2b2e31	c	R-BufferReturn/bind	3
 hex_form	ecc2b2e31	c	R-CSplit	1
+hex_form	ecc2b2e31	c	R-CTable	31
 hex_form	ecc2b2e31	c	R-CTail	1
 hex_form	ecc2b2e31	c	R-Callee	1
 hex_form	ecc2b2e31	c	R-CharWalk	1
@@ -2634,6 +2641,7 @@ markdown	dd260f04c	c	R-BoundedNest/kernel	1
 markdown	dd260f04c	c	R-BufferReturn	128
 markdown	dd260f04c	c	R-BufferReturn/bind	62
 markdown	dd260f04c	c	R-CSplit	2
+markdown	dd260f04c	c	R-CTable	7
 markdown	dd260f04c	c	R-CTail	12
 markdown	dd260f04c	c	R-CharWalk	7
 markdown	dd260f04c	c	R-CompleteWrite	8
@@ -2755,6 +2763,7 @@ pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-BufferReturn	14
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-BufferReturn/bind	5
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-ByteCopy	2
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-CSplit	3
+pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-CTable	48
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-CTail	15
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-CompleteWrite	50
 pluginabi	66fabda16+cbor@0.1.13+crypto@0.4.3	c	R-Counter	262

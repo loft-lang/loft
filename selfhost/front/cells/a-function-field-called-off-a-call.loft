@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a function field called off a call's result holds the record in a work ref first (`fn_ref_field_base`), reads the field from it and calls through a temporary; a `??` over a call's nullable vector with an empty and a filled literal default.
+// @FR-L-FnRef: a named function stored in a field is called through the field of a call's result (42).
+// @FR-E-Coalesce: `maybe(k) ?? [..]` answers the default when null (0) and the value when present ([3]).
 // Prints: 42 0 [3]
 
 struct Op { n: integer, f: fn(integer) -> integer }

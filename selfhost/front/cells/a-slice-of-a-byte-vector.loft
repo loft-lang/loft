@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a slice of a byte vector bound to a local is the range viewed (`OpSliceView`) at the byte's own row.
+// @FR-Slice-Value: a slice of a `vector<u8>` is the value of that range.
 // Prints: [11,12] 2
 
 fn main() {

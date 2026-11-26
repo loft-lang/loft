@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-B-Copy: a plain bind of a vector projection copies, so a write to either side never reaches the other.
+// @FR-H-Copy: the copied vector is a fresh store that survives its source's death and the callee's return.
 //
 // @PLN102 transparent-link widening — the BASELINE matrices (build step 1).
 // See doc/claude/plans/102-stability-contract/alias-where-correct-build.md.

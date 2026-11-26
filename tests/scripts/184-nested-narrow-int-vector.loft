@@ -9,6 +9,10 @@
 // read 0.  The fix propagates the declared element type `in_t` into the element
 // parse, so a nested literal's inner elements adopt the declared narrow width.
 // Width-general (i16/u8); copy and write paths were already correct.
+//
+// @FR-T-Chk-Vec: an inner literal is checked against the declared element type, so its elements
+//   take `i32`/`i16`/`u8`.
+// @FR-L-Narrow: the inner elements are stored at 4/2/1 bytes and read back at that width.
 
 fn mk_i32_rows() -> vector<vector<i32>> {
   return[[10, 20, 30], [40]];

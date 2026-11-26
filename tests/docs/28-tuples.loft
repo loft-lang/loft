@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Tuples
 // @TITLE: Grouping values without defining a struct
+// @FR-T-Proj: `t.i` reads element i, nested ones included.
+// @FR-T-Destr: `(a, b) = e` binds each element by position.
+// @FR-T-Ref: a `&(…)` parameter writes the caller's tuple.
+// @FR-F-ParamTuple: a plain tuple parameter is a copy; the caller's tuple is untouched.
+// @FR-T-Ret: a function returns a tuple as one value.
 // A tuple groups a fixed number of values of possibly different types.
 // You do not need to give a tuple a name — use it directly where you need
 // to pass or return multiple values together.

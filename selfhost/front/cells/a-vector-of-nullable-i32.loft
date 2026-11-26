@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a `vector<i32?>` is named `vector<integer?>` and laid out at stride 4 on a nullable row of its own (`vector<int<-2147483647,true>>`): `OpPushInt4` of the value or the integer null, `OpGetInt4`.
+// @FR-N-Dense: a `vector<i32?>` holds null elements.
+// @FR-L-Narrow-Enc: an `i32?` element is 4 bytes, its null the signed minimum, apart from every value.
 // Prints: 24 -1 2 5
 
 fn fill_n(n: integer, x: i32?) -> vector<i32?> {

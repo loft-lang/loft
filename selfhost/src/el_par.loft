@@ -55,9 +55,17 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     return void;
   }
   lv = el_ex_base::loop_var(vars, w.src_id, w.id, w.var_tp);
-  d = worker_def(e, worker);
-  if d < 0 {
-    el::refuse(e, "a `par` worker that is no function called by name");
+  // (Form 2, `a.method()` on the element: the element's struct's method, no extra arguments.)
+  md = method_worker_def(e, worker, w.src_id, elem);
+  is_method = md != -1;
+  d = if is_method { md } else { worker_def(e, worker) };
+  // (On the first pass a worker declared further down is not known yet: its result is unknown
+  // there, as Rust's `(u32::MAX, Unknown)`, and the second pass resolves it.)
+  if d < 0 && !e.first_pass {
+    el::refuse(e, if d == -2 { "a `par` method worker on an element of this kind: {el_ex_base::type_kind(elem)}" } else { "a `par` worker that is no function called by name" });
+    return void;
+  }
+  if d < 0 && !is_method && !(e.p.nodes[worker] is SCall) {
     return void;
   }
   args = [for a in match e.p.nodes[worker] { SCall { at: _, f: _, args: a } => a, _ => [] } { positional(e, a) }];
@@ -65,20 +73,26 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
     el::refuse(e, "a `par` worker called with a named argument");
     return void;
   }
-  first = el_ex_assign::expression(e, vars, args[0]!);
-  extras: vector<ir::Node> = [];
-  for a in args {
-    if a#index > 0 {
-      extras += [el_ex_assign::expression(e, vars, a).code];
-    }
+  if !is_method && len(args) == 0 {
+    return void;
   }
-  given = match el_ir::unspan(first.code) { NdVar { n } => n, _ => -1 };
+  extras: vector<ir::Node> = [];
+  given = lv;
+  if !is_method {
+    first = el_ex_assign::expression(e, vars, args[0]!);
+    for a in args {
+      if a#index > 0 {
+        extras += [el_ex_assign::expression(e, vars, a).code];
+      }
+    }
+    given = match el_ir::unspan(first.code) { NdVar { n } => n, _ => -1 };
+  }
   if !e.first_pass && given != lv {
     el::refuse(e, "a `par` worker whose first argument is not the element");
     return void;
   }
   th = el_ex_assign::expression(e, vars, threads).code;
-  ret = el::def(e, d).returned[0] ?? ir::TyUnknown { n: 0 };
+  ret = if d < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, d).returned[0] ?? ir::TyUnknown { n: 0 } };
   ln = lane(ret);
   es = element_size(e, elem);
   if !e.first_pass && (ln.queue == "" || es < 0) {
@@ -178,6 +192,41 @@ fn worker_def(e: el::El, worker: integer) -> integer {
         },
         _ => -1
       }
+    },
+    _ => -1
+  }
+}
+
+// `parse_parallel_worker_method`: `a.method()` on the element `a` — `t_<len><Type>_<method>` of
+// the element's struct (or the method's bare name), a function; -1 for any other worker, -2 for
+// one this port does not carry (an element that is no plain struct, a method that is none).
+fn method_worker_def(e: el::El, worker: integer, elem_name: text, elem: ir::TypeT) -> integer {
+  match e.p.nodes[worker] {
+    SMember { at: _, e: me, name: mname, args: margs, call } => {
+      if !call || me == null || len(margs) > 0 {
+        return -1;
+      }
+      match e.p.nodes[me!] {
+        SName { at: _, name: rn, member: rm } => {
+          if rn != elem_name || rm != "" {
+            return -1;
+          }
+        },
+        _ => { return -1; }
+      }
+      sd = match elem { TyReference { n } => n, _ => -1 };
+      if sd < 0 {
+        return -2;
+      }
+      tname = el::def(e, sd).name;
+      d = el::def_nr(e, "t_{len(tname)}{tname}_{mname}");
+      if d < 0 {
+        d = el::def_nr(e, mname);
+      }
+      if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION {
+        return -2;
+      }
+      match el::def(e, d).returned[0] ?? ir::TyVoid { TyIterator { step: _ } => -2, _ => d }
     },
     _ => -1
   }

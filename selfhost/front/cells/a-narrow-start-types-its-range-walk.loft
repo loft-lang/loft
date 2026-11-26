@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a range from a start of a declared narrow width (`a: u8`) types its counters by
+// the start (`in_type`); the loop variable stays narrow where the last value fits
+// (`end_fits_start`) and is the union of the bounds' types where it does not; an open range
+// stops at the start type's maximum; an inclusive end at that maximum is tested first.
+// Prints: 253 254 255 / 13725 / 1515 / 1006
+// Rule: @FR-I-Range.
+
+fn main() {
+  a: u8 = 253;
+  s = "";
+  for x in a..=255 { y: u8 = x; s += "{y} "; }
+  println(s);
+  b: u8 = 250;
+  w = 0;
+  for x in b..300 { w += x; }
+  println("{w}");
+  o = 0;
+  for x in b.. { o += x; }
+  println("{o}");
+  r = 0;
+  for x in rev(b..=253) { r += x; }
+  println("{r}");
+}

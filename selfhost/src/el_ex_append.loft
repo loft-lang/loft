@@ -268,7 +268,9 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
   }
   elm = -1;
   if len(items) > 0 {
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: 0, dep: [rec] });
+    // (A record element's temp is typed by its record on both passes — `ref(S)["h"]` — a
+    // scalar's by the placeholder.)
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if heap_def(inner) >= 0 { heap_def(inner) } else { 0 }, dep: [rec] });
     // (`parse_vector`'s `is_field` — the place is a field read (`OpGetField`): the element is a
     // reference INTO the field's store, which the owning record frees, its own free suppressed.
     // Another place — an element, a local viewing a vector — keeps the element's free.)

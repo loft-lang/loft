@@ -37,6 +37,11 @@
 // values here cannot change on an earlier build, so:
 // @falsified-at: none — a LOCK over the shapes the elision must not touch; the emitted
 // shape is falsified by `tests/view_elision.rs` (red on the build before the elision).
+//
+// @FR-O-Move: where the local is written or escapes, the bind copies and the source vector reads
+//   unchanged.
+// @FR-F-Ret: the borrowed result reaches the caller as its own value; out of range it is the minted
+//   default.
 struct Pt { ptx: float, pty: float }
 struct O { p: Pt, k: integer }
 // the consumer's helper: a clamped index with an early return on one branch

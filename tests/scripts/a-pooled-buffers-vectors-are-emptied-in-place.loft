@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Ret: each call's result is fresh: a caller's writes to one result never reach the next call's, and a shorter result keeps no stale tail.
 //
 // A pooled call buffer (minted once, released before every later call) whose type's heap is
 // vectors of plain elements, handed to a callee whose literal refills it.  What can go wrong is a stale tail (a shorter result over a longer one, c1), a caller's

@@ -1918,6 +1918,7 @@ impl Parser {
         let lhs = crate::parser::collections::AssignPlace {
             parent_tp: &parent_tp,
             fn_attr: None,
+            rhs_link: false,
         };
         self.towards_set(&to, &value, &f_type, &src_tp, &op, &lhs)
     }

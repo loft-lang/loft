@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `return text_src(1, p.s)` from a `text?` function publishes none of the call's
+// borrows — `parse_return` asks `text_return` only of a bare `Type::Text` value, and the call
+// answers `text?`; a bare return of a text parameter does, and so does the tail spelling.
+// Prints: a b c
+// Rule: @FR-F-Ret.
+
+struct T { s: text }
+fn text_src(i: integer, tag: text) -> text? { if i == 0 { return null } return tag; }
+fn g(p: T) -> text? { return text_src(1, p.s); }
+fn h(t: text) -> text? { return text_src(1, t); }
+fn k(p: T) -> text? { text_src(1, p.s) }
+fn main() { println("{g(T { s: "a" }) ?? "-"} {h("b") ?? "-"} {k(T { s: "c" }) ?? "-"}"); }

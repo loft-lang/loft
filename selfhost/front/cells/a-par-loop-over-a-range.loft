@@ -4,6 +4,8 @@
 // Gate E cell: a `par` loop over a range is materialised into a vector first
 // (`materialise_iter_for_par`), its temporaries named by the loop's number — pass 2's numbers
 // continuing after pass 1's — then dispatched as a vector `par` loop.
+// @FR-C-Par: a `par` loop over `0..4`, `1..=n` and a vector materialises its source and runs the worker per element.
+// @FR-C-Det: with a pure worker each sum equals the sequential one (14 30 14).
 // Prints: 14 30 14
 
 fn sq(i: integer) -> integer { i * i }

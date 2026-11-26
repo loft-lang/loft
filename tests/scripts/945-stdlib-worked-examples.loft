@@ -9,6 +9,8 @@
 // default/01_code.loft, or default/06_json.loft) cites the tag here via
 // `// Example: @STD-00N`, and `scripts/check_doc_drift.sh examples` fails
 // if a citation goes dangling (no test carries the tag).
+//
+// @FR-F-Render-Fields: `{w:j}` renders every field of the struct, in declaration order, as JSON.
 
 // @STD-001 — is a token present at a given BYTE offset? (scanner idiom)
 fn test_starts_with_at_scans_a_token() {

@@ -28,6 +28,10 @@
 // `LOFT_POISON=1`. `ncc_other(i)` claims the recycled store and overwrites the
 // record, so `e.a` reads the loop counter instead of 5: measured 1230 instead of
 // 250 on the pre-fix binary, on plain `--interpret` with no sanitizer.
+//
+// @FR-O-Proxy: the `??` subject's empty deps are no proof it owns a store; no free is derived from them.
+// @FR-O-Borrow: the borrowing bind is skip-free, so the recycled slot is never released under it.
+// @FR-B-View: `b = v[0] ?? …; b.b = …` writes the source element.
 
 struct NccP {
   a: integer,

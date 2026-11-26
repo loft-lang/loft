@@ -863,6 +863,15 @@ impl Stores {
         // which is also the distinction the size probe was standing in for.
         #[cfg(host_fs)]
         let data: Option<Vec<u8>> = crate::wasm::host_fs_read_binary(&resolved);
+        // A vector counts its elements in 32 bits: a file with more bytes than that is refused
+        // by its size, before a byte of it is read — the capacity check refuses the count held
+        // at the largest one, as it does below for a file that grew while it was read.
+        #[cfg(not(host_fs))]
+        if crate::file_access::metadata(crate::file_access::at(&resolved))
+            .is_ok_and(|m| m.len() > u64::from(u32::MAX))
+        {
+            let _ = vector::checked_vec_cap(u32::MAX, 1);
+        }
         #[cfg(not(host_fs))]
         let data: Option<Vec<u8>> =
             crate::file_access::read(crate::file_access::at(&resolved)).ok();

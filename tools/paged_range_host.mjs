@@ -44,6 +44,9 @@ if (!wasmPath || !storePath) {
 }
 
 const store = fs.readFileSync(storePath);
+// LOFT_PAGED_STATED_TOTAL: the size the host CLAIMS for the file, as any server may.  The bytes
+// it serves are still the file's; a reader must not size anything by the claim it cannot hold.
+const statedTotal = process.env.LOFT_PAGED_STATED_TOTAL ? Number(process.env.LOFT_PAGED_STATED_TOTAL) : null;
 let mem = null;
 const dec = new TextDecoder();
 
@@ -98,7 +101,7 @@ const loft_io = {
     requests += 1;
     return httpBytes.length;
   },
-  loft_host_http_range_total: () => store.length,
+  loft_host_http_range_total: () => statedTotal ?? store.length,
   loft_host_deliver() {},
   loft_host_expose() {},
   loft_host_release() {},

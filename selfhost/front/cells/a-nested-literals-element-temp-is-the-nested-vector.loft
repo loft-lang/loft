@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: the element temp of a literal of literals is the nested vector, borrowing the destination, in every position.
+// @FR-Col-Len: a literal of vector literals holds one element per item, in a local, a declared local, an argument, a tail and after `+=` (2 1 2 2 2 2).
 // Prints: 2 1 2 2 2 2
 
 fn v1() -> integer { vv = [[11, 22, 33], [44, 55]]; len(vv) }

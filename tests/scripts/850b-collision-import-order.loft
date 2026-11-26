@@ -11,6 +11,10 @@
 // verified against one order has not been verified at all. This is the same
 // doctrine loft#788 established for bare names (`dupname_ab` / `dupname_ba`):
 // a source line's meaning must not depend on the order of the block above it.
+//
+// @FR-Disp-Key: each package's Thing keys its own member whatever the import order.
+// @FR-Disp-Select: the call reaches the definition taking its receiver, not the first import's.
+// @FR-F-OneBody: the method and bare spellings still agree.
 use dupmethod_c::*;
 use dupmethod_b::*;
 use dupmethod_a::*;

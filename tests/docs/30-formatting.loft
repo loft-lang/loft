@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Formatting
 // @TITLE: Format strings — interpolation, alignment, and number bases
+// @FR-F-Spec: width, alignment, sign, precision and radix of a hole.
+// @FR-F-Spec-Fill: a fill character pads instead of a space.
+// @FR-F-Spec-Zero: `0N` pads after the sign or `0x`, and never pads `null`.
+// @FR-F-Render: each type's default rendering, null as `null`.
+// @FR-F-Target: a template checked against a type calls its `lit` and `hole_` methods.
 // Loft strings can embed expressions inside `{...}` braces.  A colon after
 // the expression introduces a format specifier that controls width, alignment,
 // precision, number base, and output style.

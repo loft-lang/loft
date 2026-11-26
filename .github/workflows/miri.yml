@@ -892,6 +892,11 @@ jobs:
         run: cargo build --release --bin loft
       - name: The interpreter and the C writer name one store effect per assignment
         run: python3 scripts/bind_census.py --loft target/release/loft --suite "$LOFT_SUITE_DIR" --jobs 4 --writer c --check --examples 3
+      # @PLN229 A3 — loft's own work grows linearly with a program: a call chain and a flat
+      # program of 2000 and of 4000 functions, each written to C within 2.5x of its half.
+      - name: Compile time grows linearly with the program
+        if: always()
+        run: bash scripts/scaling-guard.sh --loft target/release/loft
 
   slot-matrix-c:
     # @windows-exempt: the matrix generates platform-free loft; the Windows C compiler is c-sweep-platforms' question
@@ -1550,6 +1555,29 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/thirdparty.py --check --no-libs
 
+  attic:
+    # @windows-exempt: platform-free — loft programs on the interpreter and the C backend
+    # @nightly-class: report — the attic holds programs no rule claims yet: a red is a lead for a rule, not the language broken
+    name: Language suite with its attic (interpreter + C)
+    # The attic (loft-suite/attic/: programs read and found to describe no rule) is still tested,
+    # nightly, and gates nothing; the per-PR suite runs only the rule cells.  A program leaves it
+    # only when a rule claims it (TESTING.md § Curating the suite).
+    if: github.event_name != 'pull_request'
+    needs: pr-ci-started
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install mold
+        run: timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update -y && timeout 600 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 install -y mold
+      - name: Build the release loft
+        run: cargo build --release --bin loft
+      - name: The suite and its attic, interpreter and C
+        run: python3 "$LOFT_SUITE_DIR/loft-suite" run --attic --mode both-c --loft "$PWD/target/release/loft"
+
   toolchain-matrix:
     # @windows-exempt: varies the Rust toolchain, not the platform
     # @nightly-class: report — beta/nightly std and lint churn must never page us
@@ -1961,7 +1989,7 @@ jobs:
     name: → tracked issue (red-steps digest)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, attic]
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     permissions:
@@ -1978,7 +2006,7 @@ jobs:
     name: Daily status (the one place to look)
     needs: [pr-ci-started, stale-plans-audit, stale-claims, miri, asan, asan-leak-gate, poison, native-poison, poison-claim, stack-shadow, tsan,
             valgrind, c-sweep-unsound, c-sweep-platforms, c-sweep-android, bind-census, release-gate-sweeps, debug-asserts, audit,
-            toolchain-matrix, index-hygiene, library-health, slot-matrix-c]
+            toolchain-matrix, index-hygiene, library-health, slot-matrix-c, attic]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)

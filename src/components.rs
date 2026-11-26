@@ -79,6 +79,22 @@ pub fn path(name: &str) -> Option<String> {
     })
 }
 
+/// The library named `file` (a component's file name, [`file_name`]) where this loft finds it,
+/// under the same check as [`path`]: what a hosted unit opens, so a unit built where the
+/// component lay elsewhere opens it here (`@FR-Art-Key`).
+#[must_use]
+pub fn path_of_file(file: &str) -> Option<String> {
+    dirs().into_iter().find_map(|d| {
+        let lib = d.join(file);
+        (crate::file_access::exists(&lib)
+            && crate::cache::native_artifact_fingerprint_matches(
+                &d,
+                crate::cache::loft_ffi_fingerprint(),
+            ))
+        .then(|| lib.to_string_lossy().into_owned())
+    })
+}
+
 /// Why component `name` is missing, for a refusal: what was looked for and where.
 #[must_use]
 pub fn missing(name: &str) -> String {

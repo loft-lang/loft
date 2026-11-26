@@ -413,7 +413,11 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
 /// `Parser::source_loaded_from`, which is keyed on the canonical path for the
 /// same reason this is (loft#1080).
 #[must_use]
-pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definition) -> String {
+pub fn disambiguated_fn_ident(
+    dups: &HashSet<String>,
+    data: &crate::data::Data,
+    def: &crate::data::Definition,
+) -> String {
     let name = def.name();
     // A body-less standard-library definition is never emitted: its calls link to the function
     // the runtime provides for that bare name (`c::native_c`).  A library may define a free
@@ -423,9 +427,14 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
     let runtime_provided = *def.code() == crate::data::Value::Null
         && crate::file_access::is_stdlib_source(def.position().file.as_str());
     let base = if dups.contains(name) && !runtime_provided {
-        // FNV-1a over the defining file path — deterministic across runs.
+        // FNV-1a over the defining file's NAME (`source_name::name`, REPRODUCIBLE_OUTPUT.md):
+        // the same in every checkout and run, and the same in a placed worker, which is handed
+        // the program's roots.
+        // The roots a placed worker is handed (`source_name::program_roots`), else the program's.
+        let roots = crate::source_name::program_roots().unwrap_or_else(|| data.source_roots(None));
+        let file = crate::source_name::name(def.position().file.as_str(), &roots);
         let mut h: u32 = 0x811c_9dc5;
-        for b in def.position().file.bytes() {
+        for b in file.bytes() {
             h ^= u32::from(b);
             h = h.wrapping_mul(0x0100_0193);
         }
@@ -468,7 +477,7 @@ pub fn library_bridge_ident(data: &Data, exports: &HashSet<u32>, d_nr: u32) -> S
     format!(
         "{}__{}",
         rust_fn_ident(&data.source_label(data.def(d_nr).source)),
-        disambiguated_fn_ident(&dups, data.def(d_nr))
+        disambiguated_fn_ident(&dups, data, data.def(d_nr))
     )
 }
 

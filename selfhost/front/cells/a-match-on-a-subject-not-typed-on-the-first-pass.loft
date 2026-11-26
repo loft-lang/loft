@@ -5,6 +5,8 @@
 // vector field) still has its arms read there: each variant field binds its `_mv_<name>_N` at
 // `Unknown` (`mark_blind_capture`), so the body's `return "{value}"` makes its work text the
 // return buffer on pass 1 as Rust's does.
+// @FR-M-Variant: a match on an element of a recursive enum's vector field binds the variant's text field.
+// @FR-F-Return: `return "{value}"` from inside the loop and match exits the call with it (a|).
 // Prints: a|
 
 enum K { KNone, KText { value: text }, KList { items: vector<E> } }

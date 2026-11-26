@@ -515,10 +515,12 @@ def one(loft, defs, elab, std, path, tmp, env, i):
                            for m2 in map(ROUTE.match, m.stderr.splitlines()) if m2])
         ROUTE_FN[path] = {**route_owners("rust", rust_err), **route_owners("port", m.stderr)}
         # The first pass is compared where the image is: every function of a program that
-        # agrees, the agreeing functions of a refused one; a differing program's is not.
-        if not refused and mine == want:
+        # agrees, the agreeing functions of a refused one.  A program whose image differs has
+        # every function compared too: its first pass shows where it parted, and the functions
+        # that agree there are pinned like any other.
+        if not refused:
             PASS1[path] = pass1_verdicts(rust_err, m.stderr, None)
-        elif refused:
+        else:
             PASS1[path] = pass1_verdicts(rust_err, m.stderr, {k for k, (v, _) in fns.items() if v == "agree"})
         if path in PASS1:
             PASS1_AT[path] = pass1_parted(rust_err, m.stderr,

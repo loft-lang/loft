@@ -23,6 +23,9 @@
 // SECOND directory used to leak one store per pass (loft#615, fixed at the
 // re-assignment chokepoint in state/codegen.rs), so the shape that exposed that
 // leak now guards against its return as well as against H6's.
+//
+// @FR-H-Alloc: a file read mints a FRESH store, never the slot the live listing still holds.
+// @FR-O-Owner: each store has one owner, so the second listing keeps all its entries.
 
 fn test() {
     mkdir_all("h6_d0");

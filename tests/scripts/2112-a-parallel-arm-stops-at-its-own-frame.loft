@@ -27,6 +27,9 @@
 // WITNESS: `=== loft crash (loft) SIGBUS caught ===` after the arm's work.
 // HOLDS: nothing here — a test function is itself a called frame, so even the first cell
 //   crashed; the block written in a program's `main` was the shape that always worked.
+//
+// @FR-C-Arms: every arm runs against the snapshot of the enclosing frame and control continues
+//   after the block, wherever the block stands.
 
 struct Pt { x: integer, y: integer }
 

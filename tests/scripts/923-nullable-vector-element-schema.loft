@@ -19,6 +19,9 @@
 // Run this file under `LOFT_STRICT_SCHEMA_IDS=1` to make the drift fatal rather
 // than a report — that is the oracle this guard is built around, and the values
 // below are the second half: a drifted id can still read plausibly.
+//
+// @FR-N-Shape: `vector<integer>?` as an element answers every shape question as `vector<integer>`.
+// @FR-L-Null: the nullable element has the plain element's layout, so its contents read back.
 
 struct Ent { k: integer, v: integer }
 

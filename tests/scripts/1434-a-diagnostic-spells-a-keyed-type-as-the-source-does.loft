@@ -36,3 +36,7 @@ fn a_keyed_type_is_named_as_the_source_writes_it() {
   h: hash<It[k]>? = [It { k: 2, v: 20 }];
   assert_eq("{take(h)}", "1", "the store proceeds — this cell is about the MESSAGE");
 }
+
+// @FR-N-Store: passing a nullable `hash<It[k]>?` to a `hash<It[k]>` parameter is a warning, pinned
+//   with its exact text above.  (Cited here, below the cell, because the `@EXPECT_WARNING` names
+//   the declaration's line and a header line would move it.)

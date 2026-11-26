@@ -589,6 +589,7 @@ fn load_registry_index() -> std::io::Result<loft::registry_index::RegistryIndex>
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: true,
         lock_path: None,
     };

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector<float?> and a vector<boolean?> are stored as the scalar's vector: its row made on the first pass (database.vector), its own definition on the second (check_vector), after the nullable pair's.
+// @FR-N-Dense: `vector<float?>` and `vector<boolean?>` hold null elements.
+// @FR-L-Null: a null element is the scalar's sentinel, read back as null under `??`.
 // Prints: 0.5 true false 13.5 3
 fn main() {
   f: vector<float?> = [1.5, null];

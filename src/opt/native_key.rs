@@ -199,7 +199,7 @@ pub(crate) fn artifact_sources(
     out
 }
 
-/// @PLN199 G1b — which packages, by name and version (`loft.toml`), not by where they lie:
+/// `@FR-Art-Key`: which packages, by name and version (`loft.toml`), not by where they lie:
 /// the same library at two places is the same artifact.  A registry version is immutable; an
 /// edited local package is caught by the staleness check beside this key.  A directory with
 /// no manifest is named by its last component.
@@ -222,6 +222,49 @@ pub(crate) fn contributing_fingerprint(contributing: &[String]) -> u64 {
     let mut h = std::collections::hash_map::DefaultHasher::new();
     ids.hash(&mut h);
     crate::cache::host_triple().hash(&mut h);
+    h.finish()
+}
+
+/// The components the artifact's C binds (@PLN205): each one a contributing package names with
+/// `[native] component`, with the library `components::path` finds for it and the loft-ffi
+/// fingerprint stamped beside that library (`.loft-build-fp`), or as absent.  The C bakes in
+/// what it found — a refusal naming the component, or a call into it — so a unit built before
+/// the component was installed must not be adopted after.  Where the library lies is not part
+/// of it: a hosted unit opens the component where the running loft finds it
+/// (`HostedTable::component`).  `@FR-Art-Key`.
+pub(crate) fn component_fingerprint(contributing: &[String]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    // Which component and which build of it — not where it lies: a hosted unit opens it where
+    // the running loft finds it (`HostedTable::component`, loft#2654), so its code does not hold
+    // the place.
+    let mut ids: Vec<(String, bool, Option<u64>)> = contributing
+        .iter()
+        .filter_map(|dir| crate::native_build::component_of(dir))
+        .map(|name| {
+            let lib = crate::components::path(&name);
+            let stamp = lib
+                .as_deref()
+                .and_then(|l| std::path::Path::new(l).parent())
+                .and_then(crate::cache::native_artifact_stamped_fp);
+            (name, lib.is_some(), stamp)
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    ids.hash(&mut h);
+    h.finish()
+}
+
+/// Every `LOFT_*` switch set in this process that counts for a unit (`@FR-Art-Key`,
+/// `@FR-Art-Inert`): the environment key the program cache uses, asked for a unit
+/// ([`crate::cache::env_signature`] with [`crate::cache::EnvKey::Unit`]).  A cure switch, a
+/// width, a generator's own switch all change the code a unit is generated with, so a unit built
+/// under one setting is never adopted under another.
+pub(crate) fn generation_switches() -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    crate::cache::env_signature(crate::cache::EnvKey::Unit).hash(&mut h);
     h.finish()
 }
 

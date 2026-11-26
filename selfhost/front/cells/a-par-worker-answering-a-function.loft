@@ -4,6 +4,8 @@
 // Gate E cell: a `par` worker answering a function value rides the fn lane (`route_fn_queue`):
 // `n_parallel_queue_fn` with 20-byte rows, the result read into its own variable first thing in
 // the body (`_fr_par<loop> = n_parallel_buf_get_fn(idx)`) and called through it.
+// @FR-C-Par: each element's worker answer (a function value) is bound to `fr` for the body.
+// @FR-L-FnRef: a named function answered as a value is a fn-ref the body calls.
 // Prints: 50
 
 fn add5(x: integer) -> integer { x + 5 }

@@ -22,6 +22,9 @@
 // this file proves only that it executes: a freed store usually still holds its old bytes.
 // Elements are seeded `q = i + 7` and every lookup asks for element 0, so each cell
 // answers 7 — a value no `??` fallback (-1) can produce.
+//
+// @FR-H-SwapKeyed: `v = mk_hash(n)` takes the call's store, whose released slot is freed once.
+// @FR-O-Owner: the lifted temp and the local never both own it, so no record return lands on it.
 
 struct I890Cell { q: integer, r: integer }
 struct I890Txt { tq: text, tr: integer }

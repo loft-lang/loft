@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged-Same: a paged load answers an enum field's variant and payload as a whole load does.
 //
 // Regression — a paged working-set load must accept an ENUM field.
 //

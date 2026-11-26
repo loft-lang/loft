@@ -25,6 +25,9 @@
 // specific wrong string rather than as a failure somewhere.  The two non-text rows are the
 // controls that were correct throughout — without them this reads as "tuple writes are broken"
 // rather than "text tuple writes are".
+//
+// @FR-T-Record: a tuple is a record with fields 0…n, so `t.i = "X"` writes member i and no
+//   neighbour.
 
 fn t1004_2(a: text, b: text) -> text { "{a}{b}" }
 fn t1004_3(a: text, b: text, c: text) -> text { "{a}{b}{c}" }

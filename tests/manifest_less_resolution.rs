@@ -676,6 +676,16 @@ fn cached_index(home: &Path, name: &str, newest: &str) {
     );
 }
 
+/// Write a current, empty advisory feed beside the cached index: an install never runs without
+/// the feed, and a cell that installs offline from a hand-built index has the feed a machine
+/// that once reached the registry keeps.  Its age is the file's, written now.
+fn cached_feed(home: &Path) {
+    write(
+        &home.join(".loft/registry/advisories.json"),
+        r#"{"schema_version":1,"updated":"2026-09-29T00:00:00Z","retention_days":90,"advisories":[]}"#,
+    );
+}
+
 /// A package whose lock pins `version`, with a script under `src/`.
 fn pinned_package(home: &Path, version: &str) -> PathBuf {
     let pkg = home.join("proj");
@@ -1106,6 +1116,7 @@ fn install_binds_a_transitive_package_to_the_project_declaration() {
             entry("chainpkg", "0.1.0", r#""deps":{"probepkg":"^0.1"},"#),
         ),
     );
+    cached_feed(&home);
     let run = |tag: &str, deps: &str| {
         let pkg = project(&home, tag, deps, None, "chainpkg", "chainpkg::chain_id()");
         let url = "http://127.0.0.1:1/index.json";
@@ -1194,6 +1205,7 @@ fn a_named_install_keeps_the_declared_pin_and_an_explicit_version_moves_it() {
             entry("0.1.2"),
         ),
     );
+    cached_feed(&home);
     let pkg = project(
         &home,
         "named",

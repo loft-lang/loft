@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Paged: a paged reader serves a trie's key and prefix by S-Tree from the image's bytes.
+// @FR-S-Sound: the trie the loader built passes store_verify.
 //
 // @PLN134 — a TRIE read a page at a time. `store_load_key_text` answers one key by
 // a root→leaf descent, and `store_load_prefix` answers `"kerk"` by a seek plus a

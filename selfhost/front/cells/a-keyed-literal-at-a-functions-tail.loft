@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a literal at the tail of a function of a keyed collection is built as that collection in a __kvb_N of its own (parse_vector's keyed arm), nulled at the head.
+// @FR-Col-Insert: a literal at a keyed function's tail places its records by key.
+// @FR-Col-Lookup: the lookups answer each record placed (30 50 80).
 // Prints: 30 50 80
 struct E { k: integer, v: integer }
 

@@ -1,6 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Threading: parallel_for via the par() for-loop clause.
+//
+// @FR-C-Par: each element's worker result `b` reaches the body once (sums 120, 60, 27; empty source
+//   zero times).
+// @FR-C-Det: a pure worker answers the same at 1, 2 and 4 threads.
+// @FR-C-Order: results are consumed in the source's order ("v10,v20,v30,").
 struct Score {
   value: integer,
 }

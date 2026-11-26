@@ -342,7 +342,8 @@ fn print_help() {
     println!("                                for headless/WASI (wasmtime); NOT the browser build");
     println!("  --native-android [out.apk]    cross-compile to a signed Android APK (needs");
     println!("                                ANDROID_NDK_HOME + ANDROID_HOME) through the C");
-    println!("                                backend; a *.so output builds just the library");
+    println!("                                backend; a *.so output builds just the library;");
+    println!("                                with --ship, signed by loft.toml's [android] key");
     println!("  --assets a,b                  the files an app carries (--native-esp, --html,");
     println!("                                --native-android), beside the program: files,");
     println!("                                directories, `*` in a name, `!` to drop a match;");
@@ -592,6 +593,9 @@ fn print_help() {
     println!("  --refresh                     force re-fetch the registry index");
     println!("  --offline                     use cache only; fail if anything's missing");
     println!("  --prerelease                  resolve prerelease versions too");
+    println!(
+        "  --allow-stale                 install with an index or advisory feed over 30 days old"
+    );
     println!(
         "  --allow-unsigned              proceed when the index carries no signature (a mirror"
     );
@@ -1378,6 +1382,7 @@ fn package_info(name: &str) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -1593,6 +1598,7 @@ fn api_registry_catalog(refresh: bool) {
         refresh,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -1652,6 +1658,7 @@ fn write_api_stubs(lock_path: &std::path::Path, project_dir: &std::path::Path) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2009,7 +2016,7 @@ fn self_update_cmd(args: &SelfUpdateArgs<'_>) -> i32 {
             let nanos = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
-            let tmp = std::env::temp_dir().join(format!(
+            let tmp = loft::platform::scratch_dir().join(format!(
                 "loft-self-update-{to}-{}-{nanos:09}",
                 std::process::id()
             ));
@@ -2109,6 +2116,19 @@ fn verify_self_cmd() -> i32 {
     // verification and then segfaulted in `OpFreeText` on `println("hello")`.
     let loaded = stdlib_default_dir();
     let mut checks = local_checks(&root, Some(loaded.as_path()));
+    // The registry index and advisory feed the bundle ships for a machine with none.
+    #[cfg(feature = "registry")]
+    checks.extend(
+        loft::registry_cache::seed_checks(&root)
+            .into_iter()
+            .map(|(ok, line)| {
+                if ok {
+                    Check::Ok(line)
+                } else {
+                    Check::Failed(line)
+                }
+            }),
+    );
     // Only consult the registry for something that IS a bundle; a source checkout has
     // no manifest to anchor, and a network round-trip to say so would be noise.
     if !checks.iter().all(|c| matches!(c, Check::Skipped(_))) {
@@ -2217,6 +2237,7 @@ fn list_installed() {
         refresh: false,
         offline: true, // never hit the network for this query
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2375,6 +2396,7 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
         refresh: false,
         offline: std::env::var("LOFT_OFFLINE").is_ok(),
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: Some(lock_path.clone()),
     };
@@ -2584,6 +2606,7 @@ fn bundle_export(
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -2682,8 +2705,18 @@ fn bundle_copy_feeds(out: &std::path::Path) -> Result<(), String> {
             out.join("index.json.sig2"),
         );
     }
+    // When each copy was last known current, so the import measures its age from that and not
+    // from the day it is unpacked (`registry_cache`).
+    let _ = fa::copy(
+        loft::registry_cache::verified_at_path(&idx_path),
+        loft::registry_cache::verified_at_path(&out.join("index.json")),
+    );
     let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
     if fa::exists(&adv_path) {
+        let _ = fa::copy(
+            loft::registry_cache::verified_at_path(&adv_path),
+            loft::registry_cache::verified_at_path(&out.join("advisories.json")),
+        );
         let _ = fa::copy(&adv_path, out.join("advisories.json"));
         if fa::exists(&adv_sig_path) {
             let _ = fa::copy(&adv_sig_path, out.join("advisories.json.sig"));
@@ -2781,15 +2814,70 @@ fn bundle_import(indir: &str, allow_unsigned: bool) -> i32 {
         eprintln!("loft bundle import: cannot create {e}");
         return 1;
     }
+    // The cache only moves forward: a bundle older than what is here would put back fewer
+    // yanks and fewer advisories, so it is refused before anything is written.
     let (idx_path, sig_path, _) = registry_index::index_paths();
-    if let Err(e) = registry_index::write_signed_pair(&idx_path, &sig_path, &idx_bytes, &idx_sig) {
+    let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
+    let index_verifies =
+        &mut |c: &[u8], s: &[u8]| loft::install::verify_or_explain(c, s, &opts).is_ok();
+    let feed_opts = loft::registry_advisories::LoadOptions {
+        allow_unsigned,
+        ..Default::default()
+    };
+    let feed_verifies =
+        &mut |c: &[u8], s: &[u8]| loft::registry_advisories::verify_feed(c, s, feed_opts).is_ok();
+    let older = loft::registry_cache::newer_copy_cached(
+        "bundle's index",
+        &idx_path,
+        &sig_path,
+        &idx_bytes,
+        index_verifies,
+    )
+    .or_else(|| {
+        feed.as_ref().and_then(|(content, _)| {
+            loft::registry_cache::newer_copy_cached(
+                "bundle's advisory feed",
+                &adv_path,
+                &adv_sig_path,
+                content,
+                feed_verifies,
+            )
+        })
+    });
+    if let Some(why) = older {
+        eprintln!("loft bundle import: {why}\n  nothing was imported.");
+        return 1;
+    }
+    // Known current when the bundle was exported, or at the latest when the registry wrote it.
+    let known_at = |doc: &str, content: &[u8]| {
+        fa::read_to_string(loft::registry_cache::verified_at_path(&inp.join(doc)))
+            .ok()
+            .and_then(|t| t.trim().parse::<u64>().ok())
+            .or_else(|| loft::registry_cache::updated_secs(content))
+            .unwrap_or(0)
+    };
+    if let Err(e) = loft::registry_cache::place_pair(
+        "bundle's index",
+        &idx_path,
+        &sig_path,
+        &idx_bytes,
+        &idx_sig,
+        known_at("index.json", &idx_bytes),
+        index_verifies,
+    ) {
         eprintln!("loft bundle import: cannot write the index: {e}");
         return 1;
     }
     if let Some((content, sig)) = feed {
-        let (adv_path, adv_sig_path) = loft::registry_advisories::advisories_paths();
-        if let Err(e) = registry_index::write_signed_pair(&adv_path, &adv_sig_path, &content, &sig)
-        {
+        if let Err(e) = loft::registry_cache::place_pair(
+            "bundle's advisory feed",
+            &adv_path,
+            &adv_sig_path,
+            &content,
+            &sig,
+            known_at("advisories.json", &content),
+            feed_verifies,
+        ) {
             eprintln!("loft bundle import: cannot write the advisories: {e}");
             return 1;
         }
@@ -3950,6 +4038,7 @@ fn pin_script(script: &str, allow_unsigned: bool) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: None,
     };
@@ -3966,6 +4055,7 @@ fn pin_script(script: &str, allow_unsigned: bool) {
         refresh: false,
         offline: false,
         allow_prerelease: false,
+        allow_stale: false,
         skip_lockfile: false,
         lock_path: Some(sidecar.clone()),
     };
@@ -4730,6 +4820,7 @@ fn registry_sync(allow_unsigned: bool) {
             refresh: true,
             offline: false,
             allow_prerelease: false,
+            allow_stale: false,
             skip_lockfile: false,
             lock_path: None,
         };
@@ -4974,7 +5065,7 @@ fn registry_list(installed_only: bool) {
 #[cfg(feature = "registry")]
 fn chrono_date() -> String {
     // Use file modification time of a temp file as a proxy for "now".
-    let tmp = std::env::temp_dir().join(".loft_date_probe");
+    let tmp = loft::platform::scratch_dir().join(".loft_date_probe");
     let _ = fa::write(&tmp, "");
     let date = fa::metadata(&tmp)
         .ok()
@@ -5807,6 +5898,53 @@ fn fetch_release_for_compat(name: &str, v: &str) -> Result<(), String> {
     }
 }
 
+/// The releases of `name` an advisory withdraws — the advisory feed refuses to install them,
+/// as `loft install` would ([`loft::registry_advisories::assess`]) — each with the refusal.
+/// No release can be fetched to compare against, and none is a promise a dependent can still
+/// rely on, so the check names them and compares an installable release in their place.  No
+/// feed to read withdraws nothing: the fetch then says why it failed.
+#[cfg(feature = "registry")]
+fn withdrawn_releases(
+    name: &str,
+    versions: &[String],
+) -> std::collections::BTreeMap<String, String> {
+    let feed = loft::registry_advisories::load_or_fetch(&loft::registry_advisories::LoadOptions {
+        allow_unsigned: COMPAT_ALLOW_UNSIGNED.load(std::sync::atomic::Ordering::Relaxed),
+        offline: std::env::var("LOFT_OFFLINE").is_ok(),
+        refresh: false,
+    });
+    let Ok(Some(feed)) = feed else {
+        return std::collections::BTreeMap::new();
+    };
+    versions
+        .iter()
+        .filter_map(|v| {
+            loft::registry_advisories::assess(name, v, &feed)
+                .refusal
+                .map(|why| (v.clone(), why))
+        })
+        .collect()
+}
+
+/// The release to compare in place of the withdrawn `v`: the nearest newer one that is neither
+/// withdrawn nor already in `taken`, else the nearest older one — so a withdrawn floor is
+/// replaced by the oldest release still installable above it.
+#[cfg(feature = "registry")]
+fn in_place_of(
+    v: &str,
+    versions: &[String],
+    taken: &[String],
+    withdrawn: &std::collections::BTreeMap<String, String>,
+) -> Option<String> {
+    let at = versions.iter().position(|x| x == v)?;
+    let free = |x: &&String| !taken.contains(x) && !withdrawn.contains_key(x.as_str());
+    versions[at + 1..]
+        .iter()
+        .find(free)
+        .or_else(|| versions[..at].iter().rev().find(free))
+        .cloned()
+}
+
 /// Step 7 — verify a package's ENTIRE claim: every release the registry lists at or above its floors, under a wall-clock
 /// budget, with overrun reported as failure rather than smuggled in as success.
 ///
@@ -5841,9 +5979,14 @@ fn compat_check_full(name: &str, versions: &[String], floors: Floors) -> i32 {
     };
 
     let mut t = FullTally::default();
+    let withdrawn = withdrawn_releases(name, versions);
     // Oldest first, so a timeout leaves the DEEPEST part of the claim — the part a floor is
     // actually asserting, and the part nobody else looks at — already proven.
     for v in versions {
+        if let Some(why) = withdrawn.get(v) {
+            println!("  {v}: withdrawn, not compared ({why})");
+            continue;
+        }
         if started.elapsed().as_secs() >= budget {
             let checked = t.checked;
             let remaining = versions.len() - checked;
@@ -6079,6 +6222,29 @@ fn compat_check(name: &str, own_version: Option<&str>, floors: Floors, full: boo
         sample.push(chosen);
     }
 
+    // A withdrawn release cannot be fetched and binds no dependent any more; another release
+    // takes its place at once, so the run still compares as many against this loft.
+    let withdrawn = withdrawn_releases(name, &versions);
+    let mut kept: Vec<String> = Vec::new();
+    for v in sample {
+        let Some(why) = withdrawn.get(&v) else {
+            kept.push(v);
+            continue;
+        };
+        let taken: Vec<String> = kept.iter().chain(std::iter::once(&v)).cloned().collect();
+        match in_place_of(&v, &versions, &taken, &withdrawn) {
+            Some(r) => {
+                println!(
+                    "compat check `{name}`: {v} is withdrawn ({why}); comparing {r} in its place"
+                );
+                kept.push(r);
+            }
+            None => println!(
+                "compat check `{name}`: {v} is withdrawn ({why}); no release takes its place"
+            ),
+        }
+    }
+    let sample = kept;
     println!(
         "compat check `{name}`: {} of {} release(s) sampled{}",
         sample.len(),
@@ -6240,7 +6406,8 @@ fn compat_test_verdict(name: &str, version: &str, published: &std::path::Path) -
         eprintln!("loft compat: `{name}` {version} ships no tests/ — nothing to check against");
         return TestVerdict::CouldNotRun;
     }
-    let base = std::env::temp_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
+    let base =
+        loft::platform::scratch_dir().join(format!("loft_compat_{name}_{}", std::process::id()));
     let _ = fa::remove_dir_all(&base);
 
     // CONTROL: the published tests against the published source. Establishes that this corpus
@@ -8224,6 +8391,7 @@ fn main() {
                 refresh: false,
                 offline: false,
                 allow_prerelease: false,
+                allow_stale: false,
                 skip_lockfile: false,
                 lock_path: None,
             };
@@ -8246,6 +8414,12 @@ fn main() {
                     #[cfg(feature = "registry")]
                     {
                         install_opts.allow_prerelease = true;
+                    }
+                    i += 1;
+                } else if a2 == "--allow-stale" {
+                    #[cfg(feature = "registry")]
+                    {
+                        install_opts.allow_stale = true;
                     }
                     i += 1;
                 } else if a2 == "--allow-unsigned" {
@@ -10522,6 +10696,15 @@ fn main() {
                 std::process::exit(1);
             }
         };
+        // How the APK is signed, settled before the build: a `--ship` build signs with the
+        // key the program's loft.toml names, or is left unsigned; never with the debug key.
+        let signing = match android::signing(ship_build, std::path::Path::new(&abs_file)) {
+            Ok(s) => s,
+            Err(msg) => {
+                eprintln!("{msg}");
+                std::process::exit(1);
+            }
+        };
         let end_def = p.data.definitions();
         // The generated `android_main` runs the program's `fn main`, so an Android
         // app needs one (unlike a `--native` test file, which can be entry-less).
@@ -10576,6 +10759,7 @@ fn main() {
             let package = android::Package {
                 staging: &staging,
                 keystore_dir: &work,
+                signing: &signing,
                 debuggable: !ship_build,
                 assets: &assets,
                 libs: &libs,
@@ -12259,6 +12443,58 @@ fn add_package_paths(
         if !search.pop() {
             return;
         }
+    }
+}
+
+#[cfg(all(test, feature = "registry"))]
+mod compat_withdrawn_tests {
+    use super::in_place_of;
+
+    /// A withdrawn release is replaced by the nearest newer one still installable and not
+    /// already sampled, else the nearest older one; with none left, by nothing.
+    #[test]
+    fn a_withdrawn_release_is_replaced_by_the_nearest_installable_one() {
+        let v: Vec<String> = ["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0"]
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        let gone = |xs: &[&str]| -> std::collections::BTreeMap<String, String> {
+            xs.iter()
+                .map(|x| (x.to_string(), "advisory".to_string()))
+                .collect()
+        };
+        let taken = |xs: &[&str]| -> Vec<String> { xs.iter().map(ToString::to_string).collect() };
+        assert_eq!(
+            in_place_of("0.2.0", &v, &taken(&["0.3.0", "0.2.0"]), &gone(&["0.2.0"])).as_deref(),
+            Some("0.2.1"),
+            "the next newer release"
+        );
+        assert_eq!(
+            in_place_of(
+                "0.2.0",
+                &v,
+                &taken(&["0.2.0", "0.2.1"]),
+                &gone(&["0.2.0", "0.2.2"])
+            )
+            .as_deref(),
+            Some("0.3.0"),
+            "past a sampled and a withdrawn one"
+        );
+        assert_eq!(
+            in_place_of("0.3.0", &v, &taken(&["0.3.0"]), &gone(&["0.3.0"])).as_deref(),
+            Some("0.2.2"),
+            "the newest is replaced by the nearest older one"
+        );
+        assert_eq!(
+            in_place_of(
+                "0.2.0",
+                &v,
+                &taken(&["0.1.0", "0.2.0", "0.2.1", "0.2.2", "0.3.0"]),
+                &gone(&["0.2.0"])
+            ),
+            None,
+            "nothing left to compare"
+        );
     }
 }
 

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a text `+=` of an `if` whose arm answers a variable appends the `if` as one operand, the local borrowing that variable — in a function that answers no text.
+// @FR-E-Asgn-Compound: `out += if …` reads the place, reduces the `if`, and writes the joined text back.
+// @FR-E-Concat: text `+` joins the arm's text onto the accumulated one.
 // Prints: a b|z, z
 
 fn main() {

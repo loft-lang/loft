@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Derived: a local is freed once at scope exit, after the tail match's arms have read it.
+// @FR-F-Call: the frame's owned locals are dropped when the call ends, not before its tail runs.
 //
 // loft#992 — a `match` that is the LAST statement of a function, with a `return` in ANY
 // arm, freed the function's locals BEFORE the arms ran.

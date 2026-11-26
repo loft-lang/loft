@@ -2176,6 +2176,9 @@ fn an_added_or_removed_child_field_upgrades() {
 /// this layout wrote 32 entries past it.  The store converts — `a = 5` carried, the added `b`
 /// its zero, three items, the third item's first text `x2` — and under the compiled leg's
 /// allocator the overrun is what stops it.
+///
+/// @falsified-at: 4e992f30d — by hand: the walk pushed per field again, marked on pop, on a
+/// stack of `count * 4 + 8` → the compiled leg crashed (signal 5) converting the store.
 #[test]
 fn cell_a_struct_wider_than_its_layout_has_types() {
     let texts: String = (0..60).map(|i| format!(", t{i:02}: text")).collect();
@@ -2192,6 +2195,57 @@ fn cell_a_struct_wider_than_its_layout_has_types() {
         ),
         "5 0 3 x2\n",
     );
+}
+
+/// A sidecar that states one field's index group twice: the second statement replaces the
+/// first, as each backend's layout reader keeps the last fact it reads.  The first statement
+/// here names 400 members and the second one, so a reader that kept counting from the first
+/// writes 400 entries past the room it made for the second.  The store converts on both
+/// backends — `a = 5` carried, the added `b` its zero, two items, item 2's name `two` — and the
+/// compiled leg, rebuilt under AddressSanitizer where `cc` has one, converts without a report.
+///
+/// @falsified-at: 4e992f30d — by hand: the second `group=` no longer frees the first nor resets
+/// its count → AddressSanitizer: heap-buffer-overflow, a WRITE in `loft_ld_facts` (the plain
+/// compiled leg passes: without the sanitizer the overrun shows nothing).
+#[test]
+fn cell_a_repeated_group_fact_replaces_the_first() {
+    let types = "struct T { k: integer, n: text }\nstruct W { a: integer, items: hash<T[k]>, by_n: index<T[n]>";
+    let writer = format!(
+        "{types} }}\nfn main() {{\n  w = W {{ a: 5 }};\n  w.items += [T {{ k: 1, n: \"one\" }}, T {{ k: 2, n: \"two\" }}];\n  println(\"saved {{store_persist_copy(w, \\\"a.store\\\")}}\");\n}}\n"
+    );
+    let dir = write_store("repeated_group", &writer);
+    let side = loft::file_access::read_to_string(dir.join("a.store.dschema")).unwrap();
+    let fact = "W.items\tgroup=2\n";
+    assert!(side.contains(fact), "the sidecar states the group:\n{side}");
+    let long = vec!["2"; 400].join(",");
+    let side = side.replacen(fact, &format!("W.items\tgroup={long}\n{fact}"), 1);
+    loft::file_access::write(dir.join("a.store.dschema"), &side).unwrap();
+    loft::file_access::write(
+        dir.join("b.loft"),
+        reader(
+            &format!("{types}, b: integer }}\n"),
+            "  println(\"{w.a} {w.b} {len(w.items)} {w.items[2].n}\");\n",
+        ),
+    )
+    .unwrap();
+    let expect = "5 0 2 two\n";
+    reads("repeated_group", &dir, expect, "a group stated twice");
+    if !common::c_sanitized::available(&dir) {
+        eprintln!("skipped the sanitized leg: no AddressSanitizer runtime for cc here");
+    } else {
+        let c = common::c_sanitized::emit(&dir, &dir.join("b.loft"));
+        let exe = common::c_sanitized::build(&c, &c);
+        let run =
+            common::c_sanitized::run(&exe, &[], &dir, &[], std::time::Duration::from_secs(120));
+        assert!(
+            run.code == Some(0) && run.out == expect && !run.reported(),
+            "the sanitized reader: {:?}\n{}\n{}",
+            run.code,
+            run.out,
+            run.err
+        );
+    }
+    let _ = loft::file_access::remove_dir_all(&dir);
 }
 
 // The name a store records for a library type depends on what else its WRITER

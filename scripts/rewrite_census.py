@@ -117,6 +117,20 @@ def resolved(pkg):
     return "".join(sorted(deps))
 
 
+def stale_against_tree(binary):
+    """The first compiler source newer than `binary`, or None.  The default binary is the release
+    build, which a dev loop does not refresh: measured stale, a change's census read the tree from
+    before it (the @PLN228 value-record refusal that cost drawing a rewrite read clean)."""
+    if not binary.exists():
+        return None
+    built = binary.stat().st_mtime
+    for top in ("src", "default"):
+        for path in sorted((ROOT / top).rglob("*")):
+            if path.suffix in (".rs", ".loft", ".h", ".c") and path.stat().st_mtime > built:
+                return path.relative_to(ROOT)
+    return None
+
+
 def census(loft, prog, writer):
     """The program's admissions under `writer`, from the first of two emissions; the second
     must be the same bytes — the emitter is deterministic, and a hash-ordered walk that is not
@@ -218,6 +232,13 @@ def main() -> int:
     # Absolute: each program is compiled from its own directory, where a relative path
     # (`make after-fix` passes `target/probe/probe/loft`) names nothing.
     loft = os.path.abspath(os.environ.get("LOFT_BIN") or str(ROOT / "target" / "release" / "loft"))
+    if not os.environ.get("LOFT_BIN"):
+        stale = stale_against_tree(Path(loft))
+        if stale:
+            print(f"rewrite_census: {loft} is older than {stale}: a census of it measures the tree it "
+                  f"was built from, not this one.  Build it (`cargo build --release --bin loft`), or "
+                  f"name a build with LOFT_BIN=<loft>.", file=sys.stderr)
+            return 2
     progs = [p for p in programs() if only is None or p[0] in only]
     warm_dependencies(loft, progs)
     with ThreadPoolExecutor(max_workers=4) as pool:

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: the written image loads back byte-faithfully into a fresh collection.
+// @FR-S-Frame: a file without the signature is refused, not misread.
 //
 // @PLN97 arc G Phase 1 — `store_load` (whole-file heap load).
 //

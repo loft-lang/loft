@@ -100,7 +100,8 @@ fn c_offsets() -> Option<String> {
     src += "    printf(\"end %zu\\n\", offsetof(loft_store_t, hgen) + sizeof(uint64_t));\n";
     src += "    printf(\"hosted %zu\\n\", sizeof(loft_store_t));\n";
     src += "    return 0;\n}\n";
-    let dir = std::env::temp_dir().join(format!("loft-store-layout-{}", std::process::id()));
+    let dir =
+        crate::platform::scratch_dir().join(format!("loft-store-layout-{}", std::process::id()));
     crate::file_access::create_dir_all(&dir).ok()?;
     let c = dir.join("layout.c");
     let exe = dir.join("layout");

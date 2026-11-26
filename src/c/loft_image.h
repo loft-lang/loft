@@ -467,8 +467,8 @@ static uint32_t loft_image_live_end(loft_cx *cx, const loft_store_t *s) {
     return rec == s->size ? live_end : 0;
 }
 
-/* FIPS 180-4 SHA-256 (`integrity::sha256_hex`): the digest of `p` as 64 lowercase hex digits. */
-static void loft_sha256_hex(loft_cx *cx, const uint8_t *p, size_t n, char hex[65]) {
+/* FIPS 180-4 SHA-256: the 32-byte digest of `p`. */
+static void loft_sha256(loft_cx *cx, const uint8_t *p, size_t n, uint8_t out[32]) {
     static const uint32_t k[64] = {
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
         0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
@@ -514,7 +514,15 @@ static void loft_sha256_hex(loft_cx *cx, const uint8_t *p, size_t n, char hex[65
     }
 #undef LOFT_ROR
     free(m);
-    for (int i = 0; i < 8; i++) snprintf(hex + 8 * i, 9, "%08x", (unsigned) h[i]);
+    for (int i = 0; i < 8; i++)
+        for (int j = 0; j < 4; j++) out[4 * i + j] = (uint8_t) (h[i] >> (24 - 8 * j));
+}
+
+/* `integrity::sha256_hex`: the digest of `p` as 64 lowercase hex digits. */
+static void loft_sha256_hex(loft_cx *cx, const uint8_t *p, size_t n, char hex[65]) {
+    uint8_t d[32];
+    loft_sha256(cx, p, n, d);
+    for (int i = 0; i < 32; i++) snprintf(hex + 2 * i, 3, "%02x", d[i]);
 }
 
 /* Whether the SHA-256 of `p[0..n)` is the 64 hex digits `want` names, in either case, and

@@ -96,3 +96,24 @@ tree, and a first run includes the C compiler building the program, whose peak i
 program's. Time a second run, which hits the cache under
 `.loft/cache/`, or run that cached binary directly. A peak that stays the same with a loop
 count of 1 is the compiler, not the program.
+
+## loft's own compile time
+
+What loft spends writing a program — parsing, the passes, writing the C — is profiled on the
+`loft` process itself, with no C compiler in the run (`--native-c --native-emit out.c`):
+
+- **Frame pointers.** A release build's stacks do not unwind without them:
+  `CARGO_TARGET_DIR=$PWD/target-fp RUSTFLAGS="-C force-frame-pointers=yes" cargo build --release --bin loft`,
+  a target directory beside `target/`, where the binary still finds `default/`.
+- **One kind of core.** On a hybrid CPU `perf record -g` records the performance and the
+  efficiency cores as two events, and `perf report` shows the first one alone, which may hold a
+  handful of samples.  Record one: `taskset -c $(cat /sys/devices/cpu_core/cpus | cut -d, -f1)
+  perf record -e cpu_core/cycles/ -F 999 -g …`.
+- **Deep recursion.** perf keeps 127 frames, so a walk that recurses down a call chain loses its
+  root; `perf script` stacks, counted by the frames above the recursion, show where it starts.
+
+A cost that grows faster than the program is caught by **`scripts/scaling-guard.sh`**: a call
+chain and a flat program of N and 2N functions (N = 2000), each written to C, the best of
+three times, within 2.5x of its half.  Silent when it holds; it names the shape and the ratio
+when it does not.  The nightly runs it in the lowering census job; its receipt is in the
+script's header.

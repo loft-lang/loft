@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a `&` link to a child record that is written whole later holds the child's slot in `_slot_<name>_N`: the bind reads the child through it, and `cur = cur.next` moves the next child into the slot (`OpMoveChildRec`) and reads it again.
+// @FR-B-Ref-Write: `cur = cur.next` on a `&` link writes the linked field, which is read again (6).
+// @FR-B-OutOfLine: a write `h.f = h.f.g` of an out-of-line field reads the value before releasing the old child.
 // Prints: 6
 
 struct N { v: integer, next: N? }

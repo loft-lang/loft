@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: an insert through a link, and inside a generic at a text and an integer element (the template's `tvinsert` lowered at the bound element).
+// @FR-F-ParamGrow: an insert into a vector parameter is seen by the caller.
+// @FR-B-Ref-Uniform: `insert(v, 1, 99)` through a `&vector` parameter inserts into the vector it names.
+// @FR-G-Mono: the generic `put` inserts at the bound element type (text, integer).
 // Prints: [7,1,99,2] ["a","b"]
 
 fn amp_insert(v: &vector<integer>) { insert(v, 1, 99); }

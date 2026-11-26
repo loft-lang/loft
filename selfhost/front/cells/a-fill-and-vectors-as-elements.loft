@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a `_` binding where a comprehension fills a constant (no `__N` minted for it); a vector a call answers and a vector local appended as ELEMENTS of a vector of vectors, each copied into its element.
+// @FR-I-Comp: a constant comprehension over `_` fills four elements ([3,3,3,3]).
+// @FR-B-Copy: a vector a call answers and a vector local appended as elements are each the element's own value (rows[1][0] = 7).
 // Prints: [3,3,3,3] 2 7
 
 struct S { id: integer }

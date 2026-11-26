@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a record answered by an `if` whose arms are a parameter, a parameter's field, an element of a vector parameter, a call answering a fresh record (`own_joined_call_arms`: its buffer bound, then answered) or a recursive call answering a view: the result borrows the parameters the arms hand back, a recursive arm's known only after the first pass.
+// @FR-F-Ret: an `if` result whose arms hand back a parameter, its field, its element or a call is copied at the caller's bind.
 // Prints: 1 2 7 3 7
 
 struct S { n: integer }

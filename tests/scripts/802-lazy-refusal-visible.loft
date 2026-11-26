@@ -12,6 +12,8 @@
 // @PLN134 MOVED the trie out of the refused set — a paged image can serve one now
 // — and @PLN136 the `spatial`, so both are here as controls that they stay quiet,
 // and the refusal cells run on the kinds that remain unserved (`index`, `sorted`).
+// A `sorted` image IS paged, but by range (`store_load_range`), never by a lazy
+// binding's per-key fetch (`@FR-S-Paged`).
 // That split is the point of the file: the refusal must narrow when a capability
 // lands, and the channel must survive the narrowing.
 //
@@ -24,6 +26,9 @@
 // Driven by tests/store_persist_loft.rs with a scratch path, because a relative
 // path resolves against the PROGRAM's directory (@PLN9) and a suite script must
 // not write beside itself. No path, nothing to do.
+//
+// @FR-S-Paged: the paged reader serves a hash, a trie and a spatial and no index, so index binds false.
+// @FR-S-Paged-Same: a served lookup answers the stored record (hits 7, v 1020, v 4200).
 
 struct RfWord { const w: text, hits: integer }
 struct RfPt { const x: integer, const y: integer, v: integer }

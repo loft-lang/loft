@@ -519,7 +519,11 @@ cache key and the cold parse), `src/install.rs` (`install_resolved`), `src/parse
 
 **Decision.** Every C unit loft writes — a semantics build and a shipped one alike — starts with
 the whole C runtime and compiles alone, with one compiler call.  No tier compiles the runtime
-once into a cached object and links it in.
+once into a cached object and links it in.  **Except the opt-in split build** (`LOFT_C_UNITS`,
+@PLN229 B1): there every unit carries the HOT runtime — its types, its macros and its
+inline-hinted helpers — and the cold runtime, the plain `static` functions, is one unit of its
+own (`units::split_runtime`).  The line between the two is the one the writers already draw:
+the inline hint.  A one-unit build, semantics or shipped, is as above.
 **Why.** One unit has one failure mode: the C compiler's.  A runtime object apart adds a cache
 keyed by compiler and flags, a second link step, and a line between what stays inline in the
 unit and what moves out — a line every rewrite that expects a helper inlined would have to
@@ -531,6 +535,8 @@ huge function, is closed by `(R-CSplit)`.
 program's own on a compiler a PR gate runs, or a sweep shard nears its limit with no function
 over the split budget.  Decided 2026-11-19 — [record](DESIGN_DECISIONS-history.md#c169--a-c-unit-carries-its-whole-runtime-no-build-compiles-the-runtime-apart).
 **Holds at:** `@C169` — `src/c/mod.rs` (`RUNTIME`, written at the head of every unit);
+`src/c/units.rs` (`split_runtime`, the split build's exception; guard
+`the_cold_runtime_is_one_unit_and_the_hot_part_stays_in_every_unit`);
 [C_BACKEND.md](C_BACKEND.md) § Large functions are split into parts; guard
 `a_unit_carries_its_runtime_and_compiles_alone` (`tests/c_split.rs`).
 

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-C-Par: every worker runs on its element of the materialised source, whether or not the body names the result.
 //
 // loft#987 — a `par` loop whose body is EMPTY takes the discard route, and that route
 // had no native lowering at all.  `--native` emitted `n_parallel_discard`'s loft

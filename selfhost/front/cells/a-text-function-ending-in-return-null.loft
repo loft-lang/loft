@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a tail 'return null' of a text function is bound to its buffer where it is read (do_tret_bind), the body keeping the declared nullable type and an earlier return its own value; any other tail is promoted after the pass.
+// @FR-F-Return: `return null`, an early return and a tail are each the call's answer.
+// @FR-L-Null-Text: a returned null text stays null (`?? "-"` takes the default), never an empty text.
 // Prints: - v2 lit lit - -
 fn a() -> text? {
   return null;

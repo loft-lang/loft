@@ -9,6 +9,8 @@
 //
 // Nothing here is lazy or paged: ordinary inserts, which is what makes it a
 // property of `store_verify` rather than of any loader.
+//
+// @FR-S-Sound: the walk follows a field collection under ITS type, so a sound store verifies true.
 
 struct Hand { hid: integer, name: text }
 struct Firm { fid: integer, name: text, people: hash<Hand[hid]> }

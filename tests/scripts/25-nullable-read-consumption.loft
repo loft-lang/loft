@@ -7,6 +7,9 @@
 // Auto-run gate-OFF here; the DN1 path is exercised on both backends by
 // tests/pln25_dn1_consumption.rs. Output must be byte-identical across all four
 // (gate-OFF / DN1) × (interpret / native) configurations.
+//
+// @FR-N-Guard: after `if raw == null { continue; }` the text? reads as a text.
+// @FR-F-Render: a null text renders as `null`.
 fn recv(cond: boolean) -> text? {
   if cond { return null; }
   "MAP:hello"

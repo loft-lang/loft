@@ -10,6 +10,9 @@
 // return dep that NO pass-2 return source justifies (`expanded`, which includes transitive
 // deps — a GENUINE borrow like `fn id(x)->Box{x}` keeps `x`).  Values assert on both
 // backends; the wrap leak-gate proves the owned copies are freed.
+//
+// @FR-B-Copy: `r = x` is an independent copy, so `cp_mut` leaves the caller's `a.v` at 10.
+// @FR-O-Move: the returned copy transfers to the caller, who frees it (30 loop calls, no leak).
 
 struct Box {
   v: integer,

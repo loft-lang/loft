@@ -5,6 +5,7 @@
 // typed `fn(T) -> boolean` by the call (`special_form_callback_hint`), and each is built in
 // place on the second pass (`predicate_loop_scaffold`): `_<name>_acc`, the vector copy, its
 // index and element, a loop ending on the vector's length.
+// @FR-T-Chk-Lam: the short lambda is checked against the `fn(integer) -> boolean` the call expects.
 // Prints: true 2
 
 fn main() {

@@ -780,6 +780,10 @@ pub fn store_lazy_fail(local: reference, why: text) fs#read;
 /// structs and flat vectors all come across; only a `vector<text>` or a
 /// `vector<vector>` is refused (its element pointers would dangle), and a refusal
 /// says so on stderr rather than looking like an absent key.
+/// The server is trusted for the values it sends, as a mapped file trusts its
+/// filesystem (no read leaves the file whatever it sends); over plain `http://` to
+/// another machine the first read of a run says so. For a source you do not
+/// control, load the whole image with `store_load_url` and its SHA-256 pin.
 ///   tiles: hash<Tile[id]> = []
 ///   store_load_key(tiles, "block.store", 42)   // tiles now holds entry 42 only
 pub fn store_load_key(local: reference, path: text, key: integer) -> boolean fs#read;

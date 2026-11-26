@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-I-Narrow: a narrowing into a narrow slot is refused unless cured, and every printed cure compiles there.
+// @FR-I-Narrow-Opt: the nullable destination takes the checked narrowing: a value that does not fit reads null.
 //
 // The narrowing refusal is only ever met by a NON-null narrow slot — a nullable one takes the
 // checked narrowing (`(I-Narrow-Opt)`) — so each cure it prints has to compile THERE, and each

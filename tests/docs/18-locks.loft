@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Store Locks
 // @TITLE: Immutability with const and runtime store locks
+// @FR-Const-Bind: a `const` local still takes an append and an element write.
+// @FR-Const-Value: a value-const local still re-points with `=`.
 // Loft gives you two separate ways to protect a value from accidental changes:
 //
 // 1. **Compile-time const**: mark a variable or parameter with 'const' and the

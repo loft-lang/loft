@@ -197,7 +197,10 @@ test_runner_cmd() {
       return
     fi
     local sel="${TEST_SELECT:-all()}"
-    echo "$base -E '($sel) & not ($victims)'; $base --no-tests=pass --profile ci-victims -E '($sel) & ($victims)'"
+    # The lifetime check over the corpus, when the change can move it (`lifetime_check_due`).
+    local lifetime=""
+    [[ -n "${LIFETIME_DUE:-}" ]] && lifetime="; $base --no-tests=pass --run-ignored only -E 'binary(ownership_oracle) & test(records_lifetime_ratchet)'"
+    echo "$base -E '($sel) & not ($victims)'; $base --no-tests=pass --profile ci-victims -E '($sel) & ($victims)'$lifetime"
   else
     # No filterset support in plain `cargo test` — it runs everything, which is
     # the safe direction to fall back in.
@@ -522,6 +525,7 @@ while [[ $# -gt 0 ]]; do
       if [[ $# -gt 0 && "$1" != --* && "$1" != /* ]]; then _ref="$1"; shift; fi
       if TEST_SELECT="$(changed_filter "$_ref")"; then
         SELECT_LABEL="changed:$_ref"
+        lifetime_check_due "$_ref" && export LIFETIME_DUE=1
       else
         SELECT_LABEL="curated"; TEST_SELECT="$(curated_filter)"
       fi ;;

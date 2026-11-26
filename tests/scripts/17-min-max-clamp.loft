@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // min, max, clamp for integer, long, single, and float.
+//
+// @FR-N-Prop: a null `integer?`/`single?`/`float?` operand makes `min`/`max`/`clamp` answer null.
+// @FR-Disp-Select: an `integer?` argument selects the `τ?` overload, a plain one the dense
+//   overload.
 
 // A runtime (non-constant) division whose divisor is not provably non-zero: the
 // result types `integer?` (DN3), so `nulldiv(0)` yields null at runtime rather than

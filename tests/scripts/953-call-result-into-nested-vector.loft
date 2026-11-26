@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Buffer: the hidden return buffer is the caller's store, so the copy that appends the result never frees it.
 //
 // A copy may not claim the return buffer its CALLER owns (loft#953).
 //

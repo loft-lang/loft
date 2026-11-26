@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Language enhancements: bitwise NOT, `is` variant check, map/filter
 // on &vector, &vector loop-var mutation detection.
+//
+// @FR-E-Is: `d is North`, `c is Circle` answer whether the value's variant is the one named.
+// @FR-F-ParamHeap: `set_p160(items[1], 42)` mutates the caller's element through a by-value struct
+//   parameter.
+// @FR-F-ParamGrow: `items += [...]` on a `&vector` parameter is seen by the caller (`len(v)`
+//   grows).
 
 // ── Bitwise NOT (~) ─────────────────────────────────────────────
 

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Col-Layouts: one store holds hash tables of every layout, and each build reads and writes all of them with the same values.
 //
 // One store holds hash tables of every layout side by side — PLAIN (4-byte slots, as a store
 // written before `(Col-Tag)` has them), TAGGED (`(Col-Tag)`), INLINE (`(Col-Inline)`) and a

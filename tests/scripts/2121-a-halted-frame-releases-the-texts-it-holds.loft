@@ -19,6 +19,9 @@
 // CHANNEL: the text ledger, the expected failures' messages and the passing function's assert.
 // WITNESS: `NO text leak` in the ledger summary.
 // HOLDS: the expected-fail messages, and the last function's `second t2!`.
+//
+// @FR-E-Assert: a failing `assert(c, m)` halts with `m` reduced at that point — each EXPECT_FAIL
+//   pins the built message.
 
 fn tail(n: integer) -> text {
   "t{n}"

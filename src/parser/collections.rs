@@ -269,6 +269,11 @@ pub(crate) struct AssignPlace<'a> {
     /// (the struct has no layout yet), and pass 1 is when a capturing source must be
     /// recorded for the attribute to get its split layout at all (loft#1072).
     pub fn_attr: Option<(u32, usize)>,
+    /// The value was spelled with a `&` (`l = &g.a`), or bound under a `&` annotation.  At a
+    /// `&` link this is what tells `@FR-B-Ref-Repoint` (the link takes the new place) from
+    /// `@FR-B-Ref-Write` (the value is copied into the place the link names): the IR of a
+    /// struct projection is the same either way.
+    pub rhs_link: bool,
 }
 
 /// The steps a walk's INIT contributes to its loop's prelude, FLAT: [`Parser::iterator`]
@@ -1529,6 +1534,7 @@ impl Parser {
         let AssignPlace {
             parent_tp,
             fn_attr: lhs_fn_attr,
+            rhs_link,
         } = *lhs;
         if crate::env_once!(std::env::var("LOFT_PROBE_TS").is_ok()) && !self.first_pass {
             eprintln!(
@@ -1946,17 +1952,19 @@ impl Parser {
                 // made the shape look like it worked.  Only an `&` link qualifies: a plain
                 // view is not marked, so `c = o.i; c = S{…}` is unchanged.
                 //
-                // The discriminator is the VALUE — the same thing native's own link arm
-                // dispatches on, and it survives an IR snapshot where a per-statement flag
-                // would not.  It has to be, because `pi = &o.j` and `pi = o.j` emit
-                // IDENTICAL ops (@PLN130 F9: a `&` at a struct projection is invisible in
-                // the IR), so a place READ cannot be told apart from a re-point and keeps
-                // the binding meaning it has today.  What is unambiguous is a value that
-                // PRODUCES a record — a literal or a call — since there is no place there to
-                // link to; that is the one this rule claims.  Routed through the copy, the
-                // BIND defined nothing and every later read reached codegen at slot 65535.
+                // `pi = &o.j` and `pi = o.j` emit IDENTICAL ops (@PLN130 F9: a `&` at a struct
+                // projection is invisible in the IR), so the IR cannot say which is a re-point.
+                // The SPELLING can: `rhs_link` is the `&` the parse saw on the value, and only
+                // that is `@FR-B-Ref-Repoint`.  Every other value is `@FR-B-Ref-Write` and is
+                // copied into the place — a literal or a call, and equally a named record, another
+                // link, a projection or a parameter.  Asked of the value alone (a literal or a
+                // call only), the rest re-pointed or detached the link in silence.  The bind
+                // itself (`pe = &v[0]`) carries the `&`, so it stays the plain `Set` that defines
+                // the slot; routed through the copy it defined nothing and every later read
+                // reached codegen at slot 65535.  A value that PRODUCES a record still copies
+                // under a `&`: there is no place behind it for the link to take.
                 || (matches!(to.unspan(), Value::Var(v) if self.vars.is_amp_link(*v))
-                    && self.produces_whole_record(val)))
+                    && (!rhs_link || self.produces_whole_record(val))))
         {
             if crate::env_once!(std::env::var("LOFT_PROBE_TS").is_ok()) {
                 eprintln!("TS   -> copy_ref branch TAKEN");

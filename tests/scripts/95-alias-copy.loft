@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Ret: a result that borrows its argument is copied at the bind, so mutating it leaves the argument alone.
+// @FR-O-Move: a return that borrows a parameter makes the caller copy to own its store.
+//
 // O-B2 safety: function WITH ref param must deep copy (prevent aliasing).
 
 struct AcPoint {

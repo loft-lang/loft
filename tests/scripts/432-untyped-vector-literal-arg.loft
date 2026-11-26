@@ -14,6 +14,9 @@
 //
 // Distinctive collision-resistant values [11, 222, 33] across all three lanes —
 // a weak probe (only `v[0]`, or small values) would miss the stride reinterpret.
+//
+// @FR-T-Chk-Vec: `[11, 222, 33]` checked against `vector<u8>` checks each element at u8.
+// @FR-I-Lit: each literal takes the expected width, so the callee reads 11222033.
 
 fn s_u8(v: vector<u8>) -> integer {
   v[0] * 1000000 + v[1] * 1000 + v[2]

@@ -1,0 +1,18 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a range walked by a comprehension or by a `for` in a format hole.  The element is
+// the walk's own type (a `u8` start inside its width types the vector `vector<u8>`); the format
+// hole's `{id}#index` is made first at the count type (`iter_for`), and a range with more than
+// one init step (a computed bound: its `_range_start_N`, the null guard, `_next_N`) keeps that
+// `create_iter` as an `Insert` of its own inside the loop's (`iter_init_steps`).
+// Prints: [250,251,252,253,254,255] [251,252,253] [3,4,5,6] [1,2] [250,251,252] [3,4,5]
+// Rule: @FR-I-Range, @FR-I-RangeFrom.
+
+fn main() {
+  a: u8 = 250;
+  b = 3;
+  v = [for x in a..=255 { x }];
+  w = [for x in a..253 { x + 1 }];
+  println("{v} {w} {for x in b..7 { x }} {for x in 1..b { x }} {for x in a..=252 { x }} {for x in b.. { if x > 5 { break; } x }}");
+}

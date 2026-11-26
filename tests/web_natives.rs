@@ -13,7 +13,10 @@
 //! pong and the close frame.
 
 use loft::file_access as fa;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 #[path = "common/web_server.rs"]
 mod web_server;
@@ -42,6 +45,14 @@ fn main() {
   println("AWAY {st} [{web_natives::http_body()}]");
   st = web_natives::http_do("POST", "{base}/away307/{other}", "secret", "X-Mine: v4\n");
   println("AWAY307 {st}");
+  tls = env_variable("WN_TLS") ?? "";
+  st = web_natives::http_do("GET", "{tls}/stay", "", "X-Mine: v5\n");
+  println("STAY {st} {web_natives::http_body()}");
+  st = web_natives::http_do("GET", "{tls}/down/{other}", "", "X-Mine: v6\n");
+  println("DOWN {st}");
+  hello = env_variable("WN_HELLO") ?? "";
+  st = web_natives::http_do("GET", "{hello}/x", "", "");
+  println("HELLO {st}");
   st = web_natives::http_do("GET", "{base}/echo", "", "X-Mine: a\rInjected: 1\n");
   println("CTRL {st}");
   st = web_natives::http_do("GET", "{base}/a b", "", "");
@@ -107,7 +118,7 @@ fn main() {
 "#;
 
 /// The lines the program prints, fixed by the server's answers.
-const WANT: [&str; 20] = [
+const WANT: [&str; 23] = [
     "BIN 200 5 65 0 255 66 10",
     "HDR true",
     "POST 200 POST hello v1",
@@ -120,6 +131,14 @@ const WANT: [&str; 20] = [
     "HOP 200 [GET  v2]",
     "AWAY 200 [GET  ]",
     "AWAY307 0",
+    // Over https a redirect on the same server is followed; one to plain http is refused, as
+    // the request was made for a TLS channel (followed, it reads `DOWN 200`).  The
+    // ClientHello reader answers no TLS at all.
+    // @falsified-at: 0d82e58af — failed as written (`DOWN 200`: the check read the Location
+    // after freeing it, fixed in 3403ce791); by hand: `down` forced to 0 → `DOWN 200`.
+    "STAY 200 secure",
+    "DOWN 0",
+    "HELLO 0",
     // A header holding a bare CR, and a URL holding a space, are refused before anything is
     // sent: written as they are, each would end a request line the program did not end.
     "CTRL 0",
@@ -136,6 +155,141 @@ const WANT: [&str; 20] = [
     "BAD -1",
     "DONE",
 ];
+
+const TLS_FIXTURES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/tls/");
+
+/// An HTTPS server on a free port, with the certificate of `tests/fixtures/tls/` (it names
+/// `127.0.0.1`): `/stay` redirects to `/home` on itself, `/home` answers `secure`, and
+/// `/down/<port>` redirects to `/echo` over plain http on that port.
+fn start_tls_server() -> u16 {
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+    let certs = CertificateDer::pem_file_iter(format!("{TLS_FIXTURES}server.pem"))
+        .expect("server.pem is readable")
+        .map(|c| c.expect("server.pem parses"))
+        .collect();
+    let key =
+        PrivateKeyDer::from_pem_file(format!("{TLS_FIXTURES}server.key")).expect("server.key");
+    let cfg = Arc::new(
+        rustls::ServerConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .expect("ring supports the default versions")
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .expect("the fixture certificate and key match"),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+    let port = listener.local_addr().expect("local address").port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(tcp) = stream else { continue };
+            let cfg = Arc::clone(&cfg);
+            std::thread::spawn(move || {
+                let Ok(conn) = rustls::ServerConnection::new(cfg) else {
+                    return;
+                };
+                let mut tls = rustls::StreamOwned::new(conn, tcp);
+                let mut head = Vec::new();
+                let mut buf = [0u8; 4096];
+                while !head.windows(4).any(|w| w == b"\r\n\r\n") {
+                    match tls.read(&mut buf) {
+                        Ok(0) | Err(_) => return,
+                        Ok(n) => head.extend_from_slice(&buf[..n]),
+                    }
+                }
+                let line = String::from_utf8_lossy(&head)
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                let path = line.split(' ').nth(1).unwrap_or_default().to_string();
+                let answer = if path == "/stay" {
+                    "HTTP/1.1 302 Found\r\nLocation: /home\r\nContent-Length: 0\r\n\r\n".to_string()
+                } else if path == "/home" {
+                    "HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\nsecure".to_string()
+                } else if let Some(to) = path.strip_prefix("/down/") {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{to}/echo\r\nContent-Length: 0\r\n\r\n"
+                    )
+                } else {
+                    "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string()
+                };
+                let _ = tls.write_all(answer.as_bytes());
+                tls.conn.send_close_notify();
+                let _ = tls.flush();
+            });
+        }
+    });
+    port
+}
+
+/// A listener that reads one ClientHello and keeps the cipher suites it offers, then closes.
+fn start_hello_reader() -> (u16, Arc<Mutex<Vec<u16>>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind a local port");
+    let port = listener.local_addr().expect("local address").port();
+    let offered = Arc::new(Mutex::new(Vec::new()));
+    let keep = Arc::clone(&offered);
+    std::thread::spawn(move || {
+        let Ok((mut s, _)) = listener.accept() else {
+            return;
+        };
+        let mut head = [0u8; 5];
+        if s.read_exact(&mut head).is_err() || head[0] != 0x16 {
+            return;
+        }
+        let mut record = vec![0u8; usize::from(u16::from_be_bytes([head[3], head[4]]))];
+        if s.read_exact(&mut record).is_err() || record.first() != Some(&1) {
+            return;
+        }
+        // The handshake header (4), the version (2), the random (32), the session id.
+        let at = 4 + 2 + 32;
+        let Some(&sid) = record.get(at) else { return };
+        let at = at + 1 + usize::from(sid);
+        let Some(len) = record.get(at..at + 2) else {
+            return;
+        };
+        let len = usize::from(u16::from_be_bytes([len[0], len[1]]));
+        let Some(list) = record.get(at + 2..at + 2 + len) else {
+            return;
+        };
+        *keep.lock().expect("offered") = list
+            .chunks(2)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]))
+            .collect();
+    });
+    (port, offered)
+}
+
+/// The suites a TLS 1.2 client may offer: ECDHE with AES-GCM or ChaCha20-Poly1305, ECDSA's and
+/// RSA's, plus the two signalling values that name no cipher.
+const AEAD: [u16; 6] = [0xC02B, 0xC02C, 0xC02F, 0xC030, 0xCCA8, 0xCCA9];
+const SIGNALS: [u16; 2] = [0x00FF, 0x5600];
+
+/// The HTTP client offers forward-secret AEAD suites only: no CBC suite (SHA-1's among them)
+/// is in its ClientHello, so no server can choose one.
+///
+/// @falsified-at: cbfe505ab — by hand: the eight ECDHE CBC suites put back in the client's
+/// profile (`loft_tls_profile`) → "the client offers 0xc023".
+fn the_client_offers_only_aead_suites(backend: &str, offered: &[u16]) {
+    let ciphers: Vec<u16> = offered
+        .iter()
+        .copied()
+        .filter(|s| !SIGNALS.contains(s))
+        .collect();
+    assert!(
+        !ciphers.is_empty(),
+        "{backend}: the ClientHello offers suites: {offered:04x?}"
+    );
+    for s in &ciphers {
+        assert!(
+            AEAD.contains(s),
+            "{backend}: the client offers {s:#06x}, which is not a forward-secret AEAD suite \
+             (all offered: {offered:04x?})"
+        );
+    }
+}
 
 fn scratch(tag: &str) -> PathBuf {
     let d = std::env::temp_dir().join(format!("loft_web_natives_{tag}_{}", std::process::id()));
@@ -166,7 +320,7 @@ fn build_component() {
     );
 }
 
-fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
+fn run(backend: &str, dir: &Path, port: u16, other: u16, tls: u16, hello: u16) -> (String, String) {
     let file = dir.join("web.loft");
     fa::write(&file, PROGRAM).expect("write the program");
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
@@ -182,6 +336,10 @@ fn run(backend: &str, dir: &Path, port: u16, other: u16) -> (String, String) {
         .env("WN_BASE", format!("http://127.0.0.1:{port}"))
         .env("WN_WS", format!("ws://127.0.0.1:{port}"))
         .env("WN_OTHER", other.to_string())
+        .env("WN_TLS", format!("https://127.0.0.1:{tls}"))
+        .env("WN_HELLO", format!("https://127.0.0.1:{hello}"))
+        .env("SSL_CERT_FILE", format!("{TLS_FIXTURES}ca.pem"))
+        .env_remove("SSL_CERT_DIR")
         .env("LOFT_MAX_DOWNLOAD", "2000")
         .output()
         .expect("loft runs");
@@ -207,13 +365,16 @@ fn the_web_natives_answer_the_same_on_every_backend() {
         let dir = scratch(&backend[2..]);
         let (port, seen) = web_server::start();
         let (other, _) = web_server::start();
-        let (out, err) = run(backend, &dir, port, other);
+        let tls = start_tls_server();
+        let (hello, offered) = start_hello_reader();
+        let (out, err) = run(backend, &dir, port, other, tls, hello);
         for want in WANT {
             assert!(
                 out.lines().any(|l| l == want),
                 "{backend}: wants `{want}`\nstdout:\n{out}\nstderr:\n{err}"
             );
         }
+        the_client_offers_only_aead_suites(backend, &offered.lock().expect("offered"));
         let seen = seen.lock().expect("seen");
         assert_eq!(
             seen.pongs, 1,

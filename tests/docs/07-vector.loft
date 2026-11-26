@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @NAME: Vector
 // @TITLE: Vector creation and use
+// @FR-Col-RemoveDense: `#remove` in a walk leaves a dense vector of the rest.
+// @FR-Slice-Value: a sub-vector is a fresh copy; writing it leaves the source alone.
+// @FR-F-ParamHeap: an element write through a vector parameter reaches the caller.
+// @FR-F-ParamGrow: an append through a vector parameter reaches the caller.
+// @FR-F-ParamRebind: replacing a plain vector parameter whole stays in the callee.
 // A vector is an ordered list of values that can grow and shrink while your program runs.
 // Every element must have the same type — you cannot mix integers and text in one vector.
 // Write a vector literal with square brackets: '[1, 2, 3]'.

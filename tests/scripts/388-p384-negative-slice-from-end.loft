@@ -11,6 +11,9 @@
 //
 // Runs on every backend (interp / --native / wasm) via the wrap.rs + native.rs
 // auto-discovery of tests/scripts/.
+//
+// @FR-Slice-Value: a negative bound counts from the end on either side; a reversed range is empty.
+// @FR-H-Index: `v[-1]` / `v[-2]` name the element that far from the end.
 
 fn main() {
   v = [10, 20, 30, 40, 50];

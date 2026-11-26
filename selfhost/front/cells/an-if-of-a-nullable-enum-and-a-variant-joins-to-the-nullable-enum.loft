@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an `if` of a nullable struct enum (`E?`: a parameter or a field) and one of its
+// variants joins to `E?`, borrowing what either arm does.  Read after the `E?` then arm, the
+// variant arm is typed `E?` without the store its literal mints, an `else if` of variants arm
+// by arm; a variant FIRST keeps its own type beside the `E?` else.
+// Prints: NdInt {n:1} NdInt {n:1} NdInt {n:4} null NdInt {n:4} NdInt {n:4} null NdTwo {a:1,b:2}
+// Rule: @FR-N-Join.
+
+enum Nd { NdNull, NdInt { n: integer }, NdTwo { a: integer, b: integer } }
+struct MC { cond: Nd?, k: integer }
+fn f3(o: Nd?, c: boolean) -> Nd? { if c { o } else { NdInt { n: 4 } } }
+fn f7(o: Nd?, c: boolean) -> Nd? { if c { NdInt { n: 4 } } else { o } }
+fn main() {
+  mc = MC { cond: NdInt { n: 1 }, k: 2 };
+  x1 = if mc.k > 1 { mc.cond } else { NdTwo { a: 1, b: 2 } };
+  x2 = if mc.k > 5 { NdTwo { a: 1, b: 2 } } else { mc.cond };
+  x6 = if mc.k > 5 { mc.cond } else if mc.k > 0 { NdInt { n: 4 } } else { NdTwo { a: 1, b: 2 } };
+  cond: Nd? = null;
+  for i in 0..2 {
+    cond = if cond == null { mc.cond } else { NdTwo { a: i, b: 2 } };
+  }
+  println("{x1} {x2} {x6} {f3(null, true)} {f3(null, false)} {f7(null, true)} {f7(null, false)} {cond}");
+}

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-G-Gen-Scope: the stdlib's type variable T reserves no name, so a user type named T is the user's own.
+//
 // A user type may be named `T` (or any single letter the stdlib uses as a generic
 // type variable).  The stdlib's `<T>` in `min_of<T>` / `max_of<T>` registers an
 // INTERNAL type-var marker; it must never leak as a real type into user code, so a

@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Error tests moved to 102-expected-errors.loft
 // Match expressions: plain enums, struct enums, scalars, guards, patterns.
+//
+// @FR-M-Match: the smallest-index matching arm is selected (`_` takes what earlier arms missed).
+// @FR-M-Variant: `Rect { width, height } => width * height` binds the variant's payload fields.
+// @FR-P-Range: `4..=6` includes both ends and `0..10` excludes 10.
+// @FR-P-Guard: `High if false => 99` falls through to `High => 10`.
 
 // ── Plain enum ──────────────────────────────────────────────────────────────
 

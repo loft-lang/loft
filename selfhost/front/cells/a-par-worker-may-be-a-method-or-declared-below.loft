@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `par` worker may be the element's method (`a.get_value()`, form 2:
+// `t_<len><Type>_<method>`), and a function worker may be declared below its loop — on the first
+// pass its result is unknown, the second resolves it.
+// Prints: 12 / 20
+// Rule: @FR-C-Par.
+
+struct Sc { v: integer }
+fn get_value(self: Sc) -> integer { self.v * 2 }
+struct Bag { items: vector<Sc> }
+fn main() {
+  q = Bag { items: [Sc { v: 1 }, Sc { v: 2 }, Sc { v: 3 }] };
+  total = 0;
+  for a in q.items par(b = a.get_value(), 2) { total += b; }
+  println("{total}");
+  s = 0;
+  for i in 0..5 par(d = dbl(i), 4) { s += d; }
+  println("{s}");
+}
+fn dbl(n: integer) -> integer { n * 2 }

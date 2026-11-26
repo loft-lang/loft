@@ -515,6 +515,34 @@ pub fn set_permissions(path: impl HostPath, perms: std::fs::Permissions) -> io::
     run(path, |p| std::fs::set_permissions(p, perms))
 }
 
+/// The bytes the file system holds for the file — its blocks, not its length — on a Unix host,
+/// so a caller can tell a sparse file from a filled one; `None` where that is not known (a
+/// missing file, or a host whose metadata does not say).
+#[must_use]
+pub fn allocated_bytes(path: impl HostPath) -> Option<u64> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt as _;
+        metadata(path).ok().map(|m| m.blocks() * 512)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
+/// Make the file executable by everyone and writable by its owner (mode `0o755`): a script a
+/// test or a build writes and then runs.
+///
+/// # Errors
+/// The OS's error, naming the path; `InvalidInput` for a path of the other flavor.
+#[cfg(unix)]
+pub fn set_executable(path: impl HostPath) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    set_permissions(path, std::fs::Permissions::from_mode(0o755))
+}
+
 /// Where a symbolic link points, as the OS spells it.
 ///
 /// # Errors

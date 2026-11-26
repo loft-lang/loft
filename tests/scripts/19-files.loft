@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // File system: format detection, path safety, exists, delete, move, text I/O, files(), lines().
 // @PLN9: cwd-relative paths — reads repo fixtures (tests/example) + scratch files in the cwd.
+//
+// @FR-Path-Inside: `../loft_712_probe.txt` and its absolute form are one file; `..` back inside the
+//   tree resolves.
 #cwd
 fn cleanup() {
   delete("test_loft_t.txt");

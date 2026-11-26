@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a constant member of a destructured tuple literal is read as itself into a scalar local its author declared (destructure_constant_member); any other member off the pattern's temp.
+// @FR-T-Destr: a destructure of a tuple literal binds each member to its place, a constant member included.
+// @FR-N-Decl: the declared `b: integer?` keeps its type and holds the null `opt(0)` answers (true).
 // Prints: 5 true 7 8
 fn opt(k: integer) -> integer? { if k > 0 { k } else { null } }
 

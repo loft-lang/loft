@@ -3,6 +3,10 @@
 // Stress tests for all four collection types: build large structures, verify
 // them, and remove elements in various ways — exercising store recycling paths.
 // @PLN9: cwd-relative paths — reads a wordlist fixture relative to the cwd.
+//
+// @FR-Col-RemoveKeyed: removing by key leaves every other key reachable; a missing key is a no-op.
+// @FR-Col-RemoveDense: `#remove` over a vector drains it and later appends reuse it.
+// @FR-Col-Order-Sign: `index<TextRec[id, -name]>` walks id ascending, name descending.
 #cwd
 struct IntRec {
   id: integer,

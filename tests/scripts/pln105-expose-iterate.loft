@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Col-Order: a hash walk visits key order whether or not the hash is exposed read-only.
+// @FR-H-FreeAll: the walk's scratch store is freed on every exit, so the run ends leak-clean.
 //
 // @PLN105 — iterate an EXPOSED (read-only-pinned) hash (doc/claude/plans/
 // expose-iteration-scratch.md, Step 4 / on=4).  Before on=4 this PANICKED at

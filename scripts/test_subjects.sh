@@ -103,7 +103,7 @@ subject_patterns() {
     (winrules)  echo '=windows_rules =fs_symlink =binary_io_matrix =scalar_file_read =lib_process =process_tree =windows_probe =sweep_ignored =sweep_scratch =path_inside' ;;
     # @PLN203 C8 — the C backend's own guards.  Its corpus reading is `scripts/c_sweep.py`
     # (`make c-sweep`), which no test binary runs.
-    (c)         echo '=c_emit =c_alloc_order =store_diff =hosted_unit =hosted_coverage =c_split =bind_census =c_tail =c_https =web_natives =server_natives =ssh_natives =crt_bodies' ;;
+    (c)         echo '=c_emit =c_alloc_order =store_diff =hosted_unit =hosted_coverage =c_split =bind_census =c_tail =c_https =c_runtime_edges =web_natives =server_natives =ssh_natives =crt_bodies' ;;
     (*)        return 1 ;;
   esac
 }
@@ -230,6 +230,16 @@ unmatched_binaries() {
 # binary depends on — the shared test harness, Cargo.toml, build.rs, loft-ffi — because
 # the honest selection is then the curated run, not a guess.  This is the ITERATION
 # loop's selection; `make ci` still runs everything, it only runs these first.
+# The paths whose change can move a store-lifetime finding.  The compile-time check over every
+# corpus program (`ownership_oracle::records_lifetime_ratchet`, the CI `leak-scan` job) is an
+# ignored test no subject filter selects, so `--changed` runs it as a pass of its own when the
+# diff touches one of these (~2.5 min): the scope pass, the store records, both value-record
+# passes, the two checks, the ownership oracle, and the parser's `??` and return delivery.
+LIFETIME_PATHS='^src/scopes\.rs|^src/scopes/|^src/store_records|^src/value_record\.rs|^src/opt/value_records/|^src/lifetime_check\.rs|^src/scope_check\.rs|^src/use_analysis\.rs|^src/parser/control\.rs|^src/parser/operators\.rs'
+lifetime_check_due() {
+  changed_paths "${1:-HEAD}" | grep -qE "$LIFETIME_PATHS"
+}
+
 changed_paths() {
   local ref="${1:-HEAD}"
   { git diff --name-only "$ref" -- ; git ls-files --others --exclude-standard; } | sort -u

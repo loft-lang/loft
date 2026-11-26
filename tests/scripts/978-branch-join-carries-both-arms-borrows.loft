@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Complete: the join of a fresh arm and a view arm keeps the view's borrow, in either arm order.
+// @FR-O-Borrow: the view arm's container record is freed once, by its owner, not by the local.
 //
 // loft#978 — a local fed by a branch whose arms DISAGREE about ownership borrows
 // whatever any arm can hand it.

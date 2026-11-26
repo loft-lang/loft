@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector<integer?> is the vector<integer> it is stored as, under definitions of its own name: built, appended to (null the integer's sentinel), read under ??, walked, formatted.
+// @FR-N-Dense: a `vector<integer?>` holds null elements.
+// @FR-L-Null: a null element is the integer sentinel: read under `??`, walked, formatted as null.
 // Prints: 3 -1 203 4 1 [null,3,0,null]
 fn main() {
   v: vector<integer?> = [null, 3];

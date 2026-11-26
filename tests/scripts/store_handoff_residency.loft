@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Image: every block the root owns, each text and vector<text> element included, is claimed again in the image.
 //
 // @PLN119 Q1 — TEXT RESIDENCY across a process handoff. One task writes a
 // store file; a SEPARATE PROCESS reads it back. Nothing but the file crosses,

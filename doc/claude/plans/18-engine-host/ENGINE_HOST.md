@@ -464,9 +464,10 @@ read:
 | State sync | raw datagrams, `seq`-stamped | **nothing** — conflation already tolerates loss/reorder; never retransmit a stale pose |
 | Long loads | stay on the TCP/WS channel | nothing (the two-channel shape; bulk *wants* TCP behaviour) |
 
-Remaining mechanics: stateless-cookie handshake (spoofing), keepalive/timeout, MTU
-fragmentation for oversized events, sender pacing (token bucket — the receive budget
-is the other half), DTLS / `crypto`-lib encryption.
+Remaining mechanics: MTU fragmentation for oversized events, sender pacing (token
+bucket — the receive budget is the other half), DTLS / `crypto`-lib encryption.  The
+handshake and keepalive/timeout landed with 05a: a per-connection session key seals
+every datagram, so the seat cannot be spoofed ([05a-udp.md](05a-udp.md)).
 
 Consequences: **(1) heterogeneous transports per client, one server** — the pump core
 feeds the same class queues from any frontend, so browser phones stay on `wss` while
@@ -507,7 +508,8 @@ and picks per seat (and per chunk); meaning never branches on transport.
 ### UDP on a normal LAN — what's actually needed (evaluated 2026-06-10)
 
 Engine-side (small): one well-known UDP port (client identity = the datagram's source
-4-tuple + the handshake cookie — clients need no config); discovery reuses the demo's
+4-tuple, proven by datagrams sealed under the session key the WS handshake handed
+over — clients need no config); discovery reuses the demo's
 IP-harvest + QR, optionally upgraded with a **broadcast discovery beacon** (~30 lines;
 broadcast for discovery ONLY — wifi sends broadcast at base rate and APs filter it,
 so gameplay stays unicast); keepalive at a steady cadence (doubles as the phone

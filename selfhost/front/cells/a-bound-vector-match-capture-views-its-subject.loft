@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `one = match v { [first, ..] => first, _ => P {…} }` answers its arms as they
+// stand, the local typed by the element binding it views (`["first#1"]`); a variant pattern in
+// a slice element (`[Bx { rs }, ..]`) binds its field as a view of the subject (`["t"]`) on
+// the first pass already.
+// Prints: 1 / 1
+// Rule: @FR-P-Cap-View.
+
+struct Pt { x: integer, y: integer }
+enum Tok { Num { n: integer }, Bx { rs: vector<Pt> } }
+fn mk() -> vector<Pt> { [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }] }
+fn main() {
+  n1 = mk();
+  one = match n1 { [first, ..] => first, _ => Pt { x: 0, y: 0 } };
+  n1[0].x = 9;
+  println("{one.x}");
+  t = [Bx { rs: [Pt { x: 1, y: 2 }] }, Num { n: 7 }];
+  match t { [Bx { rs }, ..] => { println("{len(rs)}"); }, _ => {} }
+}

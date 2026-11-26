@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Disp-Key: a library's set reaches every import spelling whole, and a consumer's definition of another spelling joins it.
+//
 // A LIBRARY's overload set reaches its consumers by every import spelling (`Disp-Key`,
 // @PLN162): the wildcard `use lib` bare, the selective `use lib::(name, …)`, the qualified
 // `lib::name(…)` with no `use`, the alias `use lib as l`, the method spelling on a method

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-M-Expr: every arm of a value match has the match's result type, whatever route a text? arm returns it through.
+// @FR-N-Shape: tau? answers a sameness question as tau does, so two text? differing only in deps unify.
 //
 // A `τ?` is a `τ?` whatever it was handed back through.
 //

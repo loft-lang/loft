@@ -1,6 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // L7: init(expr) stored field initialiser with $ reference.
+//
+// @FR-F-Default-Field: `init($.b * 5)` fills at construction with `$` the record, then is a plain field.
 
 struct Metrics {
   c: integer,

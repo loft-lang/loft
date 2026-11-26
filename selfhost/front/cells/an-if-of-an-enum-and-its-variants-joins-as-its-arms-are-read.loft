@@ -1,0 +1,29 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: an `if` of a struct-enum value and variant literals joins to the enum.  Each
+// `if`'s then arm keeps its own type; where it IS the enum (a parameter) the whole else chain is
+// read against it — every arm on the way to a variant literal typed as the enum — and where it is
+// a variant the else joins on its own, an `if` it is or ends in read the same way.  A function
+// answering such a join borrows the parameters its leaves are (`param_join_return`), through an
+// `if` that ends an else block too — and declines a join over a callee it refused, whose borrows
+// it cannot read (`sv` below beside a refused `sub` keeps Rust's `["b"]` that way).
+// Prints: -1 5 5 -1 -1 1 1 3 1 -1 5 2 S2TRef {n:7,dep:[1,2]} S2TRef {n:4,dep:[]}
+// Rule: @FR-C-Var.
+
+enum Ty { TU, TV { inner: integer }, TW { s: text } }
+fn tval(t: Ty) -> integer { match t { TV { inner } => inner, TU => -1, TW { s } => len(s) } }
+fn a(t: Ty, c: boolean) -> Ty { if c { t } else { TV { inner: 5 } } }
+fn b(t: Ty, c: boolean) -> Ty { if c { TV { inner: 5 } } else { t } }
+fn d(t: Ty, c: boolean) -> Ty { if c { t } else if t is TU { TV { inner: 1 } } else { TW { s: "abc" } } }
+fn f(t: Ty, c: boolean) -> Ty { if c { TV { inner: 5 } } else if t is TU { TW { s: "z" } } else { t } }
+fn g(t: Ty, c: boolean) -> Ty { if c { TV { inner: 5 } } else { x = 2; if t is TU { t } else { TV { inner: x } } } }
+enum S2T { S2TInt, S2TRef { n: integer, dep: vector<integer> } }
+fn deps(t: S2T) -> vector<integer> { match t { S2TRef { dep } => dep, _ => [] } }
+fn wd(t: S2T, d: vector<integer>) -> S2T { match t { S2TRef { n } => S2TRef { n: n, dep: d }, _ => t } }
+fn sub(t: S2T, h: integer, b: S2T) -> S2T { match t { S2TRef { n } => if n == h { b } else { t }, _ => t } }
+fn sv(t: S2T, h: integer, b: S2T) -> S2T { match t { S2TRef { n, dep } => if n == h { wd(b, deps(b) + dep) } else { t }, _ => sub(t, h, b) } }
+fn main() {
+  sb = S2TRef { n: 7, dep: [1] };
+  println("{tval(a(TU, true))} {tval(a(TU, false))} {tval(b(TU, true))} {tval(b(TU, false))} {tval(d(TU, true))} {tval(d(TU, false))} {tval(d(TV { inner: 7 }, true)) - 6} {tval(d(TV { inner: 7 }, false))} {tval(f(TU, false))} {tval(g(TU, false))} {tval(g(TU, true))} {tval(g(TW { s: "q" }, false))} {sv(S2TRef { n: 3, dep: [2] }, 3, sb)} {sv(S2TRef { n: 4, dep: [] }, 3, sb)}");
+}

@@ -360,7 +360,11 @@ struct loft_cx {
 
 /* The main thread's context: the one `main` hands to everything it calls.  Its fields start at
  * zero but for those `loft_cx_fresh` sets, which it sets the same way. */
-static loft_cx loft_main_cx = {
+/* Its initializer holds a directive, which a macro argument may not (`LOFT_INIT`), so the
+ * unit that declares it `extern` leaves the initializer out by hand. */
+LOFT_STATE loft_cx loft_main_cx
+#ifndef LOFT_SPLIT_USE
+    = {
 #ifdef LOFT_HOSTED
     .br_hdepth = 0xFFFFFFFFu,
 #endif
@@ -372,7 +376,9 @@ static loft_cx loft_main_cx = {
     .srv_ev_kind = -1,
     .srv_ev_cid = -1,
     .in_test = 0
-};
+}
+#endif
+    ;
 
 /* A context as a new thread starts it: what `loft_main_cx` holds before `main` runs. */
 static void loft_cx_fresh(loft_cx *cx) {

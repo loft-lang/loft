@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Gate: a changed layout the upgrade cannot carry is refused before any byte under it is read.
 //
 // @PLN196 — the REFUSED half of the whole-image loaders (loft#700, loft#1562): the
 // same Tile as `store_load_layout_gate.loft` with `name` changed from text to

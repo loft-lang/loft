@@ -12,6 +12,8 @@
 // (2) the mutated borrower keeps copy semantics (the write hits the discarded copy,
 // the source is unchanged); (3) the escaping borrower keeps copy semantics. Both
 // backends, no leak. See copy-elision-design.md § Tier-1.5.
+//
+// @FR-H-Copy: `xs = g.c` is a fresh vector, so `e.v = 99` through its element leaves g.c alone.
 
 struct Item {
   v: integer,

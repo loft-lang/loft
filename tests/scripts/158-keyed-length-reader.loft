@@ -19,6 +19,11 @@
 //   is 0 — and exits 1 at `assert(r8 == 22, "k8")`.
 //   HOLDS: the interpreter is exact on both trees, k1–k7 are exact on both, and leak, panic
 //   and free-refusal are clean on both — only native's k8 moves.
+//
+// @FR-Col-Len: `len` of every keyed kind inside the loop answers the element count (4, 5, 6, 7, 2).
+// @FR-I-For: `for i in 0..len(v)` reads the end once, so clearing `v` mid-loop still runs three
+//   passes.
+// @FR-F-ParamGrow: `hb.h += [...]` through a parameter grows the caller's hash to 7.
 struct Eh { k: integer }
 struct Hb { h: hash<Eh[k]> }
 struct Es { k: integer }

@@ -1,0 +1,27 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `?` result answered by a match of call arms and a block arm.  `ref_return`'s
+// `ls` runs named locals first, then work refs ascending: the first that may take the buffer is
+// renamed, every later one bound (a local rebuilt by `x += [k]` keeps its own store, copied
+// in); the call arms write into the buffer; a block arm is typed as the `?` its siblings
+// settled on; a record local an arm builds from a literal offers no candidate.
+// Prints: [3,3] - [4,4] / [3,3] - [4,5] / 6 -1 14 / 3 -1 5
+// Rule: @FR-O-Buffer.
+
+struct Out { kind: integer, value: integer }
+enum Nd { A, B { n: integer }, C { n: integer } }
+fn list(n: integer) -> vector<integer>? { if n < 0 { null } else { [n, n] } }
+fn num(n: integer) -> integer? { if n < 0 { null } else { n * 2 } }
+fn mk(n: integer) -> Out? { if n < 0 { return null; } Out { kind: 1, value: n } }
+fn calls(v: Nd) -> vector<integer>? { match v { A => list(3), B { n } => list(0 - n), C { n } => list(n) } }
+fn mixed(v: Nd) -> vector<integer>? { match v { A => list(3), B { n } => list(0 - n), C { n } => { x = [n]; x += [n + 1]; x } } }
+fn int(v: Nd) -> integer? { match v { A => num(3), B { n } => num(0 - n), C { n } => { x = n + 10; x } } }
+fn rec(v: Nd) -> Out? { match v { A => mk(3), B { n } => mk(0 - n), C { n } => { x = Out { kind: 3, value: n }; x.value += 1; x } } }
+fn show(v: vector<integer>?) -> text { if v == null { "-" } else { "{v}" } }
+fn main() {
+  println("{show(calls(A))} {show(calls(B { n: 2 }))} {show(calls(C { n: 4 }))}");
+  println("{show(mixed(A))} {show(mixed(B { n: 2 }))} {show(mixed(C { n: 4 }))}");
+  println("{int(A) ?? -1} {int(B { n: 1 }) ?? -1} {int(C { n: 4 }) ?? -1}");
+  println("{(rec(A) ?? Out { kind: 0, value: -1 }).value} {(rec(B { n: 2 }) ?? Out { kind: 0, value: -1 }).value} {(rec(C { n: 4 }) ?? Out { kind: 0, value: -1 }).value}");
+}

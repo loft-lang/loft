@@ -3,6 +3,8 @@
 //
 // Gate E cell: a `vector<T>?` result answering a dense local that views another local copies it in
 // where present; one answering an element of a local is answered as read, the body the buffer's `?`.
+// @FR-F-Ret: a `vector<integer>?` function answering a local that views an element, or the element itself, hands out an independent value.
+// @FR-B-Copy: `e = vv[0]` is a copy of the element ([11,22,33] twice).
 // Prints: [11,22,33] [11,22,33]
 
 fn b5(k: integer) -> vector<integer>? { vv = [[11, 22, 33], [44, 55]]; e = vv[0]; e }

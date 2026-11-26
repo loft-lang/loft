@@ -4,6 +4,8 @@
 // Gate E cell: `a + [3]` over narrow vectors (`u8`, `i16`, `i32`, and an element of a
 // `vector<vector<u8>>`): appended through the content row, the literal operand read against
 // the first operand's element on pass 2; on pass 1 the result borrows the first operand's root.
+// @FR-Col-Concat: `a + [3]` answers a new vector of a's elements then the literal's, at every element width.
+// @FR-L-Narrow: u8 / i16 / i32 elements keep their values (200, -7, 100000) through the concatenation.
 // Prints: [200,3] [-7,8] [100000,3] [200,4] [5,6]
 
 fn main() {

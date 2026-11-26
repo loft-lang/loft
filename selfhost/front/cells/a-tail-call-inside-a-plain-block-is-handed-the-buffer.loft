@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record function whose body is a plain block — or blocks — ending in a call
+// that takes a hidden record buffer, early returns beside it: the tail call is handed the
+// function's buffer where it stands (`one_buffer_chain`, its work ref bound to the buffer), the
+// block keeping its own type, as a body ending in the call directly does.
+// Prints: 1 -1 1 -1 6 -1 1 -1
+// Rule: @FR-O-Buffer.
+
+struct Ex { code: integer, tp: integer }
+fn ex(c: integer, t: integer) -> Ex { Ex { code: c, tp: t } }
+fn a(n: integer) -> Ex { { if n < 0 { return ex(0, -1); } ex(n, 1) } }
+fn b(n: integer) -> Ex { { { if n < 0 { return ex(0, -1); } ex(n, 1) } } }
+fn c(n: integer) -> Ex { { for i in 0..n { if i > 5 { return ex(0, -1); } } ex(n, 6) } }
+fn d(n: integer) -> Ex { x = n; { if x < 0 { return ex(0, -1); } ex(x, 1) } }
+fn main() {
+  println("{a(3).tp} {a(-1).tp} {b(3).tp} {b(-1).tp} {c(3).tp} {c(9).tp} {d(3).tp} {d(-1).tp}");
+}

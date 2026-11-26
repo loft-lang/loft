@@ -526,6 +526,8 @@ pub mod registry;
 #[cfg(feature = "registry")]
 pub mod registry_advisories;
 #[cfg(feature = "registry")]
+pub mod registry_cache;
+#[cfg(feature = "registry")]
 pub mod registry_index;
 pub mod registry_keys;
 #[cfg(feature = "registry")]

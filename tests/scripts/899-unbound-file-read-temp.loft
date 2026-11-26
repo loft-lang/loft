@@ -30,6 +30,10 @@
 // Element type is an axis, not a detail: `main_vector<integer>` is registered by the
 // stdlib whatever the program does, so an integer-element row cannot see the missing
 // registration at all. c5 and c6 carry the element types that nothing else registers.
+//
+// @FR-H-Alloc: the read's temp is a store for its vector type wherever it is consumed (len 2, 1.5 2.5).
+// @FR-O-Derived: an unbound read's store is freed by the frame that made it, once.
+// @FR-O-Move: a read returned from a function transfers to the caller, no double free.
 
 struct B { d: vector<single> }
 struct P { a: i32, b: i32 }

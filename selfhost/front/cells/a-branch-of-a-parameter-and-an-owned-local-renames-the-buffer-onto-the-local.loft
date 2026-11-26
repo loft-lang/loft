@@ -5,6 +5,8 @@
 // buffer onto the local on the first pass (the parameter is `MergeAttr` beside it); the second
 // binds the branch to a `___ret_join_N` and copies it into that local, and the parameter's
 // borrow is dropped from the result once the tail is copied (`D-own-2`).
+// @FR-O-Move: a record tail answering the parameter (a borrow) or an owned local: the caller gets its own store either way.
+// @FR-F-Ret: each call's result is an independent value (1, then 9 9).
 // Prints: 1 9 9
 
 struct V3 { x: float, y: float, z: float }

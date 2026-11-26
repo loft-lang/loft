@@ -19,6 +19,9 @@
 //   CHANNEL: exit — the control's rustc refuses the program (E0308), so no assertion runs.
 //   WITNESS: rustc's E0308 on the control's `--native` build, where this tree prints `ok`.
 //   HOLDS: every assertion passes on both backends of this tree; leak and panic are clean.
+//
+// @FR-M-Expr: a text match's selected arm, call, literal or format, is the function's value.
+// @FR-M-Variant: `A { n }` binds the payload the arm's call reads.
 
 enum Sh { A { n: integer }, B, C }
 struct T { name: text, parts: vector<Sh> }

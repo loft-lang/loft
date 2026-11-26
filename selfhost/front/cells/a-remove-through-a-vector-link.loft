@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: `v.remove(i)` through a link to a vector removes from the vector it names; `h.len()` on a hash is its `len`.
+// @FR-B-Ref-Uniform: `v.remove(0)` through a `&vector` parameter removes from the vector it names.
+// @FR-Col-RemoveDense: the vector stays dense: len 1, the old second element now at 0.
+// @FR-Col-Len: `h.len()` and `len(h)` count the hash.
 // Prints: 2 2 1 2
 
 struct E { k: integer, v: integer }

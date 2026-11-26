@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a tuple field written from a tuple local takes its members (`x.0`), from a call's tuple through a work ref held first, and an integer member widens into a float one (`OpConvFloatFromInt`).
+// @FR-T-Record: a tuple-typed field is written and read member by member like a record field.
+// @FR-C-Tuple: `(3, 4)` written into a `(float, integer)` field converts its members.
+// @FR-F-ParamHeap: `put(h)` writes `h.q` in the caller's record.
 // Prints: eight 3 10
 
 struct H { k: integer, t: (integer, text), q: (float, integer) }

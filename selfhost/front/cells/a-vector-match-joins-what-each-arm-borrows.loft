@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a match whose arms answer vectors keeps each arm's own borrow (`list(0 - n)`'s
+// `["__ref_2"]`) and joins them (`["__ref_1", "__ref_2", "__ref_3"]`), as `joined_deps` over
+// `arm_join_type` does — bound to a local, and at a function's tail where the call arms write
+// into the buffer renamed onto the first.
+// Prints: [4,4] / [3,3] [-2,-2] [4,4]
+// Rule: @FR-N-Join.
+
+enum Nd { A, B { n: integer }, C { n: integer } }
+fn list(n: integer) -> vector<integer> { [n, n] }
+fn vec(v: Nd) -> vector<integer> { match v { A => list(3), B { n } => list(0 - n), C { n } => list(n) } }
+fn main() {
+  v = C { n: 4 };
+  x = match v { A => list(3), B { n } => list(0 - n), C { n } => list(n) };
+  println("{x}");
+  println("{vec(A)} {vec(B { n: 2 })} {vec(C { n: 4 })}");
+}

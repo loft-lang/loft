@@ -29,6 +29,10 @@
 // The invocation counts are asserted as well as the answers: a fold that ran the predicate zero
 // times and a fold that short-circuits correctly agree on the ANSWER in c3 and c5, and only the
 // count tells them apart.
+//
+// @FR-L-CapWrite: the predicate's `na += 1` reaches the outer `na`, so the call counts are
+//   observed.
+// @FR-L-Apply: a capturing lambda and a fn-ref held in a variable are applied per element.
 
 fn gt2_1001(x: integer) -> boolean { x > 2 }
 

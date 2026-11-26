@@ -1662,6 +1662,10 @@ pub struct Parser {
     pub(crate) assign_target_discounted: u16,
     /// Whether the route lowering that `=` already took its target's mention back from `uses`.
     pub(crate) assign_target_taken: bool,
+    /// The value of the last `=` parsed was spelled with a `&` (`rhs_link` in
+    /// `parse_assign_op_inner`).  At a `&` record link, no `&` means the write goes THROUGH
+    /// the link (`@FR-B-Ref-Write`), so the lints count it as a read of the binding.
+    pub(crate) assign_rhs_link: bool,
     /// Post-2c: captures the most recently parsed `as <alias>` cast target's
     /// def_nr when the alias has a `size(N)` annotation.  Consumed by
     /// `append_to_file` so that `f += x as i32` narrows the serialised
@@ -1748,6 +1752,13 @@ pub struct Parser {
     /// the pass-1 body; [`Parser::rebuild_stale_monomorphs`] redoes those at the end of
     /// the pass, when every template body exists.
     pub(crate) pass2_bodies: std::collections::HashSet<u32>,
+    /// @PLN229 A3 — the parameter-write facts (`callee_param_writes`) that are final:
+    /// of a function whose body this pass has read and whose every callee's facts are final
+    /// too.  [`Parser::check_ref_mutations`] starts each function's walk from them, so a call
+    /// chain is walked once, not once per function above it (a 4 000-deep chain re-walked the
+    /// whole chain below every function).
+    pub(crate) param_writes_final: crate::fxhash::FxHashMap<u32, Vec<bool>>,
+    pub(crate) param_writes_final_keys: crate::fxhash::FxHashSet<u32>,
     /// loft#1023 — `(monomorph, template, bindings)` for each monomorph built
     /// from a template whose pass-2 body had not been parsed yet.
     pub(crate) stale_monomorphs: Vec<(u32, u32, Vec<(u32, Type)>)>,
@@ -2446,6 +2457,7 @@ impl Parser {
             is_capture_aliases: Vec::new(),
             capture_took_body: None,
             assign_target_discounted: u16::MAX,
+            assign_rhs_link: false,
             assign_target_taken: false,
             is_capture_bindings: Vec::new(),
             last_cast_alias: u32::MAX,
@@ -2464,6 +2476,8 @@ impl Parser {
             ncc_default_end: None,
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
+            param_writes_final: crate::fxhash::FxHashMap::default(),
+            param_writes_final_keys: crate::fxhash::FxHashSet::default(),
             stale_monomorphs: Vec::new(),
             refused_templates: std::collections::HashSet::new(),
             conv_owned_result: None,

@@ -18,6 +18,8 @@
 // records, which belong to the primary. Getting that wrong is a use-after-free, not a
 // wrong number, so every group here is built and dropped inside a called function: by the
 // time `main` returns, each has been torn down through the view as well as the primary.
+//
+// @FR-Col-Group: `data` and `look` over one element type are two routes to one record set (22, 11, 7).
 
 struct W { k: integer, nm: text }
 struct P { x: integer, y: integer, tag: integer }

@@ -23,6 +23,12 @@
 //   LOFT_HOIST_VERIFY=1 the run stops at the first raw read — "a raw read disagrees with the
 //   checked read".  n19 needs LOFT_POISON_CLAIM=1 to be a witness: unpoisoned, the slack it
 //   would read raw is zero, which is the checked answer by luck.
+//
+// @FR-R-BoundedNest: an admitted tap nest answers exactly what the checked loop answers, cells at
+//   and past each range end.
+// @FR-E-Uncomp: a product or accumulate that overflows makes the accumulator null (n3, n7, n7c,
+//   n17).
+// @FR-E-Default: `a[i]?` past the end or on a stored null contributes the integer default 0.
 
 const MAXI = 9223372036854775807;
 

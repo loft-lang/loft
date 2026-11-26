@@ -483,7 +483,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
 }
 
 // A `for` over a vector slice (`parse_for` with the range's preamble as its start).
-pub fn slice_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
+pub fn slice_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, rev: boolean = false) -> Ex {
   st = slice_start(e, vars, x, h.id);
   lv = loop_var(vars, h.src_id, h.id, st.elem);
   vars.active_loops += [lv];
@@ -495,7 +495,7 @@ pub fn slice_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  read = slice_read(e, vars, st);
+  read = slice_read(e, vars, st, rev: rev);
   if read == null {
     el::refuse(e, "a `for` over a vector slice of this element type: {type_kind(st.elem)}");
     return ex(ir::NdNull, ir::TyVoid);

@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a variant literal written into a struct-enum field is built in the inline field —
+// its members set through the field's place, then its ordinal — whether the field is declared
+// `E` or `E?` (the `?` is the field's tag 0, which the ordinal overwrites).  A member vector
+// literal whose items are records is primed into the place, so on the second pass the literal
+// declines it (`primed_reads_place`): built apart in a `__ref_p2_N` and copied in whole
+// (`OpCopyRecord`), the abandoned attempt's element temp left declared.
+// Prints: NdInt {n:3} NdV {d:2,args:[5,6]} NdT {s:"hi"} NdTwo {a:4,b:5} NdInt {n:9} NdCall {d:2,args:[NdInt {n:5}]} NdCall {d:2,args:[NdInt {n:2}]}
+// Rule: @FR-R-InPlaceLiteral.
+
+enum Nd { NdNull, NdInt { n: integer }, NdTwo { a: integer, b: integer }, NdV { d: integer, args: vector<integer> }, NdT { s: text }, NdCall { d: integer, args: vector<Nd> } }
+struct V { cond: Nd?, k: integer }
+struct W { cond: Nd, k: integer }
+fn set9(r: V) { r.cond = NdInt { n: 9 }; }
+fn main() {
+  a = V { cond: null, k: 1 };
+  a.cond = NdInt { n: 3 };
+  b = V { cond: null, k: 1 };
+  b.cond = NdV { d: 2, args: [5, 6] };
+  c = V { cond: null, k: 1 };
+  c.cond = NdT { s: "hi" };
+  d = V { cond: NdInt { n: 1 }, k: 1 };
+  d.cond = NdTwo { a: 4, b: 5 };
+  f = V { cond: null, k: 1 };
+  set9(f);
+  g = V { cond: null, k: 1 };
+  g.cond = NdCall { d: 2, args: [NdInt { n: 5 }] };
+  h = W { cond: NdNull, k: 1 };
+  for k in 1..3 {
+    h.cond = NdCall { d: k, args: [NdInt { n: k }] };
+  }
+  println("{a.cond} {b.cond} {c.cond} {d.cond} {f.cond} {g.cond} {h.cond}");
+}

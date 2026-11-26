@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-H-Elide: a copy may be elided only where no write can make it observable, and the alias-aware cells must read observable.
 //
 // @PLN102 transparent-link widening — the OBSERVABILITY oracle probe (build step 3).
 // One function per Matrix-O cell, distinct `a` per cell → one `link-obs-dbg: fn=… var=a … unobs=0|1`

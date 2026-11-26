@@ -428,7 +428,7 @@ impl FnWriter<'_> {
                 let test = self.expr(guard, ind)?;
                 let test = as_cond(test)?;
                 let (lo_t, hi_t) = (self.temp(CType::Int), self.temp(CType::Int));
-                self.line(ind, &format!("if ({test}) {{"));
+                self.line(ind, &format!("if ({}) {{", super::bare(&test)));
                 let lo = self.expr(lo, ind + 1)?;
                 let lo = as_shape(self.cx, lo, CType::Int)?;
                 let hi = self.expr(hi, ind + 1)?;

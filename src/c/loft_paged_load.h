@@ -40,12 +40,13 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
     if (local.store_nr == 0xFFFF || local.store_nr >= cx->nstores) return 0;
     char *p = loft_cpath(cx, path, 0);
     int url = loft_pg_is_url(cx, p);
+    if (url) loft_pg_note_plain_http(p);
     if (!url && loft_path_refused(cx, path)) {
         free(p);
         return 0;
     }
     uint16_t known = LOFT_KNOWN(cx->stores[local.store_nr]);
-    char err[1100];
+    char err[1100] = "";
     cx->gate_paged = 1;
     cx->gate_trie_v1 = 0;
     cx->gate_legacy_nul = 0;
@@ -57,7 +58,11 @@ static int loft_pg_begin(loft_cx *cx, loft_pg *r, loft_ref local, loft_str path,
 #endif
     cx->gate_paged = 0;
     if (ok && !loft_pg_open(cx, r, p, err, sizeof err)) {
-        loft_pg_refuse(cx, p, "it cannot be opened as a paged source");
+        /* The open's own reason after the loader's line when it gave one (a size this build
+         * cannot address, the connection error): the program reads it from store_lazy_error. */
+        char why[1200];
+        snprintf(why, sizeof why, "it cannot be opened as a paged source%s%s", err[0] ? ": " : "", err);
+        loft_pg_refuse(cx, p, why);
         ok = 0;
     } else if (ok && known == 0xFFFF) {
         loft_pg_refuse(cx, p, "the target collection's store has no recorded type");

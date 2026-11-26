@@ -408,6 +408,22 @@ static void *loft_ffi_sym(loft_cx *cx, const char *path, const char *file, const
         }
     }
 #endif
+#if defined(LOFT_HOSTED)
+    /* `@FR-Art-Key` (loft#2654): a hosted unit opens a component where the running loft finds it,
+     * not where the machine that generated the unit did — a unit the release builds runs on a
+     * machine whose components lie elsewhere.  The generated path stays the answer when the
+     * interpreter finds none (it then names that path in its refusal). */
+    char found[4096];
+    if (loft_hosted && loft_hosted->component) {
+        size_t n = 0;
+        const unsigned char *at = loft_hosted->component(file, strlen(file), &n);
+        if (at && n < sizeof found) {
+            memcpy(found, at, n);
+            found[n] = 0;
+            path = found;
+        }
+    }
+#endif
     (void) file;
     void *h = loft_dl_open(cx, path, LOFT_DL_LOCAL);
     void *p = h ? loft_ffi_lookup(cx, h, sym) : 0;

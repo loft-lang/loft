@@ -4,6 +4,8 @@
 // Gate E cell: a function answering a literal vector of records with a four-byte narrow field
 // (`u32`, `i32`) gets no constant twin — `const_literal` folds no `OpSetInt4`/`OpSetInt4Raw`
 // field — while a 1- or 2-byte narrow field's does.
+// @FR-L-Narrow: `u32`/`i32` fields store in 4 bytes, `u8` in 1.
+// @FR-L-Narrow-Enc: a `u32` past the signed maximum decodes unsigned (4294967295), an `i32` two's-complement (-7).
 // Prints: 4294967295 1 -7 200
 
 struct R { a: u32, c: integer }

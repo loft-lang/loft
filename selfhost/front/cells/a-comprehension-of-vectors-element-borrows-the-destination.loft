@@ -3,6 +3,8 @@
 //
 // Gate E cell: a comprehension building vectors into a local: its element slot borrows the
 // destination's store (a fresh local's `__vdb_N`, or the local itself), not the body literal's.
+// @FR-I-Comp: a comprehension whose body is a vector literal builds a fresh vector of vectors, into a new local and into a declared one (3 4 3).
+// @FR-B-Copy: each element vector is its own value in the destination.
 // Prints: 3 4 3
 
 fn main() {

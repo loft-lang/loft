@@ -153,6 +153,24 @@ error naming the type, the interface, and the missing method — never a runtime
 fires where the generic is instantiated, so the same interface can be satisfied by different sets
 of visible functions at different call sites.
 
+```
+  (G-Companion)  an interface may name a companion type: `type R` or `type R: J₁ + … + Jₖ` in its
+             body, spelled `Self.R` in its own signatures and nowhere else.  It is a type
+             variable owned by the interface: inside a generic it dispatches through its bounds
+             as `<T: J>` does, and at each instantiation it binds to the ONE concrete type the
+             implementor's own signatures write where the interface writes `Self.R` — return and
+             parameter positions alike, read for the type's shape, its deps stripped.  Two
+             positions that name different types are a STATIC error, and so is a companion that
+             does not satisfy every Jᵢ (G-Check, per monomorph).  A bound-less `type R` still
+             binds; it authorises no method of its own.
+```
+
+**In words.** An interface can say "and the type my `open` returns" without naming it: `type
+Rows: Cursor` plus `fn open(self: Self) -> Self.Rows`.  Each implementor answers it by its own
+signature — `fn open(self: FileSource) -> FileRows` makes `FileRows` the companion — and a
+generic holding one may call `Cursor`'s methods on it.  It is a compile-time name with no runtime
+cost; the behaviour matrix is `tests/scripts/pln125-a2c-companion.loft`.
+
 ### Selection — a generic is a member of its name's overload set
 
 ```
@@ -215,14 +233,15 @@ kind cannot be half-read.
   (G-Scope)  interfaces are COMPILE-TIME bounds, not runtime types.  Out of scope by design
              (each a decided edge, not a deviation): an interface-typed VALUE / variable
              (`x: I = …` — dynamic dispatch); interface INHERITANCE (`interface A extends B`);
-             ASSOCIATED types; DEFAULT method bodies; a GENERIC method inside an interface; a
-             FACTORY method (a `Self` return with no `self` parameter).
+             DEFAULT method bodies; a GENERIC method inside an interface; a FACTORY method (a
+             `Self` return with no `self` parameter); naming an associated type (G-Companion)
+             outside its interface (`S.Rows` in a generic's own signature).
 ```
 
 **In words.** You cannot store a value at its interface type and dispatch on it at runtime
 (`x: Sizable = …` is rejected) — an interface only ever appears as a generic *bound*. Inheritance,
-associated types, default bodies, generic interface methods, and no-`self` factory methods are
-deliberately not in the language (see [INTERFACES.md § out of scope](../INTERFACES.md)); each is a
+default bodies, generic interface methods, no-`self` factory methods and a companion type named
+outside its interface are deliberately not in the language (see [INTERFACES.md § out of scope](../INTERFACES.md)); each is a
 decided boundary, so it belongs here as a scope rule, not as a deviation to close.
 
 ---

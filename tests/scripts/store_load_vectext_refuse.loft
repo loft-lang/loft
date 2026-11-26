@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-S-Sound: the refused, empty collection still passes store_verify.
 //
 // @PLN97 arc G Phase 3b (safe-refusal, ongoing) — a `vector<text>` field (a
 // vector whose ELEMENTS are string pointers, not scalars or structs) is not

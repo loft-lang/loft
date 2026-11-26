@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a variant field whose struct enum holds the variant is out of line (child_rec<E>, the enum's row its content): its child literals built in the child or copied in, a match binding of it a view through OpRefFromChildRec.
+// @FR-T-Recursive: a struct enum whose variant holds the enum is admitted (its other variants end it).
+// @FR-L-OutOfLine: the recursive variant field is a child record, built, matched and read back.
 // Prints: 7
 enum Ex { Num { v: integer }, Add { l: Ex, r: Ex } }
 

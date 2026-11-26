@@ -11,6 +11,9 @@
 // `vector_append` is shared by both backends, so this guards CORRECTNESS
 // after thousands of single-element appends (len / indexing / iteration)
 // AND the fragmentation BOUND on interp + native.
+//
+// @FR-Col-Capacity: one-element appends take the doubling growth step, so the store's free-block
+//   count stays in one or two digits.
 
 // Count the consecutive digits after store_memory()'s "free-blocks "
 // marker.  We only need the MAGNITUDE: post-fix the count is ~7 (1 digit),

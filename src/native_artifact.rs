@@ -395,7 +395,7 @@ pub fn parse_library_alone(
     }
     p.parse_stdlib(default_dir)
         .map_err(|e| format!("the standard library: {e}"))?;
-    let tmp = std::env::temp_dir().join(format!(
+    let tmp = crate::platform::scratch_dir().join(format!(
         "loft_library_alone_{}_{}.loft",
         std::process::id(),
         name

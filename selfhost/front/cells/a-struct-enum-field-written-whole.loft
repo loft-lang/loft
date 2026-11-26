@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a struct-enum field written whole from a local, another record's field and a fresh call: the value's record copied into the field's bytes (`OpCopyRecord`), the call's store freed after.
+// @FR-H-Write: a struct-enum field written whole from a local, another record's field and a call holds that value after.
 // Prints: 16 6 25 25
 
 enum Sh { Dot, Circle { r: integer }, Rect { w: integer, h: integer } }

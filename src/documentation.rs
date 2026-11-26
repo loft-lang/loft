@@ -109,7 +109,10 @@ fn index_intro(topic: &Topic) -> std::io::Result<String> {
     for line_result in source.lines() {
         let line = line_result?;
         let trimmed = line.trim();
-        if is_topic_directive(trimmed) || (in_header && skip_header(trimmed)) {
+        if is_topic_directive(trimmed)
+            || opens_rule_citation(trimmed)
+            || (in_header && skip_header(trimmed))
+        {
             continue;
         }
         in_header = false;
@@ -202,6 +205,40 @@ fn opens_example_tag(trimmed: &str) -> bool {
         .map(str::trim_start)
         .and_then(|t| t.strip_prefix('@'))
         .is_some_and(is_example_tag)
+}
+
+/// Is this a formal-rule CITATION line (`// @FR-N-Div: what of the rule this page pins`)?
+///
+/// A topic page is a test program, and a test program names the rule its asserted output
+/// pins (TESTING.md § Curating the suite).  That name is for `scripts/rule_tags.py` and
+/// `suite_curate.py`, not for the reader, so no renderer prints it: the prose renderers
+/// drop the line, and the Run panel's copy of the source carries a bare `//` in its place,
+/// keeping every line number the file's own.  One line per rule; a citation does not wrap.
+#[must_use]
+pub fn opens_rule_citation(trimmed: &str) -> bool {
+    trimmed
+        .strip_prefix("//")
+        .map(str::trim_start)
+        .is_some_and(|t| t.starts_with("@FR-"))
+}
+
+/// The topic source as the Run panel receives it: every rule-citation line becomes a bare
+/// `//` (its indentation kept), so the line count, and with it every "Stop on a line"
+/// number, stays the file's own.
+fn panel_source(source: &str) -> String {
+    let mut out = String::with_capacity(source.len());
+    for line in source.split_inclusive('\n') {
+        let body = line.trim_end_matches(['\n', '\r']);
+        if opens_rule_citation(body.trim()) {
+            let indent = &body[..body.len() - body.trim_start().len()];
+            out.push_str(indent);
+            out.push_str("//");
+            out.push_str(&line[body.len()..]);
+        } else {
+            out.push_str(line);
+        }
+    }
+    out
 }
 
 /// Is this comment line a feature-catalogue ANCHOR (`@F40 — file & directory I/O
@@ -823,7 +860,10 @@ fn parse_sections(source: &str) -> Vec<DocSection> {
 
     for line in source.lines() {
         let trimmed = line.trim();
-        if is_topic_directive(trimmed) || (in_header && skip_header(trimmed)) {
+        if is_topic_directive(trimmed)
+            || opens_rule_citation(trimmed)
+            || (in_header && skip_header(trimmed))
+        {
             continue;
         }
         in_header = false;
@@ -1515,7 +1555,7 @@ fn render_doc_page<S: std::hash::BuildHasher>(
 ) -> String {
     let nav = build_nav(topic_info, stdlib_sections, active);
     let mut body = render_topic_body(source, link_map);
-    body.push_str(&panel_html(source));
+    body.push_str(&panel_html(&panel_source(source)));
     // The topic's `@TITLE` is already a hand-written one-liner — exactly what a
     // search result should show — so it is the description rather than a scrape
     // of the first paragraph.
@@ -2601,5 +2641,103 @@ fn main() {
         assert!(!is_example_tag("FR-B-Copy"), "@FR- is a formal rule");
         assert!(!is_example_tag("STD-01"), "two digits is not the shape");
         assert!(!is_example_tag("ST-001"), "two letters is not the shape");
+    }
+
+    /// A topic page is a test program that names its rules (`// @FR-<Rule>: …`), and no
+    /// rendering of the page shows that name: the prose, the print sheet and the PDF read as
+    /// if the line were absent, and the Run panel's source carries a bare `//` in its place,
+    /// so its line count and every "Stop on a line" number stay the file's own.
+    /// @falsified-at: 8fbe1bd9c — by hand: `opens_rule_citation` answering false (that commit has no
+    /// predicate); the prose assertion fails with the tag printed in the intro paragraph.
+    #[test]
+    fn a_rule_citation_line_never_reaches_the_page() {
+        let header = "// Copyright (c) 2026 Someone\n// @NAME: Sample\n// @TITLE: A sample page\n";
+        let rest = "\
+// The intro paragraph a reader sees.
+//
+// ## A heading
+fn main() {
+  // Prose inside the program.
+  assert(1 + 1 == 2, \"sum\");
+}
+";
+        let cited = format!(
+            "{header}// @FR-N-Div: integer division by zero answers null.\n{}",
+            rest.replace(
+                "  assert(",
+                "  // @FR-N-Arith: the sum of two integers is an integer.\n  assert("
+            )
+        );
+        let absent = format!("{header}{rest}");
+        let blanked = format!(
+            "{header}//\n{}",
+            rest.replace("  assert(", "  //\n  assert(")
+        );
+        let links = HashMap::<String, String>::new();
+        assert_eq!(
+            render_topic_body(&cited, &links),
+            render_topic_body(&absent, &links),
+            "the prose renders as if the citation were absent"
+        );
+        assert_eq!(
+            render_topic_typst(&cited),
+            render_topic_typst(&absent),
+            "the PDF source renders as if the citation were absent"
+        );
+        assert_eq!(
+            panel_source(&cited),
+            blanked,
+            "each citation becomes a bare `//`"
+        );
+        assert_eq!(
+            panel_source(&cited).lines().count(),
+            cited.lines().count(),
+            "the panel keeps the file's line numbers"
+        );
+        let page = |src: &str| {
+            render_doc_page(
+                src,
+                "Sample",
+                "A sample page",
+                "99-sample",
+                &[],
+                &[],
+                &links,
+            )
+        };
+        let expected = page(&absent).replace(&html_esc(&absent), &html_esc(&blanked));
+        assert_eq!(
+            page(&cited),
+            expected,
+            "the page differs from the uncited one only in the panel's blanked lines"
+        );
+        assert!(
+            !page(&cited).contains("FR-"),
+            "no rule tag reaches the page"
+        );
+        // The index card's intro paragraph comes from the file itself.
+        let dir = std::env::temp_dir().join(format!("loft-doc-cite-{}", std::process::id()));
+        crate::file_access::create_dir_all(&dir).unwrap();
+        let intro = |src: &str, name: &str| {
+            let file = dir.join(name);
+            crate::file_access::write(&file, src).unwrap();
+            index_intro(&Topic {
+                file,
+                filename: name.to_string(),
+                name: String::new(),
+                title: String::new(),
+            })
+            .unwrap()
+        };
+        let (with, without) = (intro(&cited, "cited.loft"), intro(&absent, "absent.loft"));
+        let _ = crate::file_access::remove_dir_all(&dir);
+        assert_eq!(
+            with, without,
+            "the index intro renders as if the citation were absent"
+        );
+        assert!(
+            with.contains("The intro paragraph"),
+            "the control: the intro renders"
+        );
     }
 }

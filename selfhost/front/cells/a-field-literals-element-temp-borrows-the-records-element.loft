@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a field literal's element temp takes the field's element type, borrowing the outer literal's element only where the record is an item of one.
+// @FR-E-Record: a record literal whose vector field is itself a literal builds the field, inside a vector literal, as an argument and as a tail.
+// @FR-F-Ret: a record returned with its literal vector field is independent and whole (len 1).
 // Prints: 1 1 1 1 1
 
 enum T { TInt { lo: integer }, TVec { inner: T } }

@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-F-Ret: a parameter returned on one path and a fresh value on another hands the caller an owned value on both.
+// @FR-O-Move: a borrowed return is never freed by the caller, a minted one is adopted and freed.
 //
 // loft#981 / loft#982 — a RETURN whose paths disagree about ownership.
 //

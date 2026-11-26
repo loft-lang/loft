@@ -326,14 +326,15 @@ static int loft_http_open(loft_cx *cx, loft_http *h, const char *method, const c
                 same = loft_http_same_server(cx, v + sn, ln, auth, alen, tls);
             }
         }
+        /* Never from https to http, and never a body to another server: both are refused, as
+         * the request the caller made cannot be carried out there.  Read off the `Location`
+         * here: `v` points into the head, which is freed below. */
+        int down = tls && vn >= 7 && strncasecmp(v, "http://", 7) == 0;
         loft_push(cx, &next, v, vn);
         loft_push(cx, &next, "", 1);
         loft_stream_close(cx, &h->st);
         free(h->head.p);
         int get = h->status == 303 || ((h->status == 301 || h->status == 302) && strcmp(method, "POST") == 0);
-        /* Never from https to http, and never a body to another server: both are refused, as
-         * the request the caller made cannot be carried out there. */
-        int down = tls && vn >= 7 && strncasecmp(v, "http://", 7) == 0;
         if (down || (!same && !get && *body)) {
             snprintf(err, cap, "%s: Redirect Refused: %s", url,
                      down ? "from https to http" : "a request body to another server");

@@ -1,0 +1,23 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `x!` on a struct enum's `E?` FIELD reads the field through its slot's tag before
+// testing it (`read_through_enum_slot`, `(L-Null-Which)`), as `??` does: the null sentinel where
+// the first word is zero, the field otherwise — its place as written (`ms[0].cond!` reads the
+// element with the dense getter; the `!` is the field's).  An element's own `!` is unchanged.
+// Prints: NdInt {n:1} 1 {a:NdInt {n:1},b:NdNull {}} NdInt {n:1} NdInt {n:1} NdInt {n:1} NdInt {n:1}
+// Rule: @FR-L-Null-Which.
+
+enum Nd { NdNull, NdInt { n: integer }, NdTwo { a: Nd, b: Nd } }
+struct MC { cond: Nd?, k: integer }
+fn sz(n: Nd) -> integer { match n { NdInt { n } => n, _ => 0 } }
+fn f(mc: MC) -> Nd { mc.cond! }
+fn main() {
+  mc = MC { cond: NdInt { n: 1 }, k: 2 };
+  a = mc.cond!;
+  c = NdTwo { a: mc.cond!, b: NdNull };
+  ms = [MC { cond: NdInt { n: 1 }, k: 2 }];
+  i = 0;
+  ns: vector<Nd> = [NdInt { n: 1 }];
+  println("{a} {sz(mc.cond!)} {c} {f(mc)} {ms[0].cond!} {ms[i].cond!} {ns[0]!}");
+}

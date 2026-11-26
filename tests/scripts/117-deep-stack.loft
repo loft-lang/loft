@@ -10,6 +10,8 @@
 // several locals incl. a text local, so the cumulative stack_pos
 // crosses the old 8000-byte limit well before the recursion bottoms
 // out.
+//
+// @FR-F-Rec: `sum_to(250)` recurses 250 frames deep (each with locals) and answers 31375.
 
 // @FTR-079 — the runtime stack the execute loop drives: it GROWS on deep call nesting
 // instead of running off the end of the frame it started with

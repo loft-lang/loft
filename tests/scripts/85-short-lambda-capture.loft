@@ -4,6 +4,8 @@
 // form captured. Fix: parse_lambda_short gained the closure-param setup block +
 // builds its public Function type from the declared params only (excluding the
 // hidden __closure). Both backends.
+//
+// @FR-L-Fn: `|y| { y + x }` and `fn(y) { y + x }` are both closures capturing `x`.
 struct Box {
   v: integer,
 }

@@ -1,3 +1,5 @@
+// @FR-I-For: a walk over a vector a call built visits its elements in order with the values the build stored.
+//
 // A vector a function BUILDS and its caller WALKS ONCE: the walk's body sees the values the
 // vector holds, in order — beside a body that writes what the builder reads, a walk that
 // leaves early, a use of the vector or the index after the walk, and a call in the body or

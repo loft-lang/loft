@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `match x { NdInt { n: m } => NdInt { n: m + 1 }, _ => x }` answers its arms as
+// they stand — the variant arm built in its own store and typed by its variant (`ref(NdInt)`),
+// the parameter arm handed back, the body borrowing `x` (`MergeAttr`).
+// Prints: i5 null
+// Rule: @FR-F-Ret.
+
+enum Node { NdInt { n: integer }, NdNull }
+fn keep(x: Node) -> Node { match x { NdInt { n: m } => NdInt { n: m + 1 }, _ => x } }
+fn show(x: Node) -> text { match x { NdInt { n } => "i{n}", NdNull => "null" } }
+fn main() { println("{show(keep(NdInt { n: 4 }))} {show(keep(NdNull))}"); }

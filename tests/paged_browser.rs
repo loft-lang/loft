@@ -611,3 +611,104 @@ fn run_url_program(tmp: &Path, name: &str, source: &str, store: &Path) -> String
     );
     stdout
 }
+
+/// A server may state any size.  A page is a 32-bit target, and a stated size whose page table
+/// (one pointer per 64 KiB page) does not fit its `size_t` is refused when the store opens: cut
+/// to 32 bits, 2^50 bytes plus five pages would be a table of five, which the 64-bit page
+/// numbers index past.  The harness claims that size for a real image of ~20 pages; the load
+/// answers `false`, names the reason, and the program runs on.
+///
+/// @falsified-at: none — the machine it was written on has no node, so the cell has not run
+/// yet; its first run is CI's.  The claim to check there: with the `npages > SIZE_MAX / …`
+/// refusal in `src/c/loft_paged.h` removed, the reason is not printed.
+// @speed 1.0
+#[test]
+fn a_stated_size_past_a_32_bit_page_table_is_refused_in_the_browser() {
+    if !which("node") || !wasm32_installed() || !fa::exists(loft_bin()) {
+        eprintln!("SKIP: needs node, a wasm32 C toolchain and target/release/loft");
+        return;
+    }
+    let tmp = std::env::temp_dir().join("loft_paged_browser_stated_size");
+    let _ = fa::remove_dir_all(&tmp);
+    fa::create_dir_all(&tmp).expect("create test dir");
+    let store = tmp.join("block.store");
+    let writer = tmp.join("write.loft");
+    fa::write(
+        &writer,
+        "struct Tile { tkey: integer not null, name: text not null }\n\
+         fn main() {\n\
+         \x20 t: hash<Tile[tkey]> = [];\n\
+         \x20 i = 0;\n\
+         \x20 while i < 20000 { t += Tile { tkey: i, name: \"tile-{i}-padding\" }; i += 1 }\n\
+         \x20 if !store_persist_copy(t, env_variable(\"LOFT_PAGED_WRITE_PATH\")) { println(\"FAIL\") }\n\
+         }\n",
+    )
+    .expect("write writer script");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .arg("--interpret")
+        .arg(&writer)
+        .env("LOFT_PAGED_WRITE_PATH", &store)
+        .current_dir(repo_root())
+        .output()
+        .expect("invoke loft to write the store");
+    assert!(
+        fa::exists(&store) && !String::from_utf8_lossy(&out.stdout).contains("FAIL"),
+        "fixture store not written: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let src = tmp.join("stated.loft");
+    fa::write(
+        &src,
+        "struct Tile { tkey: integer not null, name: text not null }\n\
+         fn main() {\n\
+         \x20 tiles: hash<Tile[tkey]> = [];\n\
+         \x20 ok = store_load_key(tiles, \"http://127.0.0.1:1/block.store\", 4242);\n\
+         \x20 println(\"browser ok={ok} len={len(tiles)}\");\n\
+         \x20 println(\"browser ran on\");\n\
+         }\n",
+    )
+    .expect("write browser script");
+    let html = tmp.join("stated.html");
+    let status = loft::platform::process::harness_command(loft_bin())
+        .args([
+            "--native",
+            "--html",
+            html.to_str().unwrap(),
+            "--path",
+            &format!("{}/", repo_root().display()),
+        ])
+        .arg(src.to_str().unwrap())
+        .current_dir(repo_root())
+        .status()
+        .expect("invoke loft --html");
+    assert!(status.success(), "loft --html must build the program");
+    let page = fa::read_to_string(&html).expect("read html");
+    let marker = "const wasmB64=\"";
+    let start = page.find(marker).expect("wasmB64 marker") + marker.len();
+    let end = start + page[start..].find('"').expect("wasmB64 closing quote");
+    let wasm = tmp.join("stated.wasm");
+    fa::write(&wasm, loft::base64::decode(&page[start..end])).expect("write wasm");
+
+    // 2^50 bytes and five pages: 2^34 + 5 pages, which a 32-bit `size_t` would cut to 5.
+    let stated: u64 = (1 << 50) + 5 * 64 * 1024;
+    let run = loft::platform::process::harness_command("node")
+        .arg(repo_root().join("tools/paged_range_host.mjs"))
+        .arg(&wasm)
+        .env("LOFT_PAGED_FILE", &store)
+        .env("LOFT_PAGED_STATED_TOTAL", stated.to_string())
+        .current_dir(repo_root())
+        .output()
+        .expect("invoke node harness");
+    let stdout = String::from_utf8_lossy(&run.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&run.stderr).into_owned();
+    let _ = fa::remove_dir_all(&tmp);
+    assert!(
+        stdout.contains("browser ok=false len=0") && stdout.contains("browser ran on"),
+        "the load is refused and the program runs on\n  stdout:\n{stdout}\n  stderr:\n{stderr}"
+    );
+    assert!(
+        format!("{stdout}{stderr}").contains("larger than this build can address"),
+        "and the refusal names its reason\n  stdout:\n{stdout}\n  stderr:\n{stderr}"
+    );
+}

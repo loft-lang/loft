@@ -19,6 +19,9 @@
 // It also asserts the CONTENT, not the length.  A use-after-free can leave a buffer of
 // exactly the right size holding the wrong bytes, and `size(s)` cannot tell that from a
 // correct answer — so both halves are compared against what they should be.
+//
+// @FR-E-Concat: `s + s` and `s += s` join the text to itself, byte for byte, even when the buffer
+//   has to move.
 
 fn blk1k() -> text {
   b = "";

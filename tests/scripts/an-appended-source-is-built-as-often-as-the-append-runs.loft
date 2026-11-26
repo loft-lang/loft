@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-O-Latest: the folded build is taken at the append's loop depth, so it runs as often as the append.
+//
 // @falsified-at: cd7a8bf7 — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @PLN90 phase B move-elision, loft#1243: the retargeted build must run exactly as often as
 // the append it replaces.

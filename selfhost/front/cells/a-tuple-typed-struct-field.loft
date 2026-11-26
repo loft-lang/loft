@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a tuple-typed struct field lies in the record as its `__tuple<…>` struct: a literal's field and a whole assignment write it member by member (`tuple_field_set`, `tuple_field_set_via_assign`), `x.f.1` reads the member where it lies, and `y = x.f` copies a text member into a work text of the tuple's own.
+// @FR-T-Record: a tuple-typed struct field's members are written and read like record fields, a text member included.
+// @FR-L-Tuple: narrow tuple members (`u16`, `u8`) keep their values in the field.
 // Prints: 1 5 five 4 five
 
 struct A { a: integer, f: (integer, text), g: (u16, u8) }

@@ -7,6 +7,9 @@ use loft::file_access as fa;
 use loft::parser::Parser;
 use std::fmt::Write as _;
 
+#[path = "common/udp_wire.rs"]
+mod udp_wire;
+
 const SRC: &str = r#"
 fn fib(n: integer) -> integer {
   if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
@@ -7099,13 +7102,14 @@ fn in_binary_natives_run_on_the_c_as_on_the_interpreter() {
 
 /// @PLN203 C5 — `lib/engine_host`'s kernel on the C (`loft_engine.h`) and on the interpreter,
 /// driven from outside by a WebSocket and a UDP peer, every message written out by hand: the
-/// 101 response carries the UDP cookie (`X-Loft-UDP`); the connect handler's greeting arrives
-/// (`hello 0`, the first slot's cid); a text frame is echoed; `H:<cookie>` is acked `A:0`; a
-/// seq-stamped datagram of a declared sync kind reaches `on_event` at the next tick and is
-/// echoed over the WebSocket; `quit` stops the run and the program exits 0.
+/// 101 response carries the cid and UDP session key (`X-Loft-UDP`); the connect handler's
+/// greeting arrives (`hello 0`, the first slot's cid); a text frame is echoed; a sealed hello
+/// is acked with a sealed `A` (`tests/common/udp_wire.rs`); a sealed datagram of a declared
+/// sync kind reaches `on_event` at the next tick and is echoed over the WebSocket, while one
+/// under another key does not; `quit` stops the run and the program exits 0.
 /// A port free for TCP AND UDP at once: the engine host binds both on one number, and a port
 /// free for TCP alone was taken for UDP by a test running beside it on a busy Windows leg — the
-/// host then served without UDP (no `X-Loft-UDP` cookie), as it should.
+/// host then served without UDP (no `X-Loft-UDP` offer), as it should.
 fn free_tcp_and_udp_port() -> u16 {
     for _ in 0..64 {
         let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("a free TCP port");
@@ -7191,13 +7195,13 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
             head.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"),
             "{backend}: the RFC 6455 sample key's accept value: {head}"
         );
-        let cookie = head
-            .lines()
-            .find_map(|l| l.strip_prefix("X-Loft-UDP: "))
-            .unwrap_or_else(|| panic!("{backend}: no cookie: {head}"))
-            .trim()
-            .to_string();
-        assert_eq!(cookie.len(), 16, "{backend}: a 16-hex cookie: {cookie}");
+        let seat = udp_wire::Seat::of(
+            head.lines()
+                .find_map(|l| l.strip_prefix("X-Loft-UDP: "))
+                .unwrap_or_else(|| panic!("{backend}: no UDP offer: {head}"))
+                .trim(),
+        );
+        assert_eq!(seat.cid, 0, "{backend}: the first connection's cid");
         let recv = || -> String {
             let mut h = [0u8; 2];
             (&ws).read_exact(&mut h).unwrap();
@@ -7219,22 +7223,28 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
         let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         udp.set_read_timeout(Some(Duration::from_millis(300)))
             .unwrap();
-        let mut ack = String::new();
+        let mut ack = None;
         for _ in 0..20 {
-            udp.send_to(format!("H:{cookie}").as_bytes(), ("127.0.0.1", port))
-                .unwrap();
-            let mut buf = [0u8; 64];
+            udp.send_to(&seat.hello(), ("127.0.0.1", port)).unwrap();
+            let mut buf = [0u8; 128];
             if let Ok((n, _)) = udp.recv_from(&mut buf) {
-                ack = String::from_utf8_lossy(&buf[..n]).to_string();
+                ack = seat.open(&buf[..n]);
                 break;
             }
         }
-        assert_eq!(ack, "A:0", "{backend}: the hello's ack");
-        udp.send_to(b"S:5:7:pose", ("127.0.0.1", port)).unwrap();
+        assert!(
+            ack.as_ref().is_some_and(|(k, _, _)| *k == 'A'),
+            "{backend}: the hello's sealed ack, got {ack:?}"
+        );
+        for d in seat.forged(b'S', 1 << 40, "7:forged") {
+            udp.send_to(&d, ("127.0.0.1", port)).unwrap();
+        }
+        udp.send_to(&seat.sync(50, "7:pose"), ("127.0.0.1", port))
+            .unwrap();
         assert_eq!(
             recv(),
             "echo:7:pose",
-            "{backend}: the sync datagram, at the next tick"
+            "{backend}: the sealed sync datagram, at the next tick (a forged one is not applied)"
         );
         send("quit");
         let out = child.wait_with_output().expect("kernel output");
@@ -7355,6 +7365,103 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
                  server got bye\nserver saw disconnect 0\n"
             ),
             "{backend}: the listener's lines\n{}",
+            String::from_utf8_lossy(&listener.stderr)
+        );
+    }
+}
+
+/// The sealed state-sync datagram is one format on both runtimes: a seat and a listener on
+/// DIFFERENT backends (the C listener with an interpreted seat, and the other way round) talk
+/// over UDP.  The seat sends `7:udp` only once its path is acked, so the sample can only arrive
+/// as a datagram the listener opened; the listener answers `7:back`, a sync kind, on a path
+/// that sample just proved, so the answer can only arrive as a datagram the seat opened.
+///
+/// @falsified-at: 60acdddde — by hand: the C runtime's direction byte toward the listener
+/// changed (`LOFT_EH_TO_LISTENER`), so C seals what the Rust kernel does not open: red on both
+/// pairs, while the all-C seat cell stays green.  The C tag check off reddens the kernel cell
+/// above, whose forged sample is then applied.
+#[test]
+fn a_seat_and_a_listener_on_different_backends_share_the_sealed_datagram() {
+    use std::time::{Duration, Instant};
+    if !have_cc() || !loft::platform::c_runtime_has_sockets() {
+        eprintln!("skipped: no cc on PATH, or a host without sockets");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    let dir = scratch("sealed_twins");
+    let file = dir.join("twins.loft");
+    fa::write(
+        &file,
+        "use engine_host;\nstruct S { sent: boolean not null }\nfn main() {\n  \
+         role = env_variable(\"ROLE\") ?? \"server\";\n  \
+         port = (env_variable(\"PORT\") ?? \"0\") as integer ?? 0;\n  \
+         engine_host::sync_class(7);\n  if role == \"client\" {\n    s = S { sent: false };\n    \
+         engine_host::run_client(engine_host::default_host(), port, 5000,\n      \
+         fn(ev: engine_host::Event) {\n        \
+         if ev.kind == 1 && ev.payload == \"7:back\" {\n          \
+         println(\"client got 7:back\");\n          \
+         engine_host::client_send(\"bye\");\n          engine_host::client_stop();\n        }\n      },\n      \
+         fn() {\n        if !s.sent && engine_host::client_udp_bound() {\n          \
+         s.sent = true;\n          engine_host::client_send(\"7:udp\");\n        }\n      });\n    \
+         return;\n  }\n  \
+         engine_host::run(port, 5000,\n    fn(ev: engine_host::Event) {\n      \
+         if ev.kind == 1 && ev.payload == \"7:udp\" {\n        \
+         println(\"server got 7:udp\");\n        engine_host::send(ev.cid, \"7:back\");\n      }\n      \
+         if ev.kind == 1 && ev.payload == \"bye\" { println(\"server got bye\"); }\n      \
+         if ev.kind == 2 { engine_host::stop(); }\n    },\n    fn() {});\n}\n",
+    )
+    .expect("write program");
+    for (server_backend, client_backend) in
+        [("--native-c", "--interpret"), ("--interpret", "--native-c")]
+    {
+        let port = free_tcp_and_udp_port();
+        let start = |backend: &str, role: &str| {
+            loft::platform::process::harness_command(loft)
+                .arg(backend)
+                .arg("--lib")
+                .arg(&lib)
+                .arg(&file)
+                .env("ROLE", role)
+                .env("PORT", port.to_string())
+                .env("LOFT_TIMEOUT", "60")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start loft")
+        };
+        let pair = format!("{server_backend} listener, {client_backend} seat");
+        let mut server = start(server_backend, "server");
+        let deadline = Instant::now() + Duration::from_secs(90);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            if Instant::now() > deadline || server.try_wait().ok().flatten().is_some() {
+                let _ = server.kill();
+                let out = server.wait_with_output().expect("listener output");
+                panic!(
+                    "{pair}: the listener never listened\n{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let seat = start(client_backend, "client")
+            .wait_with_output()
+            .expect("seat output");
+        let listener = server.wait_with_output().expect("listener output");
+        assert_eq!(
+            String::from_utf8_lossy(&seat.stdout),
+            "client got 7:back\n",
+            "{pair}: the seat's lines\n{}",
+            String::from_utf8_lossy(&seat.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&listener.stdout),
+            format!(
+                "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)\n\
+                 server got 7:udp\nserver got bye\n"
+            ),
+            "{pair}: the listener's lines\n{}",
             String::from_utf8_lossy(&listener.stderr)
         );
     }
@@ -8183,8 +8290,8 @@ fn a_programs_c_is_the_same_on_every_emission() {
 }
 
 /// loft#2250's numbering half on a corpus program whose functions take and return three value
-/// record types: its `loft_tupN` types were numbered three ways in twelve emissions.  Ten
-/// emissions must agree (under the defect, about one chance in a thousand that they do).
+/// record types: its tuple types were named three ways in twelve emissions.  Ten emissions
+/// must agree (under the defect, about one chance in a thousand that they do).
 #[test]
 fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
     let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
@@ -8209,7 +8316,7 @@ fn a_programs_tuple_types_are_numbered_the_same_on_every_emission() {
         );
         let unit = fa::read_to_string(&c).expect("read the C");
         assert!(
-            unit.contains("loft_tup2;"),
+            unit.matches("} loft_tup_").count() >= 3,
             "the program has three tuple types"
         );
         match &first {
@@ -9164,4 +9271,319 @@ fn a_binding_with_other_pointer_types_than_the_header_is_named() {
             && !stderr.contains("a defect of the C backend"),
         "the refusal names the binding and the cure: {stderr}"
     );
+}
+
+/// @PLN229 B2 — a split build (`LOFT_C_UNITS=1`) caches each unit's object by its C: an edit to
+/// one function's body compiles that file's unit alone, and a change to a struct another file
+/// reads rebuilds the units that carry it.  The values are the check that no object is stale:
+/// with `z` added before `a`, a `main` unit linked from before the change reads `a` where the
+/// float now is.
+#[test]
+fn a_split_build_compiles_only_the_units_a_change_reaches() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("split-cache");
+    let _ = fa::remove_dir_all(dir.join(".loft"));
+    fa::create_dir_all(dir.join("lib")).expect("lib dir");
+    let geo = dir.join("lib").join("geo.loft");
+    let main = dir.join("main.loft");
+    fa::write(
+        &main,
+        "use geo;\nfn show(p: geo::P) -> text { \"{p.a} {p.b}\" }\n\
+         fn main() {\n  p = geo::mk(3);\n  println(\"{show(p)} {geo::label(5)}\");\n}\n",
+    )
+    .expect("write main");
+    let lib = |fields: &str, build: &str, label: &str| {
+        fa::write(
+            &geo,
+            format!(
+                "pub struct P {{ {fields} }}\npub fn mk(x: integer) -> P {{ P {{ {build} }} }}\n\
+                 pub fn label(x: integer) -> text {{ \"{label}\" }}\n"
+            ),
+        )
+        .expect("write geo");
+    };
+    let run = |want: &str| {
+        let out = loft::platform::process::harness_command(loft)
+            .current_dir(&dir)
+            .env("LOFT_C_UNITS", "1")
+            .env_remove("LOFT_NO_CACHE")
+            .env_remove("LOFT_C_LINT")
+            .arg("--native-c")
+            .arg(&main)
+            .output()
+            .expect("run loft --native-c");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let objects = || {
+        fa::read_dir(fa::PathText::from_os(
+            &dir.join(".loft").join("cache").join("units"),
+        ))
+        .map(|e| e.len())
+        .unwrap_or(0)
+    };
+    lib(
+        "pub a: integer, pub b: integer",
+        "a: x * 10, b: x + 7",
+        "geo{x}",
+    );
+    run("30 10 geo5\n");
+    let cold = objects();
+    assert!(cold >= 3, "every unit is cached: {cold}");
+    lib(
+        "pub a: integer, pub b: integer",
+        "a: x * 10, b: x + 7",
+        "geo-{x}!",
+    );
+    run("30 10 geo-5!\n");
+    assert_eq!(
+        objects(),
+        cold + 1,
+        "a body edit compiles its own unit only"
+    );
+    lib(
+        "pub z: float, pub a: integer, pub b: integer",
+        "z: 1.5, a: x * 10, b: x + 7",
+        "geo-{x}!",
+    );
+    run("30 10 geo-5!\n");
+    assert!(
+        objects() >= cold + 3,
+        "the struct change rebuilt geo's unit and main's: {} after {}",
+        objects(),
+        cold + 1
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
+
+/// @PLN229 B0 — a tuple struct is named from its members' shapes (`loft_tup_<code>`), never
+/// numbered by first use: a program that meets another tuple first still names `pair`'s
+/// `(integer, float)` the same, so the units that use it are unchanged.
+#[test]
+fn a_tuple_struct_is_named_from_its_members_not_its_first_use() {
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("tuple-names");
+    let pair = "fn pair(n: integer) -> (integer, float) { (n * 2, n as float / 4.0) }\n";
+    let other = "fn other(x: float) -> (float, boolean) { (x / 2.0, x > 1.0) }\n";
+    let names = |name: &str, src: String| -> std::collections::BTreeSet<String> {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let c = dir.join(format!("{name}.c"));
+        let out = loft::platform::process::harness_command(loft)
+            .env("LOFT_NO_CACHE", "1")
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = fa::read_to_string(&c).expect("read the C");
+        let mut found = std::collections::BTreeSet::new();
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("loft_tup") {
+            let tail = &rest[at..];
+            let end = tail
+                .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                .unwrap_or(tail.len());
+            found.insert(tail[..end].to_string());
+            rest = &tail[end..];
+        }
+        found
+    };
+    let alone = names(
+        "alone",
+        format!("{pair}fn main() {{\n  (a, b) = pair(21);\n  println(\"{{a}} {{b}}\");\n}}\n"),
+    );
+    let after = names(
+        "after",
+        format!(
+            "{other}{pair}fn main() {{\n  (c, d) = other(3.0);\n  (a, b) = pair(21);\n  \
+             println(\"{{a}} {{b}} {{c}} {{d}}\");\n}}\n"
+        ),
+    );
+    assert!(alone.contains("loft_tup_ld"), "{alone:?}");
+    assert!(
+        after.contains("loft_tup_ld") && after.contains("loft_tup_db"),
+        "{after:?}"
+    );
+    let numbered = |s: &std::collections::BTreeSet<String>| {
+        s.iter()
+            .any(|n| n["loft_tup".len()..].starts_with(|c: char| c.is_ascii_digit()))
+    };
+    assert!(
+        !numbered(&alone) && !numbered(&after),
+        "{alone:?} {after:?}"
+    );
+}
+
+/// @PLN229 B2b — the shipped tier ignores the split switch: `--ship` with `LOFT_C_UNITS=1`
+/// writes ONE unit (no unit marks), as a semantics build with the switch writes several.
+#[test]
+fn a_shipped_build_is_one_unit_whatever_the_split_switch_says() {
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("ship-one-unit");
+    let file = dir.join("p.loft");
+    fa::write(&file, "fn main() {\n  println(\"hi {1 + 2}\");\n}\n").expect("write program");
+    let marks = |ship: bool| -> usize {
+        let c = dir.join(if ship { "ship.c" } else { "dev.c" });
+        let mut cmd = loft::platform::process::harness_command(loft);
+        cmd.env("LOFT_C_UNITS", "1").env("LOFT_NO_CACHE", "1");
+        if ship {
+            cmd.arg("--ship");
+        }
+        let out = cmd
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        fa::read_to_string(&c)
+            .expect("read the C")
+            .matches(loft::c::SPLIT_UNIT)
+            .count()
+    };
+    assert!(marks(false) > 1, "the switch splits a semantics build");
+    assert_eq!(marks(true), 0, "a shipped build is one unit");
+}
+
+/// `@FR-R-CTable` — a parted function's runs of releases go through a table: a function of
+/// twelve vector-delivering calls and an early exit, written in parts (`LOFT_C_SPLIT=12`), has
+/// its exits' release runs as `loft_release_run` calls, and answers what its statements answer
+/// (hand-computed: `many(1)` = sum of 2 + (1 + i) for twelve calls = 102, `many(200)` returns
+/// after eight = 1644), with no leak; `LOFT_NO_C_RELTABLE=1` writes the statements again.
+#[test]
+fn a_parted_function_releases_through_its_table() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("reltable");
+    let file = dir.join("p.loft");
+    let mut src = String::from(
+        "fn mk(n: integer) -> vector<integer> { v: vector<integer> = [n, n + 1]; v }\n\
+         fn many(a: integer) -> integer {\n  t = 0;\n",
+    );
+    for i in 0..12 {
+        let _ = writeln!(src, "  x{i} = mk(a + {i});\n  t += len(x{i}) + x{i}[0];");
+        if i == 7 {
+            src.push_str("  if a > 100 { return t; }\n");
+        }
+    }
+    src.push_str("  t\n}\nfn main() {\n  println(\"{many(1)} {many(200)}\");\n}\n");
+    fa::write(&file, src).expect("write program");
+    let run = |table: bool| -> (String, usize) {
+        let mut cmd = loft::platform::process::harness_command(loft);
+        cmd.env("LOFT_C_SPLIT", "12")
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_NATIVE_LEAK_CHECK", "1");
+        if !table {
+            cmd.env("LOFT_NO_C_RELTABLE", "1");
+        }
+        let c = dir.join(if table { "t.c" } else { "s.c" });
+        let emit = cmd
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("emit");
+        assert!(
+            emit.status.success(),
+            "{}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let calls = fa::read_to_string(&c)
+            .expect("read the C")
+            .matches("loft_release_run(loft_fr")
+            .count();
+        let mut cmd = loft::platform::process::harness_command(loft);
+        cmd.env("LOFT_C_SPLIT", "12")
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_NATIVE_LEAK_CHECK", "1");
+        if !table {
+            cmd.env("LOFT_NO_C_RELTABLE", "1");
+        }
+        let out = cmd.arg("--native-c").arg(&file).output().expect("run");
+        assert!(
+            out.status.success() && out.stderr.is_empty(),
+            "a clean run: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (String::from_utf8_lossy(&out.stdout).into_owned(), calls)
+    };
+    let (tables, calls) = run(true);
+    assert_eq!(tables, "102 1644\n");
+    assert!(
+        calls > 0,
+        "the parted function's release runs go through its table"
+    );
+    let (statements, none) = run(false);
+    assert_eq!(statements, "102 1644\n");
+    assert_eq!(none, 0, "the switch writes the statements");
+}
+
+/// `@FR-R-CSplit` — a part names the function's context the way the whole body does: a
+/// closure's release, called in a part as `loft_drop_closure(loft_fr->cx, …)`, is written (its
+/// presence was looked for under the `(cx, ` spelling alone), and a runtime macro that names
+/// `cx` in its expansion (`LOFT_WRITE_REFUSED`, a keyed collection's write) finds it in the
+/// part.  Both programs, every function of twelve sites in parts (`LOFT_C_SPLIT=12`), compile
+/// and answer what the interpreter answers.
+#[test]
+fn a_part_reaches_the_closure_release_and_the_context_a_macro_names() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("split-context");
+    let closure = "struct E73 { a: integer }\nfn in_frame(p: boolean) -> integer {\n  \
+        e: E73 = E73 { a: 2 };\n  g: fn() -> integer = if p { fn() -> integer { 3 + e.a } } \
+        else { fn() -> integer { 5 + e.a } };\n  g()\n}\nfn main() {\n  \
+        println(\"{in_frame(true)} {in_frame(false)}\");\n}\n";
+    let keyed = "struct E { key: integer, val: integer, name: text, link: reference<E>? }\n\
+        struct F { key: integer, val: integer }\nstruct H { es: hash<E[key]>, other: hash<F[key]> }\n\
+        fn main() {\n  f = H { };\n  q = 41;\n  f.es += [E { key: q, val: 1, name: \"a\" }];\n  \
+        m = f.es[q];\n  if m != null { m.val = 77; }\n  r = 40;\n  \
+        f.es += [E { key: 42, val: 2, name: \"b\" }];\n  m2 = f.es[r];\n  \
+        f.es += [E { key: 41, val: 3, name: \"c\" }];\n  m3 = f.es[q];\n  \
+        f.es += [E { key: 50, val: 4, name: \"d\" }];\n  f.es[50] = null;\n  w = 50;\n  \
+        m4 = f.es[w];\n  m5 = f.other[q];\n  \
+        println(\"{m3!.val} {len(f.es)} {m2 == null} {m4 == null} {m5 == null}\");\n}\n";
+    for (name, src, want) in [
+        ("closure", closure, "5 7\n"),
+        ("keyed", keyed, "3 2 true true true\n"),
+    ] {
+        let file = dir.join(format!("{name}.loft"));
+        fa::write(&file, src).expect("write program");
+        let out = loft::platform::process::harness_command(loft)
+            .env("LOFT_C_SPLIT", "12")
+            .env("LOFT_NO_CACHE", "1")
+            .arg("--native-c")
+            .arg(&file)
+            .output()
+            .expect("run loft");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{name}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
 }

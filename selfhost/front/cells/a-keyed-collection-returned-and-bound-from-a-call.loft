@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a function answering a keyed local of its own hands it back as it is (no buffer, the body typed without a borrow); a keyed local bound from such a call takes it by OpReplaceKeyed, the call's store freed after.
+// @FR-O-Move: a keyed local returned by its function moves to the caller's binding, a rebind included.
+// @FR-Col-Lookup: the bound collections answer their key lookups (50 2).
 // Prints: 50 2
 struct E { k: integer, v: integer }
 

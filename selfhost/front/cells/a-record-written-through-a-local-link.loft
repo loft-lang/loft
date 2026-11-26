@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// Gate E cell: a whole record written through a local `&` link to a place (`copy_ref`, loft#1376): a literal and a fresh call's record are copied into the place (`OpCopyRecord`, the call's store given away); a bare record local re-points the link.
-// Prints: 9nine 9m 9
+// Gate E cell: a whole record written through a local `&` link to a place (`copy_ref`, loft#1376, loft#2653): a literal, a fresh call's record and a bare record local are each copied into the place (`OpCopyRecord`, the call's store given away) — `@FR-B-Ref-Write`; only a value spelled `&` re-points (`@FR-B-Ref-Repoint`).
+// @FR-B-Ref-Write: a literal, a call result and a named record written through `l = &h.a` / `e = &v[0]` replace the source's contents.
+// Prints: 9nine 4q 9
 
 struct P { x: integer, s: text }
 struct H { a: P, k: integer }

@@ -4,6 +4,8 @@
 // Gate E cell: an `if` of a variant beside a `null` arm joins as that variant `?` — inside a
 // match arm it stays `At?`, its `null` the sentinel — and as the enum `?` where it is the body's
 // own tail of a function answering the enum.
+// @FR-N-Join: an `if` of a variant and `null` joins to the optional type.
+// @FR-C-Var: the variant widens to its enum where a function answers the enum.
 // Prints: 7 5 4
 
 struct Pos { file: text, line: integer }

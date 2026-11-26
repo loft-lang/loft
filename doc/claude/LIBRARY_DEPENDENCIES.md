@@ -73,6 +73,12 @@ could not verify, when the registry cannot be read and nothing is cached, and wh
 release it still promises something about cannot be fetched. Its first line counts the
 releases it looked at: read it.
 
+A release the advisory feed refuses to install is **withdrawn**: it cannot be fetched and no
+dependent can still install it, so the check names it with its advisory and compares another
+in its place: the nearest newer release still installable, else the nearest older one. The
+sample stays as large, and the latest loft is still held to that many releases.
+`--full` names a withdrawn release and leaves it out.
+
 A changed surface is held against `api_compatible_with`. A reshaped record is declared by
 either floor: the data floor for one behind an unchanged surface, and the API floor for one
 whose new field is itself the API break — a package may then keep its data floor, saying

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: an out-of-line record field given an unwrapped local (`inner!`) sets the child from the `ncr` block.
+// @FR-N-Present: `inner!` discharges the nullable local to `T`.
+// @FR-L-OutOfLine: the variant's recursive field holds the child, matched back out.
 // Prints: 3
 
 enum T { TInt { lo: integer }, TVec { inner: T } }

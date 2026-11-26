@@ -72,7 +72,7 @@ LAYERS: list[tuple[str, list[str]]] = [
         "net_profile", "null_census", "op_census", "op_layout", "op_sets", "ops", "package",
         "package_layout", "page_metrics", "paged_reader", "par_pool", "placement", "platform",
         "platform_census", "png_store", "process_run", "pure_reuse", "radix_db", "radix_tree",
-        "registry", "registry_advisories", "registry_index", "registry_keys", "registry_signing",
+        "registry", "registry_advisories", "registry_cache", "registry_index", "registry_keys", "registry_signing",
         "repeat_run", "repl_doc", "resolution", "resolution_scope", "return_field",
         "rewrite_census", "runtime_error", "rust_spelling", "sandbox", "schema_sidecar",
         "self_update", "shared_call", "ship_tier", "siphash", "slice_text", "slot_alias", "source_name",

@@ -1,6 +1,10 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // single (f32) type: arithmetic, comparisons, conversions, null, formatting.
+//
+// @FR-E-NullArg: a null single is contagious, equals null and orders below every value.
+// @FR-E-Uncomp: `0.0f / 0.0f` is null, `1.0f / 0.0f` infinity.
+// @FR-N-Parse: `"not_a_number" as single?` is null.
 fn main() {
   // --- Arithmetic ---
   assert(3.0f - 1.0f == 2.0f, "single sub");

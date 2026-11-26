@@ -7,6 +7,10 @@
 // of them and their annotations would assert nothing — which is exactly what happened for
 // 24 of them (loft#929).  The pass-1 errors that used to share this file live in
 // 36b-pass1-parse-errors.loft.  Keep the split: nothing here may report during pass 1.
+//
+// @FR-T-Chk: an argument, a return and an else arm are checked against the expected type.
+// @FR-C-Par: a par worker's first argument is the loop element; anything else is refused.
+// @FR-C-Det: the par form refuses a worker the sequential call would refuse.
 
 // --- Argument / return / branch type errors ---
 //
