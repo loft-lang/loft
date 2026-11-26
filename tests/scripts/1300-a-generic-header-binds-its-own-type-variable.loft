@@ -41,6 +41,11 @@
 //   HOLDS: assertions, leak, panic, free-refusal, expectations are equal on both trees.
 //   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
 //   those is clean on both. The native side was not scored in this sweep.
+//
+// @FR-G-Gen-Scope: the `T` of one generic header is its own variable, not the `T` of the next
+//   header.
+// @FR-G-Sat: each bound is met by the concrete function with its own signature — `sizer()` and
+//   `sizer(k)`, binary and unary `-`.
 
 // ---- the reported shapes -----------------------------------------------------------------
 

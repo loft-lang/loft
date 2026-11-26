@@ -30,6 +30,12 @@
 //   `RefVar` exclusion, or match `Type::Text`) and the corresponding row stops COMPILING —
 //   that is the direction it fails in, and it is why the rows are ordinary code rather
 //   than `@EXPECT_ERROR` cells.
+//
+// @FR-L-CapHeap: append, element write, clear and field write through a captured parameter reach
+//   the caller.
+// @FR-L-CapWrite: `n = 7` inside the closure reaches the captured scalar parameter
+//   (`scalar_rebind(1) == 7`).
+// @FR-L-CapRef: a closure growing a captured `&vector` parameter writes back to the caller.
 
 struct S { n: integer }
 

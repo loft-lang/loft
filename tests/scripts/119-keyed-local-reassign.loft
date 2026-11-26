@@ -15,6 +15,10 @@
 // `s["ns"]` lifetime dep was stripped.  The deep-copy also surfaced two
 // latent hash-copy bugs (remove_claims off-by-one, copy_claims_hash_body
 // under-copy).
+//
+// @FR-Col-Copy: `s = ns`, `h = nh`, `ix = nx` bind a copy of the keyed collection, readable after
+//   the source's scope ends.
+// @FR-Col-Order: the rebuilt sorted and index locals iterate in key order ("1 2 3 4 100 ", "3 7 ").
 
 struct Item {
   k: integer,

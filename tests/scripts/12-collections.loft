@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // Collections: sorted, index, and hash.
 // --- Sorted ---
+//
+// @FR-Col-Lookup: `db.map["Five"]`, `db.map[null]`, `idb.map[83, "One"]` answer null.
+// @FR-Col-Order-Sign: `sorted<SortElm[-key]>` iterates descending, `rev(…)` ascending.
+// @FR-Col-Insert: `db.map += [SortElm { key: "Two", value: 99 }]` replaces the record under "Two".
+// @FR-Col-RemoveKeyed: `e#remove` and `idx_kn.map[10, "x"] = null` remove by key; the other keys
+//   stay reachable.
 struct SortElm {
   key: text,
   value: integer,

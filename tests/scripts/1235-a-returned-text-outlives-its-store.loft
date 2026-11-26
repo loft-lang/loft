@@ -35,6 +35,9 @@
 //
 // The INTEGER twin of shape 2 is the separating control — it was clean throughout, because
 // an integer element is copied by value and never points into the container.
+//
+// @FR-F-Ret: a text returned out of a local container (or a closure's capture) reaches the caller
+//   as its own value.
 
 fn elem1235() -> text {
   tv: vector<text> = ["a", "b"];

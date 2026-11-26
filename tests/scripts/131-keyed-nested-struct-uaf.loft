@@ -9,6 +9,11 @@
 // corrupted the nested-vector backings of every entry after the first —
 // silent data loss on the interpreter, use-after-free SIGSEGV once the store
 // was reused under heavier churn.
+//
+// @FR-Col-Assign: `h[k] = Cont { … }` places a copy of the record, nested vector included, under
+//   each key.
+// @FR-O-Owner: the literal's store has one owner, so no entry's nested vector is freed by another's
+//   write.
 
 struct V {
   a: vector<integer>,
