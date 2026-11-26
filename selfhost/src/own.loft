@@ -1808,11 +1808,18 @@ pub fn text_return_orphan_risk(b: ir::Bundle, d_nr: integer) -> text {
     match o {
       Owned => return "owned-by-value",
       Unknown => return "owned-by-value",
-      Borrowed { base } => if !(base != MAX && is_argument(f, base)) { return "view-of-local"; },
-      Join { base } => if !(base != MAX && is_argument(f, base)) { return "join-of-local"; },
+      Borrowed { base } => if !(base != MAX && is_argument(f, base) && !rebound_to_frame(f, base)) { return "view-of-local"; },
+      Join { base } => if !(base != MAX && is_argument(f, base) && !rebound_to_frame(f, base)) { return "join-of-local"; },
     }
   }
   ""
+}
+
+// (loft#2645) An argument REBOUND in the body to a value of this frame (`v = o` copies `o` into
+// a store the frame owns: `v: vector<text>["__vdb_1"]`) holds the caller's store no longer, so
+// a text read out of it is frame-local text, not a borrow of the argument.
+fn rebound_to_frame(f: ir::Function, base: integer) -> boolean {
+  len([for w in tp_depend(f, base) if w != base && !is_argument(f, w) { 1 }]) > 0
 }
 
 fn peel_optional(t: ir::TypeT) -> ir::TypeT {

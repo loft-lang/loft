@@ -359,8 +359,24 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
           }
         },
         // (And an element or a field of a local, `vv[0]`.)
-        NdCall { def_nr: ord } => if projection_op(el::def(e, ord).name) && place_root(e, otail) >= 0 && !vars.vars[place_root(e, otail)]!.argument && !el_types::deps(oret).contains(ba) {
-          e.b.data.definitions[d].returned = [el_types::with_deps(oret, el_types::deps(oret) + [ba])];
+        NdCall { def_nr: ord } => if projection_op(el::def(e, ord).name) && place_root(e, otail) >= 0 && !vars.vars[place_root(e, otail)]!.argument {
+          if !el_types::deps(oret).contains(ba) {
+            e.b.data.definitions[d].returned = [el_types::with_deps(oret, el_types::deps(oret) + [ba])];
+          }
+          // (`vector_view_tail_root`, loft#2644: an `OpGetField` tail of one local is bound to
+          // `__vtail` first — minted on this pass too, where an element that is a vector is read
+          // by its bare `OpGetVector`, the field read added on the second.)
+          if el::def(e, ord).name == "OpGetField" || el::def(e, ord).name == "OpGetVector" {
+            el_vars::create_unique(vars, "__vtail", ir::TyVector { inner: match el_types::base(result) { TyVector { inner: vti } => vti, _ => ir::TyVoid }, dep: [place_root(e, otail)] });
+          }
+        } else if ord < 0 {
+          // (The first pass's element field read is a placeholder no definition answers yet,
+          // `def_nr: -1`, over the element read: the same `OpGetField` tail.)
+          pargs = match otail { NdCall { args: pa } => pa, _ => [] };
+          proot = if len(pargs) > 0 { place_root(e, el_ir::unspan(pargs[0]!)) } else { -1 };
+          if proot >= 0 && !vars.vars[proot]!.argument {
+            el_vars::create_unique(vars, "__vtail", ir::TyVector { inner: match el_types::base(result) { TyVector { inner: vti } => vti, _ => ir::TyVoid }, dep: [proot] });
+          }
         },
         _ => {}
       }
@@ -412,6 +428,19 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         // (An element or a field of a local at the tail is answered as it is read — Rust delivers
         // nothing there — the body typed as the buffer's `?`.)
         ptl = if len(ob.operators) > 0 { el_ir::unspan(ob.operators[-1]) } else { ir::NdNull };
+        // `vector_view_tail_root` (loft#2644): an `OpGetField` tail viewing one local's store is
+        // bound first, `__vtail = <tail>`, and copied into the buffer where present — left raw the
+        // answer was a view into a store the frame frees.
+        vroot = match ptl { NdCall { def_nr: vpd } => if el::def(e, vpd).name == "OpGetField" { place_root(e, ptl) } else { -1 }, _ => -1 };
+        if vroot >= 0 && !vars.vars[vroot]!.argument && nrow >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && el_ex_copy::returns_in(mids) == 0 {
+          vtmp = el_vars::create_unique(vars, "__vtail", ir::TyVector { inner: match el_types::base(result) { TyVector { inner: vti } => vti, _ => ir::TyVoid }, dep: [vroot] });
+          el_vars::set_defined(vars, vtmp);
+          vb = ir::NdVar { n: rb };
+          vcopy = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [vb]), el_ir::cl(e, "OpAppendVector", [vb, ir::NdVar { n: vtmp }, ir::NdInt { n: nrow }]), vb] };
+          ob.operators[-1] = el_ir::respan(ob.operators[-1], ir::NdInsert { items: [el_ir::v_set(vtmp, ptl), el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [ir::NdVar { n: vtmp }]), el_ir::cl(e, "OpNullRefSentinel", []), vcopy)] });
+          ob.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]) }];
+          return ir::NdBlock { block: [ob] };
+        }
         if match ptl { NdCall { def_nr: pd } => projection_op(el::def(e, pd).name) && place_root(e, ptl) >= 0 && !vars.vars[place_root(e, ptl)]!.argument, _ => false } && attr_nr(el::def(e, d), "__retbuf") >= 0 && el_ex_copy::returns_in(mids) == 0 {
           ob.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]) }];
           return ir::NdBlock { block: [ob] };
