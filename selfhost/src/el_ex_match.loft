@@ -638,8 +638,11 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
       out[oa#index].tp = result;
     }
   }
-  // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`).
-  if null_arm && el_types::base(result) is TyReference && !(result is TyOptional) {
+  // A record result with a `null` arm is `τ?` on both passes (`(N-Join)`) — over a scalar or a
+  // text subject.  An enum's `match` (plain or struct) widens only where `null_arm_widens` says,
+  // a non-null scalar: its record join keeps the arms' type (`match c { Red => FInt { … },
+  // Green => null }` is `ref(FInt)`), the declared `E?` answering the null.
+  if null_arm && !enum_subject && sd < 0 && el_types::base(result) is TyReference && !(result is TyOptional) {
     result = ir::TyOptional { inner: result };
   }
   // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand

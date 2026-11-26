@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record or struct-enum result answered by a `match` over a plain enum — a
+// `match` block around its `_match_subj_N` bind — whose arms are variant literals (each built
+// in its own `__ref_p2_N`) or `null`: the arms are the answer, as a scalar match's are.  An
+// enum subject's join (plain or struct) takes no `?` from a `null` arm for a record — only a
+// non-null scalar widens (`null_arm_widens`) — while a scalar or text subject's does; a `-> E?`
+// body whose arms answer is typed as the declared `E?`.
+// Prints: FInt {v:7} FFloat {v:0.5} FInt {v:2} null null FInt {v:3} FInt {v:1} null FInt {v:4} null FInt {v:1} null {v:1} null
+
+enum Fd { FInt { v: integer }, FFloat { v: float } }
+enum Col { Red, Green }
+enum It { A { v: integer }, B { n: integer } }
+struct R { v: integer }
+fn by_col(c: Col, k: integer) -> Fd { match c { Red => FInt { v: k }, Green => FFloat { v: 0.5 } } }
+fn one(c: Col, k: integer) -> Fd? { match c { Red => FInt { v: k }, Green => null } }
+fn lead_null(c: Col, k: integer) -> Fd? { match c { Red => null, Green => FInt { v: k } } }
+fn by_int(k: integer) -> Fd? { match k { 1 => FInt { v: k }, _ => null } }
+fn se(i: It) -> Fd? { match i { A { v } => FInt { v: v }, B { n } => null } }
+fn txt(t: text) -> Fd? { match t { "a" => FInt { v: 1 }, _ => null } }
+fn rec(c: Col) -> R? { match c { Red => R { v: 1 }, Green => null } }
+fn main() {
+  println("{by_col(Red, 7)} {by_col(Green, 0)} {one(Red, 2)} {one(Green, 2)} {lead_null(Red, 3)} {lead_null(Green, 3)} {by_int(1)} {by_int(0)} {se(A { v: 4 })} {se(B { n: 1 })} {txt("a")} {txt("b")} {rec(Red)} {rec(Green)}");
+}
