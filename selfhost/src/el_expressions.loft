@@ -2623,7 +2623,7 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
   dflt = if pts >= 0 && match e.p.nodes[pts] { SBin { op: pop } => pop == "??", _ => false } { coalesce_default_var(tail) } else { -1 };
   ps: vector<integer> = [];
   call_arm = false;
-  for arm in el_ex_deliver::branch_arms(tail, []) {
+  for arm in join_arms(tail) {
     leaf = el_ir::unspan(join_leaf(arm));
     ok = match leaf {
       NdVar { n: lv } => vars.vars[lv].argument && !hidden_param(e, vars, lv),
@@ -2701,11 +2701,40 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
     bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(ret)), ps)];
     // (An arm ending in a VARIANT literal is typed as the result's enum, as the join types it —
     // the literal's own block keeps its variant.)
+    // (An `if` tail's arms as its join reads them, `if_enum_arms`.)
     if el_types::struct_enum_def(ret) >= 0 {
-      bl.operators[-1] = el_ir::respan(bl.operators[-1], enum_arms(e, el_ir::unspan(bl.operators[-1]), el_types::without_deps(el_types::base(ret))));
+      pet = el_types::without_deps(el_types::base(ret));
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], match el_ir::unspan(bl.operators[-1]) { NdIf { cond: _ } => if_enum_arms(e, el_ir::unspan(bl.operators[-1]), pet), _ => enum_arms(e, el_ir::unspan(bl.operators[-1]), pet) });
     }
   }
   ir::NdBlock { block: [bl] }
+}
+
+// An `if` chain's arms as each `if`'s join reads them: the then arm keeps its own type, and the
+// else arm is read against it.  Where the then arm IS the enum (a parameter, `if c { t } else {
+// TV { … } }`) the whole else chain is read against the enum: every arm on the way to a variant
+// literal typed `et` (`enum_arms`).  Where it is a variant (`if c { TV { … } } else { t }`), the
+// else joins on its own: kept, and an `if` it is — or ends in — read the same way.
+fn if_enum_arms(e: el::El, n: ir::Node, et: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: if_enum_arms(e, inner, et) },
+    NdIf { cond, t, f } => {
+      tenum = match el_ir::unspan(t) { NdBlock { block: tb } => el_types::base(tb[0].result[0] ?? ir::TyVoid) is TyEnum, _ => false };
+      f2 = if tenum { enum_arms(e, f, et) } else { match el_ir::unspan(f) {
+        NdIf { cond: _ } => if_enum_arms(e, f, et),
+        NdBlock { block: fb } => {
+          fbl = fb[0];
+          if fbl.name == "block" && len(fbl.operators) > 0 && el_ir::unspan(fbl.operators[-1]!) is NdIf {
+            fbl.operators[-1] = el_ir::respan(fbl.operators[-1]!, if_enum_arms(e, el_ir::unspan(fbl.operators[-1]!), et));
+            ir::NdBlock { block: [fbl] }
+          } else { f }
+        },
+        _ => f
+      } };
+      ir::NdIf { cond: cond, t: t, f: f2 }
+    },
+    _ => n
+  }
 }
 
 // The branch `n` with every arm block on the way to a variant literal typed `et`.
@@ -2738,6 +2767,21 @@ fn enum_arms(e: el::El, n: ir::Node, et: ir::TypeT) -> ir::Node {
     },
     _ => n
   }
+}
+
+// The arms of an `if` chain whose leaves the join reads — an arm that is a block ending in an `if`
+// (`else { if p { t } else { TW { … } } }`) answers that `if`'s arms.
+fn join_arms(n: ir::Node) -> vector<ir::Node> {
+  r: vector<ir::Node> = [];
+  for arm in el_ex_deliver::branch_arms(n, []) {
+    leaf = el_ir::unspan(join_leaf(arm));
+    if leaf is NdIf {
+      r += join_arms(leaf);
+    } else {
+      r += [arm];
+    }
+  }
+  r
 }
 
 // The value an arm ends in, through its blocks — stopping at a record literal, whose own block

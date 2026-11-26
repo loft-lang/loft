@@ -1959,6 +1959,14 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     t = ex(t.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(t.tp) });
     f = ex(f.code, ir::TyEnum { n: ven, is_ref: true, dep: el_types::deps(f.tp) });
   }
+  // (…and the enum beside one of its variants, `if c { t } else { TV { … } }`: the else arm was
+  // read against the then arm's enum (`arm_expectation`), so its block is the enum, the literal
+  // inside keeping its variant.)
+  fven = el_ex_deliver::variant_parent(e, f.tp);
+  if fven >= 0 && ven < 0 && el_types::struct_enum_def(t.tp) == fven && !(t.tp is TyOptional) && !(f.tp is TyOptional) {
+    fet = ir::TyEnum { n: fven, is_ref: true, dep: el_types::deps(f.tp) };
+    f = ex(block_typed(f.code, fet), fet);
+  }
   // An else that never finishes leaves the then arm's type (`merge_dependencies`).  A statement
   // `if` with a void then arm drops the else's value; a then arm's value beside a void else is
   // the join's, which the statement drops.  `(N-Join)`: `τ` beside `τ?` joins to `τ?`.
