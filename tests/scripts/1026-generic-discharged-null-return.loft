@@ -23,6 +23,11 @@
 // This file asserts the VALUES.  The two faults are read by the harness around it: the
 // `LOFT_POISON` sweep fails on the first, `LOFT_TEXT_TIMELINE` on the second — see
 // `tests/generic_discharged_return.rs`, which drives both plus the static signature oracle.
+//
+// @FR-N-Default: `a?` on a null `T?` answers the type's default — "" at text, 0 at integer, the
+//   declared field default at a record.
+// @FR-G-Mono: one template specialised at text, integer and a struct delivers the right value at
+//   each.
 
 struct P1026 { x: integer = 3 }
 

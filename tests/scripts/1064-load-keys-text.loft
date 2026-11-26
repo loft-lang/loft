@@ -17,6 +17,9 @@
 // Driven by `store_persist_loft.rs` with a scratch path: a relative path resolves
 // against the PROGRAM's directory (@PLN9), so a suite script must not write beside
 // itself. No path, nothing to do.
+//
+// @FR-S-Paged-Same: `store_load_keys_text` loads, for every key, the record the per-key load
+//   answers; an absent key is skipped.
 
 struct Blob1064 { bkey: text, payload: text }
 

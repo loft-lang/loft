@@ -36,6 +36,11 @@
 //
 // Sizes are pinned too, because "takes up less space" is the other half of the entry's
 // promise and it is the half that holds exactly.
+//
+// @FR-E-Uncomp-NN: `a: u8 = 250; a += 10` (local or field) takes the type's default 0.
+// @FR-N-Reserve: an `i32` stepped past its range lands on its reserved null code and reads `null`.
+// @FR-L-Narrow: `sizeof(u8)`, `sizeof(u16)`, `sizeof(i32)` and a `vector<u8>`'s size are 1, 2, 4
+//   and 1 byte per element.
 
 struct U1009 { a: u8, b: u16, c: i8 }
 struct L1009 { b: integer limit(0, 255) }
