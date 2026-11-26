@@ -50,9 +50,14 @@ fn refuse(why: text) -> Unit {
 // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`).
 MAX_CALL_DEPTH = 10000;
 
+// The line a stack overflow prints after its message (`runtime_error::STACK_OVERFLOW_HELP`),
+// stated in the unit so the runtime holds no copy of it.
+pub STACK_OVERFLOW_HELP = "help: a call that is the last thing its function does runs as a loop and needs no frame; a walk over deep data keeps the work still to do in a vector and loops over it";
+
 // Where a unit's runtime starts: gcc and clang are told not to report an unused helper of the
-// runtime, a library every unit carries whole.
-RUNTIME_START = "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n";
+// runtime, a library every unit carries whole, nor a helper that takes the store context first
+// without reading it, nor a piece of the runtime's state whose only reader the unit does not call.
+RUNTIME_START = "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#pragma GCC diagnostic ignored \"-Wunused-variable\"\n#endif\n";
 
 // Where it ends; the program's own functions after it are reported.
 pub RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
@@ -61,7 +66,7 @@ pub RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)
 // order `RUNTIME` holds them in src/c/mod.rs.  Null where one cannot be read, named in `missing`.
 pub fn runtime(dir: text, missing: &text) -> text? {
   out = "";
-  for name in ["loft_width.h", "loft_cc.h", "loft_cx.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h"] {
+  for name in ["loft_os.h", "loft_width.h", "loft_cc.h", "loft_cx.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_par_move.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_deliver_web.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h", "loft_ledger.h"] {
     part = file("{dir}/{name}").content();
     if part == null {
       missing = "{dir}/{name}";
@@ -280,7 +285,7 @@ fn empty_body(code: vector<ir::Node>) -> boolean {
 // The unit's defines (`unit_defines`) for a unit that reaches nothing but an empty `main`: no
 // locked store, no thread, none of the optional runtimes.
 fn unit_defines() -> text {
-  "#define LOFT_NO_LOCKS 1\n#define LOFT_NO_THREADS 1\n#define LOFT_MAX_CALL_DEPTH {MAX_CALL_DEPTH}\n"
+  "#define LOFT_NO_LOCKS 1\n#define LOFT_NO_THREADS 1\n#define LOFT_MAX_CALL_DEPTH {MAX_CALL_DEPTH}\n#define LOFT_STACK_OVERFLOW_HELP \"{STACK_OVERFLOW_HELP}\"\n"
 }
 
 // Always written (`Cx::type_name_table`): the heap ceiling's report names a type by it too.

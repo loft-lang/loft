@@ -12,7 +12,7 @@
 
 use cgen_transient;
 use ir;
-use cgen::(Cx, new_cx);
+use cgen::(Cx, new_cx, STACK_OVERFLOW_HELP);
 use cgen_w::*;
 use cgen_fn;
 use cgen_clibs;
@@ -300,7 +300,7 @@ fn defines(x: Cx, b: ir::Bundle, reached: vector<boolean>, max_depth: integer, r
     }
     json += "#define LOFT_NET 1\n{b.tls_lines}";
   }
-  "{head}{no_locks}{no_threads}{json}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n"
+  "{head}{no_locks}{no_threads}{json}{frame_defs}#define LOFT_MAX_CALL_DEPTH {max_depth}\n#define LOFT_STACK_OVERFLOW_HELP \"{STACK_OVERFLOW_HELP}\"\n"
 }
 
 // `reflects`: does the unit reach a reflection native (`unit_defines`' third answer)?
