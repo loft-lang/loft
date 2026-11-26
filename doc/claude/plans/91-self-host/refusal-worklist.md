@@ -165,6 +165,19 @@ of refused programs: every difference in a refused program that is not the refus
 itself, whether a knock-on refusal, a definition one side registers, or numbers shifted by a
 dropped definition.
 
+**The noise pools, ranked (try 1edef3fdb, 2026-11-26):**
+1. HELD, built: a package's own name in a `use` loads its manifest entry (Rust's
+   `probe_own_package`), `loft-front` abde82ef1.  Rust-only definitions 1689 → 1191, unscored
+   state rows 15814 → 10103, `engine_host/tests/local_kernel` refused → agree.  It exposes two
+   hidden differs in `lib/process` tests (a field read of a call's record answer: Rust's
+   `parse_part_inner` inline ref, sent to the porter).  It lands once the porter has ported that.
+2. Generic templates, about 300 Rust-only definitions in 6 programs (G-Mono 98, G-Regular 87 +
+   39, a-library-carries-generic-types 52, 25-generics 29, G-Type 26).  These are the porter's
+   T6: the instances follow the template's port.
+3. A lock-pinned registry dependency (`gridmesh` 0.2.6 via `loft.lock`): 188 definitions
+   (47 × 4 `audience_crystal` programs).  The routine is `resolve_pinned` /
+   `probe_governing_lock` (@C173), an S–M port.
+
 A construct the port refuses before it registers its definitions shifts the number of every
 definition after it, so those definitions differ in numbers only (`beside numbers`).  The fix at
 each site is to register what Rust registers, then refuse.  Done: the refused lambda
