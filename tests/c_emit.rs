@@ -9165,3 +9165,79 @@ fn a_binding_with_other_pointer_types_than_the_header_is_named() {
         "the refusal names the binding and the cure: {stderr}"
     );
 }
+
+/// @PLN229 B2 — a split build (`LOFT_C_UNITS=1`) caches each unit's object by its C: an edit to
+/// one function's body compiles that file's unit alone, and a change to a struct another file
+/// reads rebuilds the units that carry it.  The values are the check that no object is stale:
+/// with `z` added before `a`, a `main` unit linked from before the change reads `a` where the
+/// float now is.
+#[test]
+fn a_split_build_compiles_only_the_units_a_change_reaches() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("split-cache");
+    let _ = fa::remove_dir_all(dir.join(".loft"));
+    fa::create_dir_all(dir.join("lib")).expect("lib dir");
+    let geo = dir.join("lib").join("geo.loft");
+    let main = dir.join("main.loft");
+    fa::write(
+        &main,
+        "use geo;\nfn show(p: geo::P) -> text { \"{p.a} {p.b}\" }\n\
+         fn main() {\n  p = geo::mk(3);\n  println(\"{show(p)} {geo::label(5)}\");\n}\n",
+    )
+    .expect("write main");
+    let lib = |fields: &str, build: &str, label: &str| {
+        fa::write(
+            &geo,
+            format!(
+                "pub struct P {{ {fields} }}\npub fn mk(x: integer) -> P {{ P {{ {build} }} }}\n\
+                 pub fn label(x: integer) -> text {{ \"{label}\" }}\n"
+            ),
+        )
+        .expect("write geo");
+    };
+    let run = |want: &str| {
+        let out = loft::platform::process::harness_command(loft)
+            .current_dir(&dir)
+            .env("LOFT_C_UNITS", "1")
+            .env_remove("LOFT_NO_CACHE")
+            .env_remove("LOFT_C_LINT")
+            .arg("--native-c")
+            .arg(&main)
+            .output()
+            .expect("run loft --native-c");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            want,
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    };
+    let objects = || {
+        fa::read_dir(fa::PathText::from_os(&dir.join(".loft").join("cache").join("units")))
+            .map(|e| e.len())
+            .unwrap_or(0)
+    };
+    lib("pub a: integer, pub b: integer", "a: x * 10, b: x + 7", "geo{x}");
+    run("30 10 geo5\n");
+    let cold = objects();
+    assert!(cold >= 3, "every unit is cached: {cold}");
+    lib("pub a: integer, pub b: integer", "a: x * 10, b: x + 7", "geo-{x}!");
+    run("30 10 geo-5!\n");
+    assert_eq!(objects(), cold + 1, "a body edit compiles its own unit only");
+    lib(
+        "pub z: float, pub a: integer, pub b: integer",
+        "z: 1.5, a: x * 10, b: x + 7",
+        "geo-{x}!",
+    );
+    run("30 10 geo-5!\n");
+    assert!(
+        objects() >= cold + 3,
+        "the struct change rebuilt geo's unit and main's: {} after {}",
+        objects(),
+        cold + 1
+    );
+    let _ = fa::remove_dir_all(&dir);
+}
