@@ -59,6 +59,11 @@ pub fn reads_over(n: ir::Node, tv: ir::Function, h: integer) -> boolean {
 // one (`instantiate`).
 pub fn instance_for(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   inst = el_ex_object::generic_instance(e, g, types);
+  // An instance registered by its signature only (`refused_instances`) is refused at every call.
+  if inst >= 0 && e.refused_instances.contains(inst) {
+    el::refuse(e, "a call of a generic instance this port refused to fill");
+    return -1;
+  }
   if inst < 0 { instantiate(e, g, types) } else { inst }
 }
 
@@ -146,25 +151,6 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     el::refuse(e, "a generic call whose argument types bind no type");
     return -1;
   }
-  // Every variable the call binds: each bound type one this port instantiates at.
-  for bt in b!.types {
-    kind = bound_refused(e, bt);
-    if kind != "" {
-      el::refuse(e, "a generic instance at this type: {kind}");
-      return -1;
-    }
-  }
-  // (A tuple holding a text is answered BOXED, in its `__tuple<…>` record (`boxed_tuple_return`):
-  // an instance at one whose result names the variable — `fn first<T>(v) -> T?` — is not
-  // carried; one answering something else, `same` / `differ`, is.)
-  for bh in b!.vars {
-    btt = b!.types[bh#index] ?? ir::TyVoid;
-    texty = match el_types::base(btt) { TyTuple { elems: bte } => len([for m in bte if el_types::base(m) is TyText { 1 }]) > 0, _ => false };
-    if texty && type_mentions(tmpl.returned[0] ?? ir::TyVoid, bh) {
-      el::refuse(e, "a generic instance answering a tuple with a text member (boxed)");
-      return -1;
-    }
-  }
   // (Asked before the instance is declared — a refusal after `add_def` leaves a definition Rust
   // does not have, and every later one is numbered one off: a bound's method this binding has
   // no builtin for.)
@@ -177,35 +163,44 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
     }
   }
   nm = el_ex_object::instance_name(e, g, b!);
+  // The shapes this port does not instantiate at, the first one met.  Rust mints the instance at
+  // each of them, so it is registered by its signature (register, then refuse) and refused.
+  why = "";
+  // Every variable the call binds: each bound type one this port instantiates at.
+  for bt in b!.types {
+    kind = bound_refused(e, bt);
+    if kind != "" && why == "" {
+      why = "a generic instance at this type: {kind}";
+    }
+  }
+  // (A tuple holding a text is answered BOXED, in its `__tuple<…>` record (`boxed_tuple_return`):
+  // an instance at one whose result names the variable — `fn first<T>(v) -> T?` — is not
+  // carried; one answering something else, `same` / `differ`, is.)
+  for bh in b!.vars {
+    btt = b!.types[bh#index] ?? ir::TyVoid;
+    texty = match el_types::base(btt) { TyTuple { elems: bte } => len([for m in bte if el_types::base(m) is TyText { 1 }]) > 0, _ => false };
+    if texty && type_mentions(tmpl.returned[0] ?? ir::TyVoid, bh) && why == "" {
+      why = "a generic instance answering a tuple with a text member (boxed)";
+    }
+  }
   for hv in b!.vars {
     for a in tmpl.attributes {
-      if !bare_over(a.typedef[0] ?? ir::TyVoid, hv) {
-        el::refuse(e, "a generic parameter over the type variable in another shape");
-        return -1;
+      if !bare_over(a.typedef[0] ?? ir::TyVoid, hv) && why == "" {
+        why = "a generic parameter over the type variable in another shape";
       }
     }
-    if !bare_over(tmpl.returned[0] ?? ir::TyVoid, hv) {
-      el::refuse(e, "a generic result over the type variable in another shape");
-      return -1;
+    if !bare_over(tmpl.returned[0] ?? ir::TyVoid, hv) && why == "" {
+      why = "a generic result over the type variable in another shape";
     }
   }
-  d = el::add_def(e, nm, tmpl.position, el::DT_FUNCTION);
-  for a in tmpl.attributes {
-    at = a.typedef[0] ?? ir::TyVoid;
-    for hv in b!.vars {
-      at = substitute(at, hv, b!.types[hv#index] ?? ir::TyVoid);
+  if why != "" {
+    if nm != "" && el::def_nr(e, nm) < 0 {
+      e.refused_instances += [signature_instance(e, g, b!, nm)];
     }
-    na = el::attribute(a.name, at);
-    na.value = a.value;
-    na.value_const = a.value_const;
-    na.hidden = a.hidden;
-    e.b.data.definitions[d].attributes += [na];
+    el::refuse(e, why);
+    return -1;
   }
-  rt = tmpl.returned[0] ?? ir::TyVoid;
-  for hv in b!.vars {
-    rt = substitute(rt, hv, b!.types[hv#index] ?? ir::TyVoid);
-  }
-  el::set_returned(e, d, rt);
+  d = signature_instance(e, g, b!, nm);
   // `rewrite_vector_write_triplets` registers `vector<T>`'s row on the first fill, at the call.
   for bt in b!.types {
     // (`is_rewritable_vector_element_target`: a primitive, a record or a tuple — not a vector
@@ -222,6 +217,33 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
   } else if !fill_all(e, d, g, b!.vars, b!.types) {
     return -1;
   }
+  d
+}
+
+// The instance `nm` of template `g` at binding `b`, declared with the template's parameters and
+// result, each variable replaced by what `b` binds it to (`instantiate_template`'s `add_def`
+// and its signature); its body is not filled here.
+fn signature_instance(e: el::El, g: integer, b: el_ex_object::Binding, nm: text) -> integer {
+  d = el::add_def(e, nm, ir::Position { ..el::def(e, g).position }, el::DT_FUNCTION);
+  ai = 0;
+  while ai < len(el::def(e, g).attributes) {
+    a = ir::Attribute { ..el::def(e, g).attributes[ai]! };
+    at = a.typedef[0] ?? ir::TyVoid;
+    for hv in b.vars {
+      at = substitute(at, hv, b.types[hv#index] ?? ir::TyVoid);
+    }
+    na = el::attribute(a.name, at);
+    na.value = a.value;
+    na.value_const = a.value_const;
+    na.hidden = a.hidden;
+    e.b.data.definitions[d].attributes += [na];
+    ai += 1;
+  }
+  rt = el::def(e, g).returned[0] ?? ir::TyVoid;
+  for hv in b.vars {
+    rt = substitute(rt, hv, b.types[hv#index] ?? ir::TyVoid);
+  }
+  el::set_returned(e, d, rt);
   d
 }
 

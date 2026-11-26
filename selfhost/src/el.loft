@@ -186,6 +186,9 @@ pub struct El {
   // `Parser::pass2_bodies`: the generic templates whose second-pass body has been read
   pub bodies2: vector<integer>,
   pub stale: vector<StaleInstance>,
+  // Generic instances registered by their signature only, at a call this port refuses (Rust
+  // mints them there): every later call of one is refused too, never lowered to a body-less def.
+  pub refused_instances: vector<integer>,
   // The lambda being read: the enclosing function's locals it captures, its closure record and
   // the `__closure` parameter they are read through (-1 where there is none yet).
   pub captures: vector<Capture>,
@@ -291,6 +294,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     type_vars: [],
     bodies2: [],
     stale: [],
+    refused_instances: [],
     captures: [],
     shared_vecs: [],
     closure_rec: -1,
