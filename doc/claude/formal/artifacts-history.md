@@ -34,6 +34,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   units to spare.  A hosted unit now asks the running loft where the component is
   (`HostedTable::component`), and the key names the stamp alone.
 
+- **One list for every environment key (2026-11-26).**  The unit key first had a list of its
+  own beside the program cache's `INERT_ENV`; the two drifted at once — the unit's lacked the
+  timing, build-stamp and grace switches the program cache had verified inert, and both lacked
+  `LOFT_TRACE_NATIVE_GATE`, so a traced user run did not adopt a published unit and, with no C
+  compiler, ran the library interpreted.  The lists were merged into `cache::INERT_ENV`, each
+  entry naming the key it is inert for, read through `cache::env_counts_for`.
+
 ## Deviations carried by artifacts.md until 2026-11-26
 
 - **D-art-1 (CLOSED, [loft#2654](https://github.com/loft-lang/loft/issues/2654))** — violated

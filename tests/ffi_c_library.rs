@@ -549,10 +549,11 @@ fn a_component_built_against_another_loft_ffi_is_refused_without_build_advice() 
 }
 
 /// `@FR-Art-Inert`: the release builds the library units it publishes under inert switches only.
-/// A switch the release sets that is not on `INERT_SWITCHES` is in those units' keys and in no
-/// user's, so no user would ever adopt a published unit — they would all rebuild, and a machine
-/// with no C compiler would interpret, with nothing reporting it.  Every `LOFT_*` name the
-/// release workflow or its library-artifact script sets is on the list.
+/// A switch the release sets that counts for a unit (`cache::INERT_ENV` does not leave it out
+/// for `EnvKey::Unit`) is in those units' keys and in no user's, so no user would ever adopt a
+/// published unit — they would all rebuild, and a machine with no C compiler would interpret,
+/// with nothing reporting it.  Every `LOFT_*` name the release workflow or its library-artifact
+/// script sets is inert for a unit.
 /// @falsified-at: 7f512272d — by hand: with `LOFT_NO_CACHE` off `INERT_SWITCHES`, the test
 /// fails naming it (`scripts/release-lib-artifacts.sh` sets it).
 #[test]
@@ -583,7 +584,7 @@ fn the_release_builds_its_units_under_inert_switches_only() {
     );
     let live: Vec<_> = named
         .iter()
-        .filter(|(_, n)| !loft::opt::native_key::INERT_SWITCHES.contains(&n.as_str()))
+        .filter(|(_, n)| loft::cache::env_counts_for(n, loft::cache::EnvKey::Unit))
         .collect();
     assert!(
         live.is_empty(),
@@ -601,6 +602,7 @@ fn the_release_builds_its_units_under_inert_switches_only() {
 /// the other two have one each, so three units.  The C backend keys its program build on
 /// its C text, so only the interpreter adopts a unit by this key.
 /// @falsified-at: ebe1bd76b — the four runs leave 1 unit, 3 wanted.
+/// @falsified-at: 03f985719 — the traced run builds its own: 4 units, 3 wanted.
 #[test]
 fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
     let dir = std::env::temp_dir().join(format!("loft_unit_switch_key_{}", std::process::id()));

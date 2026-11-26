@@ -256,51 +256,15 @@ pub(crate) fn component_fingerprint(contributing: &[String]) -> u64 {
     h.finish()
 }
 
-/// The `LOFT_*` switches that cannot change the code a unit is generated with (`@FR-Art-Inert`):
-/// where files are, how long a run may take, what it logs, what the RUNTIME reads when it runs.
-/// Every other `LOFT_*` switch set in the environment is part of a unit's key
-/// ([`generation_switches`]).  A name belongs here only when no generator reads it: a switch
-/// missing from this list costs a rebuild, one wrongly on it lets a unit built for other code be
-/// adopted.  Exact names only — no prefix, since a family such as `LOFT_TRACE_*` holds both kinds.
-pub const INERT_SWITCHES: &[&str] = &[
-    "LOFT_HOME",          // where the caches and the registry live
-    "LOFT_LIB",           // where libraries are found: which ones is the contributing key's
-    "LOFT_LIB_PATH",      // the same
-    "LOFT_COMPONENTS",    // where components are found: which one is the component key's
-    "LOFT_TMPDIR",        // where scratch goes
-    "LOFT_SUITE_DIR",     // where the language suite is checked out
-    "LOFT_REGISTRY_URL",  // which registry is asked: the versions are the contributing key's
-    "LOFT_REGISTRY_SEED", // the seed of that registry's cache
-    "LOFT_OFFLINE",       // whether the registry may be asked
-    "LOFT_TIMEOUT",       // how long a run may take
-    "LOFT_MEMORY_LIMIT",  // how much store memory a run may hold
-    "LOFT_LOG",           // what is logged, and where
-    "LOFT_LOG_CONF",      // the same
-    "LOFT_TIMING",        // phase timings printed
-    "LOFT_KEEP_NATIVE_C", // whether the generated C is kept beside the unit
-    "LOFT_NO_CACHE",      // whether caches are read: the release builds its units under it
-    "LOFT_VERSION",       // read by no loft code; the release's jobs set it
-    "LOFT_FAKE_NOW_MS",   // the clock the runtime reads
-    "LOFT_FAKE_TICKS_US", // the same
-    "LOFT_FAULT_LOG",     // where the runtime writes its faults
-    "LOFT_DEBUG_TOKEN",   // the debug channel's token
-    "LOFT_DEBUG_CONTROL", // the debug control channel
-];
-
-/// Every `LOFT_*` switch set in this process that is not inert (`@FR-Art-Key`, `@FR-Art-Inert`),
-/// by name and value: a cure switch, a width, a generator's own switch all change the code a unit
-/// is generated with, so a unit built under one setting is never adopted under another.  The
-/// setting a run inherits from its environment is what it generates with, so that is what is
-/// read; the order is the names' own.
+/// Every `LOFT_*` switch set in this process that counts for a unit (`@FR-Art-Key`,
+/// `@FR-Art-Inert`): the environment key the program cache uses, asked for a unit
+/// ([`crate::cache::env_signature`] with [`crate::cache::EnvKey::Unit`]).  A cure switch, a
+/// width, a generator's own switch all change the code a unit is generated with, so a unit built
+/// under one setting is never adopted under another.
 pub(crate) fn generation_switches() -> u64 {
     use std::hash::{Hash, Hasher};
-    let mut set: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("LOFT_") && !INERT_SWITCHES.contains(&k.as_str()))
-        .collect();
-    set.sort_unstable();
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    set.hash(&mut h);
+    crate::cache::env_signature(crate::cache::EnvKey::Unit).hash(&mut h);
     h.finish()
 }
 

@@ -340,68 +340,121 @@ pub fn stdlib_cache_key(default_dir: &str, stdlib_sources: &[(String, String)]) 
     h.finalize().into()
 }
 
-/// The `LOFT_*` variables verified to change neither the parsed `Data` nor the emitted code:
-/// watchdog and memory bounds, timing, the cache's own knobs, the diagnostic renderer, the
-/// scratch dir and the source anchor a native binary reads at run time.  An ALLOW-list,
-/// because the `LOFT_*` surface is large and scattered — every lowering and every `--native`
-/// rewrite has a `LOFT_NO_*` switch, read where it acts — so a list of the variables that DO
-/// matter drifts the moment someone adds one (`LOFT_NO_WORK_BUFFER` was missing from the one
-/// kept here, and a bundle written under it was warm-loaded by the next default run, which
-/// then emitted the unpromoted program; loft#1697).  Anything not named here counts, which
-/// costs a warm start and never a wrong answer.
-pub const INERT_ENV: &[&str] = &[
+/// Which cached artefact an environment key is for.  Every cache keyed on the environment asks
+/// the one table [`INERT_ENV`] through [`env_counts_for`], so the two keys cannot drift.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EnvKey {
+    /// A cached parse — the program cache, the stdlib image — and the native fast path that
+    /// stands in for one: a switch counts when it can change what a run parses or emits, or
+    /// when the run must parse because it reports on the parse.
+    Parse,
+    /// A library's compiled unit (`native-auto/`, `@FR-Art-Key`): a switch counts when it can
+    /// change the code the unit is generated with.
+    Unit,
+}
+
+/// The `LOFT_*` variables left out of a key, each with the key it is inert for (`@FR-Art-Inert`).
+/// `EnvKey::Parse`: verified to change neither the parsed `Data` nor the emitted code — watchdog
+/// and memory bounds, timing, the cache's own knobs, the diagnostic renderer, the scratch dir and
+/// the source anchor a native binary reads at run time — so inert for a unit as well.
+/// `EnvKey::Unit`: inert for a unit only.  An ALLOW-list, because the `LOFT_*` surface is large
+/// and scattered — every lowering and every `--native` rewrite has a `LOFT_NO_*` switch, read
+/// where it acts — so a list of the variables that DO matter drifts the moment someone adds one
+/// (`LOFT_NO_WORK_BUFFER` was missing from the one kept here, and a bundle written under it was
+/// warm-loaded by the next default run, which then emitted the unpromoted program; loft#1697).
+/// Anything not named here counts, which costs a warm start or a rebuild and never a wrong
+/// answer.  Exact names only — no prefix, since a family such as `LOFT_TRACE_*` holds both kinds.
+pub const INERT_ENV: &[(&str, EnvKey)] = &[
     // The backend `--native` drives: the native fast path's fingerprint carries it.
-    "LOFT_NATIVE_BACKEND",
-    "LOFT_TIMING",
-    "LOFT_TIMING_LEDGER",
-    "LOFT_TIMING_TEST",
-    "LOFT_TIMEOUT",
-    "LOFT_TIMEOUT_GRACE",
-    "LOFT_MEMORY_LIMIT",
-    "LOFT_PROGRAM_CACHE",
-    "LOFT_STDLIB_CACHE",
-    "LOFT_CACHE_MAX_MB",
-    "LOFT_CACHE_TTL_HOURS",
-    "LOFT_ERRORS",
-    "LOFT_TMPDIR",
-    "LOFT_TMPFS_MIN_FREE_MB",
-    "LOFT_SOURCE_DIR",
+    ("LOFT_NATIVE_BACKEND", EnvKey::Parse),
+    ("LOFT_TIMING", EnvKey::Parse),
+    ("LOFT_TIMING_LEDGER", EnvKey::Parse),
+    ("LOFT_TIMING_TEST", EnvKey::Parse),
+    ("LOFT_TIMEOUT", EnvKey::Parse),
+    ("LOFT_TIMEOUT_GRACE", EnvKey::Parse),
+    ("LOFT_MEMORY_LIMIT", EnvKey::Parse),
+    ("LOFT_PROGRAM_CACHE", EnvKey::Parse),
+    ("LOFT_STDLIB_CACHE", EnvKey::Parse),
+    ("LOFT_CACHE_MAX_MB", EnvKey::Parse),
+    ("LOFT_CACHE_TTL_HOURS", EnvKey::Parse),
+    ("LOFT_ERRORS", EnvKey::Parse),
+    ("LOFT_TMPDIR", EnvKey::Parse),
+    ("LOFT_TMPFS_MIN_FREE_MB", EnvKey::Parse),
+    ("LOFT_SOURCE_DIR", EnvKey::Parse),
     // loft#1859 — the build script's own stamps.  `cargo test` and `cargo run` export them
     // into the process they start, while an installed binary sees none, so counting them
     // keyed every test binary apart from the `loft` binary of the same build.  Nothing reads
     // them at run time: the build's values are compiled in (`env!`) and already in the key.
-    "LOFT_BUILD_ID",
-    "LOFT_BUILD_RUSTC",
-    "LOFT_BUILD_REMAPPED",
-    "LOFT_BUILD_RUSTFLAGS",
-    "LOFT_BUILD_STAMP",
-    "LOFT_BUILD_TARGET",
-    "LOFT_FFI_FINGERPRINT",
+    ("LOFT_BUILD_ID", EnvKey::Parse),
+    ("LOFT_BUILD_RUSTC", EnvKey::Parse),
+    ("LOFT_BUILD_REMAPPED", EnvKey::Parse),
+    ("LOFT_BUILD_RUSTFLAGS", EnvKey::Parse),
+    ("LOFT_BUILD_STAMP", EnvKey::Parse),
+    ("LOFT_BUILD_TARGET", EnvKey::Parse),
+    ("LOFT_FFI_FINGERPRINT", EnvKey::Parse),
     // loft#2532 — the cache's own trace.  Counting it keyed a traced run apart from the run it
     // was meant to watch, so the trace could only ever report on a slot nobody else reads.
-    "LOFT_TRACE_WARM",
+    ("LOFT_TRACE_WARM", EnvKey::Parse),
     // The switch of the image-identity check (`keys::bundle_identity_off`): it decides which
     // cached image a warm load may take, never what a parse produces, so it shares the slot.
-    "LOFT_NO_BUNDLE_IDENTITY",
+    ("LOFT_NO_BUNDLE_IDENTITY", EnvKey::Parse),
+    // ── Inert for a library unit only.  A run under these must still parse — it looks for its
+    // libraries, components or registry somewhere else, or it reports on the parse — but the
+    // code a unit is generated with is the same: which libraries and components it carries is
+    // the unit's contributing and component keys', and the rest is read when the program RUNS.
+    ("LOFT_HOME", EnvKey::Unit), // where the caches and the registry live
+    ("LOFT_LIB", EnvKey::Unit),  // where libraries are found
+    ("LOFT_LIB_PATH", EnvKey::Unit), // the same
+    ("LOFT_COMPONENTS", EnvKey::Unit), // where components are found
+    ("LOFT_SUITE_DIR", EnvKey::Unit), // where the language suite is checked out
+    ("LOFT_REGISTRY_URL", EnvKey::Unit), // which registry is asked
+    ("LOFT_REGISTRY_SEED", EnvKey::Unit), // the seed of that registry's cache
+    ("LOFT_OFFLINE", EnvKey::Unit), // whether the registry may be asked
+    ("LOFT_LOG", EnvKey::Unit),  // what is logged, and where
+    ("LOFT_LOG_CONF", EnvKey::Unit), // the same
+    ("LOFT_TRACE_NATIVE_GATE", EnvKey::Unit), // how each library splits; `=only` builds nothing
+    ("LOFT_CC", EnvKey::Unit),   // which compiler builds the unit's C, not what it is
+    ("LOFT_REQUIRE_NATIVE", EnvKey::Unit), // whether a run may interpret instead
+    ("LOFT_NO_NATIVE_LIBS", EnvKey::Unit), // whether units are used at all
+    ("LOFT_NATIVE_NO_CACHE", EnvKey::Unit), // whether the native caches are read
+    ("LOFT_KEEP_NATIVE_C", EnvKey::Unit), // whether the generated C is kept beside the unit
+    ("LOFT_NO_CACHE", EnvKey::Unit), // whether caches are read; the release sets it
+    ("LOFT_VERSION", EnvKey::Unit), // read by no loft code; the release's jobs set it
+    ("LOFT_FAKE_NOW_MS", EnvKey::Unit), // the clock the runtime reads
+    ("LOFT_FAKE_TICKS_US", EnvKey::Unit), // the same
+    ("LOFT_FAULT_LOG", EnvKey::Unit), // where the runtime writes its faults
+    ("LOFT_DEBUG_TOKEN", EnvKey::Unit), // the debug channel's token
+    ("LOFT_DEBUG_CONTROL", EnvKey::Unit), // the debug control channel
 ];
 
-/// Whether `name` is an environment variable that may change what a run parses or emits:
-/// any `LOFT_*` outside [`INERT_ENV`].
+/// Whether `name` is an environment variable that is part of `key`: any `LOFT_*` not on
+/// [`INERT_ENV`] for that key.  An entry inert for a parse is inert for a unit too: what
+/// changes neither the parse nor the emitted code changes no generated unit.
 #[must_use]
-pub fn env_counts(name: &str) -> bool {
-    name.starts_with("LOFT_") && !INERT_ENV.contains(&name)
+pub fn env_counts_for(name: &str, key: EnvKey) -> bool {
+    name.starts_with("LOFT_")
+        && !INERT_ENV
+            .iter()
+            .any(|&(n, k)| n == name && (k == key || k == EnvKey::Parse))
 }
 
-/// Every counting `LOFT_*` variable with its value, sorted by name: two runs that differ in
-/// any of them must never share a cached parse.  A switch-ON sweep otherwise poisons a later
-/// switch-OFF run of the same file (observed: the @PLN85 54-cell over-free map read 0/54
-/// switch-OFF right after a switch-ON run — the real count was 6/54).
+/// Whether `name` is an environment variable that may change what a run parses or emits
+/// ([`env_counts_for`] with [`EnvKey::Parse`]).
 #[must_use]
-fn semantic_env_signature() -> String {
+pub fn env_counts(name: &str) -> bool {
+    env_counts_for(name, EnvKey::Parse)
+}
+
+/// Every `LOFT_*` variable counting for `key`, with its value, sorted by name: two runs that
+/// differ in any of them must never share what `key` caches.  A switch-ON sweep otherwise
+/// poisons a later switch-OFF run of the same file (observed: the @PLN85 54-cell over-free map
+/// read 0/54 switch-OFF right after a switch-ON run — the real count was 6/54).
+#[must_use]
+pub fn env_signature(key: EnvKey) -> String {
     let mut vars: Vec<(String, String)> = std::env::vars_os()
         .filter_map(|(k, v)| {
             let k = k.to_string_lossy().into_owned();
-            env_counts(&k).then(|| (k, v.to_string_lossy().into_owned()))
+            env_counts_for(&k, key).then(|| (k, v.to_string_lossy().into_owned()))
         })
         .collect();
     vars.sort_unstable();
@@ -413,6 +466,12 @@ fn semantic_env_signature() -> String {
         sig.push(';');
     }
     sig
+}
+
+/// The environment part of a cached parse's key ([`env_signature`] for [`EnvKey::Parse`]).
+#[must_use]
+fn semantic_env_signature() -> String {
+    env_signature(EnvKey::Parse)
 }
 
 /// The target triple this binary was built for, e.g.

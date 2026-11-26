@@ -33,10 +33,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
   (Art-Inert)  a switch is left out of a unit's key only when no generator reads it, and the
                switches left out are ONE explicit list, by exact name (no prefix: one family
-               holds both kinds), each with what it governs instead: `INERT_SWITCHES`.  A
-               switch missing from the list costs a rebuild; a switch on it changes no
-               generated code.  The units the release publishes are built under inert
-               switches only, so a user's key and the release's agree.
+               holds both kinds), each with what it governs instead and the key it is inert
+               for: `cache::INERT_ENV`, the list every cache keyed on the environment reads.
+               A switch inert for a cached parse is inert for a unit; one inert for a unit
+               only (a path, a log, a trace) still counts for a parse, which a run under it
+               must make.  A switch missing from the list costs a rebuild; a switch on it
+               changes no generated code.  The units the release publishes are built under
+               inert switches only, so a user's key and the release's agree.
 
   (Art-Name)   the key is part of the unit's file name, and a unit is adopted only after it
                answers that key itself.  Two keys never share a file, so two runs with
