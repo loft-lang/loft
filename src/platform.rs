@@ -2658,6 +2658,64 @@ pub fn exit_signal(status: std::process::ExitStatus) -> Option<i32> {
     }
 }
 
+/// Windows' `STATUS_STACK_OVERFLOW`, the exit code of a process whose stack ran out.
+pub const STATUS_STACK_OVERFLOW: i32 = 0xC000_00FD_u32 as i32;
+/// Windows' `STATUS_ACCESS_VIOLATION`, the exit code of a process that touched memory it
+/// does not hold.
+pub const STATUS_ACCESS_VIOLATION: i32 = 0xC000_0005_u32 as i32;
+
+/// How a child process crashed: what to call it, whether it was a memory fault (where a
+/// recursion deeper than the stack holds ends), and the exit code a shell gives it.
+pub struct Crash {
+    pub what: String,
+    pub memory: bool,
+    pub code: i32,
+}
+
+/// How a child process crashed, or `None` when it ended on its own (an exit code) or someone
+/// stopped it (an interrupt, a hang-up, a termination request, a closed pipe).  A Unix host
+/// ends it with a signal, and a stack overflow there is a `SIGSEGV` or `SIGBUS` like any other
+/// memory fault; Windows ends it with a status code that names a stack overflow as such.
+/// Approved exemption: the two hosts report a crash in different forms, and this is where they
+/// are made one.
+#[must_use]
+pub fn crash_of(status: std::process::ExitStatus) -> Option<Crash> {
+    #[cfg(unix)]
+    {
+        let sig = exit_signal(status)?;
+        if [libc::SIGINT, libc::SIGHUP, libc::SIGTERM, libc::SIGPIPE].contains(&sig) {
+            return None;
+        }
+        let memory = sig == libc::SIGSEGV || sig == libc::SIGBUS;
+        let what = match sig {
+            libc::SIGSEGV => "a segmentation fault (SIGSEGV)".to_string(),
+            libc::SIGBUS => "a bus error (SIGBUS)".to_string(),
+            libc::SIGABRT => "an abort (SIGABRT)".to_string(),
+            libc::SIGKILL => "killed (SIGKILL)".to_string(),
+            _ => format!("signal {sig}"),
+        };
+        Some(Crash {
+            what,
+            memory,
+            code: 128 + sig,
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let code = status.code()?;
+        let what = match code {
+            STATUS_STACK_OVERFLOW => "its stack ran out (STATUS_STACK_OVERFLOW)",
+            STATUS_ACCESS_VIOLATION => "a memory fault (STATUS_ACCESS_VIOLATION)",
+            _ => return None,
+        };
+        Some(Crash {
+            what: what.to_string(),
+            memory: true,
+            code,
+        })
+    }
+}
+
 /// Can a library declared `placement = "process"` run in a worker process on this host?
 /// Windows: `false` — the library runs in-process, and `LOFT_REQUIRE_PLACEMENT=1` refuses;
 /// approved exemption: the transport's shared file mapping and the worker's parent-death

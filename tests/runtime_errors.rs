@@ -877,6 +877,10 @@ fn i1058_the_call_stack_budget_is_the_same_on_both_backends() {
         err.contains("error: call stack overflow — exceeded 10000 stack frames"),
         "the cap is part of the message, on both backends; got: {err}"
     );
+    assert!(
+        err.contains(loft::runtime_error::STACK_OVERFLOW_HELP),
+        "the overflow names what to write instead, on both backends; got: {err}"
+    );
 }
 
 /// An overflow inside a lazy-store DRIVER is contained, like every other fault there.

@@ -3961,6 +3961,64 @@ fn native_deep_recursion_reports_clean_stack_overflow() -> std::io::Result<()> {
     Ok(())
 }
 
+/// A shipped program has no call cap: it recurses as deep as the hardware allows, and only
+/// then crashes — and a crash is named, not a silent exit code.  A development build keeps
+/// the cap (the test above): it stops a runaway recursion before it takes the machine along.
+///
+/// The first program recurses 20 000 deep, twice the development cap, with a frame small
+/// enough for any host's stack.  The second recurses without end, holding texts across each
+/// call so no compiler turns it into a loop; it ends when the stack runs out.
+#[test]
+fn a_shipped_program_recurses_past_the_development_cap_and_names_its_crash() -> std::io::Result<()>
+{
+    let _guard = native_suite_lock()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let run = |name: &str, source: &str| -> std::io::Result<(String, String, Option<i32>)> {
+        let path = std::env::temp_dir().join(format!("loft_ship_depth_{name}.loft"));
+        fa::write(&path, source)?;
+        let out = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"))
+            .arg("--ship")
+            .arg(&path)
+            .env("LOFT_TIMEOUT", "300")
+            .output()?;
+        let _ = fa::remove_file(&path);
+        Ok((
+            String::from_utf8_lossy(&out.stdout).trim().to_string(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+            out.status.code(),
+        ))
+    };
+    let (out, err, code) = run(
+        "deep",
+        "fn down(n: integer) -> integer { if n == 0 { 0 } else { 1 + down(n - 1) } }\n\
+         fn main() { println(\"{down(20000)}\"); }\n",
+    )?;
+    assert_eq!(
+        (out.as_str(), code),
+        ("20000", Some(0)),
+        "a shipped build has no call cap; stderr: {err}"
+    );
+    let (_, err, code) = run(
+        "runaway",
+        "fn recur(n: integer, s: text) -> integer {\n\
+         \x20 a = \"{s}{n}\"; b = \"{a}-{n}\";\n\
+         \x20 m = recur(n + 1, s);\n\
+         \x20 m + len(a) + len(b)\n\
+         }\n\
+         fn main() { println(\"{recur(0, \"x\")}\"); }\n",
+    )?;
+    assert!(
+        code.is_some_and(|c| c != 0),
+        "a crash ends non-zero; stderr: {err}"
+    );
+    assert!(
+        err.contains("error: the program crashed: ") && err.contains("loft --interpret "),
+        "a crash is named, with the run that stops the recursion at its line; stderr: {err}"
+    );
+    Ok(())
+}
+
 /// Library packages whose tests do not compile or run under `--native`.
 const LIB_PKGS_NATIVE_SKIP: &[&str] = &[
     // (empty) An entry here names a package whose tests do not compile or run

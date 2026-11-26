@@ -145,7 +145,20 @@ made once for the whole box: drawing laid-out text runs at 1.5 times Rust.
 because the wrapper reports the same version.  The compiler's path is now part of the build's
 key.
 
+**A shipped program recurses as deep as the machine allows.**  A `--ship` build no longer stops a
+recursion at 10 000 calls: it runs until the machine's stack is full.  A development build
+(`loft prog.loft`, `--interpret`, `--native-debug`) keeps the limit, so a runaway recursion stops
+at its line instead of taking the machine along, and the message now says what to write instead:
+a call that is the last thing its function does runs as a loop, and a walk over deep data can keep
+the work still to do in a vector.
+
 ### Bug fixes
+
+**A compiled program that crashes says so.**  When a program built by `loft prog.loft` or
+`--ship` crashed, loft ended with exit code 1 and printed nothing.  It now names the crash (a
+segmentation fault, say), ends with the exit code the program itself had, and for a memory fault,
+where a recursion deeper than the stack ends, names `loft --interpret`, which stops such a
+recursion at its line.
 
 **`loft debug` runs a program that imports a library with `use lib::*;` when the library takes
 a tuple.**  The session stopped before the program ran, with an internal assertion about an

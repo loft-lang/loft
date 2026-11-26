@@ -261,11 +261,6 @@ fn records_clean_on_generated_fuzz_corpus() {
     );
 }
 
-/// The problem count over `tests/scripts` and every language-suite program may only fall.
-/// Each line is a records gap or a compiler defect (STORE_RECORDS.md § Every new defect); one
-/// resolved lowers the baseline.
-const LIFETIME_BASELINE: usize = 6;
-
 /// The programs the ratchet must read a report of, at least: every compiling program of
 /// `tests/scripts` and the suite reports, so a sweep that read far fewer read silence.
 const LIFETIME_REPORTS_FLOOR: usize = 3000;
@@ -304,19 +299,14 @@ fn records_lifetime_ratchet() {
         "the ratchet read only {reports} lifetime reports (floor {LIFETIME_REPORTS_FLOOR}): \
          most programs did not compile"
     );
+    // Every program over `tests/scripts` and the suite reads clean: a line is a records gap or a
+    // compiler defect, fixed in the three places (STORE_RECORDS.md § Every new defect).
     assert!(
-        found.len() <= LIFETIME_BASELINE,
-        "lifetime problems REGRESSED: {} > baseline {LIFETIME_BASELINE}:\n{}",
+        found.is_empty(),
+        "lifetime problems ({}), each a records gap or a compiler defect:\n{}",
         found.len(),
         found.join("\n")
     );
-    if found.len() < LIFETIME_BASELINE {
-        eprintln!(
-            "lifetime ratchet PROGRESS: {} < {LIFETIME_BASELINE} — lower LIFETIME_BASELINE to {}.",
-            found.len(),
-            found.len()
-        );
-    }
     eprintln!(
         "lifetime ratchet: {} problem(s) over {reports} report(s)",
         found.len()

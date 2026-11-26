@@ -64,28 +64,6 @@ pub fn program_roots() -> Option<Roots> {
         .clone()
 }
 
-/// The roots a unit or a generated program names its sources from: `hosted_root` for a hosted
-/// unit (its package's parent), else the directory of the program's `main`; and the directory
-/// the standard library was read from.  Either is empty when the definitions hold none.
-#[must_use]
-pub fn roots_of(data: &crate::data::Data, hosted_root: Option<String>) -> Roots {
-    let file_of = |d: u32| {
-        (d < data.definitions())
-            .then(|| data.def(d).position.file.to_string())
-            .filter(|f| !f.is_empty())
-    };
-    let std_file = (0..data.definitions())
-        .find(|&d| data.def(d).source == crate::data::STD_SOURCE && file_of(d).is_some())
-        .and_then(file_of)
-        .unwrap_or_default();
-    let mut roots = Roots::of("", &std_file);
-    roots.main_dir = match hosted_root {
-        Some(root) => root,
-        None => program_dir(&file_of(data.def_nr("n_main")).unwrap_or_default()),
-    };
-    roots
-}
-
 /// The directory a program's files are named from: its project's root (the nearest directory
 /// above the main file holding a `loft.toml`), else the main file's own directory — the base the
 /// logger has always named a record's file from (LOGGER.md, `logger::source_base_for`), so a

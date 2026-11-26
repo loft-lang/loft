@@ -429,10 +429,48 @@ closure record that takes a mutated parameter's cell (`__bx_<name>`, whose recor
 the parameter's name): a run that builds no closure releases the cell nowhere
 (`closures/L-CapBox/2639-…`).
 
-**`LOFT_NO_VALUE_PARAM_DECLINE=1`** (`@FR-R-ValueRecord`, the value-record pass, BOTH backends)
-admits a function whose value-struct answer names a parameter into the tuple rewrite again: its
-body's copy of that parameter then has no owner and leaks once per call
-(`rewrites/R-ValueRecord/2641-…`).
+**`LOFT_NO_VALUE_PARAM_DECLINE=1`** (`@FR-R-ValueRecord`, both value-record passes, BOTH backends)
+admits a function whose record answer names a parameter into the tuple rewrite again (a value
+struct in the IR pass, any plain record in `opt::value_records`, `o ?? s` included): its body's
+copy of that parameter then has no owner and leaks once per call
+(`rewrites/R-ValueRecord/2641-…`, `…/2646-…`).
+
+**`LOFT_NO_NCC_LOCAL_ARM_WITNESS=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the
+lift of an inline keyed `??` whose borrowed arm is one variable or a projection of it
+(`ch(maybe(c) ?? d)`, `?? o.m`): the store the call answered on a present pass is then owned by
+nothing (`heap/H-Free/2643-…`).
+
+**`LOFT_NO_VIEW_TAIL_BIND=1`** (`@FR-F-Ret`, parse time, BOTH backends) answers an element read
+of a local vector (`vv[k]`) at the tail of a `vector<T>?` function raw again: a view into a store
+the frame frees before the caller reads it (`calls/F-Ret/2644-…`).
+
+**`LOFT_NO_REBOUND_ARG_TEXT_COPY=1`** (`@FR-F-Ret`, the text-return oracle, BOTH backends) reads a
+text taken from a parameter the body rebound (`v = o; v[0]`) as the argument's again: the
+function gets no text buffer and answers a view into the copy it frees
+(`calls/F-Ret/2645-…`).
+
+**`LOFT_NO_NCC_CHAIN_FLAT=1`** (`@FR-H-FreeTwice`, scope pass, BOTH backends) reads a nested `??`
+as one owned arm of the lift again: `ch(f() ?? g() ?? d)` then frees `d`, which the frame frees
+again at exit (`heap/H-FreeTwice/2647-…`).
+
+**`LOFT_NO_NCC_MULTI_WITNESS=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the lift of an
+inline keyed `??` chain through two different variables (`ch(f() ?? dn ?? d)`), as it did when the
+lift compared with one variable only: the store the call answered then leaks
+(`heap/H-Free/2648-…`).
+
+**`LOFT_NO_NCC_SUBJECT_ROOT=1`** (`@FR-H-Free`, scope pass, BOTH backends) declines the lift of an
+inline keyed `??` chain whose middle arm is a field (`ch(f() ?? ob.m ?? d)`, a `for` over it): the
+store the call answered then leaks (`heap/H-Free/2649-…`).
+
+**`LOFT_NO_NCC_ARM_OWNER_BASE=1`** (`@FR-H-FreeTwice`, scope pass, BOTH backends) reads a `??`
+default the parser gave its own buffer (`join-arm-owner`) as a store the lift owns: where it is
+taken (`for r in on.m ?? mk(2)` with `on.m` absent) the lift frees it and the buffer frees it
+again (`heap/H-Free/2650-…`).
+
+**`LOFT_NO_STRUCT_LITERAL_ABSORB=1`** (`@FR-B-Scope`, scope pass, BOTH backends) moves a hoisted
+literal's argument-block locals to the enclosing scope only for a vector literal: a struct
+literal's vector field then leaves its element records at a scope no emitted code opens, which
+the store records read as `out-of-scope`.
 
 **`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
 hold for a generator handle a second holder takes while its source keeps one
