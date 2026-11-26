@@ -917,9 +917,15 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
   }
   // A call through a function-valued FIELD of a record local (`o.f(4)`, `try_fn_ref_call`):
   // the field read into a `__fn_ref_tmp`, then called through it (`fn_call_tmp`).
+  // (…and of a record a field path off a local reaches — `p.h.f(21)`, `h: H?` a tagged slot —
+  // its type read through the slot's tag, `read_through_tag`.)
   if call {
     fv = match e.p.nodes[re!] { SName { name: rn, member: rm } => if rm == "" { el_vars::var(vars, rn) } else { -1 }, _ => -1 };
     fd = if fv >= 0 { struct_ref(e, el_types::base(el_vars::tp(vars, fv))) } else { -1 };
+    if fv < 0 && field_path_of_local(e, vars, re!) {
+      fpx = el_ex_into::read_through_tag(e, vars, el_ex_assign::expression(e, vars, re!));
+      fd = if fpx == null { -1 } else { struct_ref(e, el_types::base(fpx!.tp)) };
+    }
     fa = if fd >= 0 && literal_def(e, fd) { attr_nr(el::def(e, fd), name) } else { -1 };
     if fa >= 0 && el_types::base(el::def(e, fd).attributes[fa]!.typedef[0] ?? ir::TyVoid) is TyFunction {
       read = member(e, vars, at, re, name, [], false);
@@ -2956,6 +2962,14 @@ pub fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, nam
 }
 
 // `method_call` over a receiver already read.
+// Is syntax node `n` a field path off a local — `p.h`, `p.h.g` — with no call or index on it?
+fn field_path_of_local(e: el::El, vars: el_vars::Vars, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SMember { e: me, call: mc } => !mc && me != null && match e.p.nodes[me!] { SName { name: mn, member: mm } => mm == "" && el_vars::var(vars, mn) >= 0, SMember { at: _ } => field_path_of_local(e, vars, me!), _ => false },
+    _ => false
+  }
+}
+
 pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: integer, name: text, args: vector<integer>) -> Ex {
   // (A tagged `__nullable<S>` slot receiver — a `vector<S?>` element, an `S?` field — is read as
   // the `S?` it holds (`read_through_tag`): the overload set selects on that.)
