@@ -18,6 +18,7 @@ use cgen_tables;
 use cgen_show;
 use cgen_eq;
 use consts;
+use cgen;
 use cgen::(Cx);
 use loop_shape;
 use cgen_fn;
@@ -1100,7 +1101,7 @@ fn ref_ops_4(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       return none();
     }
     x.consts[d] = true;
-    return E { code: "loft_const{d}", kind: K_REF };
+    return E { code: "loft_const_{cgen::const_ident(x, d)}", kind: K_REF };
   }
   // The file operators (`file_operator`), but for the reads and writes of a value.
   if (name == "OpGetFile" || name == "OpSizeFile" || name == "OpSyncFile") && count == 1 {
@@ -2256,7 +2257,7 @@ fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   }
   // `@FR-R-SameRead`'s filed clause: the previous statement filed a record into this hash at
   // this place, so where that insert landed holds the key looked up, the entry it filed
-  // (`loft_h_filed`) is the one under the key (`@FR-Col-Insert`: the latest insert wins).
+  // (`cx->h_filed`) is the one under the key (`@FR-Col-Insert`: the latest insert wins).
   filed = w.filed_next == tp && given == 1 && loop_shape::var_of(loop_shape::unspan(args[3])) >= 0 && w.filed_next_path != "" && cgen_table::path_of(x.b, args[0]) == w.filed_next_path;
   all: vector<ir::Node> = [args[0]];
   for a in args {
@@ -2287,7 +2288,7 @@ fn get_record(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
       // `(R-TableHandle)`: the one-integer lookup goes through the place's handle.
       found = if given == 1 { cgen_table::handle(x, w, args[0]) } else { "" };
       kpos = keys[0]!.position;
-      typed = if given == 1 && filed { "((!LOFT_WRITE_REFUSED(loft_store_of(cx, {data})) && {data}.rec != 0 && loft_h_filed.rec != 0 && loft_get_int(cx, loft_h_filed, {kpos}) == {ints[0]}) ? loft_h_filed : loft_h_find_i64(cx, {data}, {key_table}, {ints[0]}))" } else if given == 1 { if found != "" { "loft_hh_find_i64(cx, &{found}, {data}, {key_table}, {ints[0]})" } else { "loft_h_find_i64(cx, {data}, {key_table}, {ints[0]})" } } else { "loft_h_find_ints(cx, {data}, {key_table}, {given}, (int64_t[]){{ {ints.join(", ")} }})" };
+      typed = if given == 1 && filed { "((!LOFT_WRITE_REFUSED(loft_store_of(cx, {data})) && {data}.rec != 0 && cx->h_filed.rec != 0 && loft_get_int(cx, cx->h_filed, {kpos}) == {ints[0]}) ? cx->h_filed : loft_h_find_i64(cx, {data}, {key_table}, {ints[0]}))" } else if given == 1 { if found != "" { "loft_hh_find_i64(cx, &{found}, {data}, {key_table}, {ints[0]})" } else { "loft_h_find_i64(cx, {data}, {key_table}, {ints[0]})" } } else { "loft_h_find_ints(cx, {data}, {key_table}, {given}, (int64_t[]){{ {ints.join(", ")} }})" };
     }
   }
   if typed == "" && kind == "hash" && given == 1 && nk == 1 && keys[0].type_nr == 6 && values[0].starts_with("loft_kv_text(cx, ") && values[0].ends_with(")") {

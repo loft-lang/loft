@@ -328,7 +328,7 @@ pub fn text_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integ
   }
   if name == "OpClearText" && count == 1 {
     dest = text_dest(w, args[0]);
-    return E { code: "{dest}.len = 0", kind: K_VOID };
+    return E { code: "loft_text_clear(cx, &{dest})", kind: K_VOID };
   }
   if name == "OpConvTextFromNull" && count == 0 {
     return E { code: "loft_null_text(cx)", kind: K_VIEW };

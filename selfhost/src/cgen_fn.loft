@@ -15,6 +15,7 @@
 
 use ir;
 use cgen::(Cx, request_twin, source_name);
+use cgen;
 use binds;
 use opt_apart_value;
 use cgen_transient;
@@ -29,6 +30,7 @@ use cgen_ref;
 use cgen_bind;
 use cgen_cold;
 use cgen_split;
+use cgen_reltable;
 use cgen_tail;
 use cgen_recptr;
 use cgen_hoist;
@@ -271,13 +273,21 @@ fn plain_macro(name: text, count: integer) -> text {
   }
 }
 
-// The checked helper of an integer operator, "" for any other operator.
+// The checked helper of an integer operator, "" for any other operator.  `@FR-E-Report`: the
+// undefended forms report an overflow under `--dev-soft-halt` (`loft_add_r` …); the `Nullable`
+// forms, the operand of `??`, say nothing.
 fn checked(name: text) -> text {
-  if name == "OpAddInt" || name == "OpAddLong" || name == "OpAddIntNullable" {
+  if name == "OpAddInt" || name == "OpAddLong" {
+    "loft_add_r"
+  } else if name == "OpMinInt" || name == "OpMinLong" {
+    "loft_sub_r"
+  } else if name == "OpMulInt" || name == "OpMulLong" {
+    "loft_mul_r"
+  } else if name == "OpAddIntNullable" {
     "loft_add"
-  } else if name == "OpMinInt" || name == "OpMinLong" || name == "OpMinIntNullable" {
+  } else if name == "OpMinIntNullable" {
     "loft_sub"
-  } else if name == "OpMulInt" || name == "OpMulLong" || name == "OpMulIntNullable" {
+  } else if name == "OpMulIntNullable" {
     "loft_mul"
   } else if name == "OpDivInt" || name == "OpDivLong" {
     "loft_div_at"
@@ -712,14 +722,24 @@ fn float_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
     b = arg(x, w, args, 1, ind);
     return E { code: "{call2}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: k };
   }
-  cmp = if name == "OpEqFloat" || name == "OpEqSingle" {
+  // @PLN217 — two singles compare in single precision (`loft_feq32` …): the double forms would
+  // widen both first, a library call each on a single-precision FPU.
+  cmp = if name == "OpEqFloat" {
     "loft_feq"
-  } else if name == "OpNeFloat" || name == "OpNeSingle" {
+  } else if name == "OpNeFloat" {
     "!loft_feq"
-  } else if name == "OpLtFloat" || name == "OpLtSingle" {
+  } else if name == "OpLtFloat" {
     "loft_flt"
-  } else if name == "OpLeFloat" || name == "OpLeSingle" {
+  } else if name == "OpLeFloat" {
     "loft_fle"
+  } else if name == "OpEqSingle" {
+    "loft_feq32"
+  } else if name == "OpNeSingle" {
+    "!loft_feq32"
+  } else if name == "OpLtSingle" {
+    "loft_flt32"
+  } else if name == "OpLeSingle" {
+    "loft_fle32"
   } else {
     ""
   };
@@ -4160,6 +4180,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
   outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
+  // A body whose calls reach it again keeps the wrapper's hint and no more (`on_call_cycle`).
+  if cgen::on_call_cycle(x, index) {
+    storage = outer;
+  }
   rtext = resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n");
   rret = resolve_tuples(x, held(ret));
   rlist = resolve_tuples(x, list);
@@ -4169,6 +4193,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // each C compiler takes them above its own size (loft_cc.h), the whole body (out of line, as
   // its parts are) in the `#else` arm.
   parts = cgen_split::split_body(outer, rret, "{name}__fr", rlist, rinner);
+  // `@FR-R-CTable`: the parts' runs of releases are written as data.
+  if parts != "" {
+    parts = cgen_reltable::tables("{name}__fr", parts);
+  }
   // `@FR-R-CTail`: the whole body's shared release tails are written once; the parts keep
   // every exit's own statements, and `inner` stays the body before this pass.
   merged = cgen_tail::merge(rret, rinner);

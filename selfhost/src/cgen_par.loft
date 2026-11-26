@@ -141,7 +141,7 @@ fn discard(call: text, shape: text) -> text {
   if shape == "text" {
     "{{ loft_text loft_t = {call}; loft_text_free(cx, &loft_t); }}"
   } else if shape == "ref" {
-    "{{ uint64_t loft_s = loft_stores_allocated; loft_ref loft_r = {call}; if (loft_fnref_minted(cx, loft_r, loft_s, loft_ref_null(cx))) loft_free_ref(cx, loft_r); }}"
+    "{{ uint64_t loft_s = cx->stores_allocated; loft_ref loft_r = {call}; if (loft_fnref_minted(cx, loft_r, loft_s, loft_ref_null(cx))) loft_free_ref(cx, loft_r); }}"
   } else {
     "(void) {call};"
   }
@@ -160,7 +160,7 @@ fn row_store(name: text, call: text, shape: text, threaded: boolean, why: &text)
     return "loft_b[loft_i].t = {call};";
   }
   if shape == "ref" {
-    return "{{ uint64_t loft_s = loft_stores_allocated; loft_b[loft_i].r = {call}; loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}";
+    return "{{ uint64_t loft_s = cx->stores_allocated; loft_b[loft_i].r = {call}; loft_b[loft_i].adopted = (uint8_t) loft_fnref_minted(cx, loft_b[loft_i].r, loft_s, loft_ref_null(cx)); }}";
   }
   if shape == "fn" && !threaded {
     return "loft_b[loft_i].fn = {call};";
@@ -175,6 +175,9 @@ fn row_store(name: text, call: text, shape: text, threaded: boolean, why: &text)
 // `par_native`: a call of one of the `par` natives, or null for another.
 pub fn par_native(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E? {
   if (name == "n_parallel_queue" || name == "n_parallel_queue_text" || name == "n_parallel_queue_ref" || name == "n_parallel_queue_narrow" || name == "n_parallel_queue_fn" || name == "n_parallel_discard") && len(args) >= 5 {
+    if name != "n_parallel_discard" {
+      line(w, ind, "(void) LOFT_TRACE_MARK(\"P\");");
+    }
     return queue(x, w, name, args, ind);
   }
   if name == "n_parallel_fold" && len(args) >= 4 {
@@ -200,10 +203,10 @@ pub fn par_native(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
     return E { code: "loft_par_get_narrow(cx, {as_int(w, i)}, {as_int(w, n)}, {as_int(w, s)})", kind: K_INT };
   }
   if (name == "n_parallel_buf_drop" || name == "n_parallel_buf_drop_text" || name == "n_parallel_buf_drop_narrow" || name == "n_parallel_buf_drop_fn") && len(args) == 0 {
-    return E { code: "loft_par_drop(cx, 0)", kind: K_VOID };
+    return E { code: "(loft_par_drop(cx, 0), (void) LOFT_TRACE_MARK(\"Q\"))", kind: K_VOID };
   }
   if name == "n_parallel_buf_drop_ref" && len(args) == 0 {
-    return E { code: "loft_par_drop(cx, 1)", kind: K_VOID };
+    return E { code: "(loft_par_drop(cx, 1), (void) LOFT_TRACE_MARK(\"Q\"))", kind: K_VOID };
   }
   null
 }
@@ -339,7 +342,7 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   dense = if name == "n_parallel_discard" { "" } else { dense_row(shape) };
   row_c = if dense == "" { "loft_par_slot" } else { dense };
   push = if dense == "" { "loft_par_push" } else { dense_push(shape) };
-  decl = "typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n    loft_ref res;\n";
+  decl = "typedef struct {{\n    loft_ref in;\n    {row_c} *b;\n";
   for i in 0..len(extra) {
     decl += "    {held(if i < len(shapes) { shapes[i]! } else { "int" })} x{i};\n";
   }
@@ -359,7 +362,9 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   body += "    }}\n}}\n";
   if kt >= 0 {
     cgen_tables::describe_type(x, kt);
-    body += "\nstatic void loft_paradopt{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    loft_parctx{id} *loft_c = (loft_parctx{id} *) loft_vc;\n    loft_par_slot *loft_b = loft_c->b;\n    for (int64_t loft_i = loft_lo; loft_i < loft_hi; loft_i++) {{\n        loft_ref loft_r = loft_b[loft_i].r;\n        if (loft_r.store_nr == 0xFFFF || loft_r.rec == 0 || loft_r.store_nr < loft_pn) {{ loft_b[loft_i].adopted = 0; continue; }}\n        loft_ref loft_d = {{ loft_c->res.store_nr, loft_c->res.rec, loft_c->res.pos + (uint32_t) loft_i * {size}u, 0 }};\n        loft_copy_bytes(cx, loft_d, 0, loft_r, 0, {size});\n        loft_copy_claims(cx, loft_types, {kt}, loft_r, loft_d);\n        loft_b[loft_i].r = loft_d;\n        loft_b[loft_i].adopted = 0;\n    }}\n}}\n";
+    // A worker's record answer is moved into the caller's stores by the runtime
+    // (`loft_par_move_rows`, `loft_par_move.h`).
+    body += "\nstatic void loft_paradopt{id}(loft_cx *cx, void *loft_vc, int64_t loft_lo, int64_t loft_hi, uint32_t loft_pn) {{\n    loft_par_move_rows(cx, loft_types, loft_ntypes, {kt}, ((loft_parctx{id} *) loft_vc)->b, loft_lo, loft_hi, loft_pn);\n}}\n";
   }
   x.gen_bodies += body;
   t = as_int(w, cgen_fn::expr(x, w, threads, ind));
@@ -367,22 +372,15 @@ fn threaded_site(x: Cx, w: W, name: text, input: text, esz: integer, threads: ir
   line(w, ind, "{n} = loft_vec_len(cx, {input});");
   line(w, ind, "{{");
   slots = if name == "n_parallel_discard" { "0" } else { "{push}(cx, {n})" };
-  res = "{{ 0xFFFF, 0, 0, 0 }}";
-  if kt >= 0 {
-    line(w, ind + 1, "loft_ref loft_res = loft_ref_null(cx);");
-    line(w, ind + 1, "loft_database(cx, &loft_res, (uint32_t) ({n} * {size}));");
-    res = "loft_res";
-  }
-  init = "loft_parctx{id} loft_c = {{ {input}, {slots}, {res}";
+  init = "loft_parctx{id} loft_c = {{ {input}, {slots}";
   for e in extra {
     init += ", {e}";
   }
   line(w, ind + 1, init + " }};");
   if kt >= 0 {
-    line(w, ind + 1, "loft_par_hold(cx, loft_res);");
-    line(w, ind + 1, "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id}, loft_res.store_nr);");
+    line(w, ind + 1, "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, loft_paradopt{id});");
   } else {
-    line(w, ind + 1, "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, 0, 0);");
+    line(w, ind + 1, "loft_par_run(cx, {n}, {t}, loft_parbody{id}, &loft_c, 0);");
   }
   line(w, ind, "}}");
   if name == "n_parallel_discard" {

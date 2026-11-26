@@ -186,7 +186,16 @@ pub fn windowed(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, d
       return none();
     }
     done = true;
-    return E { code: "((void) 0)", kind: K_VOID };
+    // `@FR-Col-Capacity`: the reservation is exact through the window too, as the bytecode and
+    // the push header (`loft_ph_prealloc`) make it — it claims only while the vector has no
+    // record, so a window over one tests and goes on.
+    if len(args) != 3 {
+      refuse(w, "OpPreAllocVector without its count and size");
+      return none();
+    }
+    n = cgen_fn::literal(w, args[1], "count") ?? return none();
+    size = cgen_fn::literal(w, args[2], "element size") ?? return none();
+    return E { code: "loft_win_prealloc(cx, &{w.windows[at].name}, {w.windows[at].pv}, {n}, {size})", kind: K_VOID };
   }
   path = "";
   root = -1;

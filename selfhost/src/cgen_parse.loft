@@ -320,7 +320,7 @@ pub fn parse_table(x: Cx) -> text {
   if last < 0 {
     return "";
   }
-  out + "static const loft_ptype loft_ptypes[{last + 1}] = {{ {rows.join(", ")} }};\nstatic const loft_tdesc *loft_parse_types(loft_cx *cx) {{ return loft_types; }}\n"
+  out + "static const loft_ptype loft_ptypes[{last + 1}] = {{ {rows.join(", ")} }};\nstatic const loft_tdesc *loft_parse_types(loft_cx *cx) {{ (void) cx; return loft_types; }}\n"
 }
 
 // `loft_is_main_vector`: the types a vector variable's own store is minted as

@@ -13,6 +13,7 @@
 use cgen_transient;
 use ir;
 use cgen::(Cx, new_cx, STACK_OVERFLOW_HELP, source_name);
+use cgen;
 use cgen_w::*;
 use cgen_fn;
 use cgen_clibs;
@@ -92,8 +93,8 @@ fn wrapper(x: Cx, d: integer, wr: Written) -> text {
   guard_free = !ret_up && (env_variable("LOFT_NO_GUARD_FREE") ?? "0") == "0" && opt_frame_calls::is_guard_free(x.b, x.guard, d);
   release = "";
   if !ret_up && !guard_free {
-    push += "    size_t fm = loft_nfnrefs;\n";
-    release = "    if (loft_nfnrefs != fm) loft_fnref_release(cx, fm);\n";
+    push += "    size_t fm = cx->nfnrefs;\n";
+    release = "    if (cx->nfnrefs != fm) loft_fnref_release(cx, fm);\n";
   }
   call = "{wr.name}__fr({arg_names(wr.list).join(", ")})";
   if wr.ret == "void" {
@@ -382,7 +383,8 @@ fn write_one(x: Cx, t: cgen_names::Twin, p: Pieces, candidates: vector<integer>)
     candidates += [t.d];
   }
   // A split body keeps the wrapper's storage: its parts are not one unit with it.
-  x.gen_decls += "{if wr.split { wr.storage } else { body_storage(wr.storage) }} {wr.ret} {wr.name}__fr({wr.list});\n";
+  // A split body, and one on a call cycle, keep the wrapper's storage (`on_call_cycle`).
+  x.gen_decls += "{if wr.split || cgen::on_call_cycle(x, t.d) { wr.storage } else { body_storage(wr.storage) }} {wr.ret} {wr.name}__fr({wr.list});\n";
   p.protos += "{wr.storage} {wr.ret} {wr.name}({wr.list});\n";
   x.gen_bodies += "\n{wr.text}";
   p.bodies += "\n{wr.storage} {wr.ret} {wr.name}({wr.list}) {{\n{wrapper(x, t.d, wr)}}}\n";

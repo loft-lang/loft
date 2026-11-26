@@ -339,7 +339,7 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     src_held = temp(w, "ref");
     since = temp(w, "int");
     line(w, ind, "{dst} = {name};");
-    line(w, ind, "{since} = (int64_t) loft_stores_allocated;");
+    line(w, ind, "{since} = (int64_t) cx->stores_allocated;");
     // `@FR-R-FnRefBuffer`: a kept binding is handed to the target as its record buffer, and
     // an answer in that store is the binding already.
     in_place = (w.lr_recs[var] ?? -1) >= 0;

@@ -722,10 +722,10 @@ pub fn number_pending(x: Cx, w: W) {
   w.numbered = n;
 }
 
-pub fn resolve_tuples(x: Cx, code: text) -> text {
+// A transient group's struct by its type's identifier, for `held`'s `lt_@<g>@`.
+fn resolve_groups(x: Cx, code: text) -> text {
   out = "";
   rest = code;
-  // A transient group's struct by its type's identifier (`held`'s `lt_@<g>@`).
   for _ in 0..code.size() {
     at = rest.find("lt_@") ?? break;
     close = rest[at + 4..rest.size()].find("@") ?? break;
@@ -733,8 +733,12 @@ pub fn resolve_tuples(x: Cx, code: text) -> text {
     out += "{rest[0..at]}lt_{type_ident(x, g)}";
     rest = rest[at + 5 + close..rest.size()];
   }
-  rest = out + rest;
+  out + rest
+}
+
+pub fn resolve_tuples(x: Cx, code: text) -> text {
   out = "";
+  rest = resolve_groups(x, code);
   for _ in 0..code.size() {
     at = rest.find("loft_tup@") ?? break;
     close = rest[at + 9..rest.size()].find("@") ?? break;
@@ -768,7 +772,9 @@ fn tuple_code(x: Cx, shape: text) -> text {
 // `Cx::name_tuples` (@PLN229 B0): `code` with every tuple struct named from its members' shapes
 // (`loft_tup_<code>`) in place of its number of first use (`loft_tup<n>`, and a cast's
 // `loft_tup<n>_as<m>`), in one pass: a unit's C then changes only where a tuple it uses changes.
-pub fn name_tuples(x: Cx, code: text) -> text {
+pub fn name_tuples(x: Cx, given: text) -> text {
+  // A group a prototype or a twin named without passing `resolve_tuples` (the transient twins').
+  code = resolve_groups(x, given);
   n = len(x.tuples);
   if n == 0 {
     return code;

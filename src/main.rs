@@ -133,32 +133,33 @@ fn print_target_surface(want: Option<&str>) {
 /// is handed does.
 #[cfg(feature = "mmap")]
 fn emit_program_image(
-    p: &mut parser::Parser,
+    data: &mut loft::data::Data,
+    database: &mut loft::database::Stores,
     ships_live_tier: bool,
     c_facts: bool,
     out: &str,
 ) -> ! {
     if ships_live_tier {
-        p.data.open_world = true;
+        data.open_world = true;
     }
-    compile::close_program(&mut p.data, &mut p.database);
+    compile::close_program(data, database);
     let facts = if c_facts {
         let mut facts = loft::ir_store::bundle_facts(
-            &p.data,
-            &p.database,
-            loft::c::c_library_facts(&p.data),
-            loft::c::host_facts(&p.data, &p.database),
+            data,
+            database,
+            loft::c::c_library_facts(data),
+            loft::c::host_facts(data, database),
         );
         // The constants are built by the compile, which an image does not run: they are built
         // here as the image's own reader builds them (`ir_read::image_round_trip`).
-        if let Ok((data, stores)) = loft::ir_read::image_round_trip(&p.data, &p.database) {
+        if let Ok((data, stores)) = loft::ir_read::image_round_trip(data, database) {
             facts.host.consts = loft::c::const_facts(&data, &stores);
         }
         facts
     } else {
         loft::ir_store::BundleFacts::default()
     };
-    if let Err(e) = loft::ir_store::save_bundle_with(&p.data, &p.database, out, &facts) {
+    if let Err(e) = loft::ir_store::save_bundle_with(data, database, out, &facts) {
         eprintln!("loft: cannot write the image to {out}: {e}");
         std::process::exit(1);
     }
@@ -214,7 +215,8 @@ fn emit_parsed_image(_p: &parser::Parser, _out: &str) -> ! {
 /// A build without file-backed stores (the browser build) cannot write an image.
 #[cfg(not(feature = "mmap"))]
 fn emit_program_image(
-    _p: &mut parser::Parser,
+    _data: &mut loft::data::Data,
+    _database: &mut loft::database::Stores,
     _ships_live_tier: bool,
     _c_facts: bool,
     _out: &str,
@@ -10478,9 +10480,12 @@ fn main() {
         );
     }
     // @PLN91 S0.2 — the image the cache above saves, taken at the same point and under the
-    // same openness, written to the path the caller named; the program is not run.
-    if let Some(out) = &emit_image {
-        emit_program_image(&mut p, ships_live_tier, native_c_named, out);
+    // same openness, written to the path the caller named; the program is not run.  The C
+    // writer's image (`--native-c`) is taken after the bytecode compile instead, below.
+    if let Some(out) = &emit_image
+        && !native_c_named
+    {
+        emit_program_image(&mut p.data, &mut p.database, ships_live_tier, false, out);
     }
     // @PLAN28 debug/validation hook — when `LOFT_DUMP_SNAPSHOT=<path>` is set,
     // write the parsed `Data` as the startup-cache JSON snapshot and exit.
@@ -10539,6 +10544,13 @@ fn main() {
     // @PLN91 — the run image is taken from the bytecode as the interpreter would run it.
     if let Some(out) = &emit_run_image {
         emit_program_run_image(&state, &p.data, out);
+    }
+    // @PLN91 strand 12 — the C writer's image (`--native-c --emit-image`) is taken where the C
+    // writer reads the program: after the bytecode compile, which registers types the unit's
+    // tables list (a narrow element's row, a bare `vector`).  Taken before it, the image lacked
+    // them and the loft writer's type table was short of the Rust one's.
+    if native_c_named && let Some(out) = &emit_image {
+        emit_program_image(&mut p.data, &mut state.database, ships_live_tier, true, out);
     }
     // @PLN119 arc A — a platform without the placement transport runs a placed
     // library in-process. By the plan's invariant that is the same PROGRAM, so

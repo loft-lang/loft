@@ -10,6 +10,7 @@
 
 use ir;
 use types;
+use cgen;
 use cgen::(Cx, type_ident);
 use cgen_w::*;
 use cgen_show;
@@ -388,8 +389,9 @@ fn const_code(x: Cx) -> text {
     from_image = false;
     for c in x.b.consts {
       if c.d == d {
-        out += "static const uint32_t loft_cwords{d}[] = {{ {c.words} }};\nstatic loft_ref loft_const{d};\n";
-        init += "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {c.n});\n";
+        ci = cgen::const_ident(x, d);
+        out += "static const uint32_t loft_cwords_{ci}[] = {{ {c.words} }};\nLOFT_STATE loft_ref loft_const_{ci};\n";
+        init += "    loft_const_{ci} = loft_const_store(cx, loft_cwords_{ci}, {c.n});\n";
         from_image = true;
       }
     }
@@ -410,8 +412,9 @@ fn const_code(x: Cx) -> text {
     for i in 0..n {
       words += ["{word(bytes, i, 0)}u", "{word(bytes, i, 4)}u"];
     }
-    out += "static const uint32_t loft_cwords{d}[] = {{ {words.join(", ")} }};\nstatic loft_ref loft_const{d};\n";
-    init += "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {n});\n";
+    ci = cgen::const_ident(x, d);
+    out += "static const uint32_t loft_cwords_{ci}[] = {{ {words.join(", ")} }};\nLOFT_STATE loft_ref loft_const_{ci};\n";
+    init += "    loft_const_{ci} = loft_const_store(cx, loft_cwords_{ci}, {n});\n";
   }
   out + init + "}}\n"
 }

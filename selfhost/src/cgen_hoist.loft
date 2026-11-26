@@ -220,7 +220,7 @@ pub fn hold_vectors(x: Cx, w: W, lp: ir::Block, ind: integer) -> opt_hoist::Loop
       return verdict;
     }
     h = "h{len(w.decls) + 1}";
-    w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
+    w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0, 0, 0 }};"];
     line(w, ind, "{h} = loft_vh_of(cx, {as_ref(w, e)});");
     if pending_grown.contains(v.path) {
       w.grown_headers += [h];
@@ -397,8 +397,16 @@ pub fn pushed_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
     if name == "OpLengthVector" {
       return E { code: "((int64_t) {w.push_heads[at].name}.len)", kind: K_INT };
     }
-    // The reservation is capacity, observably nothing; the header's push grows the record.
-    return E { code: "((void) 0)", kind: K_VOID };
+    // `@FR-Col-Capacity`: a known count is reserved exactly, as the bytecode does it, through the
+    // header held for the path (`loft_ph_prealloc`), so its mints fill the record the
+    // reservation claimed instead of growing one of their own.
+    if len(args) != 3 {
+      refuse(w, "OpPreAllocVector without its count and size");
+      return none();
+    }
+    n = cgen_fn::literal(w, args[1], "count") ?? return none();
+    size = cgen_fn::literal(w, args[2], "element size") ?? return none();
+    return E { code: "loft_ph_prealloc(cx, &{w.push_heads[at].name}, {n}, {size})", kind: K_VOID };
   }
   path = "";
   root = -1;
@@ -490,7 +498,7 @@ pub fn bind_view_header(x: Cx, w: W, ops: vector<ir::Node>, at: integer, ind: in
     _ => return,
   }
   h = "h{len(w.decls) + 1}";
-  w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0 }};"];
+  w.decls += ["loft_vh {h} = {{ 0xFFFF, 0, 0, 0, 0, 0 }};"];
   if source != "" {
     line(w, ind, "{h} = {source};");
   } else {

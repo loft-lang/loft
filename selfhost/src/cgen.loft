@@ -215,6 +215,10 @@ pub struct Cx {
   pub std_dir: text,
   // Each type's part of a C name (`Cx::type_ident`), by type number.
   pub tids: vector<text>,
+  // Each constant's part of a C name (`Cx::const_ident`), by definition number.
+  pub cids: vector<text>,
+  // Per definition: is it on a call cycle (`Cx::on_cycle`)?  0 not asked, 1 no, 2 yes.
+  pub cycles: vector<integer>,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -268,6 +272,8 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     main_dir: cgen_names::program_dir(cgen_names::main_file(b)),
     std_dir: cgen_names::std_dir(b),
     tids: cgen_names::type_idents(b),
+    cycles: [for _ in 0..len(b.data.definitions) { 0 }],
+    cids: cgen_names::const_idents(b),
   }
 }
 
@@ -323,6 +329,24 @@ fn empty_function(b: ir::Bundle, d: ir::Definition, decls: &text, bodies: &text)
   decls += "LOFT_HOT_INLINE void {name}__fr(loft_cx *cx);\nstatic inline void {name}(loft_cx *cx);\n";
   bodies += "\nLOFT_HOT_INLINE void {name}__fr(loft_cx *cx) {{\n}}\n";
   bodies += "\nstatic inline void {name}(loft_cx *cx) {{\n    loft_frame_push(cx, {c_string(original_name(d))}, {c_string(file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr(cx);\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n}}\n";
+}
+
+// `on_call_cycle`: whether `d`'s calls reach `d` again.  Such a body keeps its wrapper's hint
+// and no more: forced inline, its own call through the wrapper is a cycle of forced inlining,
+// which gcc 16 at -O3 compiled wrong on Windows.
+pub fn on_call_cycle(x: Cx, d: integer) -> boolean {
+  known = x.cycles[d] ?? 0;
+  if known == 0 {
+    known = if opt_frame_calls::reaches_itself(x.b, d) { 2 } else { 1 };
+    x.cycles[d] = known;
+  }
+  known == 2
+}
+
+// The part of a C name that stands for constant `d` (`Cx::const_ident`).
+pub fn const_ident(x: Cx, d: integer) -> text {
+  c = x.cids[d] ?? "";
+  if c == "" { "{d}" } else { c }
 }
 
 // The part of a C name that stands for type `tp` (`Cx::type_ident`).

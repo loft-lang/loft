@@ -348,3 +348,26 @@ pub fn type_idents(b: ir::Bundle) -> vector<text> {
   out
 }
 
+// The part of a C name that stands for each constant (`Cx::const_ident`: `loft_const_<ident>`,
+// `loft_cwords_<ident>`), by definition number: the constant's own name made an identifier,
+// never its number, which moves whenever a definition is added before it.  Two constants that
+// share a name keep their number beside it.  "" for a definition that is no constant.
+pub fn const_idents(b: ir::Bundle) -> vector<text> {
+  names: vector<text> = [for d in b.data.definitions { if d.def_type == 8 { c_ident(d.name) } else { "" } }];
+  out: vector<text> = [];
+  for n in names {
+    if n == "" {
+      out += [""];
+      continue;
+    }
+    shared = 0;
+    for m in names {
+      if m == n {
+        shared += 1;
+      }
+    }
+    out += [if shared > 1 { "{n}_{n#index}" } else { n }];
+  }
+  out
+}
+
