@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a `for` over a literal of floats, characters or booleans walks its items
+// (`literal_walk`, each into its own `_lit_N`) on the first pass too: the literal's
+// `vector<float>` rows are laid out only after that pass, yet the literal answers its vector
+// there.  Left to the second pass, a later integer walk took `_lit_1` on the first and the
+// float items were typed `integer`.
+// Prints: 1.5 -1 ab truefalse 12
+
+fn main() {
+  o = "";
+  for f in [1.5, -1.0] { o += "{f} "; }
+  for c in ['a', 'b'] { o += "{c}"; }
+  o += " ";
+  for b in [true, false] { o += "{b}"; }
+  o += " ";
+  for g in [1, 2] { o += "{g}"; }
+  println("{o}");
+}

@@ -2938,8 +2938,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
   // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.  So
   // does a vector element in value position — a `for`'s source, an argument, a subscript's
-  // receiver: `vector<vector<integer>>`.)
-  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && el_types::base(in_t) is TyVector)) {
+  // receiver: `vector<vector<integer>>` — and a scalar one whose rows the schema lays out after
+  // the pass (`[1.5, -1.0]`, `['a', 'b']`, `[true, false]`: a `for` over it walks its items,
+  // `literal_walk`, on this pass as on the second.)
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t)))) {
     rcodes: vector<ir::Node> = [];
     for x in xs {
       rcodes += [x.code];
