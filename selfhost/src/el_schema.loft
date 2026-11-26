@@ -113,7 +113,9 @@ pub fn fill_all(e: el::El) {
     if len([for ba in d.attributes if (ba.typedef[0] ?? ir::TyVoid) == ir::TyUnknown { n: 0 } { 1 }]) > 0 {
       continue;
     }
-    if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE {
+    // (`is_template_part`: a template's own variant is laid out nowhere; its instances' are.)
+    template_part = d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 && el::def(e, d.parent).def_type == el::DT_TYPE_TEMPLATE;
+    if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE && !template_part {
       fill_database(e, d#index);
       // @PLN25 E2: a struct's `__nullable<S>` variants are laid out right after it, so their
       // type numbers follow `S` and precede any later struct that holds one.
@@ -459,6 +461,15 @@ fn fill_database(e: el::El, d: integer) {
   if def.name == "main_vector<unknown>" {
     return;
   }
+  // @PLN165 D5 — an OPEN instance (`Box<T>` inside a template) gets a ROW and no layout: the
+  // fieldless entry a type variable's placeholder has, a variant named by its instance.
+  if el_types::is_open_instance(e, d) {
+    if def.known_type == NO_TYPE {
+      rn = if def.def_type == el::DT_ENUM_VALUE { "__typevar_{el::def(e, def.parent).name}::{def.name}" } else { "__typevar_{def.name}" };
+      e.b.data.definitions[d].known_type = structure(e, rn, 0);
+    }
+    return;
+  }
   // A type variable's placeholder (`is_type_var_placeholder`: a struct with no fields answering
   // a record of itself) is registered under a name no program type can take.
   own = match def.returned[0] ?? ir::TyVoid { TyReference { n } => n == d, _ => false };
@@ -469,8 +480,24 @@ fn fill_database(e: el::El, d: integer) {
     reg = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
   }
   if schema_type(e, reg) >= 0 {
-    el::refuse(e, "a struct named like a type the schema already has");
-    return;
+    // @P379: a second definition of a name the schema has is registered qualified — for a
+    // generic instance's own definitions (the standard library's source, which no `use` names)
+    // as `src<source>::<name>`, else under its parent enum's row (`variant_parent_qualified_name`).
+    // A library's same-named type, qualified by its `use` name, is not carried.
+    if def.source != el::STD_SOURCE {
+      el::refuse(e, "a struct named like a type the schema already has");
+      return;
+    }
+    q = "src{def.source}::{def.name}";
+    if schema_type(e, q) >= 0 && def.def_type == el::DT_ENUM_VALUE && el::def(e, def.parent).known_type != NO_TYPE {
+      pq = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
+      q = if schema_type(e, pq) >= 0 { q } else { pq };
+    }
+    if schema_type(e, q) >= 0 {
+      el::refuse(e, "a struct named like a type the schema already has");
+      return;
+    }
+    reg = q;
   }
   // The structure first, then each field's content — a narrow Part is made after it.  A
   // variant's record carries its ordinal and is linked into its enum's values.

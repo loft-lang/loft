@@ -1007,7 +1007,7 @@ pub fn is_type_var_placeholder(e: el::El, d: integer) -> boolean {
 
 // port: data.rs is_open_instance
 // An instance of a generic struct, or a tuple record, whose arguments still name a type variable.
-fn is_open_instance(e: el::El, d: integer) -> boolean {
+pub fn is_open_instance(e: el::El, d: integer) -> boolean {
   if d < 0 || d >= len(e.b.data.definitions) {
     return false;
   }
