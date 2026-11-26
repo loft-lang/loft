@@ -656,7 +656,7 @@ fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
     let units: Vec<String> = fa::read_dir(pkg.join("native-auto"))
         .expect("the package's native-auto")
         .into_iter()
-        .filter_map(|e| fa::file_name(&e.os_spelling()))
+        .filter_map(|e| fa::file_name(e.os_spelling()))
         .filter(|n| {
             n.contains("loft_auto_keyed")
                 && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
@@ -785,7 +785,7 @@ fn a_unit_is_keyed_on_the_components_it_binds() {
                 let units: Vec<String> = fa::read_dir(pkg.join("native-auto"))
                     .expect("the package's native-auto")
                     .into_iter()
-                    .filter_map(|e| fa::file_name(&e.os_spelling()))
+                    .filter_map(|e| fa::file_name(e.os_spelling()))
                     .filter(|n| {
                         n.contains("loft_auto_cwrap")
                             && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))

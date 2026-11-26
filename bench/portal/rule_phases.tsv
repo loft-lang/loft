@@ -13,8 +13,8 @@ R-Apart/vector	c	6	0	0	0	26
 R-AppendTwin	c	3	0	0	0	33
 R-AppendTwin/loop-window	c	3	0	0	0	4
 R-AppendTwin/mint	c	3	0	0	0	5
-R-Base	c	60	0	0	0	1220
-R-Base/counter	c	44	0	0	0	388
+R-Base	c	60	0	0	0	1218
+R-Base/counter	c	44	0	0	0	386
 R-Base/grid	c	2	0	0	0	102
 R-Base/guard	c	56	0	0	0	90
 R-Base/length-local	c	4	0	0	0	13
@@ -25,6 +25,7 @@ R-BufferReturn	c	18	0	0	0	263
 R-BufferReturn/bind	c	17	0	0	0	112
 R-ByteCopy	ir	2	0	4	0	0
 R-CSplit	c	11	0	0	0	21
+R-CTable	c	9	0	0	0	199
 R-CTail	c	16	0	0	0	71
 R-Callee	c	20	0	0	0	66
 R-CharWalk	c	12	0	0	0	34
@@ -35,7 +36,7 @@ R-Const	ir	2	0	3	0	0
 R-Const/fn	parse	5	7	0	0	0
 R-CopyView	ir	4	0	8	0	0
 R-CopyView/walk	ir	1	0	4	0	0
-R-Counter	ir,c	61	0	1546	0	18180
+R-Counter	ir,c	61	0	1546	0	18178
 R-CtorLiteral	parse	3	11	0	0	0
 R-Demote	parse	1	4	0	0	0
 R-Demote/place	parse	1	1	0	0	0
@@ -45,7 +46,7 @@ R-ElemFirst	ir	5	0	8	0	0
 R-ExitVector	ir	26	0	463	0	0
 R-ExitVector/record	ir	1	0	2	0	0
 R-FieldAppend	c	13	0	0	0	87
-R-FieldAppend/bare	c	44	0	0	0	495
+R-FieldAppend/bare	c	44	0	0	0	497
 R-FileHold	c	2	0	0	0	6
 R-Fill	c	3	0	0	0	9
 R-Fill/guarded	c	1	0	0	0	4
@@ -59,7 +60,7 @@ R-ForwardResult	ir	2	0	6	0	0
 R-ForwardWalk	parse	44	389	0	0	0
 R-Fuse	interp	61	0	0	15219	0
 R-Fuse/field	interp	42	0	0	1136	0
-R-Fuse/jump	interp	61	0	0	11781	0
+R-Fuse/jump	interp	61	0	0	11777	0
 R-Fuse/tag	interp	11	0	0	139	0
 R-Fuse/text	interp	61	0	0	2228	0
 R-GuardFree	c	61	0	0	0	1727
@@ -67,7 +68,7 @@ R-GuardedChain	c	32	0	0	0	145
 R-GuardedChain/operators	c	32	0	0	0	532
 R-GuardedChain/versions	c	7	0	0	0	21
 R-HandOver/rotate	c	1	0	0	0	2
-R-Header	c	60	0	0	0	1241
+R-Header	c	60	0	0	0	1239
 R-Header/apart	c	18	0	0	0	263
 R-Header/apart-param	c	15	0	0	0	83
 R-Header/grown	c	2	0	0	0	26
@@ -100,7 +101,7 @@ R-LoopRecord	ir	4	0	6	0	0
 R-LoopRecord/refill	ir	2	0	6	0	0
 R-LoopSlot	interp	61	0	0	4226	0
 R-MaskRange	parse	9	49	0	0	0
-R-Mint	c	26	0	0	0	351
+R-Mint	c	26	0	0	0	343
 R-MoveChild	parse	1	2	0	0	0
 R-MoveLast	ir	3	0	9	0	0
 R-MoveLast/host	ir	1	0	1	0	0
@@ -123,17 +124,17 @@ R-PushFill/run	c	23	0	0	0	68
 R-PushFill/run-header	c	19	0	0	0	45
 R-PushFill/several	ir	10	0	10	0	0
 R-PushFill/text	c	2	0	0	0	11
-R-PushRec	c	17	0	0	0	80
+R-PushRec	c	17	0	0	0	78
 R-PushRec/apart	c	5	0	0	0	60
 R-Range	c	61	0	0	0	6994
 R-Range/index	c	28	0	0	0	478
 R-RangedCall	c	42	0	0	0	584
 R-RangedCall/guard	c	9	0	0	0	32
 R-Rebind	ir	3	0	5	0	0
-R-RecPtr	c	44	0	0	0	522
-R-RecPtr/held	c	37	0	0	0	198
+R-RecPtr	c	44	0	0	0	518
+R-RecPtr/held	c	37	0	0	0	196
 R-RecPtr/param	c	42	0	0	0	285
-R-RecPtr/text	c	4	0	0	0	40
+R-RecPtr/text	c	3	0	0	0	36
 R-RefParam	c	54	0	0	0	6070
 R-Refresh/keep-header	c	1	0	0	0	2
 R-RepeatRun	ir	10	0	109	0	0
@@ -161,7 +162,7 @@ R-TailSelf	parse	2	2	0	0	0
 R-TextBorrow	interp,c	61	0	0	902	277
 R-TextBorrow/tested	c	3	0	0	0	5
 R-TextLen	parse	4	5	0	0	0
-R-Transient	c	8	0	0	0	10
+R-Transient	c	8	0	0	0	11
 R-TypedKeyed	c	3	0	0	0	36
 R-TypedKeyed/compound	c	3	0	0	0	12
 R-TypedKeyed/remove	c	2	0	0	0	4
@@ -169,7 +170,7 @@ R-TypedKeyed/text	c	4	0	0	0	15
 R-TypedRead	c	2	0	0	0	19
 R-TypedRead/float	c	1	0	0	0	2
 R-ValueLocal	parse,c	19	239	0	0	19
-R-ValueRecord	parse,c	27	147	0	0	372
+R-ValueRecord	parse,c	27	143	0	0	372
 R-ValueRecord/view	c	2	0	0	0	3
 R-VecCopy	ir	6	0	21	0	0
 R-Version	c	16	0	0	0	133
