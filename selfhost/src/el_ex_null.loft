@@ -225,7 +225,9 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if keyed_kind(lhs) {
     // A field path (`self.tokens[l].possible ?? []`, a point lookup's field included) is held
     // in a `__ncc_N` viewing it, as a vector field is; the "ncc" block answers it where present.
-    if !(el_ir::unspan(x.code) is NdVar) && (field_path(e, x.code) || keyed_field_read(e, x.code)) {
+    // (…and so is a loft function's answer, `pick(c) ?? []`: held in a `__ncc_N` as it comes.)
+    kcall = match el_ir::unspan(x.code) { NdCall { def_nr: kcd } => starts_with(el::def(e, kcd).name, "n_"), _ => false };
+    if !(el_ir::unspan(x.code) is NdVar) && (field_path(e, x.code) || keyed_field_read(e, x.code) || kcall) {
       if !el_types::is_equal(e, el_types::without_deps(lhs), el_types::without_deps(el_types::base(d.tp))) {
         el::refuse(e, "a keyed `??` default of another type");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -246,7 +248,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       kpresent = el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpVectorIsNull", [kh])]);
       // A call default of the viewing join gets its home (`join-arm-owner`).
       kdf = if len(el_types::deps(lhs)) > 0 { own_join_arm(e, vars, d.code, lhs) } else { d.code };
-      return ex(el_ir::v_block([el_ir::v_set(kheld, nullable_arith(e, x.code, true)), el_ir::v_if(kpresent, kh, kdf)], lhs, "ncc"), lhs);
+      return ex(el_ir::v_block([el_ir::v_set(kheld, if kcall { x.code } else { nullable_arith(e, x.code, true) }), el_ir::v_if(kpresent, kh, kdf)], lhs, "ncc"), lhs);
     }
     if !(el_ir::unspan(x.code) is NdVar) {
       el::refuse(e, "a keyed `??` on something other than a local");
