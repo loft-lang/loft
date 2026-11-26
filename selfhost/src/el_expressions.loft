@@ -137,6 +137,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if ttail >= 0 && result is TyOptional && el_types::base(result) is TyVector && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false } {
     vars.bare_literal = ttail;
   }
+  // (An empty `[]` tail under a vector result, in a body with an early `return`: Rust reads it
+  // into a store of its own — `__vdb_N`, the one the buffer is renamed onto, the early exits
+  // copied in (`deliver_mid_vector_returns`).)
+  if ttail >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) && match e.p.nodes[ttail] { SVecLit { items } => len(items) == 0, _ => false } && syntax_returns(e, body) {
+    vars.expect_node = ttail;
+    vars.expect = el_types::without_deps(result);
+    vars.empty_tail = ttail;
+  }
   // (A tail literal under a KEYED result — `[]` included — is read as the collection.)
   if ttail >= 0 && keyed_kind(el_types::base(result)) && e.p.nodes[ttail] is SVecLit {
     vars.expect_node = ttail;
@@ -1415,6 +1423,21 @@ pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::
     _ => {}
   }
   null
+}
+
+// Does the syntax under `n` hold a `return` (not one inside a lambda)?
+fn syntax_returns(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SJump { kind } => { if kind == "return" { return true; } },
+    SLambda { at: _ } => { return false; },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if syntax_returns(e, c) {
+      return true;
+    }
+  }
+  false
 }
 
 // Is every leaf of this join a keyed LOCAL that is no parameter, or a keyed literal (`Vector`)?
