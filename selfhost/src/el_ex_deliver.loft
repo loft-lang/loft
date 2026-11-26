@@ -263,7 +263,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       rbl.operators[-1] = deliver_arms(e, vars, rbl.operators[-1], vb, rrec);
       // (A dense result beside a `null` arm opens by clearing the local the buffer was renamed
       // onto, its first statement inside that `Insert` — Rust's head clear of a renamed buffer.)
-      if !ropt && null_arm(e, rtail) && vb != rb && len(rbl.operators) > 0 {
+      if !ropt && written_null_arm(e, tail_syntax(e, vars.body)) && vb != rb && len(rbl.operators) > 0 {
         rbl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ir::NdVar { n: vb }]), rbl.operators[0]] };
       }
       rdense = el_types::with_deps(el_types::without_deps(el_types::base(result)), rborrowed);
@@ -1256,7 +1256,7 @@ pub fn arm_delivery(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer,
   dbuf = if vb >= 0 && vb != rb { vb } else { rb };
   // (A dense result beside a `null` arm opens by clearing the buffer — Rust's head clear, its
   // first statement inside that `Insert` — whether it kept `__retbuf` or was renamed.)
-  null_head = !(result is TyOptional) && null_arm(e, tail) && len(bl.operators) > 0;
+  null_head = !(result is TyOptional) && written_null_arm(e, tail_syntax(e, vars.body)) && len(bl.operators) > 0;
   delivered = deliver_arms(e, vars, tail, dbuf, rec);
   answered = el_types::with_deps(el_types::without_deps(el_types::base(result)), borrowed);
   if mwrap != null {
@@ -1510,6 +1510,28 @@ fn temp_subject_call(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
       -1
     },
     _ => -1
+  }
+}
+
+// Is syntax node `n` an `if` with an arm the program WROTE as `null` — through `else if` chains?
+// (A match's own fallback, the sentinel no arm takes, is no written arm: Rust's head clear of a
+// dense result keys on the written `null` only.)
+fn written_null_arm(e: el::El, n: integer) -> boolean {
+  if n < 0 {
+    return false;
+  }
+  match e.p.nodes[n] {
+    SIf { then, other } => syntax_null(e, then) || (other != null && (syntax_null(e, other!) || written_null_arm(e, other!))),
+    _ => false
+  }
+}
+
+// Is syntax node `n` the literal `null`, or a block whose value is?
+fn syntax_null(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SNull { at: _ } => true,
+    SBlock { stmts } => len(stmts) > 0 && match e.p.nodes[stmts[-1]!] { SStmt { e: se, semi } => !semi && se != null && e.p.nodes[se!] is SNull, _ => false },
+    _ => false
   }
 }
 
