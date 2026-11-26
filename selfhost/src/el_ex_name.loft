@@ -556,7 +556,9 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
           }
           return ex(got!, c.tp);
         }
-        return ex(got!, el::def(e, e.closure_rec).attributes[a]!.typedef[0]);
+        // (`t.depending(closure_param)`: a captured text read borrows the closure record, whose
+        // store holds it — `-> text["__closure", …]` where a lambda answers one.)
+        return ex(got!, el_types::with_deps(el::def(e, e.closure_rec).attributes[a]!.typedef[0], [e.closure_var]));
       }
     }
   }

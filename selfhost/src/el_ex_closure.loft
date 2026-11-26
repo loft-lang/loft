@@ -772,7 +772,10 @@ pub fn lambda_value_type(e: el::El, d: integer) -> ir::TypeT {
   match t {
     TyFunction { args, result, dep, consts } => {
       def = el::def(e, d);
-      kept = [for x in el_types::deps(result) if (def.attributes[x] == null || !def.attributes[x]!.hidden) { x }];
+      // (`published_ret_type`: the closure is a borrow only where the tail READS it — a place,
+      // or a join with a place arm, `tail_is_a_place` / `tail_joins_with_a_place`.)
+      ptail = tail_place(e, def.code[0] ?? ir::NdNull);
+      kept = [for x in el_types::deps(result) if (def.attributes[x] == null && ptail || def.attributes[x] != null && !def.attributes[x]!.hidden && (def.attributes[x]!.name != "__closure" || ptail)) { x }];
       if len(kept) == len(el_types::deps(result)) {
         return t;
       }
@@ -780,6 +783,51 @@ pub fn lambda_value_type(e: el::El, d: integer) -> ir::TypeT {
     },
     _ => t
   }
+}
+
+// `tail_is_a_place || tail_joins_with_a_place`: the body's tail is a variable or a projection
+// out of one (`OpGetField`, `OpGetVector`, `OpGetDbRef`), or an `if` with such an arm.
+fn tail_place(e: el::El, body: ir::Node) -> boolean {
+  node = el_ir::unspan(body);
+  // (The body block's tail first.)
+  match node { NdBlock { block } => { if len(block[0].operators) == 0 { return false; } node = el_ir::unspan(el_ir::last(block[0].operators)); }, _ => { return false; } }
+  if node_place(e, node) {
+    return true;
+  }
+  while true {
+    match node {
+      NdReturn { inner } => { node = el_ir::unspan(inner); },
+      NdInsert { items } => { if len(items) == 0 { return false; } node = el_ir::unspan(items[-1]!); },
+      NdBlock { block } => { if len(block[0].operators) == 0 { return false; } node = el_ir::unspan(el_ir::last(block[0].operators)); },
+      NdIf { cond: _, t: it, f: ifa } => { return node_place(e, it) || node_place(e, ifa); },
+      _ => { return false; }
+    }
+  }
+  false
+}
+
+// `node_place_root(n).is_some()`.
+fn node_place(e: el::El, n: ir::Node) -> boolean {
+  node = el_ir::unspan(n);
+  while true {
+    match node {
+      NdReturn { inner } => { node = el_ir::unspan(inner); },
+      NdInsert { items } => { if len(items) == 0 { return false; } node = el_ir::unspan(items[-1]!); },
+      NdBlock { block } => { if len(block[0].operators) == 0 { return false; } node = el_ir::unspan(el_ir::last(block[0].operators)); },
+      NdVar { n: _ } => { return true; },
+      NdTupleGet { var: _ } => { return true; },
+      NdCall { def_nr, args } => {
+        nm = el::def(e, def_nr).name;
+        if (nm == "OpGetField" || nm == "OpGetVector" || nm == "OpGetDbRef") && len(args) > 0 {
+          node = el_ir::unspan(args[0]!);
+        } else {
+          return false;
+        }
+      },
+      _ => { return false; }
+    }
+  }
+  false
 }
 
 pub fn closure_fn_type(e: el::El, d: integer) -> ir::TypeT {
