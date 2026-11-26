@@ -1314,6 +1314,8 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     if rw == null {
       return ex(ir::NdNull, ir::TyVoid);
     }
+    // (The element is the walk's type, as a `for`'s is: a `u8` start inside its width is `u8`.)
+    elem = rw!.elem;
     // (A `_` comprehension's counters are its own: beside the range's, the comprehension
     // mints the `_index_N` a named one would call `x#index`, which a range never reads.)
     if src_id == "_" {
@@ -2286,14 +2288,24 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     lt = ir::TyCharacter;
     extra = [el_ir::v_set(idx, ir::NdInt { n: 0 })];
   } else if range {
+    // (`iter_for` makes `{id}#index` first, at the count type, whatever the walk's own type: a
+    // `u8` range's counters are `u8`, its index is not.)
+    if src_id != "_" {
+      el_vars::set_defined(vars, el_vars::add_variable(vars, "{id}#index", count_type(e)));
+    }
     el_ex_base::start_loop(e, vars);
     rw = el_ex_pattern::range_walk(e, vars, id, source);
     if rw == null {
       return null;
     }
     idx = rw!.idx;
-    lt = el_ex_base::count_type(e);
+    lt = rw!.elem;
     init = el_ex_pattern::range_init(rw!);
+    // (`iter_init_steps` keeps the walk's `create_iter` whole: a range with more than one init
+    // step is an `Insert` of its own inside the loop's.)
+    if len(init) > 1 {
+      init = [ir::NdInsert { items: init }];
+    }
   } else {
     idx = el_vars::add_variable(vars, "{id}#index", count_type(e));
     el_vars::set_defined(vars, idx);
