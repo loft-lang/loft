@@ -1258,11 +1258,20 @@ static int64_t loft_fs_mkdir(loft_cx *cx, loft_str raw, int all) {
     char *path = loft_resolve(cx, raw);
     if (!path) return LOFT_FS_OTHER;
     int64_t code = LOFT_FS_OTHER;
-    /* A path that resolves to nothing names no directory; the walks below start one past
-     * its first character. */
+    /* A path that resolves to nothing (`.`, `q/..` or "" under `#cwd`) is the working
+     * directory, as the interpreter reads it: the walks below start one past the path's first
+     * character, so they are given that directory's own name.  An empty name makes no single
+     * directory, as the interpreter answers it. */
     if (!path[0]) {
-        free(path);
-        return loft_fs_code(cx, ENOENT);
+        if (!raw.len && !all) {
+            free(path);
+            return loft_fs_code(cx, ENOENT);
+        }
+        char *dot = (char *) realloc(path, 2);
+        if (!dot) { fputs("loft: out of memory\n", stderr); abort(); }
+        path = dot;
+        path[0] = '.';
+        path[1] = 0;
     }
 #if defined(LOFT_POSIX)
     if (all) {
