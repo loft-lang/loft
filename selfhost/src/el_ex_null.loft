@@ -3458,14 +3458,13 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
     }
     td = heap_def(el_types::base(result));
     // (A struct enum's buffer stays `__retbuf` and takes the copy itself.  The copy is tested
-    // only where its source may be absent, `copy_source_may_be_absent`: a loop's own element
-    // is there.)
+    // unless its source is proven present, `copy_needs_test`: a loop's own element is there.)
     if mb >= 0 && (!unrenamed || el_convert::struct_enum(el_types::base(result))) {
       kt = ir::NdInt { n: el::def(e, td).known_type };
       b = ir::NdVar { n: mb };
       owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [mb]);
       copy = el_ir::v_block([el_ir::v_set(mb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [src, b, kt]), b], owned, "materialized_view_return");
-      chosen = if len(pre) > 0 || el_ex_copy::copy_source_may_be_absent(e, vars, src) { el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [src]), el_ir::cl(e, "OpNullRefSentinel", []), copy) } else { copy };
+      chosen = if len(pre) > 0 || el_ex_copy::copy_needs_test(e, vars, src) { el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [src]), el_ir::cl(e, "OpNullRefSentinel", []), copy) } else { copy };
       if len(pre) > 0 {
         chosen = el_ir::v_block(pre + [chosen], owned, "return_source");
       }
