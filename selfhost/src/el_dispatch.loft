@@ -966,8 +966,7 @@ fn definition_ranks(e: el::El, d: integer, args: vector<ir::TypeT>, literals: ve
 // definition's does.  Changed: `bind_template` is `el_ex_object::template_binding`, which
 // answers null where two positions bind one variable differently (Rust binds the first and the
 // second position then fails its rank, so the member is out either way).  `refused_templates` has
-// no twin (a refused header refuses the program here), nor has `open_instance_bindings` (an open
-// instance, `Box<T>` inside a template, is not carried by this port).
+// no twin (a refused header refuses the program here).
 fn template_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<integer>? {
   if !takes_arity(e, d, len(args)) {
     return null;
@@ -985,6 +984,8 @@ fn template_ranks(e: el::El, d: integer, args: vector<ir::TypeT>) -> vector<inte
   if !satisfies(e, d, b!) {
     return null;
   }
+  // `Box<T>` ranks as the instance the binding names (@PLN165 D5): the open ones it closes.
+  el_types::open_instance_bindings(e, d, b!.vars, b!.types);
   params = visible_params(e, d);
   r: vector<integer> = [];
   for p in params[0..len(args)] {
