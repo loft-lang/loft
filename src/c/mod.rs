@@ -26,6 +26,7 @@ mod fnval;
 pub mod hosted;
 mod parse;
 mod reflect;
+mod reltable;
 mod show;
 mod split;
 mod tail;
@@ -5792,6 +5793,8 @@ fn framed(
     // A body whose calls reach it again keeps the hint and no more: forced, its own call
     // through the wrapper is a cycle of forced inlining, which gcc 16 at -O3 compiled wrong on
     // Windows (`fact(10)` answered 181440 where the wrapper pushes a frame, `LOFT_CALL_CHAIN`).
+    // `@FR-R-CTable`: the parts' runs of releases are written as data.
+    let parts = parts.map(|(p, sites)| (reltable::tables(&fr, &p), sites));
     let body_storage = if parts.is_some() || on_call_cycle(cx, d) {
         storage.to_string()
     } else {

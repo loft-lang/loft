@@ -9356,3 +9356,79 @@ fn a_shipped_build_is_one_unit_whatever_the_split_switch_says() {
     assert!(marks(false) > 1, "the switch splits a semantics build");
     assert_eq!(marks(true), 0, "a shipped build is one unit");
 }
+
+/// `@FR-R-CTable` — a parted function's runs of releases go through a table: a function of
+/// twelve vector-delivering calls and an early exit, written in parts (`LOFT_C_SPLIT=12`), has
+/// its exits' release runs as `loft_release_run` calls, and answers what its statements answer
+/// (hand-computed: `many(1)` = sum of 2 + (1 + i) for twelve calls = 102, `many(200)` returns
+/// after eight = 1644), with no leak; `LOFT_NO_C_RELTABLE=1` writes the statements again.
+#[test]
+fn a_parted_function_releases_through_its_table() {
+    if !have_cc() {
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let dir = scratch("reltable");
+    let file = dir.join("p.loft");
+    let mut src = String::from(
+        "fn mk(n: integer) -> vector<integer> { v: vector<integer> = [n, n + 1]; v }\n\
+         fn many(a: integer) -> integer {\n  t = 0;\n",
+    );
+    for i in 0..12 {
+        let _ = writeln!(src, "  x{i} = mk(a + {i});\n  t += len(x{i}) + x{i}[0];");
+        if i == 7 {
+            src.push_str("  if a > 100 { return t; }\n");
+        }
+    }
+    src.push_str("  t\n}\nfn main() {\n  println(\"{many(1)} {many(200)}\");\n}\n");
+    fa::write(&file, src).expect("write program");
+    let run = |table: bool| -> (String, usize) {
+        let mut cmd = loft::platform::process::harness_command(loft);
+        cmd.env("LOFT_C_SPLIT", "12")
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_NATIVE_LEAK_CHECK", "1");
+        if !table {
+            cmd.env("LOFT_NO_C_RELTABLE", "1");
+        }
+        let c = dir.join(if table { "t.c" } else { "s.c" });
+        let emit = cmd
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&file)
+            .output()
+            .expect("emit");
+        assert!(
+            emit.status.success(),
+            "{}",
+            String::from_utf8_lossy(&emit.stderr)
+        );
+        let calls = fa::read_to_string(&c)
+            .expect("read the C")
+            .matches("loft_release_run(loft_fr")
+            .count();
+        let mut cmd = loft::platform::process::harness_command(loft);
+        cmd.env("LOFT_C_SPLIT", "12")
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_NATIVE_LEAK_CHECK", "1");
+        if !table {
+            cmd.env("LOFT_NO_C_RELTABLE", "1");
+        }
+        let out = cmd.arg("--native-c").arg(&file).output().expect("run");
+        assert!(
+            out.status.success() && out.stderr.is_empty(),
+            "a clean run: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (String::from_utf8_lossy(&out.stdout).into_owned(), calls)
+    };
+    let (tables, calls) = run(true);
+    assert_eq!(tables, "102 1644\n");
+    assert!(
+        calls > 0,
+        "the parted function's release runs go through its table"
+    );
+    let (statements, none) = run(false);
+    assert_eq!(statements, "102 1644\n");
+    assert_eq!(none, 0, "the switch writes the statements");
+}

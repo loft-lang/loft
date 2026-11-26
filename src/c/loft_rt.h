@@ -3505,6 +3505,30 @@ LOFT_HOT_INLINE void loft_free_var_distinct(loft_cx *cx, loft_ref *v, loft_ref w
     v->store_nr = 0xFFFF;
 }
 
+/* `@FR-R-CTable`: a run of releases written as data (`c::reltable`).  `alpha` holds each
+ * distinct release of a parted function once — its kind, its variable's offset in the frame
+ * struct `fr`, and the witness offset (the distinct form) or the parking slot (a work text) —
+ * and `run` the indices of the `n` releases an exit runs, which run here in their order: the
+ * statements the run replaced, one after another. */
+typedef struct {
+    uint8_t kind;
+    uint32_t off;
+    uint32_t woff;
+    loft_text *slot;
+} loft_rel;
+static LOFT_NOINLINE void loft_release_run(loft_cx *cx, void *fr, const loft_rel *alpha, const uint16_t *run, uint32_t n) {
+    char *base = (char *) fr;
+    for (uint32_t i = 0; i < n; i++) {
+        const loft_rel *e = &alpha[run[i]];
+        switch (e->kind) {
+        case 0: loft_free_var(cx, (loft_ref *) (base + e->off)); break;
+        case 1: loft_free_var_distinct(cx, (loft_ref *) (base + e->off), *(loft_ref *) (base + e->woff)); break;
+        case 2: loft_wpark_put(cx, e->slot, (loft_text *) (base + e->off)); break;
+        default: loft_text_free(cx, (loft_text *) (base + e->off)); break;
+        }
+    }
+}
+
 /* `State::bind_fn_ref_result` / native's `cr_fnref_minted`: was the record a call through a
  * function value handed back MINTED by that call — a store made after `since` — rather than an
  * argument or a capture that predates it (or the closure's own record)?  A null is adopted as

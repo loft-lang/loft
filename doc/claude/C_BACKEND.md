@@ -296,6 +296,11 @@ the same order, so no answer, free or leak changes; the rule and its premises ar
   names each function it shortened.
 - **Guard:** `tests/c_tail.rs`.
 
+The parts of `(R-CSplit)` cannot share tails, so `src/c/reltable.rs` writes their release runs
+of eight or more as data (`(R-CTable)`): one `loft_release_run` call over a table of the
+function's distinct releases, the same releases in the same order.  `LOFT_NO_C_RELTABLE=1`
+turns it off; guard `a_parted_function_releases_through_its_table` in `tests/c_emit.rs`.
+
 ## The split build: one unit per source file (opt-in)
 
 A big program's edit–build–test loop spends most of its gcc time recompiling C that did not
