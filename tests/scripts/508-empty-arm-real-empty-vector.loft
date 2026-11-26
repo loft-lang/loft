@@ -1,6 +1,8 @@
 // @PLN90 W8 regression: an empty `[]` match/if arm must materialise a REAL empty vector
 // (usable downstream — iterable, appendable), not fold to a null/void that only happens to
 // read len 0. Both single-line and multi-line formattings must behave identically.
+//
+// @FR-M-Expr: the selected arm's vector — `items` or `[]` — is the match's value.
 enum Cell {
   Empty,
   Filled { items: vector<integer> },

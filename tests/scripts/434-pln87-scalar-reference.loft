@@ -2,6 +2,10 @@
 // element) is a LIVE link: reads see the source's current value, writes write the source.
 // Runs on interp + --native + wasm, under the store-leak gate.  `&` here is the allowed
 // binding form (`a = &b`, addressable operand).
+//
+// @FR-B-Ref-Read: a `&` link to a local, a field or an element reads the source's current value.
+// @FR-B-Ref-Write: writing the link writes the source, read-modify-write included.
+// @FR-F-ParamRef: a `&` parameter's whole-value write reaches the caller's variable or struct.
 
 struct Pair {
   a: integer,

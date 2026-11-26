@@ -5,6 +5,9 @@
 // through); a PLAIN bind COPIES (H-Copy). Before the fix, `&` was silently
 // ignored for a vector — `d = &v; d[i]=x` copied, so no write reached the source
 // (this is what broke every Canvas drawing method: `d = self.data; d[i]=color`).
+//
+// @FR-B-Ref-Alias: `d = &v` and `row = &self.cells` write and grow the source.
+// @FR-B-Copy: `copy = base` and `cc = h.cells` are independent copies.
 
 struct Grid {
   cells: vector<integer>,

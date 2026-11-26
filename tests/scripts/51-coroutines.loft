@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // CO1: Coroutines — yield, iterator<T>, next(), exhausted(), for-loop, text param, nested call.
 // CO1.4: yield from delegation.
+//
+// @FR-G-Next: each `next` runs to the next yield (10 + 20 + 30).
+// @FR-G-Done: after the last yield the generator is exhausted.
+// @FR-G-Delegate: `yield from inner_vals()` yields 10 and 20 between 1 and 2 (33).
 
 fn count() -> iterator < integer > {
   yield 10;

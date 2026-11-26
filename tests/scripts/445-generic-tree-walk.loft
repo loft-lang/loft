@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Sat: GwNode satisfies GwKidded by its visible `gw_kids` / `gw_worth`.
+// @FR-G-Mono: `gw_walk(gt_n1, …)` specialises to GwNode and walks level order 1,2,3,4,5,6.
 
 // Recursion-free generic tree walk — the full composition the sandbox-side
 // `walk` construction needs (bounded loop + grow-only worklist + `??` on

@@ -27,6 +27,9 @@
 // Axes: what the capture DERIVES from (a field, a vector element, a whole vector, a
 // scalar read out of one), the DEPTH of the read inside the lambda, and cardinality
 // (a resolved capture beside an unresolved one; two lambdas each needing a layout).
+//
+// @FR-L-CapWrite: the mutated forward-typed capture `n` writes back (5 + 1 + 2).
+// @FR-L-CapOwn: a borrowed projection capture is never freed, so the World survives repeat calls.
 
 struct F686Cell  { v: float }
 struct F686Row   { q: float }

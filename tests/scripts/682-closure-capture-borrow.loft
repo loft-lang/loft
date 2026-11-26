@@ -21,6 +21,10 @@
 // its lambda and still lost the World.  What the axes separate is adoption from borrowing,
 // and both directions are asserted here — the borrow cells for the over-free, the adopt
 // cells because marking them borrowed instead leaks (the store checker catches that half).
+//
+// @FR-L-CapOwn: a borrowed capture is not freed by the record; an owned one is freed once, no leak.
+// @FR-L-Escape: a factory's returned closure keeps its owned capture (add5, add7).
+// @FR-L-CapWrite: `acc = acc + n` inside the closure reaches the outer `acc` (6).
 
 struct C682Cell  { v: float }
 struct C682Chunk { cx: integer, cells: vector<C682Cell> }

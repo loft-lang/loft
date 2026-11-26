@@ -7,6 +7,9 @@
 // pairs it with a NULL closure (vector-stored fn-refs are non-capturing),
 // mirroring the working for-loop unpack.  `par` compiles its worker to native
 // under BOTH backends, so this pins interp and `--native`.
+//
+// @FR-C-Par: each worker gets the vector's element at its position.
+// @FR-L-FnRef: a stored fn-ref element calls the function it names.
 fn dbl(x: integer) -> integer {
   return x * 2;
 }
