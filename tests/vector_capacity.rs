@@ -132,14 +132,7 @@ fn a_file_with_more_bytes_than_a_vector_counts_stops_read_bytes() {
     let _ = fa::remove_dir_all(&dir);
 }
 
-/// Does `file` hold far fewer blocks than its length — is it sparse?
-#[cfg(unix)]
+/// Does `file` hold far fewer blocks than its length — is it sparse?  Unknown counts as not.
 fn sparse(file: &std::path::Path) -> bool {
-    use std::os::unix::fs::MetadataExt as _;
-    fa::metadata(file).is_ok_and(|m| m.blocks() * 512 < (1 << 20))
-}
-
-#[cfg(not(unix))]
-fn sparse(_file: &std::path::Path) -> bool {
-    false
+    fa::allocated_bytes(file).is_some_and(|b| b < (1 << 20))
 }

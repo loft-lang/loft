@@ -903,21 +903,10 @@ mod tests {
         ks_pass = \"env:APP_KS_PASS\"\nkey_pass = \"file:keys/key.pass\"\n";
 
     /// A stand-in `apksigner` that writes its working directory and arguments, one a line,
-    /// to `<dir>/apksigner.log`.
-    #[cfg(unix)]
+    /// to `<dir>/apksigner.log` (`platform::logging_stub`).
     fn fake_apksigner(dir: &Path) -> (PathBuf, PathBuf) {
         let log = dir.join("apksigner.log");
-        let script = dir.join("apksigner");
-        crate::file_access::write(
-            &script,
-            format!(
-                "#!/bin/sh\npwd > '{log}'\nfor a in \"$@\"; do echo \"$a\" >> '{log}'; done\n",
-                log = log.display()
-            ),
-        )
-        .expect("write fake apksigner");
-        crate::file_access::set_executable(&script).expect("chmod");
-        (script, log)
+        (crate::platform::logging_stub(dir, "apksigner", &log), log)
     }
 
     fn target() -> AndroidTarget {
@@ -947,7 +936,6 @@ mod tests {
     /// @falsified-at: 04818af26 — by hand: with `signing` answering `Signing::Debug` for a
     /// `--ship` build (what it did before), the `Release` match fails; with `release_key_args`
     /// dropping `--ks-key-alias`, the argument list differs.
-    #[cfg(unix)]
     #[test]
     fn a_ship_build_signs_with_the_key_its_manifest_names() {
         let (dir, program) = app_dir("release", Some(RELEASE_TOML));
@@ -1099,7 +1087,6 @@ mod tests {
     /// release key.
     /// @falsified-at: 04818af26 — by hand: with `signing` answering the release key for a
     /// debug build, the `Debug` match fails.
-    #[cfg(unix)]
     #[test]
     fn a_debug_build_signs_with_the_debug_key() {
         let (dir, program) = app_dir("debug", Some(RELEASE_TOML));

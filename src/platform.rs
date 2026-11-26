@@ -228,6 +228,46 @@ pub fn timing_report(phase: &str) {
 /// Initialised once at startup from [`std::path::MAIN_SEPARATOR`].
 static WINDOWS_FS: OnceLock<bool> = OnceLock::new();
 
+/// A stand-in for a command-line tool, for tests: an executable in `dir` named `name` (a
+/// `.cmd` on Windows, run through `cmd.exe`) that writes its working directory and then each
+/// argument, one a line, to `log`.  Not `cfg(test)`: the binary's tests reach it through the
+/// library, which is built without that flag.
+#[doc(hidden)]
+#[must_use]
+pub fn logging_stub(
+    dir: &std::path::Path,
+    name: &str,
+    log: &std::path::Path,
+) -> std::path::PathBuf {
+    let log = log.display();
+    #[cfg(unix)]
+    {
+        let stub = dir.join(name);
+        crate::file_access::write(
+            &stub,
+            format!("#!/bin/sh\npwd > '{log}'\nfor a in \"$@\"; do echo \"$a\" >> '{log}'; done\n"),
+        )
+        .expect("write the stub");
+        crate::file_access::set_executable(&stub).expect("make the stub executable");
+        stub
+    }
+    #[cfg(not(unix))]
+    {
+        // The redirection comes first, so an argument ending in a digit is not read as a
+        // handle number; `echo(` writes an argument that is a lone word as it is.
+        let stub = dir.join(format!("{name}.cmd"));
+        crate::file_access::write(
+            &stub,
+            format!(
+                "@echo off\r\n>\"{log}\" cd\r\n:next\r\nif \"%~1\"==\"\" goto :eof\r\n\
+                 >>\"{log}\" echo(%~1\r\nshift\r\ngoto next\r\n"
+            ),
+        )
+        .expect("write the stub");
+        stub
+    }
+}
+
 /// Returns `true` when the runtime filesystem uses `'\\'` (Windows).
 pub fn is_windows_fs() -> bool {
     *WINDOWS_FS.get_or_init(|| std::path::MAIN_SEPARATOR == '\\')
