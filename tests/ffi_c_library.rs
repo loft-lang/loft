@@ -553,6 +553,8 @@ fn a_component_built_against_another_loft_ffi_is_refused_without_build_advice() 
 /// user's, so no user would ever adopt a published unit — they would all rebuild, and a machine
 /// with no C compiler would interpret, with nothing reporting it.  Every `LOFT_*` name the
 /// release workflow or its library-artifact script sets is on the list.
+/// @falsified-at: 7f512272d — by hand: with `LOFT_NO_CACHE` off `INERT_SWITCHES`, the test
+/// fails naming it (`scripts/release-lib-artifacts.sh` sets it).
 #[test]
 fn the_release_builds_its_units_under_inert_switches_only() {
     let root = root();
@@ -596,6 +598,7 @@ fn the_release_builds_its_units_under_inert_switches_only() {
 /// (`LOFT_WIDTH=32`).  Each answers 135 (0 + 3 + … + 27); the plain and the inert run share one
 /// unit and the other two have one each, so three units.  The C backend keys its program build on
 /// its C text, so only the interpreter adopts a unit by this key.
+/// @falsified-at: ebe1bd76b — the four runs leave 1 unit, 3 wanted.
 #[test]
 fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
     let dir = std::env::temp_dir().join(format!("loft_unit_switch_key_{}", std::process::id()));
@@ -673,6 +676,10 @@ fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
 /// the old key too — the interpreter refuses or
 /// finds the component at start, and the C backend keys its build on its C text, which holds what
 /// the search found — so that cell, and the C backend's, guard.  `@FR-Art-Key`.
+/// @falsified-at: 3fd0586f2 — `--interpret`, installed after a refused run: run 2 prints
+/// nothing and exits 1 (it adopted the refusing unit).
+/// @falsified-at: ca63d583f — `--interpret`, moved after a run that called it: 2 units, 1
+/// wanted (the moved run built its own).
 #[test]
 fn a_unit_is_keyed_on_the_components_it_binds() {
     // (what the run finds, whether its program calls the native, what it prints, whether it is
