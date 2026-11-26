@@ -3073,6 +3073,20 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
     return ex(ir::NdReturn { inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyNever);
   }
   d = e.context;
+  // A boxed tuple returned (`return ("big", i);` under `-> (text, integer)`): built into a
+  // `__tuple<…>` work ref of its own (`synthetic_tuple_return`), minted on the second pass as the
+  // tail's is — `boxed_tail_into`, the tail's walk.
+  rbtd = match el_types::base(result) { TyReference { n: rbn } => if starts_with(el::def(e, rbn).name, "__tuple<") { rbn } else { -1 }, _ => -1 };
+  if rbtd >= 0 && (el_ir::unspan(v.code) is NdTuple || el_ir::unspan(v.code) is NdIf) {
+    if e.first_pass {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    rbw = el_vars::work_ref(vars, ir::TyReference { n: rbtd, dep: [] });
+    rnt = el_expressions::boxed_tail_into(e, vars, el_ir::unspan(v.code), rbw, rbtd);
+    if rnt != null {
+      return ex(ir::NdReturn { inner: rnt! }, ir::TyNever);
+    }
+  }
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
   x = el_ir::unspan(v.code);
   if !e.first_pass && branch_projects_call(e, x) {
