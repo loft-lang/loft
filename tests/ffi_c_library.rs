@@ -547,3 +547,110 @@ fn a_component_built_against_another_loft_ffi_is_refused_without_build_advice() 
         );
     }
 }
+
+/// A library's compiled unit (`native-auto/`) is keyed on the components its C binds: whether
+/// each is installed, and which one.  A package wraps a component's native in a loft function of
+/// its own (`twice(21)` = 21 + 21 + 1 = 43) and a program is run twice, the component installed
+/// or not, or moved, between the runs.  Keyed without the component, the second run adopted the
+/// first run's unit and, after an install, kept refusing.  The runs share the package, its
+/// `native-auto/`, a scratch `LOFT_HOME` and program cache, as two runs of one program on one
+/// machine do.  The uninstall and the move pass on the old key too — the interpreter refuses or
+/// finds the component at start, and the C backend keys its build on its C text, which holds what
+/// the search found — so those cells, and the C backend's, guard.  No formal rule covers an
+/// artifact's key.
+#[test]
+fn a_unit_is_keyed_on_the_components_it_binds() {
+    // (what the run finds, whether its program calls the native, what it prints, whether it is
+    // refused).  A program that can reach a missing native does not start, so the one that does
+    // not call it is another program, which uses the package all the same.
+    type Run = (Found, bool, &'static str, bool);
+    #[derive(Clone, Copy)]
+    enum Found {
+        Absent,
+        Installed,
+        Moved,
+    }
+    const CELLS: [(&str, Run, Run); 4] = [
+        (
+            "installed after a refused run",
+            (Found::Absent, true, "", true),
+            (Found::Installed, true, "TWICE 43\n", false),
+        ),
+        (
+            "installed after another program that does not call it",
+            (Found::Absent, false, "IDLE\n", false),
+            (Found::Installed, true, "TWICE 43\n", false),
+        ),
+        (
+            "uninstalled after a run that called it",
+            (Found::Installed, true, "TWICE 43\n", false),
+            (Found::Absent, true, "", true),
+        ),
+        (
+            "moved after a run that called it",
+            (Found::Installed, true, "TWICE 43\n", false),
+            (Found::Moved, true, "TWICE 43\n", false),
+        ),
+    ];
+    const WRAP: &str = "pub fn add(a: integer, b: integer) -> integer;\n#native\n\n\
+                        pub fn twice(a: integer) -> integer {\n  add(a, a) + 1\n}\n";
+    const PROG: &str = "use cwrap;\nfn main() { println(\"TWICE {cwrap::twice(21)}\"); }\n";
+    const IDLE: &str = "use cwrap;\nfn main() { println(\"IDLE\"); }\n";
+    for backend in ["--interpret", "--native"] {
+        for (k, (cell, first, second)) in CELLS.iter().enumerate() {
+            let (libs, components) = published(&format!("ckey{k}_{}", &backend[2..]));
+            let pkg = libs.join("cwrap");
+            fa::create_dir_all(pkg.join("src")).expect("the wrapping package");
+            fa::write(
+                pkg.join("loft.toml"),
+                "[package]\nname = \"cwrap\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+                 [library]\nentry = \"src/cwrap.loft\"\n\n[native]\ncomponent = \"ffi_c_library\"\n",
+            )
+            .expect("write the manifest");
+            fa::write(pkg.join("src/cwrap.loft"), WRAP).expect("write the library");
+            let file = libs.join("prog.loft");
+            fa::write(&file, PROG).expect("write the program");
+            let idle = libs.join("idle.loft");
+            fa::write(&idle, IDLE).expect("write the other program");
+            let absent = libs.join("no_components");
+            fa::create_dir_all(&absent).expect("an empty components directory");
+            let moved = libs.join("moved_components");
+            let home = libs.join("home");
+            for (nr, &(found, call, want, refused)) in [first, second].into_iter().enumerate() {
+                let dir = match found {
+                    Found::Absent => absent.clone(),
+                    Found::Installed => components.clone(),
+                    Found::Moved => {
+                        fa::rename(&components, &moved).expect("move the component");
+                        moved.clone()
+                    }
+                };
+                let out = loft_in(&libs, &dir, &[backend], if call { &file } else { &idle })
+                    .env("LOFT_HOME", &home)
+                    .env("XDG_CACHE_HOME", &home)
+                    .output()
+                    .expect("loft runs");
+                let err = String::from_utf8_lossy(&out.stderr).to_string();
+                let ok = String::from_utf8_lossy(&out.stdout) == want
+                    && out.status.success() != refused
+                    && (!refused || err.contains("component `ffi_c_library`"));
+                if !ok {
+                    let _ = fa::remove_dir_all(&libs);
+                }
+                assert!(
+                    ok,
+                    "{backend}, {cell}, run {}: want {want:?}{}, got {:?} (exit {:?})\nstderr:\n{err}",
+                    nr + 1,
+                    if refused {
+                        " and a refusal naming the component"
+                    } else {
+                        ""
+                    },
+                    String::from_utf8_lossy(&out.stdout),
+                    out.status.code()
+                );
+            }
+            let _ = fa::remove_dir_all(&libs);
+        }
+    }
+}
