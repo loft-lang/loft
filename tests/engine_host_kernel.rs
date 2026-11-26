@@ -3014,40 +3014,7 @@ fn a_message_that_trickles_in_holds_the_kernel_no_longer_than_its_budget() {
     for (base, interpret) in [(18160, true), (18161, false)] {
         let leg = if interpret { "interpreter" } else { "C" };
         let port = common::bind_port(base);
-        let prog = test_tmp().join(format!("eh_trickle_{port}_{}.loft", std::process::id()));
-        fa::write(
-            &prog,
-            r#"use engine_host;
-
-fn main() {
-  engine_host::run((env_variable("EH_PORT") ?? "0") as integer ?? 0, 100,
-    fn(ev: engine_host::Event) {
-      if ev.kind == 1 { engine_host::send(ev.cid, "got:{ev.payload}"); }
-    },
-    fn() {});
-}
-"#,
-        )
-        .unwrap();
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let mut cmd = loft::platform::process::harness_command(loft_bin());
-        if interpret {
-            cmd.arg("--interpret");
-        }
-        cmd.process_group(0);
-        let child = cmd
-            .env("LOFT_OFFLINE", "1")
-            .env("EH_PORT", port.to_string())
-            .arg("--no-warnings")
-            .arg("--lib")
-            .arg(root.join("lib"))
-            .arg(&prog)
-            .current_dir(&root)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .expect("spawn kernel");
-        let _guard = Guard(Some(child));
+        let (_guard, prog) = echo_kernel(port, interpret);
         let peer = ws_connect(port);
         ws_send(&peer, "ready");
         assert_eq!(ws_recv(&peer), "got:ready", "{leg}: the kernel answers");
@@ -3076,6 +3043,83 @@ fn main() {
             "{leg}: an upgrade request still arriving after five seconds is dropped, and the \
              next peer is answered then; it waited {waited:?}"
         );
+        let _ = fa::remove_file(&prog);
+    }
+}
+
+/// A kernel that answers every peer message `m` with `got:m` to that peer, on `port`: the
+/// interpreter's or the C.  Answers its guard and the program file.
+fn echo_kernel(port: u16, interpret: bool) -> (Guard, PathBuf) {
+    let prog = test_tmp().join(format!("eh_trickle_{port}_{}.loft", std::process::id()));
+    fa::write(
+        &prog,
+        r#"use engine_host;
+
+fn main() {
+  engine_host::run((env_variable("EH_PORT") ?? "0") as integer ?? 0, 100,
+    fn(ev: engine_host::Event) {
+      if ev.kind == 1 { engine_host::send(ev.cid, "got:{ev.payload}"); }
+    },
+    fn() {});
+}
+"#,
+    )
+    .unwrap();
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let mut cmd = loft::platform::process::harness_command(loft_bin());
+    if interpret {
+        cmd.arg("--interpret");
+    }
+    cmd.process_group(0);
+    let child = cmd
+        .env("LOFT_OFFLINE", "1")
+        .env("EH_PORT", port.to_string())
+        .arg("--no-warnings")
+        .arg("--lib")
+        .arg(root.join("lib"))
+        .arg(&prog)
+        .current_dir(&root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn kernel");
+    (Guard(Some(child)), prog)
+}
+
+/// A client's frame must be masked (RFC 6455 § 5.1): the kernel closes a connection whose
+/// client sends an unmasked one, and does not take its payload as a message, where a masked
+/// one is answered and the kernel serves on.  Both kernels.
+///
+/// @falsified-at: PENDING
+#[test]
+fn an_unmasked_client_frame_closes_the_connection() {
+    if !fa::exists(loft_bin()) {
+        eprintln!("skipping: loft not built");
+        return;
+    }
+    for (base, interpret) in [(18162, true), (18163, false)] {
+        let leg = if interpret { "interpreter" } else { "C" };
+        let port = common::bind_port(base);
+        let (_guard, prog) = echo_kernel(port, interpret);
+        let peer = ws_connect(port);
+        ws_send(&peer, "masked");
+        assert_eq!(
+            ws_recv(&peer),
+            "got:masked",
+            "{leg}: a masked frame is answered"
+        );
+        let mut bare = ws_connect(port);
+        bare.write_all(&[0x81, 7, b'u', b'n', b'm', b'a', b's', b'k', b'd'])
+            .unwrap();
+        let mut rest = Vec::new();
+        let _ = bare.read_to_end(&mut rest);
+        assert!(
+            !String::from_utf8_lossy(&rest).contains("got:unmaskd"),
+            "{leg}: an unmasked client frame is not taken as a message: {rest:02x?}"
+        );
+        // The kernel goes on serving the peer that keeps to the protocol.
+        ws_send(&peer, "after");
+        assert_eq!(ws_recv(&peer), "got:after", "{leg}: the kernel serves on");
         let _ = fa::remove_file(&prog);
     }
 }
