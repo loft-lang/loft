@@ -137,6 +137,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if ttail >= 0 && result is TyOptional && el_types::base(result) is TyVector && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false } {
     vars.bare_literal = ttail;
   }
+  // (A tail literal under a KEYED result — `[]` included — is read as the collection.)
+  if ttail >= 0 && keyed_kind(el_types::base(result)) && e.p.nodes[ttail] is SVecLit {
+    vars.expect_node = ttail;
+    vars.expect = result;
+  }
   // (…and a KEYED result reaches them too: each arm's literal is built as the collection.)
   if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && (el_types::base(result) is TyVector || keyed_kind(result) && !(e.p.nodes[ttail] is SMatch)) {
     vars.expect_node = ttail;

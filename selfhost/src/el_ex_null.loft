@@ -1635,6 +1635,12 @@ pub fn arm_expect(e: el::El, vars: el_vars::Vars, arm: integer, expected: ir::Ty
   }
   // (A bare arm — a `match` arm's `[…]` — is the literal itself.)
   at = if (e.p.nodes[arm] is SVecLit) { arm } else { el_ex_deliver::tail_syntax(e, arm) };
+  // (A NESTED `if` arm under a keyed expectation takes it too: its own arms are read against it.)
+  if at >= 0 && e.p.nodes[at] is SIf && keyed_kind(el_types::base(expected)) {
+    vars.expect_node = at;
+    vars.expect = expected;
+    return;
+  }
   if at >= 0 && match e.p.nodes[at] { SVecLit { items } => len(items) > 0 || keyed_kind(el_types::base(expected)), _ => false } {
     vars.expect_node = at;
     vars.expect = expected;
@@ -2940,6 +2946,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     // (So is a closure built in the `return`, `fn_ref_with_closure`, unless it answers a text.)
     built_closure = (match el_ir::unspan(v.code) { NdBlock { block: rb } => rb[0].name == "fn_ref_with_closure", _ => false } || (e.first_pass && el_ir::unspan(v.code) is NdNull)) && !(match el_types::base(v.tp) { TyFunction { result: vr } => el_types::base(vr) is TyText, _ => true });
     if result is TyFunction && v.tp is TyFunction && (el_ir::unspan(v.code) is NdVar || el_ir::unspan(v.code) is NdFnRef || el_ir::unspan(v.code) is NdInt || built_closure) {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
+    // A keyed literal returned (`return [R {…}]` under `-> hash<R[k]>`) is the collection it built,
+    // in its own `__kvb_N`: returned as it stands (`parse_return`'s keyed arm).
+    if keyed_kind(el_types::base(result)) && hinted && (e.first_pass || match el_ir::unspan(v.code) { NdBlock { block: kvbl } => kvbl[0].name == "Vector", _ => false }) {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {
