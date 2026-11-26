@@ -161,7 +161,7 @@ pub fn rep_tuple(p: Producer) -> text {
 }
 
 // Index of the scalar field at `off` in the shape tuple (`scalar_index`), -1 none.
-pub fn scalar_index(p: Producer, off: integer) -> integer {
+pub fn scalar_index(p: Producer, off: integer?) -> integer {
   if off == null {
     return -1;
   }
@@ -313,7 +313,7 @@ pub fn unit_return(b: ir::Bundle, v: ir::Node) -> integer {
 }
 
 // `OpGetField(Var(rec), off, _)` — its `off`, null for any other node (`field_of`).
-fn field_of(b: ir::Bundle, v: ir::Node, rec: integer) -> integer {
+fn field_of(b: ir::Bundle, v: ir::Node, rec: integer) -> integer? {
   a = call_args(v);
   if call_name(b, v) == "OpGetField" && len(a) == 3 && is_var(a[0]!, rec) {
     return int_of(a[1]!);

@@ -151,7 +151,7 @@ pub fn op_name(b: ir::Bundle, d: integer) -> text {
 }
 
 // `int_of`: an integer or long literal, null for any other node.
-pub fn int_of(x: ir::Node) -> integer {
+pub fn int_of(x: ir::Node) -> integer? {
   match loop_shape::unspan(x) {
     NdInt { n } => n,
     NdLong { n } => n ?? null,
@@ -782,7 +782,7 @@ pub fn rec_tp(b: ir::Bundle, d: integer, x: ir::Node) -> integer {
 }
 
 // A literal that fits a store type number, -1 for any other.
-fn small(n: integer) -> integer {
+fn small(n: integer?) -> integer {
   if n == null || n < 0 || n > 65535 { -1 } else { n }
 }
 

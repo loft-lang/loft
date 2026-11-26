@@ -365,7 +365,7 @@ fn expr(s: CScan, v: ir::Node, p: text) {
       }
     },
     NdCall { def_nr, args } => call(s, def_nr, args, up),
-    NdSet { var, inner } => set(s, v, p, var, inner, child(up, 0)),
+    NdSet { var, inner } => set(s, p, var, inner, child(up, 0)),
     NdBlock { block } => block_(s, v, p, block[0], up),
     NdInsert { items } => {
       for o in items {
@@ -567,7 +567,7 @@ fn skip_at(s: CScan, p: text) {
   }
 }
 
-fn set(s: CScan, v: ir::Node, p: text, x: integer, rhs: ir::Node, rp: text) {
+fn set(s: CScan, p: text, x: integer, rhs: ir::Node, rp: text) {
   want = rep(s, x);
   if want == R_NONE {
     // A plain value computed from positions: a tag, a field, a call's answer.
@@ -926,7 +926,6 @@ fn walk(s: CScan, bl: ir::Block, p: text) -> Walk? {
       return null;
     }
     src = opt_decode_view::set_rhs(ops[0]!);
-    lr = ir::NdNull;
     len_var = opt_decode_view::set_var(ops[1]!);
     if len_var < 0 {
       return null;
@@ -1002,8 +1001,6 @@ fn next_walk(s: CScan, ops: vector<ir::Node>, at: vector<integer>, total: intege
   if len(ops) < 3 {
     return null;
   }
-  elem = -1;
-  next = ir::NdNull;
   elem = opt_decode_view::set_var(ops[0]!);
   if elem < 0 {
     return null;
@@ -1022,8 +1019,6 @@ fn next_walk(s: CScan, ops: vector<ir::Node>, at: vector<integer>, total: intege
   if len(nops) != 2 {
     return null;
   }
-  stepped = -1;
-  step = ir::NdNull;
   stepped = opt_decode_view::set_var(nops[0]!);
   if stepped < 0 {
     return null;
@@ -1048,15 +1043,11 @@ fn counted_walk(s: CScan, ops: vector<ir::Node>, at: vector<integer>, head: Walk
   if len(ops) < 2 {
     return null;
   }
-  at_v = -1;
-  iter = ir::NdNull;
   at_v = opt_decode_view::set_var(ops[0]!);
   if at_v < 0 {
     return null;
   }
   iter = opt_decode_view::set_rhs(ops[0]!);
-  elem = -1;
-  get = ir::NdNull;
   elem = opt_decode_view::set_var(ops[1]!);
   if elem < 0 {
     return null;
@@ -1075,8 +1066,6 @@ fn counted_walk(s: CScan, ops: vector<ir::Node>, at: vector<integer>, head: Walk
   if len(rops) != 3 {
     return null;
   }
-  stepped = -1;
-  step = ir::NdNull;
   stepped = opt_decode_view::set_var(rops[0]!);
   if stepped < 0 {
     return null;
@@ -1176,7 +1165,7 @@ fn walk_tail(s: CScan, elem: integer, rest: vector<ir::Node>, own: vector<intege
 
 // The offset a vector position names: its `OpGetField`, through copies of position locals
 // (`vector_field`); null for none.
-fn vector_field(s: CScan, src: ir::Node) -> integer {
+fn vector_field(s: CScan, src: ir::Node) -> integer? {
   if call_name(s.b, src) == "OpGetField" {
     a = call_args(src);
     return if len(a) > 1 { int_of(a[1]!) } else { null };
@@ -1187,7 +1176,7 @@ fn vector_field(s: CScan, src: ir::Node) -> integer {
 
 // The offset of the last `local = OpGetField(…, off, …)` in pre-order, `found` the one before
 // `x`.
-fn last_field_set(b: ir::Bundle, x: ir::Node, local: integer, found: integer) -> integer {
+fn last_field_set(b: ir::Bundle, x: ir::Node, local: integer, found: integer?) -> integer? {
   out = found;
   match x {
     NdSpan { pos: _, inner } => return last_field_set(b, inner, local, found),
