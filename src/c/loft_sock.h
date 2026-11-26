@@ -52,14 +52,14 @@
 
 /* The socket library ready for use: Winsock started — before the first name lookup or socket;
  * a second `WSAStartup` only counts — and nothing to do under POSIX. */
+LOFT_STATE int loft_fs_loft_sock_ready_once LOFT_INIT(0);
 static void loft_sock_ready(loft_cx *cx) {
 #if defined(_WIN32)
-    /* `@FR-C-Publish`: Winsock started once, by the first thread that needs it. */
-    static int once = 0;
-    if (loft_once_begin(&once)) {
+    /* `@FR-C-Publish`: Winsock started loft_fs_loft_sock_ready_once, by the first thread that needs it. */
+    if (loft_once_begin(&loft_fs_loft_sock_ready_once)) {
         WSADATA w;
         WSAStartup(MAKEWORD(2, 2), &w);
-        loft_once_end(&once);
+        loft_once_end(&loft_fs_loft_sock_ready_once);
     }
 #endif
 }

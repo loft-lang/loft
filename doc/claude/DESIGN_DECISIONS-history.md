@@ -5214,6 +5214,14 @@ runtime out of `cl`'s optimiser in the one sweep that runs it there.
 
 **Revisit trigger.** As the entry states.
 
+**Split-build exception (owner, 2026-11-26).**  The revisit condition was met in the opt-in split
+build: measured on the elaborator's units at the check tier (`-O1`), gcc parsed the 1.6 MB
+runtime in 0.11 s per unit, but compiled the ~180 KB of plain-`static` runtime each unit
+reaches again in every unit, about 1.1 s — as much as a small unit's own code (file43: 2.16 s
+whole, 1.03 s with the cold part out; file47 3.41 s → 2.23 s; file30, 9.5 MB, 35.8 s → 35.0 s).
+Of the runtime's 994 KB of functions, 65 KB are inline-hinted and 918 KB plain `static`.  The
+owner approved cutting the runtime hot/cold for the split build alone.
+
 ## C170 — A backend stays only while it is semantically equal to the others
 
 **Question.** Security #61 makes a null text an identity instead of the one-byte content

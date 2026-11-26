@@ -586,7 +586,15 @@ fn identity_with(
                  the package directory"
             )
         })?;
-        hasher.update(s.as_bytes());
+        // A source is named from its package (`c/twice.c`) however the caller spelled it: the
+        // parse passes the manifest's relative name, the C writer the resolved path, and keyed
+        // by the spelling the archive and the shared library of one source came apart — and
+        // the archive's name carried the checkout's path (REPRODUCIBLE_OUTPUT.md).
+        let named = p.strip_prefix(dir).map_or_else(
+            |_| crate::file_access::portable(&p),
+            crate::file_access::portable,
+        );
+        hasher.update(named.as_bytes());
         hasher.update(&bytes);
         // A header the source includes is part of what it compiles to (loft#2220): without it,
         // a change to that header alone reused the archive built from the old one.

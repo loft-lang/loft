@@ -77,9 +77,9 @@ static loft_text loft_host_input(loft_cx *cx, int64_t wait_ms) {
 #else
 /* Bytes read and not yet answered — the tail of a character a read stopped inside — and
  * whether stdin has ended.  The OS's stream, buffered: no program-visible state. */
-static unsigned char *loft_hi_buf;
-static size_t loft_hi_len, loft_hi_cap;
-static int loft_hi_eof;
+LOFT_STATE unsigned char *loft_hi_buf;
+LOFT_STATE size_t loft_hi_len, loft_hi_cap;
+LOFT_STATE int loft_hi_eof;
 
 static void loft_hi_add(loft_cx *cx, const unsigned char *p, size_t n) {
     if (loft_hi_len + n > loft_hi_cap) {

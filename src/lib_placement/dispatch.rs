@@ -354,7 +354,7 @@ pub fn mark_exports(data: &mut Data, pkg_dir: &str) -> Vec<(u32, String, String)
         }
         let sym = format!(
             "loft_placed_{}",
-            crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
+            crate::opt::names::disambiguated_fn_ident(&dups, data, data.def(d))
         );
         data.def_mut(d).native.clone_from(&sym);
         marked.push((d, sym, name));
@@ -412,7 +412,7 @@ pub fn install(
             }
             let sym = format!(
                 "loft_placed_{}",
-                crate::opt::names::disambiguated_fn_ident(&dups, def)
+                crate::opt::names::disambiguated_fn_ident(&dups, data, def)
             );
             let Some(&lib_idx) = state.library_names.get(&sym) else {
                 continue;
