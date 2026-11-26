@@ -2,7 +2,7 @@
 ==== stdout ====
 ==== stderr ====
 error: panic: boom
-  --> <cases>/25_runtime_panic_builtin.loft:2:1
+  --> 25_runtime_panic_builtin.loft:2:1
   |
 2 |   panic("boom");
   | ^

@@ -111,17 +111,20 @@ tables.
 
 ## Recursion depth is capped, and the cap halts the run
 
-A call chain deeper than `State::MAX_CALL_DEPTH` (10 000 frames) halts the program with a
-`call stack overflow` report on `--interpret` and `--native`, in every build; on wasm the
-host engine's stack traps earlier (WASM.md § How deep a program can recurse).  It is the
-one runtime halt left that is not `panic` or `assert`, and it breaks the rule that nothing
-stops a running program (DESIGN_DECISIONS.md @C80).
+A development build — `--interpret`, `--native`, `--native-debug` — halts a call chain deeper
+than `limits::MAX_CALL_DEPTH` (10 000 frames) with a `call stack overflow` report that names the
+line and says what to write instead.  A `--ship` build has no such limit: it recurses until the
+machine's stack is full, and then crashes, which `loft` reports by name.  Either kind can run out
+of stack before 10 000 frames when its frames are large (a C build's frames hold the function's
+locals), and on wasm the host engine's stack traps earlier still (WASM.md § How deep a program
+can recurse).
 
-**What replaces it — [@PLN177](plans/177-growable-stack.md):** the stack grows in blocks, so
-stack size never limits a program.  A production build has no depth limit; a development or
-test build keeps a call-depth limit that halts with a full report of the recursion.
+**What replaces it — [@PLN177](plans/177-growable-stack.md):** frames that grow on use, so
+stack size never limits a program and nothing is claimed up front.  The development limit
+stays, with a full report of the recursion.
 
-**Until then:** a recursion that can go deeper than 10 000 frames is written as a loop
+**Until then:** a recursion that can go deeper than a few thousand frames is written as a call
+that is the last thing its function does (it runs as a loop, `@FR-R-TailSelf`) or as a loop
 over an explicit work list (a `vector` used as a stack).
 
 ---

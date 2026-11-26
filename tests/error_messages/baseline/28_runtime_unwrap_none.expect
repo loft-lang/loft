@@ -2,7 +2,7 @@
 ==== stdout ====
 ==== stderr ====
 error: assertion failed: expected non-null but got null sentinel
-  --> <cases>/28_runtime_unwrap_none.loft:4:1
+  --> 28_runtime_unwrap_none.loft:4:1
   |
 4 |   assert(x, "expected non-null but got null sentinel");
   | ^

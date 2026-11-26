@@ -1337,8 +1337,12 @@ impl Scopes<'_> {
         let tmp = function.add_temp_var(&name, tp);
         function.mark_inline_ref(tmp);
         let witness = self.pending_join_witness.replace(u16::MAX);
+        let extra = self.pending_extra_witnesses.take();
         if witness != u16::MAX {
             self.lift_join_witness.insert(tmp, witness);
+            if !extra.is_empty() {
+                self.lift_extra_witnesses.insert(tmp, extra);
+            }
         }
         self.lift_decl_depth.insert(tmp, self.loops.len());
         self.var_scope.insert(tmp, self.scope);

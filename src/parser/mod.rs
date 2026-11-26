@@ -2146,7 +2146,7 @@ impl Parser {
         // A process handed the program's roots (a placed library's worker parsing the library
         // alone, `source_name::adopt_roots_env`) names a file from them, as the program does.
         let roots = crate::source_name::program_roots().unwrap_or_else(|| {
-            let mut roots = crate::source_name::roots_of(&self.data, None);
+            let mut roots = self.data.source_roots(None);
             if let Some(entry) = self.program_entry {
                 roots.main_dir = crate::source_name::program_dir(entry.as_str());
             }

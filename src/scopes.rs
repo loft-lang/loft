@@ -286,6 +286,9 @@ struct Scopes<'s> {
     /// against that base — `ownership.md` D-own-16's route, no witness slot.  Read by
     /// `get_free_vars`, which frees the temp only where it is NOT the caller's store.
     lift_join_witness: HashMap<u16, u16>,
+    /// Per lifted temp, the further variables its value may be besides the one in
+    /// `lift_join_witness` (`f() ?? dn ?? d`): the free is guarded against each (loft#2648).
+    lift_extra_witnesses: HashMap<u16, Vec<u16>>,
     /// `@FR-H-FreeTwice` — per bound local, the `__lift_N` temporaries a branch arm of its value
     /// reads a projection out of (`d = if c { mk().x } else { fresh() }`).  The arm's block
     /// hands the lift to the enclosing scope, which frees it there, so `d` names the lift's
@@ -307,6 +310,8 @@ struct Scopes<'s> {
     /// Set by `callref_owned_return` on that path, consumed by the next `new_lift_var`.
     /// `u16::MAX` = none.
     pending_join_witness: std::cell::Cell<u16>,
+    /// The extra witnesses for the next `new_lift_var` (`lift_extra_witnesses`).
+    pending_extra_witnesses: std::cell::RefCell<Vec<u16>>,
     /// @PLN157 § V-g — the record locals this function only ever READS, off the raw body
     /// (`use_analysis::read_only_record_locals`); one input of `view_elision_bind`.
     read_only_locals: Vec<bool>,

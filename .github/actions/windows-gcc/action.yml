@@ -24,8 +24,18 @@ runs:
         # a later revision builds `loft-components` on a windows-probe.  Every package of the
         # gcc set is held together: an image that ships revision 7 has `libstdc++` -7, which
         # requires `libgcc` -7, so a pin that leaves it out cannot install.
+        # binutils is held at 2.47-4 beside it: with 2.47-5 the assembler fails every compile
+        # without a word (`gcc -c` of a one-line file exits 1; windows-probe 45664462285, the
+        # daily build's msvc leg and CI's rest-c shard on 7c6972f86), where 2.47-4 builds
+        # `loft-components` (windows-probe 45662353357).
         want=16.2.0-6
+        binutils=2.47-4
         have=$(/c/msys64/usr/bin/pacman -Q mingw-w64-ucrt-x86_64-gcc | cut -d' ' -f2)
+        have_bu=$(/c/msys64/usr/bin/pacman -Q mingw-w64-ucrt-x86_64-binutils | cut -d' ' -f2)
+        if [ "$have_bu" != "$binutils" ]; then
+          timeout 600 /c/msys64/usr/bin/pacman -U --noconfirm \
+            "https://repo.msys2.org/mingw/ucrt64/mingw-w64-ucrt-x86_64-binutils-$binutils-any.pkg.tar.zst"
+        fi
         if [ "$have" != "$want" ]; then
           repo=https://repo.msys2.org/mingw/ucrt64
           timeout 600 /c/msys64/usr/bin/pacman -U --noconfirm \
@@ -35,6 +45,7 @@ runs:
             "$repo/mingw-w64-ucrt-x86_64-libstdc++-$want-any.pkg.tar.zst"
         fi
         "$gcc" --version | head -1
+        /c/msys64/usr/bin/pacman -Q mingw-w64-ucrt-x86_64-binutils
         major=$("$gcc" -dumpversion | cut -d. -f1)
         if [ "$major" -lt 16 ]; then
           echo "::error::MSYS2 gcc is $("$gcc" -dumpversion); the C backend needs 16 or newer on Windows (gcc 15.2 miscompiles it)"

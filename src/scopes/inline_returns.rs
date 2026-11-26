@@ -523,6 +523,19 @@ impl Scopes<'_> {
     /// SUBJECT reaches the tail as `Var(__ncc_N)`, so its own assignment is substituted in —
     /// the temp is a name, and the question is about what the call behind it produced.
     pub(super) fn ncc_arms_are_all_owned(bl: &Block, data: &Data) -> bool {
+        let mut arms: Vec<(&Value, bool)> = Vec::new();
+        Self::ncc_flat_arms(bl, &mut arms)
+            && arms
+                .iter()
+                .all(|(a, _)| crate::use_analysis::view_root_slots(data, a).is_none())
+    }
+
+    /// Every arm a chain of `??` can answer with, the nested `ncc` blocks flattened: each block's
+    /// SUBJECT stands in for its `Var(__ncc_N)` (the name; the question is about the value behind
+    /// it), and an arm that is itself an `ncc` block contributes its own arms.  Read whole, the
+    /// inner block of `f() ?? g() ?? d` looked like one owned store, and a lift freed `d`
+    /// (loft#2647).
+    fn ncc_flat_arms<'a>(bl: &'a Block, out: &mut Vec<(&'a Value, bool)>) -> bool {
         let Some(last) = bl.operators.last() else {
             return false;
         };
@@ -535,13 +548,118 @@ impl Scopes<'_> {
         if arms.len() < 2 {
             return false;
         }
-        arms.iter().all(|a| {
-            let effective = match (a.unspan(), subject) {
-                (Value::Var(v), Some((sv, val))) if *v == sv => val,
-                _ => *a,
-            };
-            crate::use_analysis::view_root_slots(data, effective).is_none()
-        })
+        for a in arms {
+            match (a.unspan(), subject) {
+                (Value::Var(v), Some((sv, val))) if *v == sv => out.push((val, true)),
+                (Value::Block(inner), _) if inner.name == "ncc" && !ncc_chain_flat_off() => {
+                    if !Self::ncc_flat_arms(inner, out) {
+                        out.push((a, false));
+                    }
+                }
+                _ => out.push((a, false)),
+            }
+        }
+        true
+    }
+
+    /// The one variable whose store a borrowed arm of this `ncc` block answers, where every
+    /// other arm yields a store the frame owns (`Own::Owned`): `f() ?? d`, `f() ?? o.m`,
+    /// `f() ?? vs[1].m` — a projection lives in its root's store, so the root is the base.
+    /// Lifted with it, the temp is freed only where its store is not the base's
+    /// (`OpFreeRefIfDistinct(__lift_N, d)`, @FR-O-Oracle's identity reading of a `Join`): the
+    /// subject's store on the arm that took it, nothing on the arm that answered the base.
+    /// Borrowed arms rooted in more than one variable (`f() ?? dn ?? d`) answer each, the
+    /// free then guarded against every one (loft#2648; `LOFT_NO_NCC_MULTI_WITNESS=1` declines
+    /// them), and a subject the oracle does not read as owned (`pick(c, d) ?? e` hands back
+    /// `d`) may be another variable's store: `None`, the conservative no-lift.
+    fn ncc_local_arm_bases(
+        &self,
+        bl: &Block,
+        data: &Data,
+        function: &Function,
+    ) -> Option<Vec<u16>> {
+        // Owned by the ownership oracle's reading (`@FR-O-Oracle`), not by naming no variable:
+        // a call that hands back its argument (`pick(c, d) ?? e`) names none and is a borrow.
+        // A tuple member (`t.0`) is a read of the tuple, which owns it: never the lift's.
+        let owned = |v: &Value| {
+            !matches!(v.unspan(), Value::TupleGet(..))
+                && matches!(
+                    crate::use_analysis::ownership_of(data, self.d_nr, v),
+                    crate::use_analysis::Own::Owned
+                )
+        };
+        let mut arms: Vec<(&Value, bool)> = Vec::new();
+        if !Self::ncc_flat_arms(bl, &mut arms) {
+            return None;
+        }
+        let mut bases: Vec<u16> = Vec::new();
+        for (a, is_subject) in arms {
+            // A subject must be a store the frame owns: a borrowed subject (`h.ws[9].items ?? f()`)
+            // is a view whose consumer (a `for`) releases the default arm itself.
+            if is_subject {
+                // A bare variable subject (`dn ?? d`) is a borrow of that variable, as a
+                // variable default is: one more base.
+                if let Value::Var(v) = a.unspan() {
+                    if !bases.contains(v) {
+                        bases.push(*v);
+                    }
+                    continue;
+                }
+                if owned(a) {
+                    continue;
+                }
+                // A projection subject (`ob.m ?? d`) lives in its root's store, as a projection
+                // default does — one more base (loft#2649).
+                if !crate::env_once!(std::env::var_os("LOFT_NO_NCC_SUBJECT_ROOT").is_some())
+                    && let Some(roots) = crate::use_analysis::view_root_slots(data, a)
+                    && let [r] = roots.as_slice()
+                {
+                    if !bases.contains(r) {
+                        bases.push(*r);
+                    }
+                    continue;
+                }
+                return None;
+            }
+            match a.unspan() {
+                Value::Var(v) => {
+                    if !bases.contains(v) {
+                        bases.push(*v);
+                    }
+                }
+                // A default the parser gave its own buffer (`join-arm-owner`, `materialise_owned_call`)
+                // is that buffer's store, which frees itself: one more base, so the lift never
+                // frees it a second time (`h.ws[9].items ?? mk(c)`, loft#2650).  A literal default
+                // (`?? [..]`) ends in its accumulator (`__kvb_N`, `__vdb_N`), which frees itself too.
+                Value::Block(jb)
+                    if !crate::env_once!(
+                        std::env::var_os("LOFT_NO_NCC_ARM_OWNER_BASE").is_some()
+                    ) && let Some(Value::Var(w)) = jb.operators.last().map(Value::unspan)
+                        && (jb.name == "join-arm-owner"
+                            || (*w < function.count()
+                                && crate::variables::owns_literal_backing_store(
+                                    function.name(*w),
+                                ))) =>
+                {
+                    if !bases.contains(w) {
+                        bases.push(*w);
+                    }
+                }
+                other => {
+                    if !owned(other) {
+                        let roots = crate::use_analysis::view_root_slots(data, other)?;
+                        let [r] = roots.as_slice() else {
+                            return None;
+                        };
+                        if !bases.contains(r) {
+                            bases.push(*r);
+                        }
+                    }
+                }
+            }
+        }
+        let single = crate::env_once!(std::env::var_os("LOFT_NO_NCC_MULTI_WITNESS").is_some());
+        (!bases.is_empty() && (!single || bases.len() == 1)).then_some(bases)
     }
 
     /// The literal-backing accumulators (`__kvb_N`, `__vdb_N`,
@@ -713,6 +831,26 @@ impl Scopes<'_> {
             && Self::ncc_arms_are_all_owned(bl, data)
         {
             return Some(bl.result.without_deps());
+        }
+        // …and one whose only borrowed arm is a bare local (`ch(maybe(c) ?? d)`): lifted with
+        // that local as its base, so the scope's free compares stores — the subject's store
+        // freed where it was taken, `d` untouched where it was answered.  Not lifting left the
+        // taken subject owned by nothing, one store per evaluation (loft#2643).
+        // `LOFT_NO_NCC_LOCAL_ARM_WITNESS=1` declines it.
+        if let Value::Block(bl) = val.unspan()
+            && bl.name == "ncc"
+            && crate::parser::vectors::is_keyed(&bl.result)
+            && !subject_is_call_ref
+            && crate::keys::lift_join_witness_enabled()
+            && !crate::env_once!(std::env::var_os("LOFT_NO_NCC_LOCAL_ARM_WITNESS").is_some())
+            && let Some(bases) = self.ncc_local_arm_bases(bl, data, function)
+        {
+            // The witness reaches the scope's free through the next `new_lift_var`, as the
+            // fn-ref route's does; the dep keeps the pre-Set free away on a loop's next pass.
+            // More than one base (`f() ?? dn ?? d`) guards the free against each (loft#2648).
+            self.pending_join_witness.set(bases[0]);
+            *self.pending_extra_witnesses.borrow_mut() = bases[1..].to_vec();
+            return Some(bl.result.with_deps(&Deps::frame(bases)));
         }
         // @P297 — a USER struct-returning call (`n_*` with a body) passed
         // directly as a call argument is wrapped in `Value::Span` by
@@ -1044,4 +1182,9 @@ const DELEGATION_DEPTH: usize = 8;
 /// store records must then report.
 fn ncc_lift_beside_owner() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NCC_LIFT_BESIDE_OWNER").is_some())
+}
+
+/// `LOFT_NO_NCC_CHAIN_FLAT=1`: the lift reads a nested `??` block as one arm again (loft#2647).
+fn ncc_chain_flat_off() -> bool {
+    crate::env_once!(std::env::var_os("LOFT_NO_NCC_CHAIN_FLAT").is_some())
 }

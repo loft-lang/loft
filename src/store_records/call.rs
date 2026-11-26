@@ -744,6 +744,7 @@ impl Run<'_> {
                 st.dropped_must.remove(&k);
                 st.dropped_unless.retain(|(d, _)| *d != k);
                 st.lease_copied.remove(&k);
+                st.tagged.remove(&k);
             }
             // A loop pass that freed this site's store and reset `x` joins, at the head, a pass
             // that kept it: live where `x` names it, ended where `x` is null.  Re-initialised in
@@ -894,6 +895,19 @@ impl Run<'_> {
             return Some((st, Val::null()));
         }
         match self.data.def(d).name() {
+            // A variant written into a record's tag: present (non-zero) or absent (zero) from
+            // here, until the store is minted again (`State::tagged`).
+            "OpSetEnum" if args.len() == 3 && matches!(args[1].unspan(), Value::Int(0)) => {
+                if let (Value::Var(x), Value::Enum(n, _)) = (args[0].unspan(), args[2].unspan()) {
+                    for k in Self::stores_of(&Self::pts(&st, *x)) {
+                        if *n == 0 {
+                            st.tagged.remove(&k);
+                        } else {
+                            st.tagged.insert(k);
+                        }
+                    }
+                }
+            }
             "n_protect_store_frees" => self.protected.extend(Self::first_var(args, 0)),
             "n_unprotect_store_frees" => {
                 if let Some(v) = Self::first_var(args, 0)
