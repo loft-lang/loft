@@ -520,12 +520,13 @@ fn native_build_stages_in_a_directory_private_to_the_user() {
     let _ = fa::remove_dir_all(&dir);
 }
 
-/// With neither `HOME` nor `XDG_CACHE_HOME` set, the cache — `cache_dir()`, and the stdlib
-/// image the run stores there — falls back to the user's private temp directory, never to
+/// With neither `HOME` nor `XDG_CACHE_HOME` set, the cache — `cache_dir()` on both backends,
+/// and the stdlib image and binaries the run stores there — falls back to the user's private temp directory, never to
 /// the temp directory itself or a `loft-<uid>` it did not make private.
 /// @falsified-at: f13fd9ac6 — by hand: cache_base_dir() falling back to std::env::temp_dir()
 /// → Nothing: the cache was tmp/loft, directly in the temp dir; private_temp_dir() reading
-/// loft-<uid> through a link → Link: the planted link was used.
+/// loft-<uid> through a link → Link: the planted link was used.  The `--native` leg failed
+/// unaltered at af86f9d23 (the C cache_dir() fell back to tmp/loft) until 17356a5db.
 // approved exemption: POSIX owner and mode bits have no Windows equivalent; Windows substitute: none (the temp dir there is the user's own profile directory)
 #[cfg(unix)]
 #[test]
@@ -537,10 +538,17 @@ fn cache_without_a_home_falls_back_to_a_directory_private_to_the_user() {
         "fn main() {\n  println(\"at {cache_dir()}\");\n}\n",
     )
     .expect("write");
-    for plant in [Plant::Nothing, Plant::OpenDir, Plant::Link] {
-        let (tmp, _, _) = shared_temp(&dir, plant);
+    for (backend, plant) in [
+        ("--interpret", Plant::Nothing),
+        ("--interpret", Plant::OpenDir),
+        ("--interpret", Plant::Link),
+        ("--native", Plant::Nothing),
+        ("--native", Plant::OpenDir),
+        ("--native", Plant::Link),
+    ] {
+        let (tmp, _, _) = shared_temp(&dir.join(&backend[2..]), plant);
         let out = loft::platform::process::harness_command(loft_bin())
-            .arg("--interpret")
+            .arg(backend)
             .arg(&script)
             .current_dir(&dir)
             .env("TMPDIR", &tmp)
@@ -556,12 +564,16 @@ fn cache_without_a_home_falls_back_to_a_directory_private_to_the_user() {
             .find_map(|l| l.strip_prefix("at "))
             .unwrap_or_else(|| {
                 panic!(
-                    "{plant:?}: the program printed its cache dir: {stdout}{}",
+                    "{backend} {plant:?}: the program printed its cache dir: {stdout}{}",
                     String::from_utf8_lossy(&out.stderr)
                 )
             });
         let at = std::path::Path::new(at.trim());
-        assert_eq!(fa::file_name(at).as_deref(), Some("loft"), "{plant:?}");
+        assert_eq!(
+            fa::file_name(at).as_deref(),
+            Some("loft"),
+            "{backend} {plant:?}"
+        );
         assert_private_placement(&tmp, at, plant);
     }
     let _ = fa::remove_dir_all(&dir);
