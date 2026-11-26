@@ -402,6 +402,15 @@ static inline void loft_pub_lock(void) {
 static inline void loft_pub_unlock(void) { _InterlockedExchange(&loft_pub_spin, 0); }
 #endif
 #elif defined(_WIN32)
+/* A strict build (no LOFT_GNU / LOFT_MSVC) on Windows: the lock is an SRWLOCK.  Lean, as every
+ * other runtime header brings `windows.h` in: the full one includes the old `winsock.h`, and a
+ * unit with sockets then meets `winsock2.h` after it (mingw: an error under -Werror). */
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN 1
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX 1
+#endif
 #include <windows.h>
 static SRWLOCK loft_pub_srw = SRWLOCK_INIT;
 static inline void loft_pub_lock(void) { AcquireSRWLockExclusive(&loft_pub_srw); }

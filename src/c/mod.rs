@@ -483,7 +483,7 @@ impl<'a> Cx<'a> {
             source_lines: false,
             trace_sites: crate::keys::c_trace_sites(),
             open: false,
-            source_roots: crate::source_name::roots_of(data, None),
+            source_roots: data.source_roots(None),
             type_idents: std::cell::OnceCell::new(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -2329,7 +2329,7 @@ fn emit_unit_with(
     cx.source_lines = shape.source_lines;
     cx.whole |= shape.whole;
     if shape.source_root.is_some() {
-        cx.source_roots = crate::source_name::roots_of(data, shape.source_root.clone());
+        cx.source_roots = data.source_roots(shape.source_root.clone());
     }
     cx.c_twins = twins;
     cx.open = hosted.is_some();
@@ -3208,13 +3208,18 @@ fn unit_defines(
     if stores.field_bytes(stores.name("ValueInfo"), "f") == 4 {
         out.push_str("#define LOFT_STD_SINGLE 1\n");
     }
-    // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`), stated here so
-    // the runtime cannot hold a copy of the number that drifts from it.
-    let _ = writeln!(
-        out,
-        "#define LOFT_MAX_CALL_DEPTH {}",
-        crate::limits::MAX_CALL_DEPTH
-    );
+    // The call-depth cap the interpreter enforces (`limits::MAX_CALL_DEPTH`), and the line that
+    // says what to write instead, stated here so the runtime holds no copy of either that
+    // drifts.  A development build stops a runaway recursion before it takes the machine
+    // with it; a shipped one (`--ship`) has no cap: it runs as deep as the hardware allows.
+    if !crate::ship_tier::shipped_units() {
+        let _ = writeln!(
+            out,
+            "#define LOFT_MAX_CALL_DEPTH {}\n#define LOFT_STACK_OVERFLOW_HELP \"{}\"",
+            crate::limits::MAX_CALL_DEPTH,
+            crate::runtime_error::STACK_OVERFLOW_HELP
+        );
+    }
     (out, parses, reflects)
 }
 

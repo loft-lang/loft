@@ -146,7 +146,10 @@ NO_CC = ""
 def main():
     global PREBUILT, NO_CC
     args = sys.argv[1:]
-    if not args or "-h" in args or "--help" in args:
+    if "-h" in args or "--help" in args:
+        print(__doc__)
+        return 0
+    if not args:
         print(__doc__)
         return 2
     if "--prebuilt" in args:

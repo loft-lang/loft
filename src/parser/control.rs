@@ -12389,6 +12389,34 @@ impl Parser {
 
     /// Is `tail`'s value never null: a block or a variable whose own type has no `?`?
     /// Anything else (a call, a branch) answers `false`, so the caller keeps its null path.
+    /// The one variable an element-read tail (`vv[0]`, `vv[k]`) views, when the tail is such a
+    /// read: `None` for anything else, a call or a local included, which have legs of their own.
+    fn vector_view_tail_root(&self, tail: &Value) -> Option<u16> {
+        if crate::env_once!(std::env::var_os("LOFT_NO_VIEW_TAIL_BIND").is_some()) {
+            return None;
+        }
+        let v = match tail {
+            Value::Span(b) => return self.vector_view_tail_root(&b.1),
+            Value::Return(inner) => return self.vector_view_tail_root(inner),
+            Value::Call(d, _) if self.data.def(*d).name() == "OpGetField" => tail,
+            _ => return None,
+        };
+        let roots = crate::use_analysis::view_root_slots(&self.data, v)?;
+        match roots.as_slice() {
+            [r] if *r < self.vars.count() => Some(*r),
+            _ => None,
+        }
+    }
+
+    /// The value a tail answers, taken out of its `Return`/`Span` wrapping.
+    fn take_tail_value(tail: &mut Value) -> Value {
+        match tail {
+            Value::Span(b) => Self::take_tail_value(&mut b.1),
+            Value::Return(inner) => Self::take_tail_value(inner),
+            other => std::mem::replace(other, Value::Null),
+        }
+    }
+
     fn tail_cannot_be_null(&self, tail: &Value) -> bool {
         match tail {
             Value::Span(b) => self.tail_cannot_be_null(&b.1),
@@ -14251,6 +14279,34 @@ impl Parser {
                                         // caller, freeing only its buffer, leaked it.
                                         let elm = (**elm).clone();
                                         self.materialize_vector_return_into(&elm, tail, buf_var);
+                                    } else if let Type::Vector(elm, _) = inner.base()
+                                        && let Some(root) = self.vector_view_tail_root(tail)
+                                    {
+                                        // A tail that is an element of a local's vector
+                                        // (`vv[0]` of a `vector<vector<T>>`) under a `?` result:
+                                        // bound first, as `e = vv[0]; e` binds it, so the
+                                        // per-arm leg copies it into the buffer where present.
+                                        // Left raw, the answer was a view into the local's
+                                        // store, which the frame frees before the caller reads
+                                        // it (loft#2644).  `LOFT_NO_VIEW_TAIL_BIND=1` leaves it.
+                                        let elm = (**elm).clone();
+                                        let tp =
+                                            Type::Vector(Box::new(elm.clone()), Deps::frame1(root));
+                                        let tmp = self.create_unique("__vtail", &tp);
+                                        let orig = Self::take_tail_value(tail);
+                                        let is_null = self.data.def_nr("OpVectorIsNull");
+                                        *tail = Value::Insert(vec![
+                                            crate::data::v_set(tmp, orig),
+                                            Value::If(
+                                                Box::new(Value::Call(
+                                                    is_null,
+                                                    vec![Value::Var(tmp)],
+                                                )),
+                                                Box::new(Value::Call(null_sentinel_nr, Vec::new())),
+                                                Box::new(Value::Var(tmp)),
+                                            ),
+                                        ]);
+                                        self.materialize_vector_arms_into(&elm, tail, buf_var);
                                     } else if let Type::Reference(td, _) | Type::Enum(td, true, _) =
                                         inner.base()
                                         && inner.takes_ret_buffer()

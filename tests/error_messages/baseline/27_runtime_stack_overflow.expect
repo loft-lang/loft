@@ -2,7 +2,7 @@
 ==== stdout ====
 ==== stderr ====
 error: call stack overflow — exceeded 10000 stack frames
-  --> <cases>/27_runtime_stack_overflow.loft:1:1
+  --> 27_runtime_stack_overflow.loft:1:1
   |
 1 | fn deep(n: integer) -> integer {
   | ^
@@ -12,3 +12,4 @@ error: call stack overflow — exceeded 10000 stack frames
         fn deep()
         fn deep()
         … (9995 more frames)
+help: a call that is the last thing its function does runs as a loop and needs no frame; a walk over deep data keeps the work still to do in a vector and loops over it

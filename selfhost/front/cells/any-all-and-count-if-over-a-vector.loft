@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `any` / `all` / `count_if` over a vector with a short lambda: the lambda is
+// typed `fn(T) -> boolean` by the call (`special_form_callback_hint`), and each is built in
+// place on the second pass (`predicate_loop_scaffold`): `_<name>_acc`, the vector copy, its
+// index and element, a loop ending on the vector's length.
+// Prints: true 2
+
+fn main() {
+  v = [1, 2, 3];
+  a = all(v, |y| { y > 0 });
+  c = count_if(v, |y| { y > 1 });
+  println("{a} {c}");
+  w = any(v, |y| { y > 2 });
+  println("{w}");
+}

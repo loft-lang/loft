@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a function answering a vector through a `match` whose arms are a recursive call and
+// literals: the first pass renamed its buffer onto the call's work ref (`__ref_1`), so each
+// literal arm is copied into it and its store freed, and each arm keeps its own type (the literal
+// arm the store it minted).  A subject held from a call keeps its first-pass borrow.
+// Prints: [4,5]
+
+enum N {
+  Leaf { v: integer },
+  Span { inner: N }
+}
+fn deps(n: N) -> vector<integer> {
+  match n {
+    Span { inner } => deps(inner),
+    Leaf { v } => [v, v + 1],
+    _ => []
+  }
+}
+fn main() { println("{deps(Span { inner: Leaf { v: 4 } })}"); }

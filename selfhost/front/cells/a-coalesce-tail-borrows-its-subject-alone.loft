@@ -1,0 +1,11 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a record function whose tail is `o ?? s` borrows its subject alone (`-> Vo["o"]`):
+// the `??`'s value is its subject's, so its default is no candidate of the parameter-join
+// return; an `if` over the same parameters borrows both.
+// Prints: 1
+
+struct Vo { x: integer }
+fn f(o: Vo?, s: Vo) -> Vo { o ?? s }
+fn main() { a = Vo { x: 1 }; println("{f(null, a).x}"); }

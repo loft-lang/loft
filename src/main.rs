@@ -4316,7 +4316,9 @@ fn exec_native_binary(
         if let Some(data) = data {
             native_utils::explain_windows_startup_failure(run_status, binary, data);
         }
-        std::process::exit(run_status.code().unwrap_or(1));
+        let code = native_utils::report_crash(run_status, abs_file)
+            .unwrap_or_else(|| run_status.code().unwrap_or(1));
+        std::process::exit(code);
     }
 }
 
@@ -10405,7 +10407,7 @@ fn main() {
     // A fault this run renders names its file from the program's roots, as the generated
     // binary's does (`source_name`, @PLN229) — named before a placed library's worker starts,
     // which is handed them (`lib_placement::wire::serve`).
-    loft::source_name::set_program_roots(loft::source_name::roots_of(&p.data, None));
+    loft::source_name::set_program_roots(p.data.source_roots(None));
     #[cfg(unix)]
     if !placed_libs.is_empty() && !native_requested {
         let stdlib = std::path::PathBuf::from(&default_str);

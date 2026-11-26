@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a format-hole `for` over an integer range walks it through an "Iter range" block
+// (`n#index` started one below the start), and a filter (`if x > 1`) continues the walk where
+// it does not hold, ahead of the body.
+// Prints: [2,4,6] / [2,3,4]
+
+fn main() {
+  println("{for n in 1..4 {n * 2}}");
+  v = [1, 2, 3, 4];
+  println("{for x in v if x > 1 {x}}");
+}

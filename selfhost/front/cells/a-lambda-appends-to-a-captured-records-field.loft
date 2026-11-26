@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `p.v += [7]` in a lambda over a captured `&S` appends to the field of the record
+// the capture points at, `OpPushInt(OpGetField(OpGetDbRef(__closure, 0), …), 7)`.
+// Prints: 3 2
+
+struct S { n: integer, v: vector<integer> }
+fn writes(p: &S) { g = fn() { p.n += 1; p.v += [7]; }; g(); g(); }
+fn main() { t = S { n: 1, v: [] }; writes(t); println("{t.n} {len(t.v)}"); }

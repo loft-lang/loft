@@ -6,7 +6,9 @@
 //! call-tree shape per case.  These tests pin that the lean build (`--ship`) answers what the
 //! interpreter answers without a leak, and that runaway recursion — through a helper that calls
 //! no further, an overload member, a generic instance or a method — ends in the depth cap's
-//! report rather than a native stack crash.
+//! report on the development build (`--native`) rather than a native stack crash.  A shipped
+//! build has no cap: it recurses as deep as the hardware allows, then crashes, and `loft` names
+//! the crash (`ship_answers_or_names_its_crash`).
 use loft::file_access as fa;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -26,6 +28,27 @@ fn loft(args: &[&str], env: &[(&str, &str)]) -> Output {
         cmd.env(k, v);
     }
     cmd.output().expect("spawn loft")
+}
+
+/// A `--ship` run of a deep recursion: no depth cap, so it either answers — a C compiler may
+/// turn `f(n - 1) + 1` into a loop — or runs out of stack and crashes, which `loft` names with
+/// a non-zero exit.  Never the development cap's report, and never a silent exit.
+fn ship_answers_or_names_its_crash(file: &str, res: &Output, answer: &str) {
+    let out = String::from_utf8_lossy(&res.stdout);
+    let err = String::from_utf8_lossy(&res.stderr);
+    assert!(
+        !err.contains("call stack overflow"),
+        "{file} --ship: a shipped build has no depth cap:\n{err}"
+    );
+    if res.status.success() {
+        assert_eq!(out.trim(), answer, "{file} --ship answered wrong:\n{err}");
+    } else {
+        assert!(
+            err.contains("error: the program crashed: "),
+            "{file} --ship: a crash is named, exit {:?}:\n{err}",
+            res.status.code()
+        );
+    }
 }
 
 fn cells() -> String {
@@ -64,6 +87,9 @@ fn the_lean_build_answers_what_the_interpreter_answers() {
     );
 }
 
+/// The development build's cap holds through a helper that calls no further.  Only `--native`:
+/// a shipped build has no cap, and this recursion never ends, so a C compiler that turns it
+/// into a loop would spin until the timeout (`tests/native.rs` pins a shipped crash).
 #[test]
 fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_chain_runaway_{}", std::process::id()));
@@ -77,7 +103,7 @@ fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
          fn main() { println(\"{runaway(0)}\"); }\n",
     )
     .expect("write the probe");
-    let res = loft(&["--ship", &prog.to_string_lossy()], &[]);
+    let res = loft(&["--native", &prog.to_string_lossy()], &[]);
     let err = String::from_utf8_lossy(&res.stderr);
     assert_eq!(
         res.status.code(),
@@ -95,7 +121,7 @@ fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
 /// in all but their key, so a runaway recursion through either stops at loft's depth cap on
 /// `--native` as its `n_` twin does — it overflowed Rust's own stack (the member) or ran past
 /// the cap unchecked (the instance), because the prelude that enforces the cap was written for
-/// `n_` names alone.
+/// `n_` names alone.  `--ship` has no cap: it answers or names its crash.
 #[test]
 fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_chain_keyed_{}", std::process::id()));
@@ -117,28 +143,31 @@ fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap(
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native", "--ship"] {
-            let res = loft(&[mode, &prog.to_string_lossy()], &[]);
-            let err = String::from_utf8_lossy(&res.stderr);
-            assert_eq!(
-                res.status.code(),
-                Some(1),
-                "{file} {mode}: a clean fault exit, not a signal:\n{err}"
-            );
-            assert!(
-                err.contains("call stack overflow"),
-                "{file} {mode}: the depth cap must report the runaway recursion:\n{err}"
-            );
-        }
+        ship_answers_or_names_its_crash(
+            file,
+            &loft(&["--ship", &prog.to_string_lossy()], &[]),
+            "10000000",
+        );
+        let res = loft(&["--native", &prog.to_string_lossy()], &[]);
+        let err = String::from_utf8_lossy(&res.stderr);
+        assert_eq!(
+            res.status.code(),
+            Some(1),
+            "{file} --native: a clean fault exit, not a signal:\n{err}"
+        );
+        assert!(
+            err.contains("call stack overflow"),
+            "{file} --native: the depth cap must report the runaway recursion:\n{err}"
+        );
     }
     let _ = fa::remove_dir_all(&dir);
 }
 
 /// A loft-bodied METHOD is a call frame like a free function: a runaway recursion through one
-/// stops at loft's depth cap on `--native` and `--ship` as it does on the
-/// interpreter, rather than overflowing Rust's own stack — alone, mutually with another
-/// method, and through a method on a generic receiver — and `stack_trace()` names its frames
-/// as the interpreter names them.
+/// stops at loft's depth cap on `--native` as it does on the interpreter, rather than
+/// overflowing the machine's stack — alone, mutually with another method, and through a method
+/// on a generic receiver — and `stack_trace()` names its frames as the interpreter names them.
+/// `--ship` has no cap: it answers or names its crash.
 #[test]
 fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     let dir = std::env::temp_dir().join(format!("loft_leaf_chain_method_{}", std::process::id()));
@@ -166,19 +195,22 @@ fn runaway_recursion_through_a_method_hits_the_depth_cap() {
     for (file, src) in cases {
         let prog = dir.join(file);
         fa::write(&prog, src).expect("write the probe");
-        for mode in ["--native", "--ship"] {
-            let res = loft(&[mode, &prog.to_string_lossy()], &[]);
-            let err = String::from_utf8_lossy(&res.stderr);
-            assert_eq!(
-                res.status.code(),
-                Some(1),
-                "{file} {mode}: a clean fault exit, not a signal:\n{err}"
-            );
-            assert!(
-                err.contains("call stack overflow"),
-                "{file} {mode}: the depth cap must report the runaway recursion:\n{err}"
-            );
-        }
+        ship_answers_or_names_its_crash(
+            file,
+            &loft(&["--ship", &prog.to_string_lossy()], &[]),
+            "10000000",
+        );
+        let res = loft(&["--native", &prog.to_string_lossy()], &[]);
+        let err = String::from_utf8_lossy(&res.stderr);
+        assert_eq!(
+            res.status.code(),
+            Some(1),
+            "{file} --native: a clean fault exit, not a signal:\n{err}"
+        );
+        assert!(
+            err.contains("call stack overflow"),
+            "{file} --native: the depth cap must report the runaway recursion:\n{err}"
+        );
     }
     let prog = dir.join("frames.loft");
     fa::write(

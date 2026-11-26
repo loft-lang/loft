@@ -1442,9 +1442,9 @@ jobs:
   # The store records' lifetime report over `tests/scripts` and the suite (`LOFT_LIFETIME_CHECK`,
   # compile-only): a STATIC check of every store a function makes — a leak, a double or wrong
   # end, a use after end, a variable read outside its scope, a drop lease run twice or never —
-  # on every path, where the runtime detectors only see the paths a test executes.  Held at its
-  # baseline by `records_lifetime_ratchet`.  ADVISORY (not in required-status-checks): red on a
-  # PR that adds a problem, never blocking the merge.
+  # on every path, where the runtime detectors only see the paths a test executes.  Every
+  # program reads clean (`records_lifetime_ratchet`).  ADVISORY (not in required-status-checks):
+  # red on a PR that adds a problem, never blocking the merge.
   leak-scan:
     # @windows-exempt: a platform-independent invariant sweep (store lifetimes); the corpus runs on windows-latest daily
     name: store lifetime scan (ubuntu, advisory)

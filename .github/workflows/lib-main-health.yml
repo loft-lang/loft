@@ -219,7 +219,7 @@ jobs:
         if: always()
         run: |
           set -o pipefail
-          pkgs=$(for t in lib/*/loft.toml lib/loft.toml; do [ -f "$t" ] && dirname "$t"; done)
+          pkgs=$(for t in lib/*/loft.toml lib/loft.toml; do [ -f "$t" ] && dirname "$t"; done; true)
           python3 loft-src/scripts/hosted_coverage.py --lib lib $pkgs 2>&1 | tee "$RUNNER_TEMP/coverage.log" && exit 0
           status=$?
           {

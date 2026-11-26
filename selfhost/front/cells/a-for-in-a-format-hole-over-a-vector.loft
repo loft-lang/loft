@@ -1,0 +1,12 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `"{for y in v {y * 3}}"` renders `[`, each body value with `,` between, then `]`
+// (`iter_for` + `append_iter`): `y#index`, `_val_N`, `y`, `y#count` in Rust's order, an
+// "Append Iter" loop over an "Iter For" block.
+// Prints: [3,6,9]
+
+fn main() {
+  v = [1, 2, 3];
+  println("{for y in v {y * 3}}");
+}

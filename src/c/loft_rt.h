@@ -917,7 +917,11 @@ static void loft_stack_overflow(loft_cx *cx, const char *file, uint32_t line) {
     fputs("error: ", stderr);
     fwrite(msg, 1, (size_t) n, stderr);
     fputc('\n', stderr);
-    if (!cx->in_test) loft_fault_where(cx, loft_lit(cx, file, strlen(file)), line);
+    if (!cx->in_test) {
+        loft_fault_where(cx, loft_lit(cx, file, strlen(file)), line);
+        /* What to write instead (`runtime_error::STACK_OVERFLOW_HELP`, the interpreter's line). */
+        fputs(LOFT_STACK_OVERFLOW_HELP "\n", stderr);
+    }
     cx->fail_msg.len = 0;
     loft_push(cx, &cx->fail_msg, msg, (size_t) n);
     if (cx->in_test) { LOFT_RELEASE_HELD(0); LOFT_LONGJMP(cx->test_jmp); }
@@ -992,10 +996,11 @@ static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f) = loft_trace_site;
 #define loft_frame_pop(cx) ((void) (cx)->hdepth--)
 #define LOFT_HDEPTH cx->hdepth
 #elif defined(LOFT_MAX_CALL_DEPTH)
-/* The lean tier's frame entry (`call_frames::cr_call_push_lean`, the rustc writer's `--ship`):
- * the call-depth cap without the frame record — checked before the push, at the same cap, the
- * report naming this call's own entry site (there is no frame below to read).  The count is the
- * running thread's: a field of its store context. */
+/* A development build without the call chain (an ESP app built without `--ship`): the call-depth
+ * cap without the frame record — checked before the push, at the same cap, the report naming
+ * this call's own entry site (there is no frame below to read).  The count is the running
+ * thread's: a field of its store context.  A `--ship` unit defines no `LOFT_MAX_CALL_DEPTH`, so
+ * it counts nothing and recurses as deep as the hardware allows. */
 #define loft_frame_push(cx, fn, file, decl) \
     (LOFT_UNLIKELY((cx)->cdepth >= (uint32_t) LOFT_MAX_CALL_DEPTH) ? loft_stack_overflow(cx, (file), (decl)) \
                                                                     : (void) (cx)->cdepth++)
