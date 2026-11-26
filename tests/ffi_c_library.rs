@@ -548,6 +548,79 @@ fn a_component_built_against_another_loft_ffi_is_refused_without_build_advice() 
     }
 }
 
+/// A library's compiled unit is keyed on every switch in force that
+/// can change the code it is generated with, and on none that cannot.  One plain package, one
+/// program, four runs on the interpreter in one `native-auto/`: no switch, an inert one
+/// (`LOFT_TIMEOUT`), a cure switch (`LOFT_NO_PUSH_FILL`, whose generated C differs) and a width
+/// (`LOFT_WIDTH=32`).  Each answers 135 (0 + 3 + … + 27); the plain and the inert run share one
+/// unit and the other two have one each, so three units.  The C backend keys its program build on
+/// its C text, so only the interpreter adopts a unit by this key.
+#[test]
+fn a_unit_is_keyed_on_the_switches_that_change_its_code() {
+    let dir = std::env::temp_dir().join(format!("loft_unit_switch_key_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    let pkg = dir.join("lib").join("keyed");
+    fa::create_dir_all(pkg.join("src")).expect("the package");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"keyed\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+         [library]\nentry = \"src/keyed.loft\"\n",
+    )
+    .expect("write the manifest");
+    fa::write(
+        pkg.join("src/keyed.loft"),
+        "pub fn grow(n: integer) -> integer {\n  v: vector<integer> = [];\n  \
+         for i in 0..n { v += [i * 3]; }\n  sum_of(v)\n}\n",
+    )
+    .expect("write the library");
+    let file = dir.join("prog.loft");
+    fa::write(
+        &file,
+        "use keyed;\nfn main() { println(\"{keyed::grow(10)}\"); }\n",
+    )
+    .expect("write the program");
+    let home = dir.join("home");
+    for (k, v) in [
+        ("", ""),
+        ("LOFT_TIMEOUT", "77"),
+        ("LOFT_NO_PUSH_FILL", "1"),
+        ("LOFT_WIDTH", "32"),
+    ] {
+        let mut cmd = loft::platform::process::harness_command(env!("CARGO_BIN_EXE_loft"));
+        cmd.arg("--interpret")
+            .arg("--lib")
+            .arg(dir.join("lib"))
+            .arg(&file)
+            .env("LOFT_HOME", &home)
+            .env("XDG_CACHE_HOME", home.join("cache"));
+        if !k.is_empty() {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("loft runs");
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "135\n",
+            "{k}={v}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    let units: Vec<String> = fa::read_dir(pkg.join("native-auto"))
+        .expect("the package's native-auto")
+        .into_iter()
+        .filter_map(|e| fa::file_name(&e.os_spelling()))
+        .filter(|n| {
+            n.contains("loft_auto_keyed")
+                && (n.ends_with(".so") || n.ends_with(".dylib") || n.ends_with(".dll"))
+        })
+        .collect();
+    let _ = fa::remove_dir_all(&dir);
+    assert_eq!(
+        units.len(),
+        3,
+        "one unit for the plain and the inert run, one per code-changing switch: {units:?}"
+    );
+}
+
 /// A library's compiled unit (`native-auto/`) is keyed on the components its C binds: whether
 /// each is installed, and which one.  A package wraps a component's native in a loft function of
 /// its own (`twice(21)` = 21 + 21 + 1 = 43) and a program is run twice, the component installed
