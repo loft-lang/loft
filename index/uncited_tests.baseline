@@ -1,0 +1,6 @@
+# Test programs that cite no @FR- rule, per home (scripts/suite_curate.py uncited).
+# A ratchet: a home may hold fewer, never more.  Lower a number in the commit that
+# makes a program name its rule (or say `// @no-rule: <why>`).
+tests/scripts	313
+tests/docs	36
+selfhost/front/cells	162

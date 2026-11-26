@@ -91,6 +91,9 @@ dist/
 # The suite-curation ledger is committed: it RECORDS which rules a thorough pass has finished
 # (scripts/suite_curate.py, TESTING.md § Curating the suite), which nothing can regenerate.
 !/index/suite_curation.tsv
+# The count of test programs that cite no rule is a ratchet (`suite_curate.py uncited --check`,
+# `every_test_program_names_its_rule`): the number in the diff is the receipt for lowering it.
+!/index/uncited_tests.baseline
 # loft#680: the per-target builtin surface is committed for the same reason —
 # `make ci`'s drift guard compares against it, `loft targets` embeds it, and a
 # consumer reading it should not have to run a wasm build to get an answer.

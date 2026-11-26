@@ -601,6 +601,23 @@ scripts/suite_curate.py land <rule> <chapter/dir> <new> <msg-file | msg text> <o
 scripts/suite_curate.py done <rule> '<note>'       # record it, after the commit
 ```
 
+**Curation is continuous, not one pass.**  A defect adds a cell, so a curated rule grows again:
+`status` lists the rules whose citing files outnumber the count `done` recorded, and `next` takes
+them after the `todo` rules, most grown first.  Two more views feed a pass:
+
+```bash
+scripts/suite_curate.py uncited [--list]  # the test programs that cite no rule, per home
+scripts/suite_curate.py dups [<rule>]     # programs whose code sits mostly inside another one
+```
+
+Only a program that names its rule can be curated, so every test program in `tests/scripts`,
+`tests/docs` and `selfhost/front/cells` cites the `@FR-` rule it tests, or says why none fits
+(`// @no-rule: <why>`, a whole program or a library walk); a test of a language rule belongs in
+the suite.  `index/uncited_tests.baseline` holds the count per home, and
+`every_test_program_names_its_rule` fails when one rises: lower it, in the commit that names a
+program's rule, with `uncited --write-baseline`.  `dups` is evidence for a fold, not a verdict:
+read the part a program does not share, and leave a refusal twin (marked) apart.
+
 **"Covers totally"** is measured, never assumed: every composition-axis value the rule's cells
 reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell names stays covered.
 `plan` proposes the fewest cells that keep all of it.
