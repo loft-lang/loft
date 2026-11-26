@@ -1000,7 +1000,8 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
   };
   // (A METHOD call's record answer — `c.run().ok` — borrows nothing, and the chain goes on: it is
   // held in an inline ref (`parse_part_inner`'s hold, `.` next), as a field step's record is.)
-  if !e.first_pass && match e.p.nodes[re!] { SMember { call: mcall } => mcall, _ => false } {
+  // (Only a CALL of a function — not `T.parse(…)`, which lowers to a cast and is held nowhere.)
+  if !e.first_pass && match e.p.nodes[re!] { SMember { call: mcall } => mcall, _ => false } && match el_ir::unspan(x.code) { NdCall { def_nr: mcd } => starts_with(el::def(e, mcd).name, "t_") || starts_with(el::def(e, mcd).name, "n_"), _ => false } {
     x = chain_hold(e, vars, x, true);
   }
   // A field of an `S?` slot is read through its tag: absent reads as the null `S?`.
