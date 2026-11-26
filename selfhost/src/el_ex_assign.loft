@@ -2766,6 +2766,16 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     // (`@FR-P-Opt-Ty`: an optional group's capture of a narrow field keeps the field's whole
     // range beside its null; a local bound to it takes that type, so nothing is guarded.)
     capture_bind = match el_ir::unspan(x.code) { NdVar { n: cbv } => el_vars::name_of(vars, cbv).starts_with("_mv_") && el_types::is_same(slot, x.tp), _ => false };
+    // (`convert` first: an integer that may not fit a narrow `τ?` local is the checked cast of the
+    // value as it is (`dn4cast`, the assignment seam), the slot's range guard around it.)
+    if g == null && !capture_bind && slot is TyOptional && !(x.tp is TyNull) && el_convert::narrowing_store(el_types::base(x.tp), el_types::base(slot)) {
+      vars.assign_seam = true;
+      cc = el_convert::convert_store(e, vars, x.code, x.tp, slot);
+      vars.assign_seam = false;
+      if cc != null {
+        x.code = cc!;
+      }
+    }
     if !capture_bind {
       x.code = g ?? el_convert::guard_range(e, x.code, slot, el_convert::guard_source(vars, x.code, x.tp), slot is TyOptional);
     }

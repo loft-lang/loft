@@ -517,7 +517,12 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   // set in place, its `enum` field the variant's ordinal.
   lit_sed = el_types::struct_enum_def(el_types::base(p.tp));
   unqualify_literal(e, rhs);
-  if op == "=" && lit_sed >= 0 && !(p.tp is TyOptional) && calls(e, el_ir::unspan(p.code), "OpGetField") && el_ex_pattern::variant_literal(e, rhs) {
+  // (…a FIELD declared `E?` alike: Rust writes the literal into the inline field as it does into
+  // a dense one — the `?` is the field's tag 0, which the ordinal overwrites.  Not where the `?`
+  // is the receiver's, a nullable pointer or local.)
+  lit_recv = match el_ir::unspan(p.code) { NdCall { args: lra } => el_ir::unspan(lra[0] ?? ir::NdNull), _ => ir::NdNull };
+  lit_field_opt = p.tp is TyOptional && !calls(e, lit_recv, "OpGetDbRef") && !calls(e, lit_recv, "OpGetVector") && match lit_recv { NdVar { n: lrv } => !(el_vars::tp(vars, lrv) is TyOptional), _ => true };
+  if op == "=" && lit_sed >= 0 && (!(p.tp is TyOptional) || lit_field_opt) && calls(e, el_ir::unspan(p.code), "OpGetField") && el_ex_pattern::variant_literal(e, rhs) {
     lfs: vector<integer> = [];
     lvd = -1;
     match e.p.nodes[rhs] {
@@ -540,6 +545,38 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
           _ => {}
         }
       }
+    }
+    // (`primed_reads_place`: a member vector literal whose items are records is primed into the
+    // place — its elements built there — so on the second pass the literal declines the place:
+    // built apart, its `Object` in a `__ref_p2_N`, and copied in whole (`OpCopyRecord`).  The
+    // first pass builds in place, its `_elm_N` left declared.)
+    lprimed = 0;
+    for lpi in lfs {
+      match e.p.nodes[lpi] {
+        SFieldInit { e: lpe } => {
+          if lpe != null && match e.p.nodes[lpe!] { SVecLit { items: lpits } => len([for lpit in lpits if e.p.nodes[lpit] is SStructLit { 1 }]) > 0, _ => false } {
+            lprimed += 1;
+          }
+        },
+        _ => {}
+      }
+    }
+    if lprimed > 0 && !lreads && !e.first_pass && lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
+      place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "decline_place:primed_reads_place");
+      // (The in-place attempt the decline abandons made its element temp first: declared, an
+      // inline ref borrowing nothing, never set.)
+      lk = 0;
+      while lk < lprimed {
+        lat = el_vars::create_unique(vars, "elm", ir::TyReference { n: lit_sed, dep: [] });
+        el_vars::mark_inline(vars, lat, "unique_elm_var");
+        el_vars::set_skip_free(vars, lat, "parse_vector_inner");
+        lk += 1;
+      }
+      lx = el_ex_assign::expression(e, vars, rhs);
+      if el_types::is_unknown(lx.tp) {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(el_ir::cl(e, "OpCopyRecord", [lx.code, el_ir::unspan(p.code), ir::NdInt { n: el::def(e, lit_sed).known_type }]), ir::TyVoid);
     }
     if !lreads {
       place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
@@ -624,7 +661,10 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     // dense and takes its dense default.
     recv = match cplace { NdCall { args } => el_ir::unspan(args[0] ?? ir::NdNull), _ => ir::NdNull };
     nullable_receiver = calls(e, recv, "OpGetDbRef") || match recv { NdVar { n } => el_vars::tp(vars, n) is TyOptional, _ => false };
-    held = pt is TyOptional && cfield && !nullable_receiver;
+    // (…and an element of a vector whose element type is declared `τ?` — `vector<u8?>` — is
+    // such a slot too: it holds its null, `0..=254` beside it.)
+    celem_nullable = !cfield && nullable_narrow_read(e, cplace);
+    held = pt is TyOptional && ((cfield && !nullable_receiver) || celem_nullable);
     g = el_convert::guard_compound(e, x.code, if held { pt } else { el_types::base(pt) }, held);
     cw = place_write(e, cplace, g);
     if cw == null {
@@ -733,7 +773,26 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
         nl = if field_place || elem_nullable { el_convert::null_of(e, pb) } else { null };
         nv = if nl == null { null } else { el_convert::guard_range(e, nl!, pt, x.tp, true) };
       } else {
-        nv = stored(e, vars, x, pb);
+        // (A slot DECLARED nullable — read through its nullable op — converts to its own `τ?` at
+        // the assignment seam: a value that may not fit is the checked cast (`dn4cast`) of the
+        // value as it is, the slot's range guard around it; one that fits is still guarded against
+        // the nullable range — a `u8` into a `u8?` meets `0..=254`.  A dense slot whose `?` is its
+        // receiver's (`v[i].typedef`, a `u16`) takes the value as its base does.)
+        if nullable_narrow_read(e, rd_place) {
+          vars.assign_seam = true;
+          nv = stored(e, vars, x, pt);
+          // (Rust's place assignment converts the value twice, the first answer dropped: a
+          // checked cast mints its `__dn4_N` both times, the first left unscoped.)
+          if nv != null && !e.first_pass && match el_ir::unspan(nv!) { NdBlock { block: nvb } => nvb[0].name == "dn4cast", _ => false } {
+            nv = stored(e, vars, x, pt);
+          }
+          vars.assign_seam = false;
+          if nv != null && !e.first_pass {
+            nv = el_convert::guard_range(e, nv!, pt, el_convert::guard_source(vars, nv!, x.tp), true);
+          }
+        } else {
+          nv = stored(e, vars, x, pb);
+        }
       }
       if nv != null {
         w0 = place_write(e, rd_place, nv!);
@@ -1063,6 +1122,15 @@ fn record_compound(e: el::El, vars: el_vars::Vars, bin: text, place: ir::Node, p
 // (`w.p = v`, `xs[i] = mk(9)`): the value copied into the place (`OpCopyRecord`), the source's
 // store freed after when the value is a call that gives it away (`call_gives_away_its_store`).
 // Another record's value and a record holding a closure are refused by name.
+// Is `place` a narrow slot DECLARED nullable — read through its nullable op (`OpGetByteNullable`,
+// `OpGetShort`), not a dense one (`OpGetByte`, `OpGetShortRaw`) whose `?` is its receiver's?
+fn nullable_narrow_read(e: el::El, place: ir::Node) -> boolean {
+  match el_ir::unspan(place) {
+    NdCall { def_nr } => el::def(e, def_nr).name == "OpGetByteNullable" || el::def(e, def_nr).name == "OpGetShort",
+    _ => false
+  }
+}
+
 pub fn record_place_write(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
   rd = struct_ref(e, pt);
   // (An element of a LINKED vector — any keyed collection over the record exists — is read
