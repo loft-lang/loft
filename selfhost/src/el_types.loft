@@ -640,6 +640,12 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
           // Refused, but answered as Rust answers it — the iterator of that element — so the
           // calls and matches over it register what Rust registers (register, then refuse).
           el::refuse(e, "an iterator of an element other than a plain scalar, a text, a record or a tuple of those");
+          // (Not a keyed element's: its `yield [..]` would be read as a vector literal before the
+          // keyed one Rust lowers it to, minting a `vector<R>` Rust never has — try 2826e069f.)
+          sb = base(step!);
+          if sb is TyHash || sb is TySorted || sb is TyIndex || sb is TyRadix || sb is TyTrie {
+            return null;
+          }
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
       }
