@@ -32,6 +32,7 @@ use cgen_cold;
 use cgen_split;
 use cgen_reltable;
 use cgen_switch;
+use cgen_parallel;
 use cgen_tail;
 use cgen_recptr;
 use cgen_hoist;
@@ -3346,11 +3347,8 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdYield { inner } => cgen_gen::gen_yield(x, w, inner, ind),
     // `parallel { … }`: the arms run one after another — each arm's effect is the one its
     // thread has.
-    NdParallel { arms } => {
-      for a in arms {
-        stmt(x, w, a, ind);
-      }
-    },
+    // `@FR-C-Arms`: each arm a function of its own, run on threads at once.
+    NdParallel { arms } => cgen_parallel::parallel_block(x, w, arms, ind),
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -3725,6 +3723,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   raw: vector<text> = [];
   links: vector<boolean> = [];
   is_param: vector<boolean> = [];
+  // Each parameter's declaration by variable, for a `parallel` arm that reads one.
+  param_decls: vector<text> = [];
   // `@FR-R-ValueRecord`'s pointer clause: the parameters that arrive as `const loft_tupN *`.
   by_ptr = cgen_value::vr_ptr_params(x, index);
   // `@FR-R-Apart` instance 2: an `__apv` twin's record parameters arrive as values.
@@ -3760,8 +3760,12 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
       // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
       apr_param = twin.apr && cgen_apart::twin_at(x, index) == ordinal;
       apv_t = if twin.apv && apv_roles.any && (apv_roles.apart[v#index] ?? -1) >= 0 { opt_apart_value::ctype(cgen_apart::value_plan(x), apv_roles.apart[v#index]!) } else { "" };
-      params += [if apv_t != "" { "const {apv_t} *loft_avp{v#index}" } else if apr_param { "loft_text *loft_aprp" } else if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      decl = if apv_t != "" { "const {apv_t} *loft_avp{v#index}" } else if apr_param { "loft_text *loft_aprp" } else if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" };
+      params += [decl];
+      param_decls += [decl];
       ordinal += 1;
+    } else {
+      param_decls += [""];
     }
   }
   if len(params) != len(d.attributes) {
@@ -3791,6 +3795,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     name: d.name,
     names: names,
     params: is_param,
+    param_decls: param_decls,
+    arm_fns: [],
     nn: nn,
     rv: opt_range::range_vars_seeded(x.b, x.p, x.c, index, nn, opt_range::walks_of(x.b, index), seeds),
     file: source_name(x, d.position.file),
@@ -4138,10 +4144,18 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   for decl in w.decls {
     out += "    {decl}\n";
   }
+  // `@FR-C-Arms`: the arms' functions declare what this function declares.
+  armed: vector<text> = if len(w.arm_fns) > 0 { cgen_parallel::arm_functions(w, out) } else { [] };
   out += cgen_text::hold_line(w);
   body = cgen_text::expand_epilogues(w);
   statements = statement_count(body);
   out += body;
+  // The arms' functions land only with the body that calls them: a body the writer declines is
+  // written again, and its arms with it.
+  if len(armed) == 2 {
+    x.gen_decls += armed[0]!;
+    x.gen_bodies += armed[1]!;
+  }
   if len(w.cold) > 0 {
     if cgen_cold::cold_escaped(w, out) {
       return Written { text: "", refused: cgen_cold::COLD_ESCAPED };

@@ -57,6 +57,22 @@ struct E {
 }
 
 // A temporary and its shape; `verify`: only a `LOFT_VERIFY` proof reads it.
+// One `parallel` arm's function (`parallel::ArmFn`): its C name, its statements as the writer
+// wrote them, and what it copies in at its start.
+pub struct ArmFn {
+  name: text,
+  text: text,
+  copies: vector<ArmCopy>,
+}
+
+// A copy an arm makes at its start: the C name, its index in the site's address array, and for a
+// parameter its declaration ("" for a local, whose is the enclosing function's own).
+pub struct ArmCopy {
+  name: text,
+  at: integer,
+  decl: text,
+}
+
 struct Temp {
   name: text,
   shape: text,
@@ -212,6 +228,10 @@ struct W {
   // Per variable: its C name, and whether it is a parameter.
   names: vector<text>,
   params: vector<boolean>,
+  // Each parameter's declaration by variable ("" for a local), for a `parallel` arm that reads
+  // one; the arms' functions written so far (`FnWriter::arm_fns`).
+  param_decls: vector<text>,
+  arm_fns: vector<ArmFn>,
   // The function's facts as `opt_range` reads them.
   nn: vector<boolean>,
   rv: opt_range::Ranges,

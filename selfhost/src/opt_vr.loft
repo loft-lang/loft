@@ -209,6 +209,51 @@ fn var_named(f: ir::Function, nm: text) -> integer {
   -1
 }
 
+// `t` without the link and nullable wrappers (`peel_link().base()`).
+fn bare_type(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyRefVar { inner } => bare_type(inner),
+    TyOptional { inner } => bare_type(inner),
+    _ => t,
+  }
+}
+
+// `value_record::answers_a_parameter`: does `def` return a parameter of the returned record's own
+// type its deps name?  A body answering one binds it by a copy, which a tuple twin leaves owned
+// by nothing (loft#2641, loft#2646).  `LOFT_NO_VALUE_PARAM_DECLINE=1` answers no.
+fn answers_a_parameter(def: ir::Definition) -> boolean {
+  if (env_variable("LOFT_NO_VALUE_PARAM_DECLINE") ?? "") != "" || len(def.returned) == 0 {
+    return false;
+  }
+  record = -1;
+  deps: vector<integer> = [];
+  match bare_type(def.returned[0]!) {
+    TyReference { n, dep } => {
+      record = n;
+      deps = dep;
+    },
+    _ => {},
+  }
+  if record < 0 {
+    return false;
+  }
+  for a in deps {
+    if a >= 0 && a < len(def.attributes) {
+      attr = def.attributes[a]!;
+      if !attr.hidden {
+        hit = match bare_type(attr.typedef[0] ?? ir::TyVoid) {
+          TyReference { n, dep: _ } => n == record,
+          _ => false,
+        };
+        if hit {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
 // `value_records(data, stores, false)`: the program's plan.
 pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layout::ValueRecords {
   plan_sites(b, w, ops, false)
@@ -258,6 +303,12 @@ fn plan_sites(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops, twin_sites: b
       continue;
     }
     if nullable && heap {
+      continue;
+    }
+    // A record bound out of a parameter is copied (`@FR-B-Copy`), so a body answering one of its
+    // parameters (`o ?? s`) binds each arm by a copy the record form hands to the caller.  Read
+    // field-wise into a tuple, that copy has no owner and leaks once per call (loft#2646).
+    if answers_a_parameter(def) {
       continue;
     }
     if !opt_vr_layout::has_type(vr, tp) && !opt_vr_layout::type_layout(b, rd, tp, views_ok, vr) {

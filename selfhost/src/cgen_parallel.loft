@@ -1,0 +1,253 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// `parallel { arm; arm }` as C (`@FR-C-Arms`, src/c/body/parallel.rs): each arm is written as a
+// function of its own and the site runs them all on threads at once (`loft_parallel_run`),
+// waiting until every one has ended.  The arms run AT ONCE because they may wait on each other
+// through the outside world.
+//
+// An arm reads the enclosing frame and writes none of it, so an arm's function starts from a
+// COPY of the enclosing locals it reads, as the interpreter's arm runs on a snapshot of the
+// frame: the site hands it their addresses, the arm copies each in at its start and lets go of
+// the copy at its end, so its epilogue frees only what the arm made.  A local the arm assigns is
+// the arm's own and starts at its initial value.  The arm's function declares what the enclosing
+// function declares, so the arm's statements are written by the same writer.
+
+use ir;
+use loop_shape;
+use opt_non_sentinel;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_text;
+use cgen_apart;
+
+// Is `c` a character of a C identifier?
+fn ident_char(c: character) -> boolean {
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
+}
+
+// Every C identifier `text` names, once each (`identifiers`).
+fn identifiers(text: text) -> vector<text> {
+  out: vector<text> = [];
+  word = "";
+  for c in text + " " {
+    if ident_char(c) {
+      word += "{c}";
+      continue;
+    }
+    if word != "" {
+      first = word[0..1];
+      if !(first >= "0" && first <= "9") && !holds(out, word) {
+        out += [word];
+      }
+      word = "";
+    }
+  }
+  out
+}
+
+fn holds(names: vector<text>, name: text) -> boolean {
+  for n in names {
+    if n == name {
+      return true;
+    }
+  }
+  false
+}
+
+// The name a declaration line declares: the last identifier before its initialiser.
+fn declared_name(decl: text) -> text {
+  head = decl;
+  for c in decl {
+    if c == '=' || c == ';' {
+      head = decl[0..c#index];
+      break;
+    }
+  }
+  last = "";
+  word = "";
+  for c in head + " " {
+    if ident_char(c) {
+      word += "{c}";
+    } else {
+      if word != "" {
+        last = word;
+      }
+      word = "";
+    }
+  }
+  last
+}
+
+// The variables a `Set` anywhere in `code` binds: an arm's own locals.
+fn assigned(code: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdSet { var, inner: _ } => { out += [var]; },
+      _ => {},
+    }
+  });
+  out
+}
+
+// Does `code` hold a `return` or a `yield`?
+fn exits(code: ir::Node) -> boolean {
+  hit = [false];
+  opt_non_sentinel::walk(code, fn(n: ir::Node) {
+    match n {
+      NdReturn { inner: _ } => { hit[0] = true; },
+      NdYield { inner: _ } => { hit[0] = true; },
+      _ => {},
+    }
+  });
+  hit[0]!
+}
+
+// `parallel_block`: each arm written into a function of its own, the site an array of the
+// addresses the arms read and a `loft_parallel_run` over the functions.
+pub fn parallel_block(x: Cx, w: W, arms: vector<ir::Node>, ind: integer) {
+  if len(arms) == 0 {
+    return;
+  }
+  if w.gen_elem != "" {
+    refuse(w, "a parallel block in a generator");
+    return;
+  }
+  for a in arms {
+    if exits(a) {
+      refuse(w, "a return inside a parallel arm");
+      return;
+    }
+  }
+  x.threads = true;
+  id = x.par_sites;
+  x.par_sites = id + 1;
+  // What the enclosing body holds when the block starts: an arm reads only these.
+  temps_before = len(w.temps);
+  decls_before = len(w.decls);
+  saved_body = w.body;
+  saved_pending = w.pending;
+  w.body = "";
+  w.pending = [];
+  texts: vector<text> = [];
+  for a in arms {
+    cgen_fn::stmt(x, w, a, 1);
+    if w.why != "" {
+      break;
+    }
+    flush(w, 1);
+    texts += [w.body];
+    w.body = "";
+  }
+  w.body = saved_body;
+  w.pending = saved_pending;
+  if w.why != "" {
+    return;
+  }
+  // The site's addresses, shared by every arm: each name once.
+  addrs: vector<text> = [];
+  first = len(w.arm_fns);
+  for a in arms {
+    copies = arm_copies(w, a, texts[a#index]!, temps_before, decls_before, addrs);
+    if w.why != "" {
+      return;
+    }
+    w.arm_fns += [ArmFn { name: "loft_arm{id}_{a#index}", text: texts[a#index]!, copies: copies }];
+  }
+  fns: vector<text> = [];
+  for f in w.arm_fns {
+    if f#index >= first {
+      fns += [f.name];
+    }
+  }
+  pv = if len(addrs) == 0 { "0" } else { [for a in addrs { "(void *) &{a}" }].join(", ") };
+  line(w, ind, "{{");
+  line(w, ind + 1, "void *const loft_pv[] = {{ {pv} }};");
+  line(w, ind + 1, "static const loft_arm_fn loft_pf[] = {{ {fns.join(", ")} }};");
+  line(w, ind + 1, "loft_parallel_run(cx, {len(fns)}, loft_pf, loft_pv);");
+  line(w, ind, "}}");
+}
+
+// What `arm` copies in at its start: each enclosing local, temporary and declaration its written
+// `text` names and the arm does not bind itself, with its index in the site's address array
+// `addrs` (added there once) and a parameter's declaration.
+fn arm_copies(w: W, arm: ir::Node, text: text, temps_before: integer, decls_before: integer, addrs: &vector<text>) -> vector<ArmCopy> {
+  names = identifiers(text);
+  own = assigned(arm);
+  copies: vector<ArmCopy> = [];
+  for v in 0..len(w.shapes) {
+    name = w.raw[v]!;
+    if !holds(names, name) || own.contains(v) {
+      continue;
+    }
+    if w.params[v]! {
+      decl = w.param_decls[v] ?? "";
+      if decl == "" {
+        refuse(w, "a parallel arm reads parameter {name}");
+        return copies;
+      }
+      copies += [copy(addrs, name, decl)];
+    } else if !cgen_apart::holds(w, v) && !w.undeclared[v]! {
+      copies += [copy(addrs, name, "")];
+    }
+  }
+  for t in w.temps {
+    if t#index < temps_before && holds(names, t.name) {
+      copies += [copy(addrs, t.name, "")];
+    }
+  }
+  for d in w.decls {
+    if d#index < decls_before {
+      n = declared_name(d);
+      if n != "" && holds(names, n) {
+        copies += [copy(addrs, n, "")];
+      }
+    }
+  }
+  copies
+}
+
+// The copy of `name`, its address added to `addrs` once.
+fn copy(addrs: &vector<text>, name: text, decl: text) -> ArmCopy {
+  at = -1;
+  for a in addrs {
+    if at < 0 && a == name {
+      at = a#index;
+    }
+  }
+  if at < 0 {
+    addrs += [name];
+    at = len(addrs) - 1;
+  }
+  ArmCopy { name: name, at: at, decl: decl }
+}
+
+// The arms' functions, each declaring what the enclosing function declares (`prologue`),
+// copying in what it reads, and freeing at its end only what it made: the copies are let go of
+// before the epilogue, which frees every text the function holds.  Answers the declarations and
+// the bodies.
+pub fn arm_functions(w: W, prologue: text) -> vector<text> {
+  decls = "";
+  bodies = "";
+  for a in w.arm_fns {
+    decls += "static void {a.name}(loft_cx *cx, void *const *loft_pv);\n";
+    bodies += "\nstatic void {a.name}(loft_cx *cx, void *const *loft_pv) {{\n";
+    bodies += prologue;
+    for c in a.copies {
+      if c.decl != "" {
+        bodies += "    {c.decl};\n";
+      }
+      bodies += "    memcpy(&{c.name}, loft_pv[{c.at}], sizeof {c.name});\n";
+    }
+    bodies += "    (void) loft_pv;\n";
+    inner = a.text;
+    for c in a.copies {
+      inner += "    memset(&{c.name}, 0, sizeof {c.name});\n";
+    }
+    inner += "    {EPILOGUE_MARK}\n";
+    bodies += cgen_text::expand_epilogues_in(w, inner) + "}}\n";
+  }
+  [decls, bodies]
+}

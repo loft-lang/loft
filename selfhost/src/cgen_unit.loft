@@ -474,7 +474,7 @@ pub fn assemble(b: ir::Bundle, root: integer, head: text, names: text, max_depth
     typedefs += cgen_parse::parse_table(x) + cgen_parse::main_vector_test(x);
   }
   if cgen_store::upgrades(x) {
-    typedefs += "static const loft_ptype *loft_up_ptypes(loft_cx *cx) {{ return loft_ptypes; }}\n";
+    typedefs += "static const loft_ptype *loft_up_ptypes(loft_cx *cx) {{ (void) cx; return loft_ptypes; }}\n";
   }
   if reflects(b, reached) {
     typedefs += b.reflect + reflect_entry();

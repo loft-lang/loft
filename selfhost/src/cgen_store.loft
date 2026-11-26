@@ -152,7 +152,7 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
   }
   // `load_url`: a whole image over `http(s)://` — the gate as `store_load`'s, and the
   // expected digest of a load that checks one before the sidecar.
-  if (route == "n_store_load_url" && len(args) == 3) || (route == "n_store_load_url_trusted" && len(args) == 2) {
+  if (route == "n_store_load_url" && len(args) >= 3) || (route == "n_store_load_url_trusted" && len(args) == 2) {
     tp = root_of(x, w, args[0]!, "a loaded value whose store type is not known here");
     if tp < 0 {
       return none();
@@ -168,7 +168,12 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     }
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     url = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-    sha = if len(args) == 3 { "{as_view(w, cgen_fn::arg(x, w, args, 2, ind))}, " } else { "" };
+    // `store_load_url`'s image pin and its sidecar pin (`schema_sha256`, "" when left out); the
+    // trusted twin takes neither.
+    sha = "";
+    for i in 2..len(args) {
+      sha += "{as_view(w, cgen_fn::arg(x, w, args, i, ind))}, ";
+    }
     return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}(cx, {r}, {url}, {sha}{sc})", kind: K_BOOL };
   }
   if route == "n_store_verify" && len(args) == 1 {

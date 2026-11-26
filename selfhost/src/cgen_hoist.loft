@@ -376,7 +376,7 @@ pub fn held_push_run(x: Cx, w: W, ops: vector<ir::Node>, at: integer, end: integ
   site = "{cgen_names::original_name(def)}:{h}";
   based = w.push_heads[head].based;
   line(w, ind, "LOFT_PROVED({if based { "loft_phb_same" } else { "loft_ph_same" }}(cx, {h}, {first.size}), {c_string(site)});");
-  line(w, ind, "{if based { put.replace("loft_ph_put", "loft_ph_putb") } else { put }}_run(&{h}, {len(temps)}, (const {bits_type(put)}[]) {{ {temps.join(", ")} }});");
+  line(w, ind, "{if based { put.replace("loft_ph_put", "loft_ph_putb") } else { put }}_run(cx, &{h}, {len(temps)}, (const {bits_type(put)}[]) {{ {temps.join(", ")} }});");
   stop
 }
 

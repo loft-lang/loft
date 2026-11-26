@@ -660,12 +660,18 @@ pub fn hold_line(w: W) -> text {
 // `expand_epilogues`: the body with each epilogue marker replaced by the frees of every text
 // the function holds, at the marker's indentation.
 pub fn expand_epilogues(w: W) -> text {
-  if !w.body.contains(EPILOGUE_MARK) {
-    return w.body;
+  expand_epilogues_in(w, w.body)
+}
+
+// `expand_epilogues_in`: each epilogue mark of `body` replaced by the frees of the texts the
+// function holds.
+pub fn expand_epilogues_in(w: W, body: text) -> text {
+  if !body.contains(EPILOGUE_MARK) {
+    return body;
   }
   texts = held_texts(w);
   out = "";
-  lines = w.body.split('\n');
+  lines = body.split('\n');
   for l in lines {
     // The body ends in a newline: the piece after it is no line.
     if l#index == len(lines) - 1 && l == "" {
