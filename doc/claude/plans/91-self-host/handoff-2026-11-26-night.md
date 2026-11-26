@@ -45,11 +45,15 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
-- **A Rust deviation, not to mirror:** `t2 = 0; if b.mid != null { t2 += b.mid.leaf.v; }` with
-  `mid: reference<Mid>?` — Rust widens `t2` to `integer?` UNDER the guard and not without it,
-  backwards from `(N-Guard)` (types.md): the port keeps `integer`.  It makes
-  tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft differ once
-  its `par` lanes are read.  Reported to the tester (2026-11-26); for whoever fixes Rust.
+- **Not a Rust deviation (my mistake, corrected by the tester):** a guard on a field path
+  (`if b.mid != null`) narrows nothing — `(N-Guard)` proves ONE NAME only; Rust's projection
+  narrowing reaches method dispatch, not the read's type.  The port narrowed it (fixed).  Read
+  the rule's own scope line before calling Rust wrong, and probe the unguarded twin's TYPE, not
+  just its verdict: an AGREE can be both sides `integer?`.
+- 1320: a `match` (not an `if`) whose arms call a lambda borrowing a parameter answers only the
+  first arm's borrow (`["n1"]` for Rust's `["n1", "n2"]`) — the arms reach the join with no deps,
+  so the bind derives them elsewhere.  A pass-2 parameter-borrow mapping in `vector_buffer_call`
+  is ready but exposes this, so it was held back.
 - A nullable keyed join (`if c { x } else { [R {…}] }` under `-> hash<…>?`, `x: hash<…>?`): the
   `(N-Join)` arm is simple, but it exposes three older differences in
   a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin (a vector parameter's tail, the
