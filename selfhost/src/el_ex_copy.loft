@@ -220,7 +220,8 @@ pub fn copy_source_may_be_absent(e: el::El, vars: el_vars::Vars, n: ir::Node) ->
       if nm == "OpGetField" && len(args) == 3 {
         return copy_source_may_be_absent(e, vars, args[0]!);
       }
-      starts_with(nm, "OpGet") || !starts_with(nm, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0
+      // (A LINKED vector's element read, `OpVectorRef`, misses past the end as `OpGetVector` does.)
+      starts_with(nm, "OpGet") || nm == "OpVectorRef" || !starts_with(nm, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0
     },
     _ => false
   }
