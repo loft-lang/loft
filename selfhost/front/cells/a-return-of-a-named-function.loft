@@ -3,6 +3,8 @@
 //
 // Gate E cell: `return add5;` in a function answering a function value returns the named
 // function as it is — its definition number — as a function-value local is.
+// @FR-L-FnRef: `return add5;` answers the named function as a fn-ref value.
+// @FR-F-Return: an early `return` of one function and a later one of another are each the answer.
 // Prints: 15 20
 
 fn add5(x: integer) -> integer { x + 5 }

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a vector literal mixing `S { … }` literals with other items of `S` (a call, a local) makes each element in order: a literal built into its element, any other item copied in (`build_vector_list`'s record arm) — inferred, declared and appended.
+// @FR-T-Chk-Vec: every item of the literal — a literal, a call, a local — checks against the element type, in order.
+// @FR-Col-Insert: `w += [S…, p]` appends the records after the existing ones.
 // Prints: 1274 5687
 
 struct S { a: integer }

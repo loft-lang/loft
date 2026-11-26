@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: several capturing lambdas written into one fn field share ONE closure record, the union of their captures (`__closure_u_…`): each build releases the slots it does not write and starts them empty.
+// @FR-L-Escape: capturing lambdas stored in a struct's fn field are called from it.
+// @FR-L-CapHeap: the captured vector, record and text are read through the closure.
 // Prints: 3 40 3
 
 struct V { a: integer }

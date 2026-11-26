@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a local rebound to a slice of itself keeps that range in place (`OpKeepRange`); a slice appended to a vector local is that range appended (`OpSliceVector`).
+// @FR-Slice-Value: `t[1..]` and `t[1..len(t)]` are the values of those ranges, rebound to `t` or appended.
 // Prints: [2,3,4] [3,4]
 
 fn main() {

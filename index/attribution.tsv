@@ -83,3 +83,84 @@ selfhost/front/cells/a-par-loop-over-a-sorted-collection.loft	link	C-Par,C-Det	2
 selfhost/front/cells/a-par-loop-over-a-text.loft	link	C-Par,I-Text	2026-11-26	par loop over a text
 selfhost/front/cells/a-par-loop-over-vector-elements.loft	link	C-Par,C-Det	2026-11-26	par loop over a vector of vectors
 selfhost/front/cells/a-par-text-worker-and-an-empty-range-comprehension.loft	link	I-Range,C-Par	2026-11-26	empty-range comprehension, literal comprehension, par loop with a text worker
+selfhost/front/cells/a-par-worker-answering-a-function.loft	link	C-Par,L-FnRef	2026-11-26	par worker answering a fn value; sum 50 needs res[i]=worker(v[i]) and the fn-refs pick returns
+selfhost/front/cells/a-par-worker-answering-a-narrow-value.loft	link	C-Par	2026-11-26	par over narrow worker results; the three counts need each res[i] = worker(v[i])
+selfhost/front/cells/a-par-worker-answering-a-record.loft	link	C-Par,C-Order	2026-11-26	par worker answering a record; the printed sequence pins in-order consumption
+selfhost/front/cells/a-parameter-join-with-a-call-on-a-local-view-is-bound.loft	link	F-Ret,F-Rec	2026-11-26	functions answering a parameter or a recursive call on a view of it; 5 9 pins the returned values
+selfhost/front/cells/a-partial-key-for-walks-the-key-prefix.loft	link	Slice-KeyedIter,C-Par	2026-11-26	partial-key for over sorted sums 30 and 4 (only the prefix's records); par sum 12
+selfhost/front/cells/a-place-handed-to-a-reference-parameter.loft	link	F-ParamRef,B-Ref-Lvalue	2026-11-26	fields and elements handed to & params; the printed values show each write reached the place
+selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft	link	E-Truthy,E-Truthy-1	2026-11-26	prefix ! over records, nullable integer and struct enum: true exactly for the absent ones
+selfhost/front/cells/a-record-appended-to-a-sorted-collection.loft	link	Col-Insert	2026-11-26	two records appended into a sorted<Rec[k]>; len 2
+selfhost/front/cells/a-record-branch-tail-copied-whole-or-arm-by-arm.loft	link	F-Ret	2026-11-26	record-returning if tails mixing literals, parameter views and calls; 3 7 9 3 pins the answer of each arm
+selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft	link	F-Ret	2026-11-26	record if-tails answering parameter views and calls; each printed field pins the arm's value
+selfhost/front/cells/a-record-literal-takes-the-expected-element-in-tail-and-arms.loft	link	T-Chk-Vec	2026-11-26	record vector literals in tail/arm/argument/bind positions all build one element
+selfhost/front/cells/a-record-member-of-a-boxed-tuple.loft	link	T-Proj,T-Record	2026-11-26	record member of a returned tuple read directly and through a bound local
+selfhost/front/cells/a-record-with-a-four-byte-narrow-field-is-no-constant.loft	link	L-Narrow,L-Narrow-Enc	2026-11-26	narrow fields in returned record-vector literals round-trip 4294967295, -7 and 200
+selfhost/front/cells/a-record-written-into-a-nullable-field.loft	link	E-Default,H-Write	2026-11-26	record/null/call/literal into a T? field; the `?` default after null gives 0
+selfhost/front/cells/a-record-written-into-an-element-or-a-field.loft	link	H-Write	2026-11-26	record literal and call result written into elements and fields; 5z 8 6
+selfhost/front/cells/a-record-written-into-an-element.loft	link	H-Write,H-CopySelf	2026-11-26	records written into elements/fields from a local, call and another element; r.x stays 50
+selfhost/front/cells/a-record-written-through-a-local-link.loft	link	B-Ref-Write	2026-11-26	whole records written through local & links; NOTE `e = q` (bare local) re-points per the expected output, which B-Ref-Write's text does not allow
+selfhost/front/cells/a-remove-through-a-vector-link.loft	link	B-Ref-Uniform,Col-RemoveDense,Col-Len	2026-11-26	remove through a & vector param and len on a hash; 2 2 1 2
+selfhost/front/cells/a-return-null-from-a-nullable-heap-function.loft	link	H-RefNull,F-Return	2026-11-26	return null from nullable heap functions compares == null; true false true true
+selfhost/front/cells/a-return-of-a-named-function.loft	link	L-FnRef,F-Return	2026-11-26	returned named functions called: 15 20
+selfhost/front/cells/a-returned-local-viewing-a-parameter-through-a-question-mark.loft	link	F-Ret,N-Default	2026-11-26	pts[i]? returned through a local; 7
+selfhost/front/cells/a-scalar-written-whole-through-a-link.loft	link	F-ParamRef,B-Ref-Uniform	2026-11-26	& params of integer?, text? and enum written whole; 1 was-null Blue
+selfhost/front/cells/a-self-slice-and-an-appended-slice.loft	link	Slice-Value	2026-11-26	self-slice rebind and appended slice: [2,3,4] [3,4]
+selfhost/front/cells/a-short-lambda-answering-a-record-or-a-vector.loft	link	G-Mono,L-Fn	2026-11-26	short lambdas answering a record and a vector through a two-variable generic
+selfhost/front/cells/a-short-lambda-hinted-by-a-field-or-a-result.loft	link	T-Chk-Lam	2026-11-26	short lambdas typed by their position's fn type; 5 4 10
+selfhost/front/cells/a-slice-bound-in-a-generic.loft	link	Slice-Value,G-Mono	2026-11-26	slices in generic functions over four element types
+selfhost/front/cells/a-slice-of-a-byte-vector.loft	link	Slice-Value	2026-11-26	byte vector slices: [11,12] and len 2
+selfhost/front/cells/a-slice-of-a-nullable-text-local.loft	link	Slice-Value	2026-11-26	text slices of a text? and a text local: hello hello 3
+selfhost/front/cells/a-slice-of-texts-and-of-records.loft	link	Slice-Value	2026-11-26	text/record/integer slices, negative bound, for over a slice
+selfhost/front/cells/a-store-lock-and-an-append-to-a-nullable-vector.loft	link	H-WriteLocked	2026-11-26	store lock set/read/cleared then write succeeds; append onto a vector? local
+selfhost/front/cells/a-struct-enum-field-written-whole.loft	link	H-Write	2026-11-26	struct-enum field overwritten three ways; area 16 6 25
+selfhost/front/cells/a-struct-enum-holding-itself-out-of-line.loft	link	T-Recursive,L-OutOfLine	2026-11-26	recursive expression enum evaluated: 7
+selfhost/front/cells/a-struct-enum-match-tail-copied-whole.loft	link	F-Ret,M-Expr	2026-11-26	struct enum returned from match tails; true true true
+selfhost/front/cells/a-struct-enum-parameter-rebound.loft	link	F-ParamRebind,C-Var	2026-11-26	struct-enum parameter rebinds; callers' {x:3} {y:100} unchanged
+selfhost/front/cells/a-struct-holding-itself-out-of-line.loft	link	T-Recursive,L-OutOfLine	2026-11-26	recursive Tree literal with omitted children summed: 15 2 8
+selfhost/front/cells/a-tail-viewing-a-local-is-bound-in-branches.loft	link	F-Ret	2026-11-26	vector tails that view locals; every call prints the viewed row
+selfhost/front/cells/a-text-function-ending-in-return-null.loft	link	F-Return,L-Null-Text	2026-11-26	text? functions returning null/values: - v2 lit lit - -
+selfhost/front/cells/a-text-if-appended-with-a-variable-arm.loft	link	E-Asgn-Compound,E-Concat	2026-11-26	text += of an if with a variable arm: a b|z, z
+selfhost/front/cells/a-text-ref-parameter-written-whole.loft	link	F-ParamRef,B-Ref-Write	2026-11-26	&text params overwritten by a literal, a variable and a format; 3 2 4 a12b
+selfhost/front/cells/a-text-slice-element-keeps-the-name-it-reuses.loft	link	Slice-Value	2026-11-26	text and nested-vector slices: ["bb","ccc"] / [[2,2],[3,3,3]]
+selfhost/front/cells/a-three-deep-vector-literal.loft	link	T-Chk-Vec,I-Lit	2026-11-26	three-deep vector literals, full width and i32
+selfhost/front/cells/a-trailing-return-of-a-local-names-no-buffer-on-the-first-pass.loft	link	F-Return,F-Ret	2026-11-26	vector locals returned by return and by tail: [1] [1] [0,1] [0,1]
+selfhost/front/cells/a-tuple-bound-to-a-declared-tuple-type.loft	link	C-Tuple,C-Num	2026-11-26	tuples bound to declared tuple types with int->float and null members
+selfhost/front/cells/a-tuple-field-written-from-a-local-or-a-call.loft	link	T-Record,C-Tuple,F-ParamHeap	2026-11-26	tuple fields written from locals, calls and a callee; eight 3 10
+selfhost/front/cells/a-tuple-local-member-written-in-place.loft	link	E-Asgn-Compound,T-Record	2026-11-26	tuple local members updated in place: 5 5 z
+selfhost/front/cells/a-tuple-typed-struct-field.loft	link	T-Record,L-Tuple	2026-11-26	tuple-typed struct fields written and read: 1 5 five 4 five
+selfhost/front/cells/a-tuple-with-a-vector-member.loft	link	T-Proj,T-Record	2026-11-26	tuple with a vector member read three ways: 9 2 [1,2]
+selfhost/front/cells/a-typed-empty-bind-in-a-sibling-block-leaves-the-local-backed.loft	link	B-Scope,O-Latest	2026-11-26	typed and untyped vector<Nd> binds in sibling blocks and a loop: 1 2
+selfhost/front/cells/a-union-closure-record-for-one-field.loft	link	L-Escape,L-CapHeap	2026-11-26	three capturing lambdas in one fn field: 3 40 3
+selfhost/front/cells/a-unit-variant-before-a-brace.loft	link	E-Eq	2026-11-26	unit variant compared before an if block: 10 10 10 (the parse of `Owned {` as no literal is unstated)
+selfhost/front/cells/a-variant-beside-a-null-arm.loft	link	N-Join,C-Var	2026-11-26	variant/null if joins in match arms and tails: 7 5 4
+selfhost/front/cells/a-variant-literal-built-in-its-place.loft	link	H-Write	2026-11-26	variant values written into a field and elements: 0 4 9
+selfhost/front/cells/a-vector-appended-through-a-link.loft	link	B-Ref-Uniform,F-ParamGrow	2026-11-26	vector appended through & param: [0,1,2,2,4]
+selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft	link	T-Chk-Vec,T-Chk-Var	2026-11-26	struct with vector<Part> field from a mixed variant literal: 2 4 3
+selfhost/front/cells/a-vector-if-tail-answering-parameters.loft	link	F-Ret	2026-11-26	vector if tails over parameters: [3] [0] [1,2]
+selfhost/front/cells/a-vector-literal-mixing-literals-and-records.loft	link	T-Chk-Vec,Col-Insert	2026-11-26	mixed record vector literals and an append: 1274 5687
+selfhost/front/cells/a-vector-of-i32.loft	link	L-Narrow,I-Lit	2026-11-26	vector<i32> built, appended, written, walked: 16 2 1 5 [7,2,3,4]
+selfhost/front/cells/a-vector-of-narrow-integer-vectors.loft	link	T-Chk-Vec,L-Narrow	2026-11-26	vectors of i32/i16/u8 vectors: 2 2 2002 255
+selfhost/front/cells/a-vector-of-nullable-floats-or-booleans.loft	link	N-Dense,L-Null	2026-11-26	vector<float?>/<boolean?> with nulls: 0.5 true false 13.5 3
+selfhost/front/cells/a-vector-of-nullable-i32.loft	link	N-Dense,L-Narrow-Enc	2026-11-26	vector<i32?> with nulls: 24 -1 2 5
+selfhost/front/cells/a-vector-of-nullable-integers.loft	link	N-Dense,L-Null	2026-11-26	vector<integer?>: 3 -1 203 4 1 [null,3,0,null]
+selfhost/front/cells/a-vector-of-nullable-records.loft	link	L-Null-Tag,N-Dense	2026-11-26	vector<S?> built, appended, walked, written: full printed line
+selfhost/front/cells/a-vector-of-tuples-with-narrow-members.loft	link	T-Record,L-Narrow	2026-11-26	vector<(u8,u16)>: 250 65000
+selfhost/front/cells/a-vector-of-u32.loft	link	L-Narrow,L-Narrow-Enc	2026-11-26	vector<u32> with values > 2^31: 7 4000000000 3 5 [...]
+selfhost/front/cells/a-vector-of-wide-literals.loft	link	I-Lit	2026-11-26	vectors of 64-bit literals: values print in full
+selfhost/front/cells/a-vector-parameter-of-records-nothing-else-defines.loft	attic		2026-11-26	its output is a constant `-`; `show` is never called, so nothing a rule states is observed (an elaboration-only check of type registration)
+selfhost/front/cells/a-vector-parameter-rebound-from-a-vector-then-grown.loft	link	F-ParamRebind	2026-11-26	vector param rebound then grown: 34 [1,2] [30,40,50]
+selfhost/front/cells/a-vector-parameter-rebound-from-a-vector.loft	link	F-ParamRebind	2026-11-26	vector param rebinds; callers' vectors print unchanged
+selfhost/front/cells/an-append-through-a-link-to-a-hash.loft	link	B-Ref-Uniform,Col-Insert	2026-11-26	append through &hash param: 3 seven
+selfhost/front/cells/an-arm-answering-a-viewing-local-copies-it-into-the-buffer.loft	link	F-Ret	2026-11-26	vector if tail with a viewing local arm: [11,22,33] []
+selfhost/front/cells/an-assert-over-an-enum-converts-it.loft	link	E-Assert,E-Truthy-1	2026-11-26	assert over a FileResult; a false conversion would halt
+selfhost/front/cells/an-element-inserted-into-a-vector.loft	new-rule	Col-InsertDense	2026-11-26	v.insert(i, x) / insert(v, i, x) puts x at index i of a vector and shifts every later element up one, len growing by one; a record argument is copied into the element (collections.md, the dense twin of Col-RemoveDense)
+selfhost/front/cells/an-element-of-a-local-at-the-tail-is-bound.loft	link	F-Ret	2026-11-26	vector tails answering vv[0]: five rows printed
+selfhost/front/cells/an-empty-arm-mints-its-literals-temps-on-the-first-pass.loft	link	T-Chk-Vec,M-Expr	2026-11-26	empty-vector arms beside literal arms: [1] 1 0 [1] ["a"]
+selfhost/front/cells/an-insert-through-a-link-and-in-a-generic.loft	link	F-ParamGrow,B-Ref-Uniform,G-Mono	2026-11-26	inserts through & and in a generic: [7,1,99,2] ["a","b"]
+selfhost/front/cells/an-out-of-line-field-written-back-or-moved.loft	link	B-OutOfLine,T-Recursive	2026-11-26	BST insert into out-of-line fields and a self-child move: 5 8 true
+selfhost/front/cells/an-out-of-line-field-written-whole.loft	link	B-OutOfLine	2026-11-26	whole writes to an out-of-line field; the local `o` stays 9
+selfhost/front/cells/an-unwrapped-local-set-into-an-out-of-line-field.loft	link	N-Present,L-OutOfLine	2026-11-26	unwrapped local set into a recursive variant field: 3
+selfhost/front/cells/any-all-and-count-if-over-a-vector.loft	link	T-Chk-Lam	2026-11-26	any/all/count_if with short lambdas: true 2 / true
+selfhost/front/cells/nested-tuples-and-vectors-of-tuples-with-records.loft	link	T-Proj,T-Record	2026-11-26	nested tuples and vector<(integer, P)>: 5 18 8
+selfhost/front/cells/tuples-across-calls-and-vector-elements.loft	link	T-Ret,T-Proj	2026-11-26	tuples across calls and vector elements: 2 a 7 q 7 2 two

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a short lambda handed to a two-variable generic answers a record or a vector its position does not name: the answer is settled on the first pass and delivered through the lambda's late return buffer.
+// @FR-G-Mono: `my_map` specialises with `U` bound to the record or vector the lambda answers.
+// @FR-L-Fn: a short lambda is a closure applied to each element.
 // Prints: 2 [[1,2],[2,3]]
 
 struct P { n: integer }

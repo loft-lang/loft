@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a field or an element handed to a reference parameter: a plain scalar's as its address (scalar_place_ref), a record's or a vector's through a __ref_N viewing what the place views, never freed.
+// @FR-F-ParamRef: a `&` parameter's writes reach the caller's field or element.
+// @FR-B-Ref-Lvalue: the linked source is a field or an element, not only a variable.
 // Prints: 4 [1,9] 7 n 7 9
 struct In { a: integer }
 struct H { f: integer, els: vector<integer>, inner: In, name: text }

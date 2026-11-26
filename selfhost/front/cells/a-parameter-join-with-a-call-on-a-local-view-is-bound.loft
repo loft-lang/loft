@@ -4,6 +4,8 @@
 // Gate E cell: a function answering its parameter or a call on a view of it (`unspan(inner)`)
 // borrows the parameter on pass 1; on pass 2 Rust binds the buffer, copying every arm into it,
 // so a caller's result borrows nothing.  A call on a parameter instead merges (`fe`).
+// @FR-F-Ret: a result that borrows a parameter (directly or through a call on a view of it) is copied at the caller's bind.
+// @FR-F-Rec: `fe` recurses with its parameters swapped, each call its own frame.
 // Prints: 5 9
 
 enum N { Leaf { v: integer }, Span { inner: N }, If { c: N, t: N } }

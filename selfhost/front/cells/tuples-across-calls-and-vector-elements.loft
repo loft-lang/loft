@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: tuples across calls: a tuple local and an `if` of literals as a boxed return's tail (`rewrite_tail_tuple_with_work_ref`, the branch answered through a `return`), a tuple literal as an argument, a text member read off another tuple, and a member of a vector element (`v[1].0`, whose dropped unbox temp still takes a work-ref name).
+// @FR-T-Ret: tuples returned from a local tail and an `if` of literals are the caller's values.
+// @FR-T-Proj: members of vector elements and of returned tuples are read by index.
 // Prints: 2 a 7 q 7 2 two
 
 fn total(t: (integer, integer)) -> integer { t.0 + t.1 }

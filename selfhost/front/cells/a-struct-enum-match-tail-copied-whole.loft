@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a struct enum answered by a `match` whose arms hand back a capture viewing the subject, the subject itself or a call: the whole branch is copied into the caller's buffer (`ref_return`'s copy leg, `materialized_view_return`); the join borrows an arm's capture, which the arm binds and does not mint (`arm_join_type`); a unit variant set as an out-of-line child.
+// @FR-F-Ret: a `match` answering a capture of the subject, the subject or a call is an independent returned value.
+// @FR-M-Expr: the selected arm's value is the match's value.
 // Prints: true true true
 
 enum T { TInt, TOpt { inner: T }, TVec { inner: T, n: integer } }

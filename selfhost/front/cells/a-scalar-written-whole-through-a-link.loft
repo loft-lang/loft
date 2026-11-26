@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a whole value written through a `&` link to a nullable scalar, a nullable text or a plain enum is the value converted to the place's type, `null` its null; `p ?? 0` reads the link as the value it names.
+// @FR-F-ParamRef: a whole write to a `&` parameter reaches the caller's local.
+// @FR-B-Ref-Uniform: a nullable scalar, a nullable text and a plain enum are linked and written as their dense twins.
 // Prints: 1 was-null Blue
 
 enum Col { Red, Green, Blue }

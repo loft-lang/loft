@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a slice of a text or a record vector local: bound to a local it is materialised element by element (`Slice materialise`: each element read whole, made through the local and written in — the elements borrowing the sliced vector), and a `for` walks the record elements as views; beside the plain scalar's `OpSliceView`.
+// @FR-Slice-Value: slices of text and record vectors are fresh vectors; `rs[..-1]` counts the negative bound from the end.
 // Prints: ["b","c"] 2 y 5 [2,3]
 
 struct R { s: text, n: integer }

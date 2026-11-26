@@ -5,6 +5,8 @@
 // by the expected element on both passes, its `vector<T>` / `main_vector<T>` registered at its
 // `]` after the declared outer's, and the rows built from the content (`int<…>`, its vector, the
 // outer) rather than found by the library's full-width name.
+// @FR-T-Chk-Vec: the inner literals check against the declared narrow element vectors.
+// @FR-L-Narrow: `i32`, `i16` and `u8` elements keep their values (2002, 255).
 // Prints: 2 2 2002 255
 
 fn main() {

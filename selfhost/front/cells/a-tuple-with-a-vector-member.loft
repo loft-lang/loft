@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a stack tuple with a vector literal member holds the vector's value block; the member is read as the vector it is — measured, indexed, formatted — and a bind of it copies (`OpAppendVector`).
+// @FR-T-Proj: `a.0` answers the vector member: measured, indexed and formatted.
+// @FR-T-Record: a vector member is what a vector field is; binding it copies it.
 // Prints: 9 2 [1,2]
 
 fn main() {

@@ -5,6 +5,8 @@
 // `parse_key`'s partial-key match, the inclusive range `1..=1` (`OpIterate(…, 1, k, 1, k)`, its
 // step block "Partial key match").  Its two `fill_iter`s each take a loop number, so the `par`
 // loop after it is `_q_par2`; the first pass reads it as an iterator, `r#index` before `r`.
+// @FR-Slice-KeyedIter: a partial key on a `sorted` (`d.rows[1]`, `rs[2]`) iterates the records under that key prefix in key order.
+// @FR-C-Par: the `par` loop after it binds each worker answer.
 // Prints: 30 12 / 4
 struct Row { a: integer, b: integer, w: integer }
 struct Db { rows: sorted<Row[a, b]> }
