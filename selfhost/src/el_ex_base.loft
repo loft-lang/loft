@@ -2381,6 +2381,31 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: vk }
 }
 
+// Members whose `Type::name` is the spelling Rust writes for them in a vector's name: a scalar of
+// any width, a text, a declared struct or enum, a nullable one of those, a tuple of them — never a
+// variant's record, a type variable or an unresolved type.
+fn nameable_members(e: el::El, elems: vector<ir::TypeT>) -> boolean {
+  for m in elems {
+    ok = match el_types::without_deps(m) {
+      TyOptional { inner } => nameable_members(e, [inner]),
+      TyInteger { spec: _ } => true,
+      TyFloat => true,
+      TySingle => true,
+      TyBoolean => true,
+      TyCharacter => true,
+      TyText { dep: _ } => true,
+      TyEnum { n } => el::def(e, n).def_type == el::DT_ENUM,
+      TyReference { n } => el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") && el_types::type_var(e, m) < 0,
+      TyTuple { elems: inner } => nameable_members(e, inner),
+      _ => false
+    };
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
 // `vector_rows` for a tuple element (`Data::vector_def` with `ensure_tuple_defs`): at the
 // literal's `]`, the `__tuple<…>` struct, `vector<(…)>` owned by it and the `main_vector<(…)>`
 // wrapper; on the second pass, once the rows are laid out, `check_vector`'s
@@ -2398,6 +2423,12 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
     // first, as Rust's `vector_def` registers them for any element: every definition after them
     // keeps Rust's number.
     rn = el_types::type_key_name(e, t);
+    // (A narrow, nullable or enum member has no `type_key_name`: Rust names the vector from each
+    // member's `Type::name` all the same — `vector<(integer(0, 255), integer, Hue)>` — so where
+    // every member is one Rust spells so, `key_name` names it; any other member mints nothing.)
+    if rn == "" && nameable_members(e, elems) {
+      rn = el_types::key_name(e, t);
+    }
     if rn != "" && el_schema::wants_vector_def(e, rn) {
       rtd = el_types::tuple_def(e, elems, pos);
       el_schema::make_vector_def(e, t, rn, pos, true);

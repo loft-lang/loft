@@ -467,6 +467,18 @@ pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position) {
           e.b.data.definitions[tvd].parent = ttd;
         }
       }
+      // On the second pass, once the record's row is laid out, `check_vector`'s
+      // `vector<__tuple<…>>` under the row's own name, at the same place (`tuple_vector_rows`).
+      ttd2 = el_types::tuple_def_of(e, te);
+      if !e.first_pass && ttd2 >= 0 {
+        vname = "vector<{el::def(e, ttd2).name}>";
+        vk = schema_type(e, vname);
+        if vk >= 0 && el::def_nr(e, vname) < 0 {
+          cv = el::add_def(e, vname, pos, el::DT_VECTOR);
+          e.b.data.definitions[cv].parent = ttd2;
+          e.b.data.definitions[cv].known_type = vk;
+        }
+      }
     },
     _ => {}
   }
