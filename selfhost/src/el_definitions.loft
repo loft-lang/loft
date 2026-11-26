@@ -2923,8 +2923,10 @@ pub fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   // instance keys on its template, and its member slot is the template's (`method_family`):
   // not carried, refused by name.
   if td.instance_of >= 0 {
+    // Refused, but keyed as Rust keys it — on the template, `t_4Grid_at` — so the method and
+    // its instances register as Rust's do (register, then refuse).
     el::refuse(e, "a method receiver that is a generic instance");
-    return "";
+    td = el::def(e, td.instance_of);
   }
   // The standard library's types come with the image, their members included; a library's
   // take the program's methods as its own types do.
