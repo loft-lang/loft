@@ -946,9 +946,9 @@ mod tests {
     /// loft.toml, the alias, and both passwords handed to apksigner exactly as written, with
     /// apksigner run in the loft.toml's directory so a `file:` password resolves as the
     /// keystore does.  The debug key is never asked for.
-    /// @falsified-at: 4f1d0e2c1 — by hand: with `signing` answering `Signing::Debug` for a
-    /// `--ship` build, the `Release` match fails; with `release_key_args` dropping
-    /// `--ks-key-alias`, the argument list differs.
+    /// @falsified-at: 04818af26 — by hand: with `signing` answering `Signing::Debug` for a
+    /// `--ship` build (what it did before), the `Release` match fails; with `release_key_args`
+    /// dropping `--ks-key-alias`, the argument list differs.
     #[cfg(unix)]
     #[test]
     fn a_ship_build_signs_with_the_key_its_manifest_names() {
@@ -1009,8 +1009,9 @@ mod tests {
     /// A password written into the manifest (`pass:`) is refused, for either password and on a
     /// debug build too; so is a value apksigner does not read a password from.  `env:`,
     /// `file:` and `stdin` are taken.
-    /// @falsified-at: 4f1d0e2c1 — by hand: with the `pass:` test in `password` removed, the
-    /// `pass:` manifests are taken.
+    /// @falsified-at: 04818af26 — by hand: with `password` taking `pass:` as apksigner does,
+    /// the `pass:` manifests are taken; with only its `pass:` refusal removed, the refusal
+    /// that is left echoes the password.
     #[test]
     fn a_password_written_into_the_manifest_is_refused() {
         let toml = |ks_pass: &str, key_pass: &str| {
@@ -1047,9 +1048,9 @@ mod tests {
     /// A `--ship` build of a program whose manifest names no key is aligned and left unsigned:
     /// the APK is the aligned one, the debug key is never made or read, and the notice names
     /// the apksigner command that signs it.
-    /// @falsified-at: 4f1d0e2c1 — by hand: with `signing` answering `Signing::Debug` when no
-    /// key is named, the `Unsigned` match fails; with the `Unsigned` arm signing with the
-    /// debug key, the panic fires.
+    /// @falsified-at: 04818af26 — by hand: with `signing` answering `Signing::Debug` for a
+    /// `--ship` build, the `Unsigned` match fails; with the `Unsigned` arm asking for the debug
+    /// key, the panic fires.
     #[test]
     fn a_ship_build_without_a_key_is_left_unsigned() {
         for (tag, toml) in [
@@ -1098,8 +1099,8 @@ mod tests {
 
     /// A debug build signs with the per-tree debug key, also when the manifest names a
     /// release key.
-    /// @falsified-at: 4f1d0e2c1 — by hand: with `signing` answering the release key for a
-    /// debug build, the `Debug` match fails and the debug key is not asked for.
+    /// @falsified-at: 04818af26 — by hand: with `signing` answering the release key for a
+    /// debug build, the `Debug` match fails.
     #[cfg(unix)]
     #[test]
     fn a_debug_build_signs_with_the_debug_key() {

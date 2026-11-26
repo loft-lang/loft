@@ -205,7 +205,8 @@ source = "build/game.pack"    # optional: where the bytes are on the build box.
                               # path a program passes.
 ```
 
-The `[[font]]` and `[[embed]]` tables and the `placement` key are in [PACKAGES_MANIFEST_TABLES.md](PACKAGES_MANIFEST_TABLES.md).
+The `[[font]]` and `[[embed]]` tables, the `placement` key and the `[android]` table (the key
+a `--native-android --ship` app is signed with) are in [PACKAGES_MANIFEST_TABLES.md](PACKAGES_MANIFEST_TABLES.md).
 
 ---
 
