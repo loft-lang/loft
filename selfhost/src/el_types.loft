@@ -637,8 +637,9 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
           return null;
         }
         if !carried_step(step!) {
+          // Refused, but answered as Rust answers it — the iterator of that element — so the
+          // calls and matches over it register what Rust registers (register, then refuse).
           el::refuse(e, "an iterator of an element other than a plain scalar, a text, a record or a tuple of those");
-          return null;
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
       }
