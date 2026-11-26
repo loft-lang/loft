@@ -447,7 +447,7 @@ pub fn refresh_cached_feed() {
     let (cache, _) = advisories_paths();
     let asked = registry_index::cache_dir().join("advisories.asked");
     if std::env::var_os("LOFT_OFFLINE").is_some()
-        || !older_than(&cache, ADVISORIES_TTL_SECS)
+        || !cache_stale(&cache)
         || !older_than(&asked, ASKED_TTL_SECS)
         || registry_index::installed_packages().is_empty()
     {
@@ -523,15 +523,16 @@ pub fn advisories_paths() -> (PathBuf, PathBuf) {
     (dir.join("advisories.json"), dir.join("advisories.json.sig"))
 }
 
-/// Returns `true` when the cached advisory feed is older than
-/// [`ADVISORIES_TTL_SECS`] (or absent).  Mirrors
-/// `install::index_stale` shape — caller uses mtime.
+/// Returns `true` when the cached advisory feed is older than [`ADVISORIES_TTL_SECS`] (or
+/// absent): older counted from when that copy was last known current, never from when the file
+/// was written ([`registry_cache`](crate::registry_cache)).
 #[must_use]
 pub fn cache_stale(path: &std::path::Path) -> bool {
-    older_than(path, ADVISORIES_TTL_SECS)
+    crate::registry_cache::older_than(path, ADVISORIES_TTL_SECS)
 }
 
-/// Whether `path` was last written more than `secs` ago; an absent or unreadable one was.
+/// Whether the marker file `path` was last written more than `secs` ago; an absent or
+/// unreadable one was.
 fn older_than(path: &std::path::Path, secs: u64) -> bool {
     let Ok(meta) = crate::file_access::metadata(path) else {
         return true;
@@ -564,77 +565,60 @@ pub struct LoadOptions {
 /// when the cache is stale (or absent) and we're not in offline
 /// mode.
 ///
-/// Returns `Ok(None)` when:
-/// - The feed isn't yet hosted in the registry (HTTP 404).  Treat
-///   as "no advisories" — feature isn't active yet on this
-///   registry.
-/// - Offline + cache absent.  Caller decides whether to warn or
-///   refuse.
+/// A machine with no copy, or a stale one, first takes the copy its loft bundle carries
+/// ([`registry_cache::seed_into`](crate::registry_cache::seed_into)), which only ever moves
+/// the cache forward.  A fetched feed that is refused — its signature, or older than the
+/// verified copy here — leaves that copy in use and says so; so does a fetch that fails.
 ///
-/// Returns `Ok(Some(feed))` on success, `Err` on signature
-/// mismatch or parse error.
+/// Returns `Ok(None)` only for a registry that publishes no feed and is not known to (a
+/// registry of one's own: not the default one, and no seed of it): it answered that it does
+/// not have one, or the run is offline, and nothing is cached.  Everywhere else no feed is an
+/// error, so a feed someone kept from arriving never reads as a feed with nothing in it.
 ///
 /// # Errors
-/// Signature verification failure, JSON parse failure, or
-/// I/O errors writing the cache.
+/// No feed could be had from a registry that publishes one, signature verification failure,
+/// JSON parse failure, or I/O errors writing the cache.
 pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String> {
     let (cache_path, sig_path) = advisories_paths();
     let url = advisories_url();
+    if cache_stale(&cache_path) {
+        crate::registry_cache::seed_into("advisories.json", &cache_path, &sig_path, &mut |c, s| {
+            verify_feed(c, s, *opts).is_ok()
+        });
+    }
 
     let content_bytes: Vec<u8> = if opts.offline {
         if !crate::file_access::exists(&cache_path) {
-            return Ok(None);
+            return no_feed("offline, and no advisory feed is on this machine");
         }
         // Verify here too.  This was the one branch of the four that read the cached
         // feed and trusted it unchecked, which put the whole signature gate behind a
         // single flag: `--offline` and the bytes are whatever is on disk (loft#1048).
         read_cached_feed_verified(&cache_path, &sig_path, *opts)?
     } else if opts.refresh || cache_stale(&cache_path) {
-        // Refresh.  404 → feature not hosted yet; treat as absent.
-        match registry_index::fetch_index(&url) {
-            Ok(fetched) => {
-                // Verify BEFORE caching, as the index path does.  Writing first and
-                // checking after leaves a REFUSED feed on disk, where it outlives the
-                // run that fetched it: every later command reads those bytes against
-                // the previous, still-valid signature and fails the same way, and no
-                // retry can clear it (loft#1048, the shape `install.rs` already went
-                // through).  An ABSENT signature falls back to the cached one — the
-                // offline/bundle path — but the verdict still comes first.
-                let sig_bytes = if fetched.signature.is_empty() {
-                    crate::file_access::read(&sig_path).unwrap_or_default()
-                } else {
-                    fetched.signature.clone()
-                };
-                verify_feed(&fetched.content, &sig_bytes, *opts)?;
-                // Signed is not fresh: a feed older than the verified one cached is refused.
-                if let Ok(cached) = read_cached_feed_verified(&cache_path, &sig_path, *opts)
-                    && let Some(why) =
-                        registry_index::rollback_refusal("advisory feed", &fetched.content, &cached)
-                {
-                    return Err(why);
+        match registry_index::fetch_document(&url) {
+            Ok(fetched) => match accept_fetched(&fetched, &cache_path, &sig_path, *opts) {
+                Ok(()) => fetched.content,
+                // Refused — a signature that does not verify, or a feed older than the
+                // verified one here.  The copy here stays in use: dropping it for nothing is
+                // what a served old feed would otherwise win.
+                Err(why) => {
+                    let cached = read_cached_feed_verified(&cache_path, &sig_path, *opts)
+                        .map_err(|_| why.clone())?;
+                    eprintln!("warning: {why}; the advisory feed already here is used");
+                    cached
                 }
-                // Verified: now it is safe to keep.  Atomically, and as a pair —
-                // another process reading this cache mid-refresh must not get a half
-                // feed or the new feed beside the old signature (loft#1045).
-                registry_index::write_signed_pair(
-                    &cache_path,
-                    &sig_path,
-                    &fetched.content,
-                    &fetched.signature,
-                )
-                .map_err(|e| format!("cache advisories: {e}"))?;
-                fetched.content
-            }
-            Err(_) if !crate::file_access::exists(&cache_path) => {
-                // Network failed AND no cache — soft error; treat
-                // as "no advisories available", caller decides what
-                // to log.
-                return Ok(None);
-            }
-            Err(_) => {
-                // Network failed but cache exists — fall through
-                // to using the cached copy.
+            },
+            // The fetch failed and a copy is here: it is used, and its age decides
+            // (`registry_cache::age_verdict`, at the install).
+            Err(_) if crate::file_access::exists(&cache_path) => {
                 read_cached_feed_verified(&cache_path, &sig_path, *opts)?
+            }
+            Err(registry_index::FetchMiss::Absent(why)) => {
+                return no_feed(&format!("the registry has no advisory feed ({why})"));
+            }
+            Err(registry_index::FetchMiss::Failed(why)) => {
+                return Err(format!("the advisory feed could not be read: {why}"));
             }
         }
     } else {
@@ -644,6 +628,48 @@ pub fn load_or_fetch(opts: &LoadOptions) -> Result<Option<AdvisoryFeed>, String>
     let text = std::str::from_utf8(&content_bytes)
         .map_err(|e| format!("advisories.json is not valid UTF-8: {e}"))?;
     Ok(Some(parse_advisories(text)?))
+}
+
+/// No feed: `Ok(None)` for a registry that publishes none and is not known to
+/// ([`registry_cache::registry_serves_a_feed`](crate::registry_cache::registry_serves_a_feed)),
+/// otherwise `why` as the error.
+fn no_feed(why: &str) -> Result<Option<AdvisoryFeed>, String> {
+    if crate::registry_cache::registry_serves_a_feed() {
+        Err(format!("{why}; this registry publishes one"))
+    } else {
+        Ok(None)
+    }
+}
+
+/// Keep a fetched feed: verified BEFORE it is cached, as the index is.  Writing first and
+/// checking after leaves a REFUSED feed on disk, where it outlives the run that fetched it:
+/// every later command reads those bytes against the previous, still-valid signature and fails
+/// the same way, and no retry can clear it (loft#1048).  An ABSENT signature falls back to the
+/// cached one — the offline/bundle path — but the verdict still comes first.  A signed feed
+/// older than the verified one cached is refused (signed is not fresh), and the pair lands
+/// atomically with the moment it was read (loft#1045, `registry_cache::stamp`).
+fn accept_fetched(
+    fetched: &registry_index::FetchedIndex,
+    cache_path: &std::path::Path,
+    sig_path: &std::path::Path,
+    opts: LoadOptions,
+) -> Result<(), String> {
+    let sig_bytes = if fetched.signature.is_empty() {
+        crate::file_access::read(sig_path).unwrap_or_default()
+    } else {
+        fetched.signature.clone()
+    };
+    verify_feed(&fetched.content, &sig_bytes, opts)?;
+    if let Ok(cached) = read_cached_feed_verified(cache_path, sig_path, opts)
+        && let Some(why) =
+            registry_index::rollback_refusal("advisory feed", &fetched.content, &cached)
+    {
+        return Err(why);
+    }
+    registry_index::write_signed_pair(cache_path, sig_path, &fetched.content, &fetched.signature)
+        .map_err(|e| format!("cache advisories: {e}"))?;
+    crate::registry_cache::stamp(cache_path, crate::registry_cache::now_secs());
+    Ok(())
 }
 
 /// Read the cached feed against the cached signature, through one door.
