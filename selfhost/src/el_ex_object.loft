@@ -1072,8 +1072,10 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
   // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
-  // the record present here (`(N-Guard)`).
-  proven = match el_ir::unspan(slot_code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(slot_code)) };
+  // the record present here (`(N-Guard)`: a test of ONE NAME; a test of a field path or a lookup
+  // proves nothing for the read's type — Rust's projection narrowing reaches its method dispatch,
+  // not this type).
+  proven = match el_ir::unspan(slot_code) { NdVar { n } => vars.present.contains(n), _ => false };
   // A tagged `S?` slot spells its own absence (`wrap_projection_nullable`).
   if rt is TyOptional && !(t is TyOptional) && !proven && !is_nullable_wrapper(e, t) {
     t = ir::TyOptional { inner: t };
@@ -3142,8 +3144,8 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   }
   c = r!;
   // `@FR-N-Chain`: a method on a receiver that may be absent may answer absent too — unless a
-  // guard proved the receiver present here (`(N-Guard)`).
-  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
+  // guard proved the receiver present here (`(N-Guard)`: a test of ONE NAME, as for a field).
+  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => false };
   if (x.tp is TyOptional || is_nullable_wrapper(e, x.tp)) && !proven && chain_lifts(e, c.tp) {
     c.tp = ir::TyOptional { inner: c.tp };
   }
