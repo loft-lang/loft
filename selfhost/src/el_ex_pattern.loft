@@ -2952,8 +2952,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // does a vector element in value position — a `for`'s source, an argument, a subscript's
   // receiver: `vector<vector<integer>>` — and a scalar one whose rows the schema lays out after
   // the pass (`[1.5, -1.0]`, `['a', 'b']`, `[true, false]`: a `for` over it walks its items,
-  // `literal_walk`, on this pass as on the second.)
-  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t)))) {
+  // `literal_walk`, on this pass as on the second), a plain enum's among them (`[Hue.Blue]`
+  // handed to a generic's `vector<U>` binds `U` to `Hue`, as Rust's `parse_vector` types it).
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t) || el_types::base(in_t) is TyEnum))) {
     rcodes: vector<ir::Node> = [];
     for x in xs {
       rcodes += [x.code];
