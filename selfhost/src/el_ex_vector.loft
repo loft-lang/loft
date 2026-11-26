@@ -1613,6 +1613,12 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       }
       return a;
     }
+    // A link to a KEYED local is its view the same way (`a = &h`: `a: hash<…>["h"] = h`), the
+    // writes through it the collection's (`@FR-B-Ref-Uniform`).  (A link to a keyed FIELD writes
+    // through to the field itself — `OpNewRecord(b, B, field)` — not carried: refused below.)
+    if keyed_kind(el_types::base(a.tp)) && !(a.tp is TyOptional) && a.code is NdVar && len(el_types::deps(a.tp)) > 0 {
+      return a;
+    }
     // A link to a record LOCAL (`pc = &c`) is the local's slot (`OpCreateStack`), typed as a
     // link borrowing it; its fields are reached as the record's are (`@FR-C-Ref`).
     match a.code {

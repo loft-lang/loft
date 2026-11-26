@@ -2347,6 +2347,12 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     el_vars::drop_use(vars, v);
     return ex(ir::NdInsert { items: [] }, ir::TyVoid);
   }
+  // A `&` of a keyed place (`a = &h`) binds its VIEW, typed as borrowing the place — no copy
+  // (`@FR-B-Ref-Uniform`; `(B-Copy)` is a plain bind's).
+  if keyed_kind(kcur) && !(kcur is TyRefVar) && el_ex_bind::is_link(e, rhs!) && keyed_kind(x.tp) && len(el_types::deps(x.tp)) > 0 {
+    el_vars::set_var_type(vars, v, x.tp);
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   kg: vector<ir::Node> = [];
   if !e.first_pass && keyed_kind(kcur) && !(kcur is TyRefVar) && keyed_kind(x.tp) && !(x.code is NdInsert) && !(x.code is NdNull) {
     // (`(B-Copy)` for the keyed kinds, recorded at the replace as `lower_vec_copy_bind` records a
