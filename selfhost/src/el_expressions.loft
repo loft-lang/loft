@@ -524,8 +524,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // body stays typed as the parameter's read.
   // (So is any body whose type borrows only visible parameters — a field of one, an `if` of
   // two, a `??` over one: the result borrows each, as the body's type names them.)
+  // (A `-> τ?` result the same: `fn kn_tail(x: hash<…>?) -> hash<…>? { x }` borrows `x`.)
   kparam = false;
-  if keyed_kind(el_types::base(result)) && !(result is TyOptional) && len(el_types::deps(b.tp)) > 0 {
+  if keyed_kind(el_types::base(result)) && len(el_types::deps(b.tp)) > 0 {
     kas: vector<integer> = [];
     for kpv in el_types::deps(b.tp) {
       ka = if kpv >= 0 && kpv < len(vars.vars) && vars.vars[kpv].argument && !hidden_param(e, vars, kpv) { attr_nr(el::def(e, e.context), el_vars::name_of(vars, kpv)) } else { -1 };
