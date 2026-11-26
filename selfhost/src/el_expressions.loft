@@ -1648,11 +1648,12 @@ pub fn format_append(e: el::El, v: integer, code: ir::Node, stack: boolean) -> i
 // part of the result's deps — a parameter by its number; a text local (on the first pass, or a
 // compiler buffer on either) promoted to a hidden `&text` parameter (`PromoteHidden`), the caller's
 // buffer, which the body then writes through.  The declared result takes those deps.
-pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT) {
+pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT, mid: boolean = false) {
   d = e.context;
-  // A generic template takes none of the return promotion (`generic_promote_ok`): each instance
-  // decides its own delivery once its types are known.
-  if el::def(e, d).def_type == el::DT_GENERIC {
+  // A generic template takes none of the TAIL's return promotion (`generic_promote_ok`): each
+  // instance decides its own delivery once its types are known.  A `return` statement's is asked
+  // all the same (`parse_return` has no such gate): `got = t.take(i); return got ?? "-"`.
+  if el::def(e, d).def_type == el::DT_GENERIC && !mid {
     return;
   }
   ret = el::def(e, d).returned[0];
@@ -1896,6 +1897,17 @@ pub fn rename_ret_buffer(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
   if was_match && v == -1 && len(match_deps) == 1 && match_deps[0]! < len(vars.vars) {
     v = rename_candidate(e, vars, code, ir::NdVar { n: match_deps[0]! });
   }
+  // (Several, every one a call's work ref (`["__ref_1", "__ref_2"]`): the first, ascending, is
+  // renamed onto the buffer and the others stay their own — the buffer is bound by then
+  // (`SkipJoinArm`).)
+  if was_match && v == -1 && len(match_deps) > 1 && len([for md in match_deps if md >= len(vars.vars) || !starts_with(el_vars::name_of(vars, md), "__ref_") { 1 }]) == 0 {
+    v = match_deps[0]!;
+    for md in match_deps {
+      if md < v {
+        v = md;
+      }
+    }
+  }
   // (Renamed only where the local's store type is the result's: a VARIANT local under its
   // enum's result — `o = Box { … }; o` answering `Shape` — is built in its own store and copied
   // into the buffer at the tail.)
@@ -1940,7 +1952,11 @@ pub fn arms_rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, n: 
       // the join, and `ls` does not name it (`if c { a } else { mk(7) }` renames nothing).
       if a == -3 && b == -3 { -3 } else if a == -3 { if b >= 0 && !work_ref(vars, b) || b == -2 { b } else { -1 } } else if b == -3 { if a >= 0 && !work_ref(vars, a) || a == -2 { a } else { -1 } } else if a == -2 { b } else if b == -2 || a == b || a >= 0 && b >= 0 && work_ref(vars, a) && work_ref(vars, b) { a } else { -1 }
     },
-    NdBlock { block } => if len(block[0].operators) == 0 { -1 } else { arms_rename_candidate(e, vars, code, block[0].operators[-1]) },
+    // (In a match over a RECORD result, a local an arm defines and builds from a struct literal is
+    // that arm's own mint, no borrow of the join (`arm_join_type`): it offers no candidate, and
+    // the calls' work refs beside it are renamed in their order.  One defined outside the arms
+    // — `none = P { … }; match … { _ => none }` — is a candidate as any local is.)
+    NdBlock { block } => if len(block[0].operators) == 0 { -1 } else if vars.match_tail && e.first_pass && el_types::is_heap_record(el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid)) && match el_ir::unspan(block[0].operators[-1]!) { NdVar { n: bv } => el_ex_deliver::arm_defines(n, bv) && el_ex_pattern::literal_bound_anywhere(e, vars.body, el_vars::name_of(vars, bv), 0), _ => false } { -2 } else { arms_rename_candidate(e, vars, code, block[0].operators[-1]) },
     NdNull => -2,
     NdCall { def_nr, args } => if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" { -2 } else if e.first_pass && vars.match_tail && def_nr == e.context { -2 } else if returns_argument_view(el::def(e, def_nr)) { view_arg_candidate(e, vars, code, def_nr, args, n) } else { rename_candidate(e, vars, code, n) },
     // (A call answering a view of its argument (`id(t)`) is typed by what it borrows: `ls` names

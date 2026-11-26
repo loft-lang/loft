@@ -2673,7 +2673,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       if vt is TyNull {
         return ex(ir::NdReturn { inner: el_ir::cl(e, "OpConvTextFromNull", []) }, ir::TyNever);
       }
-      el_expressions::text_return(e, vars, v.tp);
+      // (`if let Type::Text(ls) = &t`: a `text?` value — `return text_src(i, self.s)` — is no
+      // `Type::Text`, so `parse_return` publishes none of its borrows.)
+      // (A `??` here is typed `text?` by this port where Rust's is the bare text: it publishes
+      // its borrows.)
+      coalesced = match el_ir::unspan(v.code) { NdBlock { block: cb } => cb[0].name == "ncc" || cb[0].name == "ncr", _ => false };
+      if !(vt is TyOptional) || coalesced {
+        el_expressions::text_return(e, vars, v.tp, mid: true);
+      }
       rt = stored(e, vars, v, result);
       return ex(ir::NdReturn { inner: rt ?? v.code }, ir::TyNever);
     }

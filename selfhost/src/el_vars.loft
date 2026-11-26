@@ -1192,7 +1192,7 @@ pub fn work_vec_db(v: Vars, t: ir::TypeT) -> integer {
   nr
 }
 
-fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
+pub fn sorted_in(l: vector<integer>, nr: integer) -> vector<integer> {
   r: vector<integer> = [];
   placed = false;
   for x in l {
