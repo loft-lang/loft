@@ -1752,7 +1752,7 @@ pub struct Parser {
     /// the pass-1 body; [`Parser::rebuild_stale_monomorphs`] redoes those at the end of
     /// the pass, when every template body exists.
     pub(crate) pass2_bodies: std::collections::HashSet<u32>,
-    /// @PLN229 A3 — the parameter-write facts (`callee_param_writes`) that can no longer change:
+    /// @PLN229 A3 — the parameter-write facts (`callee_param_writes`) that are final:
     /// of a function whose body this pass has read and whose every callee's facts are final
     /// too.  [`Parser::check_ref_mutations`] starts each function's walk from them, so a call
     /// chain is walked once, not once per function above it (a 4 000-deep chain re-walked the

@@ -8,6 +8,7 @@
 // declines it (`primed_reads_place`): built apart in a `__ref_p2_N` and copied in whole
 // (`OpCopyRecord`), the abandoned attempt's element temp left declared.
 // Prints: NdInt {n:3} NdV {d:2,args:[5,6]} NdT {s:"hi"} NdTwo {a:4,b:5} NdInt {n:9} NdCall {d:2,args:[NdInt {n:5}]} NdCall {d:2,args:[NdInt {n:2}]}
+// Rule: @FR-R-InPlaceLiteral.
 
 enum Nd { NdNull, NdInt { n: integer }, NdTwo { a: integer, b: integer }, NdV { d: integer, args: vector<integer> }, NdT { s: text }, NdCall { d: integer, args: vector<Nd> } }
 struct V { cond: Nd?, k: integer }

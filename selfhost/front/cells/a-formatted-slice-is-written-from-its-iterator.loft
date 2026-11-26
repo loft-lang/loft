@@ -4,6 +4,7 @@
 // Gate E cell: a vector slice in a format hole is written from its iterator (`append_iter`,
 // "Append Iter"): `[`, each element by the hole's spec, `,` between, `]` — scalars and records.
 // Prints: a [2,4] b / [004,008,016] / [{x:3}]
+// Rule: @FR-F-Interp, @FR-Slice-Value.
 
 struct P { x: integer }
 fn main() {

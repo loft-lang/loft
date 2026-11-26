@@ -6,6 +6,7 @@
 // function's buffer where it stands (`one_buffer_chain`, its work ref bound to the buffer), the
 // block keeping its own type, as a body ending in the call directly does.
 // Prints: 1 -1 1 -1 6 -1 1 -1
+// Rule: @FR-O-Buffer.
 
 struct Ex { code: integer, tp: integer }
 fn ex(c: integer, t: integer) -> Ex { Ex { code: c, tp: t } }

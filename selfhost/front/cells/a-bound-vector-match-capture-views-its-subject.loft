@@ -6,6 +6,7 @@
 // a slice element (`[Bx { rs }, ..]`) binds its field as a view of the subject (`["t"]`) on
 // the first pass already.
 // Prints: 1 / 1
+// Rule: @FR-P-Cap-View.
 
 struct Pt { x: integer, y: integer }
 enum Tok { Num { n: integer }, Bx { rs: vector<Pt> } }

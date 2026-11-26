@@ -9,6 +9,7 @@
 // `if` that ends an else block too — and declines a join over a callee it refused, whose borrows
 // it cannot read (`sv` below beside a refused `sub` keeps Rust's `["b"]` that way).
 // Prints: -1 5 5 -1 -1 1 1 3 1 -1 5 2 S2TRef {n:7,dep:[1,2]} S2TRef {n:4,dep:[]}
+// Rule: @FR-C-Var.
 
 enum Ty { TU, TV { inner: integer }, TW { s: text } }
 fn tval(t: Ty) -> integer { match t { TV { inner } => inner, TU => -1, TW { s } => len(s) } }

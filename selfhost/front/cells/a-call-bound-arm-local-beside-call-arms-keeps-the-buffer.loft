@@ -11,6 +11,7 @@
 // The local is copied in at its arm and its call's store freed — a nullable local where
 // present, the sentinel where null.
 // Prints: [3,3] [1,1] [4,4] [3,3] [6,6] null [5,5] [7] [8,9] [2,2,2] [101] [202,9] [101] [202] [303] [101] [202] [303,303]
+// Rule: @FR-O-Buffer, @FR-F-Ret.
 
 enum Nd { A, B { n: integer }, C { n: integer } }
 fn list(n: integer) -> vector<integer> { [n, n] }

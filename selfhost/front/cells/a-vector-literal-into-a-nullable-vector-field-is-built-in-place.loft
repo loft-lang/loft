@@ -7,6 +7,7 @@
 // item's element temp is typed by its record on both passes (`ref(S)["h"]`), a scalar's by the
 // placeholder.
 // Prints: [1,2] [] [{x:4}] ["a","b"] [{x:4},{x:5}]
+// Rule: @FR-R-InPlaceLiteral.
 
 struct S { x: integer }
 struct H { g: vector<integer>?, k: integer }

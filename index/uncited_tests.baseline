@@ -1,6 +1,6 @@
 # Test programs that cite no @FR- rule, per home (scripts/suite_curate.py uncited).
 # A ratchet: a home may hold fewer, never more.  Lower a number in the commit that
 # makes a program name its rule, or moves it to the suite's attic.
-tests/scripts	68
+tests/scripts	67
 tests/docs	10
 selfhost/front/cells	6

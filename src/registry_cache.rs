@@ -103,7 +103,7 @@ pub fn rfc3339_secs(text: &str) -> Option<u64> {
     if !(1..=12).contains(&m) || !(1..=31).contains(&d) || hh > 23 || mm > 59 || ss > 60 {
         return None;
     }
-    // Days from 1970-01-01 to y-m-d (Howard Hinnant's `days_from_civil`).
+    // Days from the Unix epoch to y-m-d (Howard Hinnant's `days_from_civil`).
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
     let yoe = y - era * 400;

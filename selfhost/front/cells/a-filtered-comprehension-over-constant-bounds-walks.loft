@@ -4,6 +4,7 @@
 // Gate E cell: `[for n in 1..10 if n % 2 == 0 { n }]` over constant bounds is walked, not
 // unrolled: its filter step does not fold to a boolean (`try_const_unroll_comprehension`).
 // Prints: [2,4,6,8]
+// Rule: @FR-I-Filter, @FR-I-Range.
 
 fn main() {
   evens = [for n in 1..10 if n % 2 == 0 { n }];

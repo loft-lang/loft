@@ -6,6 +6,7 @@
 // first's (`a#1 = a#2`); a guard is asked of each alternative after its bindings, the body
 // read once.  Integer, record-variant and text elements.
 // Prints: 1 1 0 / 70 80 0 / 9 8 0 / 3 4 0 / y! z! -
+// Rule: @FR-P-Multi.
 
 enum Sh { A { n: integer }, S2B { n: integer }, C }
 fn f1(v: vector<integer>) -> integer { match v { [9, ..] | [1, ..] => 1, _ => 0 } }

@@ -6,6 +6,7 @@
 // `ref_return`'s `ls` is the match type's deps, to which a literal's minted store and a fresh
 // call add none; and a variant joining the enum keeps what the arms so far borrow (`["r"]`).
 // Prints: B1 B1 O / O O O / B1 B1 B3 / B9 B9 O
+// Rule: @FR-O-Buffer.
 
 enum Own { Owned, B { base: integer } }
 fn j(a: Own, c: Own) -> Own { if a == c { B { base: 9 } } else { Owned } }

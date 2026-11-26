@@ -6,6 +6,7 @@
 // (`end_fits_start`) and is the union of the bounds' types where it does not; an open range
 // stops at the start type's maximum; an inclusive end at that maximum is tested first.
 // Prints: 253 254 255 / 13725 / 1515 / 1006
+// Rule: @FR-I-Range.
 
 fn main() {
   a: u8 = 253;

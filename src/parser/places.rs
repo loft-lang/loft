@@ -492,8 +492,8 @@ impl Parser {
         }
     }
 
-    /// Keep, of the parameter-write facts `cache` holds after a check, those that can no longer
-    /// change ([`Parser::param_writes_final`]): of a function whose body this pass has read (the
+    /// Keep, of the parameter-write facts `cache` holds after a check, those that are final
+    /// ([`Parser::param_writes_final`]): of a function whose body this pass has read (the
     /// standard library's, once the parser is past it) and whose every loft-bodied callee's
     /// facts are final — a function on a call cycle never is.  The rest, derived from a pass-1
     /// body or over a callee still to be read, is dropped and derived again when asked.

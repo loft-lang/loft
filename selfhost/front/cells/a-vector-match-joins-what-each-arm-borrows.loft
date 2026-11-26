@@ -6,6 +6,7 @@
 // `arm_join_type` does — bound to a local, and at a function's tail where the call arms write
 // into the buffer renamed onto the first.
 // Prints: [4,4] / [3,3] [-2,-2] [4,4]
+// Rule: @FR-N-Join.
 
 enum Nd { A, B { n: integer }, C { n: integer } }
 fn list(n: integer) -> vector<integer> { [n, n] }

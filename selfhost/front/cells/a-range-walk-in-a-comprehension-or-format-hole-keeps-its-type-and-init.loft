@@ -7,6 +7,7 @@
 // one init step (a computed bound: its `_range_start_N`, the null guard, `_next_N`) keeps that
 // `create_iter` as an `Insert` of its own inside the loop's (`iter_init_steps`).
 // Prints: [250,251,252,253,254,255] [251,252,253] [3,4,5,6] [1,2] [250,251,252] [3,4,5]
+// Rule: @FR-I-Range, @FR-I-RangeFrom.
 
 fn main() {
   a: u8 = 250;

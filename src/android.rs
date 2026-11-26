@@ -906,7 +906,6 @@ mod tests {
     /// to `<dir>/apksigner.log`.
     #[cfg(unix)]
     fn fake_apksigner(dir: &Path) -> (PathBuf, PathBuf) {
-        use std::os::unix::fs::PermissionsExt;
         let log = dir.join("apksigner.log");
         let script = dir.join("apksigner");
         crate::file_access::write(
@@ -917,8 +916,7 @@ mod tests {
             ),
         )
         .expect("write fake apksigner");
-        crate::file_access::set_permissions(&script, std::fs::Permissions::from_mode(0o755))
-            .expect("chmod");
+        crate::file_access::set_executable(&script).expect("chmod");
         (script, log)
     }
 

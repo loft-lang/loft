@@ -4,6 +4,7 @@
 // Gate E cell: `{x: >3}` — a space as the spec's fill character — pads with spaces, as the
 // default fill does (`OpFormatInt(…, 3, 32, …)`).
 // Prints: [  7]
+// Rule: @FR-F-Spec.
 
 fn main() {
   x = 7;

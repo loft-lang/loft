@@ -7,6 +7,7 @@
 // there.  Left to the second pass, a later integer walk took `_lit_1` on the first and the
 // float items were typed `integer`.
 // Prints: 1.5 -1 ab truefalse 12
+// Rule: @FR-R-LiteralWalk.
 
 fn main() {
   o = "";

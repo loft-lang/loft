@@ -5,6 +5,7 @@
 // borrows — `parse_return` asks `text_return` only of a bare `Type::Text` value, and the call
 // answers `text?`; a bare return of a text parameter does, and so does the tail spelling.
 // Prints: a b c
+// Rule: @FR-F-Ret.
 
 struct T { s: text }
 fn text_src(i: integer, tag: text) -> text? { if i == 0 { return null } return tag; }

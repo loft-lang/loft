@@ -8,6 +8,7 @@
 // non-null scalar widens (`null_arm_widens`) — while a scalar or text subject's does; a `-> E?`
 // body whose arms answer is typed as the declared `E?`.
 // Prints: FInt {v:7} FFloat {v:0.5} FInt {v:2} null null FInt {v:3} FInt {v:1} null FInt {v:4} null FInt {v:1} null {v:1} null
+// Rule: @FR-C-Var.
 
 enum Fd { FInt { v: integer }, FFloat { v: float } }
 enum Col { Red, Green }

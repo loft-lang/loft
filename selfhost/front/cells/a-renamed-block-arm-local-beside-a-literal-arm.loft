@@ -5,6 +5,7 @@
 // (`buf: vector<u8> = []; … buf`) beside a literal arm (`_ => []`): the local's arm is the
 // answer as it stands, the literal copied into the buffer and its store freed.
 // Prints: 104,105, / 
+// Rule: @FR-O-Buffer.
 
 enum V { VText { s: text }, VNone }
 fn bytes(v: V) -> vector<u8> {

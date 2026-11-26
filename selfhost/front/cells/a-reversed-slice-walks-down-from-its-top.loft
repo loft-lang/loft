@@ -4,6 +4,7 @@
 // Gate E cell: `v[rev(0..=3)]` is `rev(v[0..=3])` — the walk starts at the slice's top and steps
 // down to its start (`parse_in_range` reads the `rev(` inside the brackets too).
 // Prints: 8421 / 8421
+// Rule: @FR-Slice-Value.
 
 fn main() {
   pows = [1, 2, 4, 8, 16];

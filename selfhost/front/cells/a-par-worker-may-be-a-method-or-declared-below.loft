@@ -5,6 +5,7 @@
 // `t_<len><Type>_<method>`), and a function worker may be declared below its loop — on the first
 // pass its result is unknown, the second resolves it.
 // Prints: 12 / 20
+// Rule: @FR-C-Par.
 
 struct Sc { v: integer }
 fn get_value(self: Sc) -> integer { self.v * 2 }

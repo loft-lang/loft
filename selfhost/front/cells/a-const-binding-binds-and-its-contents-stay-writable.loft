@@ -4,6 +4,7 @@
 // Gate E cell: `const x = T { … }` binds as any local does; what `const` fixes is the binding,
 // so the record's contents stay writable (`x.n = 2`, `x.v += [3]`).
 // Prints: 2 3 / 5
+// Rule: @FR-Const-Bind.
 
 struct T { n: integer, v: vector<integer> }
 fn main() {

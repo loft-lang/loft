@@ -6,6 +6,7 @@
 // variant arm is typed `E?` without the store its literal mints, an `else if` of variants arm
 // by arm; a variant FIRST keeps its own type beside the `E?` else.
 // Prints: NdInt {n:1} NdInt {n:1} NdInt {n:4} null NdInt {n:4} NdInt {n:4} null NdTwo {a:1,b:2}
+// Rule: @FR-N-Join.
 
 enum Nd { NdNull, NdInt { n: integer }, NdTwo { a: integer, b: integer } }
 struct MC { cond: Nd?, k: integer }

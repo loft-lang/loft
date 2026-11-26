@@ -5,6 +5,7 @@
 // the place, so the literal is built apart and copied over the element; its scalar field that
 // reads the place is staged first (`__ref_N` ahead of the record's writes), as in place.
 // Prints: 4 g2 2
+// Rule: @FR-R-InPlaceLiteral.
 
 struct E { k: integer, t: text, xs: vector<integer> }
 fn main() {

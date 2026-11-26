@@ -5,6 +5,7 @@
 // it (`i#index == max` tested first) rather than stepping past it; a computed start holds the
 // end too (`_range_end_N`), its empty-range reset written at the bounds' width.
 // Prints: 8 / 1
+// Rule: @FR-I-RangeFrom.
 
 fn first_square_over(limit: integer) -> integer {
   for i in 1.. { if i * i > limit { return i; } }

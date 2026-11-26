@@ -6,6 +6,7 @@
 // the first word is zero, the field otherwise — its place as written (`ms[0].cond!` reads the
 // element with the dense getter; the `!` is the field's).  An element's own `!` is unchanged.
 // Prints: NdInt {n:1} 1 {a:NdInt {n:1},b:NdNull {}} NdInt {n:1} NdInt {n:1} NdInt {n:1} NdInt {n:1}
+// Rule: @FR-L-Null-Which.
 
 enum Nd { NdNull, NdInt { n: integer }, NdTwo { a: Nd, b: Nd } }
 struct MC { cond: Nd?, k: integer }

@@ -10,6 +10,7 @@
 // reached through a receiver that may be absent (`ds[0].typedef`, a `u16`; a `vector<u8>` element)
 // is read through its dense op and takes the value as it is: no null guard.
 // Prints: 4721 [0,0] 1 null null null 25 250 null [null,25] [null,250]
+// Rule: @FR-N-Cast, @FR-N-Store.
 
 struct S { au: u8?, al: integer limit(0,255)?, ai: i16? }
 struct D { typedef: u16, k: integer }
