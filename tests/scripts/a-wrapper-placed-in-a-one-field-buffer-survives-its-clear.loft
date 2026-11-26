@@ -1,3 +1,6 @@
+// @FR-H-RootExtent: a one-field root store holding a placed wrapper is not reset by a clear while that record is live.
+// @FR-R-ExitVector: the vector local returned in the exit literal is the value the caller reads.
+//
 // loft#2157 — `(H-RootExtent)` with a record placed from OUTSIDE the root collection, on BOTH
 // backends.  `(R-ExitVector)` claims a vector local's wrapper in the return buffer's store; when
 // the returned struct has ONE vector field its root has the wrapper's shape, and the exit

@@ -1,3 +1,5 @@
+// @FR-O-Buffer: the function's own return buffer is the caller's store and is never handed to a call inside it as that call's buffer.
+//
 // A call's out-buffer is function scratch; the function's own return buffer is not.  `f` calls
 // `condition`, declared after it: on pass 1 that call has no known result and mints no buffer,
 // so the work-ref names shift on pass 2, and the call claims the name pass 1 left on the

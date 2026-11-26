@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-Disp-Key: a library's overload set reaches the selective and the aliased import spellings whole.
+//
 // The two import spellings the wildcard cell cannot hold in one file (a `use` form is per
 // file): the selective `use lib::(name, …)` of an overload-set name, and the alias
 // `use lib as l` reaching it qualified (`Disp-Key`, @PLN162).

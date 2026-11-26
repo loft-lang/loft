@@ -1,5 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @FR-G-Type: a library's generic struct or enum names an instance at every type the consumer applies, its own included.
+// @FR-G-Mono: the library's generic functions and methods specialise at the consumer's argument types.
 //
 // @PLN165 D10 — a `use`d library's generic structs and enums behave as the same types
 // written in the program: the consumer instantiates them at the library's types and at its
