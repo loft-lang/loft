@@ -580,7 +580,9 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         if el_types::base(result) is TyVector && el_types::base(b.tp) is TyVector {
           vjoined = el_types::deps(result);
           for vx in outside_deps(e, b.code, el_types::deps(b.tp)) {
-            if !vjoined.contains(vx) {
+            // (The first pass joins the arms' borrows of program locals and parameters only — a
+            // call's own hidden buffer, `__ref_N`, keeps the first arm's.)
+            if !vjoined.contains(vx) && (!e.first_pass || vx >= 0 && vx < len(vars.vars) && !starts_with(el_vars::name_of(vars, vx), "_")) {
               vjoined += [vx];
             }
           }
