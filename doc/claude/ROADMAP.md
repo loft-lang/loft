@@ -133,6 +133,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 | [@PLN168](https://github.com/loft-lang/plans/issues/168) | future | `hex_block` — the shared world query (blocked, raycast, floor height, movement resolution) |
 | [@PLN169](https://github.com/loft-lang/plans/issues/169) | future | `camera` — the orbit / follow / overview camera, picker and view-cone occlusion, extracted from moros |
 | [@PLN170](https://github.com/loft-lang/plans/issues/170) | future | 3D audio — spatialisation and occlusion over `audio_bus` |
+| [@PLN230](https://github.com/loft-lang/plans/issues/230) | future | Zero-trust paged stores — pages encrypted and authenticated, read as cheaply as a mapped file |
 | [@PLN75](https://github.com/loft-lang/plans/issues/75) | future | Physics — 2-body |
 | [@PLN76](https://github.com/loft-lang/plans/issues/76) | future | Particle system |
 | [@PLN56](https://github.com/loft-lang/plans/issues/56) | future | Rigged characters |
