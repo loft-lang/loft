@@ -27,6 +27,15 @@ Overview):
 3. **`tests/*.rs`** — for what a script cannot express: an exact diagnostic set, a Rust API, a
    compiler internal, a process-level fixture, a cross-mode stdout matrix.
 
+**Every test program names the rule it guards** (owner: no test runs without a link to a
+rule).  Its header cites `@FR-<Rule>` with a line saying what of the rule it checks — a link
+is good when breaking that rule would fail the program's assertions or expected output, not
+when the program merely touches the construct.  No rule states the behaviour?  Then the rule
+comes first (its formal text, the citations at the code sites that enforce it, and this
+program as its falsified guard — the owner decides it), never a test without one.
+`every_test_program_names_its_rule` holds the count of unlinked programs per home to its
+baseline ([TESTING.md § Curating the suite](../../../doc/claude/TESTING.md)).
+
 **And a change to the SYNTAX owes the slot matrix a row.**  A new operator, keyword or `#`
 attribute adds its operand position to `scripts/syntax_slots.tsv` (with its hand-computed
 line in `scripts/syntax_expect.tsv`), or its reason to `scripts/syntax_outside.tsv`;
@@ -422,6 +431,7 @@ for runtime panics that have no diagnostic-printing path.
 - [ ] If introducing a new `tests/*.rs` binary, its name matches a subject pattern in `scripts/test_subjects.sh` (or extend one).
 - [ ] If adding a `.loft` test, picked the right home: a language-suite cell (the default), `tests/docs/` (also drives HTML), or `tests/scripts/` only when something in this repo names the file.
 - [ ] `tests/docs/*.loft` files have both `@NAME:` and `@TITLE:` header comments.
+- [ ] The test names the `@FR-` rule it guards in its header (`suite_curate.py uncited --check` stays green).
 - [ ] Every new suite cell and `tests/scripts/*.loft` records `@falsified-at:` (run `make falsify` — the doc_hygiene gate fails without it).
 - [ ] `@EXPECT_ERROR:` / `@EXPECT_WARNING:` substrings do NOT include the `at file:line:col` tail.
 - [ ] `@EXPECT_FAIL` placement is correct: file-level only when the comment is in the header above the first declaration; fn-level only when the comment is the line(s) immediately above the target `fn`.

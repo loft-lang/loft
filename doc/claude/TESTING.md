@@ -619,6 +619,10 @@ belongs in the suite under that rule.  `index/uncited_tests.baseline` holds the 
 that do not, per home, and `every_test_program_names_its_rule` fails when one rises: lower it with
 `uncited --write-baseline` in the commit that links a program, until it is zero.
 
+A link is GOOD when breaking the rule would make the program's assertions or expected output
+fail; a program that merely touches the construct is not linked to it, and a link names the one
+to three rules the program pins, never every rule it passes through.
+
 A program that cites no rule is READ before anything moves: it may test a rule whose link was
 missed, or describe behaviour no rule states yet.  `attribute` gives the leads (the rules of the
 rule-citing programs it most resembles; for a defect's regression, the rules its `Fixes #N`
