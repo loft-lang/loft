@@ -2231,12 +2231,18 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
 // A literal of a struct enum's variant (`DIce { n: 8 }`): the record it builds, as a struct
 // literal's is.
 pub fn variant_literal(e: el::El, n: integer) -> boolean {
+  d = literal_variant(e, n);
+  d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE
+}
+
+// The definition a variant literal's name resolves to, or -1 for an update.  An enum-qualified
+// spelling (`Ch::Beta`) is rewritten to the plain one first (`unqualify_literal`), as the lexer
+// resolves it for Rust — so every reader of the node after this sees `Beta`.
+fn literal_variant(e: el::El, n: integer) -> integer {
+  el_ex_place::unqualify_literal(e, n);
   match e.p.nodes[n] {
-    SStructLit { name, member, base } => {
-      d = if member == "" && base == null { el::def_nr(e, name) } else { -1 };
-      d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE
-    },
-    _ => false
+    SStructLit { name, member, base } => if member == "" && base == null { el::def_nr(e, name) } else { -1 },
+    _ => -1
   }
 }
 
@@ -2327,11 +2333,8 @@ pub fn type_def_of(e: el::El, t: ir::TypeT) -> integer {
 // variant's definition, or -1.
 pub fn variant_literal_def(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
-    SStructLit { name, member, base } => {
-      if member != "" || base != null {
-        return -1;
-      }
-      d = el::def_nr(e, name);
+    SStructLit { name: _ } => {
+      d = literal_variant(e, n);
       if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && len(el::def(e, d).attributes) > 0 { d } else { -1 }
     },
     _ => -1
