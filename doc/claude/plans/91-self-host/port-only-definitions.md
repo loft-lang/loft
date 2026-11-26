@@ -2,101 +2,38 @@
 
 **The rule (owner, 2026-11-26):** a definition only the port registers is the port creating a new
 language instead of porting one; a try that adds one is `TRYRESULT issues` (refusal-worklist.md).
-These are the ones left, measured at try bc8b9e94a (on 2be44f5a6), 62 rows (85 at
-8e161452b).  A row goes once a try shows it gone.
+Left at try 5cdc4acc0 (the porter's keyed-literal lowering on bc8b9e94a): 34 rows, in
+16 programs (85 at 8e161452b).  A row goes once a try shows it gone.
 
-**Removed so far (tester):**
-- a `[…]` whose destination is a keyed collection, refused before it is read (a refused `&` of a
-  keyed collection keeps its link type; a keyed `??` default; a literal at a keyed expectation that
-  `keyed_tail_literal` declines) — the porter's keyed-literal lowering replaces the last two;
-- every generic function instance: a tuple's identity spelled from its members (`tuple_identity`),
-  type variables bound through a tuple's members, and `sort` / `map` / `filter` Rust builds in place
-  refused where the port's in-place build declines (`rust_builds_in_place`, concrete types only).
+**Removed:** a `[…]` bound for a keyed collection (tester's refusals, then the porter's lowering:
+`keyed_literal` takes every keyed hint — an arm, an empty `[]` arm, a `??` default, a `-> τ?`); every
+generic function instance (tuple identity from its members, binding through tuple members, the
+in-place `sort` / `map` / `filter` Rust builds).
 
-## vector type — 54
+**Known causes of what is left:**
+- a write or append through a link to a keyed collection that is not refused at the `&`
+  (1836, a-null-written-…): the link road;
+- a declared element type not handed into the literal (an-expected-element-type-…, which also
+  holds the one tuple record);
+- a field the port dropped at a refusal, which makes a struct look like a type variable's
+  placeholder (2500's `__typevar_Hit`); 923's nameless `vector<>`;
+- lambdas, interface stubs and functions: not yet measured.
 
-| program | definition |
+| program | definitions |
 |---|---|
-| a-null-written-to-a-collection-reaches-every-name-for-it.loft | `main_vector<Lh>` |
-| a-null-written-to-a-collection-reaches-every-name-for-it.loft | `vector<Lh>` |
-| a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft | `main_vector<Room>` |
-| a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft | `vector<Room>` |
-| 2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft | `main_vector<Fr2562E>` |
-| 2562-a-returned-keyed-field-of-a-local-record-is-its-own-store.loft | `vector<Fr2562E>` |
-| a-lambda-reads-its-captures-inside-a-comprehension-and-leaves-them-alive.loft | `main_vector<CapPt>` |
-| a-lambda-reads-its-captures-inside-a-comprehension-and-leaves-them-alive.loft | `vector<CapPt>` |
+| an-expected-element-type-reaches-every-literal-position.loft | `__tuple<integer,integer>`, `main_vector<(integer, integer)>`, `main_vector<vector<integer>>`, `vector<(integer, integer)>`, `vector<__tuple<integer,integer>>`, `vector<vector<integer>>` |
+| a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft | `__iface_948#1_weight`, `main_vector<Tree>`, `vector<Tree>` |
+| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `main_vector<JnH>`, `vector<JnH>` |
+| 1836-a-link-to-a-nullable-place-writes-through.loft | `main_vector<Ek>`, `vector<Ek>` |
+| 2337-an-empty-literal-arm-builds-its-fields-collection.loft | `main_vector<K>`, `vector<K>` |
+| 2435-two-modules-types-of-one-name-key-two-instances.loft | `n___lambda_answers_0#2`, `n___lambda_answers_1#2` |
+| 2500-a-stored-reference-to-a-struct-enum-reads-as-its-record.loft | `main_vector<__typevar_Hit>`, `vector<__typevar_Hit>` |
+| 923-nullable-vector-element-schema.loft | `main_vector<>`, `vector<>` |
+| a-lambda-body-converts-into-its-expected-return.loft | `n___dflt_takes_f`, `n___lambda___dflt_takes_f_0` |
+| a-lambda-reads-its-captures-inside-a-comprehension-and-leaves-them-alive.loft | `main_vector<CapPt>`, `vector<CapPt>` |
+| a-null-written-to-a-collection-reaches-every-name-for-it.loft | `main_vector<Lh>`, `vector<Lh>` |
+| a-struct-point-pattern-reads-any-declaration-order-and-a-null-field.loft | `main_vector<Q?>`, `vector<Q?>` |
+| a-view-materialises-where-its-container-is-disturbed-whatever-spells-it.loft | `main_vector<Room>`, `vector<Room>` |
 | a-generic-at-a-tuple-answers-the-boxed-record-and-its-callback-is-its-twins-type.loft | `main_vector<__tuple<integer,text>>` |
-| a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft | `main_vector<Tree>` |
-| a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft | `vector<Tree>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `main_vector<Ab1150H>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `main_vector<Ab1150I>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `main_vector<Ab1150P>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `main_vector<Ab1150S>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `main_vector<Ab1150T>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `vector<Ab1150H>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `vector<Ab1150I>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `vector<Ab1150P>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `vector<Ab1150S>` |
-| a-nullable-keyed-collection-crosses-a-call-as-its-dense-twin.loft | `vector<Ab1150T>` |
-| a-struct-point-pattern-reads-any-declaration-order-and-a-null-field.loft | `main_vector<Q?>` |
-| a-struct-point-pattern-reads-any-declaration-order-and-a-null-field.loft | `vector<Q?>` |
-| 2500-a-stored-reference-to-a-struct-enum-reads-as-its-record.loft | `main_vector<__typevar_Hit>` |
-| 2500-a-stored-reference-to-a-struct-enum-reads-as-its-record.loft | `vector<__typevar_Hit>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `main_vector<JnH>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `main_vector<JnI>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `main_vector<JnP>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `main_vector<JnS>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `main_vector<JnT>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnH>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnI>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnP>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnS>` |
-| 1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft | `vector<JnT>` |
-| 164-consumed-keyed-lift-rebind.loft | `main_vector<Lr1H>` |
-| 164-consumed-keyed-lift-rebind.loft | `main_vector<Lr1S>` |
-| 164-consumed-keyed-lift-rebind.loft | `vector<Lr1H>` |
-| 164-consumed-keyed-lift-rebind.loft | `vector<Lr1S>` |
-| a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `main_vector<Cp>` |
-| a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `main_vector<Cw>` |
-| a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `vector<Cp>` |
-| a-spatial-or-trie-call-result-outlives-its-coalesce.loft | `vector<Cw>` |
-| 1836-a-link-to-a-nullable-place-writes-through.loft | `main_vector<Ek>` |
-| 1836-a-link-to-a-nullable-place-writes-through.loft | `vector<Ek>` |
-| an-expected-element-type-reaches-every-literal-position.loft | `main_vector<(integer, integer)>` |
-| an-expected-element-type-reaches-every-literal-position.loft | `main_vector<vector<integer>>` |
-| an-expected-element-type-reaches-every-literal-position.loft | `vector<(integer, integer)>` |
-| an-expected-element-type-reaches-every-literal-position.loft | `vector<__tuple<integer,integer>>` |
-| an-expected-element-type-reaches-every-literal-position.loft | `vector<vector<integer>>` |
-| 2337-an-empty-literal-arm-builds-its-fields-collection.loft | `main_vector<K>` |
-| 2337-an-empty-literal-arm-builds-its-fields-collection.loft | `vector<K>` |
-| 923-nullable-vector-element-schema.loft | `main_vector<>` |
-| 923-nullable-vector-element-schema.loft | `vector<>` |
-
-## lambda / closure — 3
-
-| program | definition |
-|---|---|
-| 2435-two-modules-types-of-one-name-key-two-instances.loft | `n___lambda_answers_0#2` |
-| 2435-two-modules-types-of-one-name-key-two-instances.loft | `n___lambda_answers_1#2` |
-| a-lambda-body-converts-into-its-expected-return.loft | `n___lambda___dflt_takes_f_0` |
-
-## interface stub — 2
-
-| program | definition |
-|---|---|
-| a-template-that-names-itself-at-its-own-variables-compiles-on-its-own.loft | `__iface_948#1_weight` |
-| pln125-a2c-companion.loft | `__iface_911#1_plain_relay` |
-
-## function — 2
-
-| program | definition |
-|---|---|
-| a-lambda-body-converts-into-its-expected-return.loft | `n___dflt_takes_f` |
 | a-library-carries-generics-across-the-boundary.loft | `n_describe` |
-
-## tuple record — 1
-
-| program | definition |
-|---|---|
-| an-expected-element-type-reaches-every-literal-position.loft | `__tuple<integer,integer>` |
-
+| pln125-a2c-companion.loft | `__iface_911#1_plain_relay` |
