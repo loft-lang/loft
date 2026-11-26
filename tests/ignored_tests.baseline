@@ -49,6 +49,6 @@ tests/native.rs::native_limits_at_full_size	the limit guards at the real 300 / 6
 tests/native.rs::two_c_shims_link_into_the_wasm_target	a wasm32 build of a whole program — runs nightly in miri.yml's `release-gate-sweeps` job
 tests/ownership_fuzz_gate.rs::fuzz_gate_map54_full_replay	full both-backends replay (rustc per cell) — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_fuzz_gate fuzz_gate_map54_full_replay -- --ignored`
 tests/ownership_oracle.rs::oracle_fact_is_backend_identical_si2	native backend needs a C compile per run — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored`
-tests/ownership_oracle.rs::records_lifetime_ratchet	sweeps tests/scripts and the suite — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored`
+tests/ownership_oracle.rs::records_lifetime_ratchet	sweeps tests/scripts, selfhost/front/cells and the suite — runs on every PR in ci.yml's `leak-scan` job; by hand: `cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored`
 tests/wrap.rs::limits_at_full_size	the limit guards at the real 300 / 64 KiB — miri.yml's nightly `release-gate-sweeps` job; run with --ignored
 tests/wrap.rs::loft_suite_whole_corpus	the whole tests/scripts corpus in one process — miri.yml's nightly `release-gate-sweeps` job; run with --ignored

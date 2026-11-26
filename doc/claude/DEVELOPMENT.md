@@ -580,8 +580,9 @@ Keep the **installed** loft current: a stale one answers for an old source tree.
 
 ### Remote CI
 
-`main` requires six checks: **Test (ubuntu-latest)**, **Test (macos-latest)**, **Test
-(windows-latest)**, **Clippy**, **Format** and **Language suite (ubuntu-latest)**.  They are
+`main` requires seven checks: **Test (ubuntu-latest)**, **Test (macos-latest)**, **Test
+(windows-latest)**, **Clippy**, **Format**, **Language suite (ubuntu-latest)** and **store
+lifetime scan (ubuntu)** (every corpus program reads clean in the store records).  They are
 set in the classic branch protection, not in the `Use branches` ruleset (which holds linear
 history), so the ruleset endpoint does not list them; read them with
 `gh api repos/loft-lang/loft/branches/main/protection --jq '.required_status_checks.contexts'`.

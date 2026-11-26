@@ -12,7 +12,7 @@
 //!   program without the injection is clean;
 //! - **observer** — the report does not change the shipped IR or bytecode;
 //! - **the ratchet** — the problem count over `tests/scripts` and the language suite does not
-//!   rise (`records_lifetime_ratchet`, ci.yml's advisory `leak-scan` job).
+//!   rise (`records_lifetime_ratchet`, ci.yml's required `leak-scan` job).
 //!
 //! The ownership oracle's dump modes (`LOFT_OWN_ORACLE=own`) keep one gate here: its fact reads
 //! the same on both backends (`oracle_fact_is_backend_identical_si2`).
@@ -266,7 +266,7 @@ fn records_clean_on_generated_fuzz_corpus() {
 const LIFETIME_REPORTS_FLOOR: usize = 3000;
 
 #[test]
-#[ignore = "sweeps tests/scripts and the suite — runs on every PR in ci.yml's advisory `leak-scan` job; by hand: `cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored`"]
+#[ignore = "sweeps tests/scripts, selfhost/front/cells and the suite — runs on every PR in ci.yml's `leak-scan` job; by hand: `cargo test --release --test ownership_oracle records_lifetime_ratchet -- --ignored`"]
 fn records_lifetime_ratchet() {
     let dir = root().join("tests/scripts");
     let mut paths: Vec<PathBuf> = fa::read_dir(&dir)
@@ -276,6 +276,17 @@ fn records_lifetime_ratchet() {
         .filter(|p| fa::has_extension(p, "loft"))
         .collect();
     paths.sort();
+    // The self-hosted front end's cells: the tester's try gate checks them per program, and
+    // three compiler defects showed there first (loft#2644, #2645, #2646).
+    let cells = root().join("selfhost/front/cells");
+    let mut cell_paths: Vec<PathBuf> = fa::read_dir(&cells)
+        .expect("read selfhost/front/cells")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::has_extension(p, "loft"))
+        .collect();
+    cell_paths.sort();
+    paths.extend(cell_paths);
     paths.extend(common::corpus::suite_programs());
     let tests_lib = root().join("tests/lib").to_string_lossy().to_string();
     let mut found = Vec::new();
@@ -299,7 +310,7 @@ fn records_lifetime_ratchet() {
         "the ratchet read only {reports} lifetime reports (floor {LIFETIME_REPORTS_FLOOR}): \
          most programs did not compile"
     );
-    // Every program over `tests/scripts` and the suite reads clean: a line is a records gap or a
+    // Every program over `tests/scripts`, `selfhost/front/cells` and the suite reads clean: a line is a records gap or a
     // compiler defect, fixed in the three places (STORE_RECORDS.md § Every new defect).
     assert!(
         found.is_empty(),
