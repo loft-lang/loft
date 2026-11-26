@@ -908,7 +908,7 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
 // A keyed FIELD of a local record (`box.data += R { … }`): `v` is the owner, `fd` its record
 // and `fnr` the field's number — each record made through the owner and the field's position,
 // `OpNewRecord(box, <Box>, 0)`, as Rust spells a field append; the element borrows the owner.
-pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: integer = -1, fnr: integer = -1) -> vector<ir::Node>? {
+pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: integer = -1, fnr: integer = -1, link: integer = -1) -> vector<ir::Node>? {
   ct = if fd >= 0 { el_types::base(el::def(e, fd).attributes[fnr]!.typedef[0] ?? ir::TyVoid) } else { el_types::base(el_vars::tp(vars, v)) };
   // (Through a link — `c: &hash<Row[id]>` — the collection the link names.)
   match ct {
@@ -936,10 +936,12 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
   bare_field = fd >= 0 && e.p.nodes[n] is SStructLit;
   if len(items) > 0 && !(bare_field && e.first_pass) {
     // (Typed as the collection's record from the first pass on, `ref(Rec)["s"]`.)
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if el_d >= 0 { el_d } else { 0 }, dep: [v] });
+    // (Through a link to the field — `a = &b.h; a += […]` — the element borrows the link, and is
+    // no `is_field` element: the link is the container variable.)
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if el_d >= 0 { el_d } else { 0 }, dep: [if link >= 0 { link } else { v }] });
     // (`is_field`: into a keyed FIELD the element is a reference into the field's store, which
     // the owning record frees — never freed itself.)
-    if fd >= 0 && !bare_field {
+    if fd >= 0 && !bare_field && link < 0 {
       el_vars::set_skip_free(vars, elm, "parse_vector_inner");
     }
   }
@@ -962,7 +964,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
         refuse_known(e, kx.tp, "a keyed collection item of another type: {type_kind(kx.tp)}");
         return null;
       }
-      el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [if link >= 0 { link } else { v }] });
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
       kcopy = el_ex_link::record_item_copy(e, vars, elm, el_d, kx);
       if kcopy == null {
@@ -980,7 +982,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
       el_ex_pattern::literal_field_exprs(e, vars, it);
       continue;
     }
-    el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [v] });
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [if link >= 0 { link } else { v }] });
     fields: vector<integer> = [];
     match e.p.nodes[it] {
       SStructLit { fields: fs } => { fields = fs; },
@@ -1614,9 +1616,9 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       return a;
     }
     // A link to a KEYED local is its view the same way (`a = &h`: `a: hash<…>["h"] = h`), the
-    // writes through it the collection's (`@FR-B-Ref-Uniform`).  (A link to a keyed FIELD writes
-    // through to the field itself — `OpNewRecord(b, B, field)` — not carried: refused below.)
-    if keyed_kind(el_types::base(a.tp)) && !(a.tp is TyOptional) && a.code is NdVar && len(el_types::deps(a.tp)) > 0 {
+    // writes through it the collection's (`@FR-B-Ref-Uniform`).  A link to a keyed FIELD of a
+    // local (`a = &b.h`) the same, its uses the field's (`Vars.field_links`).
+    if keyed_kind(el_types::base(a.tp)) && !(a.tp is TyOptional) && (a.code is NdVar || calls(e, el_ir::unspan(a.code), "OpGetField") && place_root(e, el_ir::unspan(a.code)) >= 0 && el_ir::unspan(match el_ir::unspan(a.code) { NdCall { args: fga } => fga[0] ?? ir::NdNull, _ => ir::NdNull }) is NdVar) && len(el_types::deps(a.tp)) > 0 {
       return a;
     }
     // A link to a FUNCTION-value local (`pd = &g`) is the local's slot the same way

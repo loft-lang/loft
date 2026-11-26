@@ -1113,7 +1113,44 @@ fn repoint_place(e: el::El, code: ir::Node) -> ir::Node? {
   }
 }
 
+// Is keyed field read `n` (`OpGetField(b, pos, kt)`) one of two or more keyed fields of its struct
+// over the same record — a group sharing its records (`origin_is_group_member`)?
+fn keyed_group_member(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { args } => {
+      if len(args) != 3 {
+        return false;
+      }
+      r = place_root(e, el_ir::unspan(args[0]!));
+      sd = if r >= 0 { struct_ref(e, el_types::base(el_vars::tp(vars, r))) } else { -1 };
+      if sd < 0 {
+        return false;
+      }
+      pos = match el_ir::unspan(args[1]!) { NdInt { n: pn } => pn, _ => -1 };
+      me = -1;
+      for a in el::def(e, sd).attributes {
+        if el_schema::field_position(e, el::def(e, sd).known_type, a.name) == pos {
+          me = el_types::keyed_elem(el_types::base(a.typedef[0] ?? ir::TyVoid));
+        }
+      }
+      if me < 0 {
+        return false;
+      }
+      n_same = 0;
+      for a in el::def(e, sd).attributes {
+        at = el_types::base(a.typedef[0] ?? ir::TyVoid);
+        if keyed_kind(at) && el_types::keyed_elem(at) == me {
+          n_same += 1;
+        }
+      }
+      n_same > 1
+    },
+    _ => false
+  }
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  via_link = -1;
   el_ex_name::capture_target_placeholder(e, vars, target);
   // (A shared record capture written whole by a literal: built into the record it points at.)
   if rhs != null {
@@ -1143,6 +1180,23 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     if pl.root >= 0 && (coll || el_types::base(pl.tp) is TyText) {
       el_vars::mark_user_appended(vars, pl.root, "parse_assign_inner");
     }
+  }
+  // (A write through a link to a keyed field (`a = &b.h; a += [R {…}]`) is the field's: `+=`
+  // reads as `b.h += …`; any other write through it is not carried.)
+  match e.p.nodes[target] {
+    SName { name: fln, member: flm } => {
+      flv = if flm == "" { el_vars::var(vars, fln) } else { -1 };
+      fli = if flv >= 0 { el_vars::field_link_at(vars, flv) } else { -1 };
+      if fli >= 0 && !(rhs != null && el_ex_bind::is_link(e, rhs!)) {
+        if op != "+=" || (vars.field_link_syn[fli] ?? -1) < 0 {
+          el::refuse(e, "a write through a link to a keyed field other than `+=`");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        target = vars.field_link_syn[fli]!;
+        via_link = flv;
+      }
+    },
+    _ => {}
   }
   // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
   // reads, the compound written through that place (bound once where its index has an effect),
@@ -1256,7 +1310,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           el_schema::vector_type(e, el::def(e, kel).known_type);
         }
       }
-      kops = el_ex_vector::keyed_items(e, vars, kfrv, rhs!, fd: kfd, fnr: kfo);
+      kops = el_ex_vector::keyed_items(e, vars, kfrv, rhs!, fd: kfd, fnr: kfo, link: via_link);
       if kops == null {
         return ex(ir::NdNull, ir::TyVoid);
       }
@@ -2351,6 +2405,19 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // (`@FR-B-Ref-Uniform`; `(B-Copy)` is a plain bind's).
   if keyed_kind(kcur) && !(kcur is TyRefVar) && el_ex_bind::is_link(e, rhs!) && keyed_kind(x.tp) && len(el_types::deps(x.tp)) > 0 {
     el_vars::set_var_type(vars, v, x.tp);
+    // (Only where the field is a member of a GROUP — another keyed collection of the struct over
+    // the same record, which shares its records — does a write through the link go to the field
+    // (`origin_is_group_member`); otherwise the link is the collection's own view.)
+    if calls(e, el_ir::unspan(x.code), "OpGetField") && keyed_group_member(e, vars, x.code) {
+      fsyn = match e.p.nodes[rhs!] { SUnary { e: fo } => fo ?? -1, _ => -1 };
+      fl = el_vars::field_link_at(vars, v);
+      if fl < 0 {
+        vars.field_links += [v];
+        vars.field_link_syn += [fsyn];
+      } else {
+        vars.field_link_syn[fl] = fsyn;
+      }
+    }
     return ex(el_ir::v_set(v, x.code), ir::TyVoid);
   }
   kg: vector<ir::Node> = [];
