@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a field's lambda capturing a vector, a record or a text: the captures written into the record in the host's child slot, what the slot held before released where it lives, and the host's drop cascade running the closure record's.
+// @FR-L-CapHeap: a lambda in a field capturing a vector, a record or a text reads the shared value (3 40 3).
+// @FR-L-CapOwn: each captured store is released once, by the host record's drop cascade.
 // Prints: 3 40 3
 
 struct V { a: integer }

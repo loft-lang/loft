@@ -4,6 +4,7 @@
 // Gate E cell: `h` captures `g`, a function LOCAL bound to a lambda that captures nothing:
 // its closure half is typed `__fn_record`, as a parameter's is (`fn_lambda_of` names no
 // capturing lambda).  A local bound to a capturing lambda stays refused.
+// @FR-L-CapHeap: a lambda capturing a local bound to a non-capturing lambda calls it (q! q! | 5).
 // Prints: q! q! | 5
 
 fn inner() -> text { g = fn() -> text { "q" }; h = fn() -> text { g() + "!" }; t = ""; t += h() + " "; t += h(); "{t} | {len(t)}" }

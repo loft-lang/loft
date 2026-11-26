@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a generic that builds a vector of its type variable is instantiated at an integer, a text and a record: the store wrapper is the bound element's, and the element write the template lowered against the placeholder takes the bound type's shape (reserved at its size, made at its row, written by its setter).
+// @FR-G-Mono: `wrap<T>` specialises at integer, text and a record, each building its own vector ([7] ["x"] 3).
 // Prints: [7] ["x"] 3
 
 struct P { n: integer }

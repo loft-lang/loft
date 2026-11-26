@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a function field given a function-value local is written as that local's projection (`FnRefDnr`, no temporary); given a lambda that captures nothing, through a `__fn_ref_tmp`; a vector local rebound from a call that takes it, with no link to it and outside a loop, is the call bound.
+// @FR-L-Escape: a function value from a local, a lambda, and a replacing lambda stored in a field are called through it (4 8).
+// @FR-E-Asgn: `v = extend(v, 9)` reads `v` as the argument before the rebind (2 9).
 // Prints: 4 8 2 9
 
 struct P { n: integer }

@@ -3,6 +3,8 @@
 //
 // Gate E cell: a function answering a `match` whose arms are its parameter and a call for a
 // fresh record (recursive, or declared above) borrows the parameter on pass 1, as Rust's does.
+// @FR-O-Move: a match tail answering the parameter or a call's fresh record: the caller owns what it gets (3 7 7).
+// @FR-M-Variant: each arm binds the variant's payload by name.
 // Prints: 3 7 7
 
 enum N { A, Sp { inner: N }, I { n: integer }, V { n: integer } }

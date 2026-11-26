@@ -4,6 +4,8 @@
 // Gate E cell: a `par` loop over a hash local walks a scratch copy of its records
 // (`_hash_scratch_N = n_hash_unsorted(s, …)`, minted on both passes ahead of the vector), the
 // records materialised into `___par_mat_N` by the scratch's own walk.
+// @FR-C-Par: a `par` loop over a hash runs the worker on every record and the body on every result.
+// @FR-C-Det: with a pure worker the sum equals the sequential one (80).
 // Prints: 80
 
 struct Rec { k: integer, v: integer }

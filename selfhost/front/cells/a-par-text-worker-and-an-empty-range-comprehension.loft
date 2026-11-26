@@ -4,6 +4,8 @@
 // Gate E cell: a constant empty range comprehension mints no `_comp_N`, so the next one is
 // numbered as Rust numbers it; a text `par` worker answering literals by early `return` is
 // given its hidden text buffer — a worker is no `FnRef` value to `targeted_tret_promotion`.
+// @FR-I-Range: a comprehension over the empty range `5..5` builds an empty vector (0).
+// @FR-C-Par: a `par` worker answering text by early return delivers each result (2 + 2 + 3 = 7).
 // Prints: 0 1 7
 
 fn lit(x: integer) -> text {

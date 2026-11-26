@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a `τ?` answered by a branch with a `null` arm: a struct enum beside `null` joins to `T?` (`(N-Join)`), and `materialize_return_into` copies such a branch ARM BY ARM — the arm viewing its argument through a capture into the caller's buffer, the null arm left as it is; a parameter or its field beside `null` stays a view.
+// @FR-N-Join: a branch of a struct enum (or record) beside `null` answers `T?`.
+// @FR-F-Ret: the present arm arrives as the caller's own value, the null arm as null (true 2 -1 2).
 // Prints: true 2 -1 2
 
 enum T { TInt, TOpt { inner: T } }

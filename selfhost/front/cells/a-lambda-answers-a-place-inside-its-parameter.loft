@@ -5,6 +5,8 @@
 // (`q.items`) or an element (`w[0]`) — borrows that parameter on the first pass, and on the
 // second copies the place into its late return buffer (`borrow_tail_copy_104`); a call's result
 // borrows the argument (`t: vector<integer>["bag"]`).
+// @FR-O-Move: a lambda answering its parameter's field or element borrows the argument, which the caller copies.
+// @FR-F-Ret: the answered vector reads as the place held ([41,42], [1,2]).
 // Prints: [41,42] / [1,2]
 struct Bag { items: vector<integer> }
 fn main() {

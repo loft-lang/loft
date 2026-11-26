@@ -1,0 +1,85 @@
+# What reading each test program that cited no rule found (scripts/suite_curate.py verdict;
+# TESTING.md § Curating the suite).  link: it tests these rules; new-rule: it describes
+# behaviour no rule states yet; attic: read, no rule describes it — only these move.
+# program	verdict	rules	date	note
+selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft	link	N-Present,E-Asgn	2026-11-26	postfix ! on a present struct enum answers the value; a literal rebinding its own local reads the old value before the write
+selfhost/front/cells/a-boxed-tuple-return-destructured.loft	link	T-Ret,T-Destr	2026-11-26	tuple return of a record and a scalar, unpacked at the call by destructuring; t.0 / t.1 projections
+selfhost/front/cells/a-boxed-tuple-with-a-text-member.loft	link	T-Record,T-Destr	2026-11-26	a returned tuple with a text member read by projection and by destructuring
+selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft	link	O-Move,F-Ret	2026-11-26	if-tail choosing between a parameter and an owned local; result ownership moves / borrow copied
+selfhost/front/cells/a-branch-tail-after-an-early-return-of-a-local.loft	link	F-Return,F-Ret	2026-11-26	a nullable record answered by an if tail after a conditional early return of another local
+selfhost/front/cells/a-break-with-a-value-returns-it.loft	new-rule	F-BreakValue	2026-11-26	`break e` inside a loop exits the enclosing FUNCTION with e (loops are void, so `break e` is `return e`), and is refused in a function with no return type; calls.md (beside F-Return). Only the parser comment (expressions.rs) states it today
+selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft	link	L-Escape,L-Fn	2026-11-26	capturing lambdas stored in struct fields, built in a literal and assigned later, called through the field
+selfhost/front/cells/a-closure-built-in-a-return.loft	link	L-Escape,L-CapOwn	2026-11-26	a capturing closure returned from inside an if; a non-capturing one beside it
+selfhost/front/cells/a-coalesce-tail-borrows-its-subject-alone.loft	link	E-Coalesce,O-Move	2026-11-26	a record function whose tail is a coalesce over two parameters; result borrows a parameter
+selfhost/front/cells/a-comprehension-of-vectors-element-borrows-the-destination.loft	link	I-Comp,B-Copy	2026-11-26	comprehension of vector literals bound to a fresh local and rebound into a declared one
+selfhost/front/cells/a-comprehension-over-a-call-answering-a-sorted.loft	link	I-Comp,Col-Order	2026-11-26	comprehension over a call answering a sorted collection
+selfhost/front/cells/a-comprehension-over-a-literal.loft	link	I-Comp	2026-11-26	comprehension over a local vector and over a literal vector
+selfhost/front/cells/a-concatenation-of-narrow-vectors.loft	link	Col-Concat,L-Narrow	2026-11-26	vector concatenation over u8, i16, i32 vectors, an element of a vector of u8 vectors, and integer
+selfhost/front/cells/a-constant-fill-comprehension.loft	link	I-Comp,I-Range	2026-11-26	range comprehensions with constant bodies and a non-constant one
+selfhost/front/cells/a-constant-member-of-a-destructured-literal.loft	link	T-Destr,N-Decl	2026-11-26	destructuring a tuple literal into declared scalar locals, nullable member included
+selfhost/front/cells/a-cursor-match-reads-a-prefix-and-advances.loft	link	P-Cursor	2026-11-26	cursor match: the winning arm advances pos, a later call from the new pos fails
+selfhost/front/cells/a-declared-local-given-null.loft	link	E-Null,N-Store	2026-11-26	null into declared locals of record, enum, text, scalar and vector types, then a present value
+selfhost/front/cells/a-declared-tuple-local-member-written-in-place.loft	link	T-Record,E-Asgn-Compound	2026-11-26	writes to members of declared tuple locals, compound included, narrow member read
+selfhost/front/cells/a-discard-comprehension-binds-its-own-variable.loft	link	I-Comp,I-Range	2026-11-26	comprehensions and a loop over `_` binders: range walk calling, vector walk
+selfhost/front/cells/a-field-literals-element-temp-borrows-the-records-element.loft	link	E-Record,F-Ret	2026-11-26	nested record literals with a vector-of-enum field in several positions
+selfhost/front/cells/a-field-of-a-struct-declared-below.loft	new-rule	T-Forward	2026-11-26	a struct or enum may be named before its declaration (a field type, a variant field, a signature) and means the declared type: declaration order is not observable; types.md
+selfhost/front/cells/a-fields-lambda-capturing-a-store.loft	link	L-CapHeap,L-CapOwn	2026-11-26	lambdas in struct fields capturing a vector, a record and a text
+selfhost/front/cells/a-fill-and-vectors-as-elements.loft	link	I-Comp,B-Copy	2026-11-26	a fill comprehension; vectors appended as elements of a vector of vectors
+selfhost/front/cells/a-for-in-a-format-hole-over-a-call.loft	link	F-Interp,E-Once	2026-11-26	a format-hole for over a call answering a vector
+selfhost/front/cells/a-for-in-a-format-hole-over-a-keyed-local.loft	link	Col-Order,F-Interp	2026-11-26	format-hole for over a hash and a filtered sorted; key order observed
+selfhost/front/cells/a-for-in-a-format-hole-over-a-range-with-a-filter.loft	link	I-Range,I-Filter	2026-11-26	format-hole for over a range and a filtered vector
+selfhost/front/cells/a-for-in-a-format-hole-over-a-text.loft	link	I-Text,I-Filter	2026-11-26	format-hole for over a text with a filter
+selfhost/front/cells/a-for-in-a-format-hole-over-a-vector.loft	new-rule	F-HoleFor	2026-11-26	a format hole `{for x in src [if p] {e}}` renders as the vector `[for x in src if p {e}]` would (F-Render: `[`, the body values with `,`, `]`), a hole spec applying to each element; formatting.md. LOFT_LITERALS.md shows it, no formal rule states it
+selfhost/front/cells/a-formatted-vector-of-records-after-its-literal.loft	link	F-Render,F-Render-Fields	2026-11-26	formatting a vector of records bound from a literal
+selfhost/front/cells/a-formatted-vector-parameter-of-records.loft	attic		2026-11-26	the function that formats the vector parameter is never called; the program prints only '-', so its output checks no rule (gate E compares only the elaboration)
+selfhost/front/cells/a-function-field-called-off-a-call.loft	link	L-FnRef,E-Coalesce	2026-11-26	a fn field called off a call's result; coalesce over a nullable vector call
+selfhost/front/cells/a-function-field-given-a-local-or-a-lambda.loft	link	L-Escape,E-Asgn	2026-11-26	fn fields given a fn-valued local, a lambda and a reassignment; a vector local rebound from a call taking it
+selfhost/front/cells/a-function-value-appended-to-a-field-vector.loft	link	F-ParamGrow,L-FnRef	2026-11-26	a function value appended to a vector<fn> field through a parameter
+selfhost/front/cells/a-function-valued-struct-field.loft	link	L-FnRef,L-Escape	2026-11-26	function-valued struct field written, reassigned, read into a local, called
+selfhost/front/cells/a-generic-building-a-vector-of-its-variable.loft	link	G-Mono	2026-11-26	generic building a vector of its type variable at three instantiations
+selfhost/front/cells/a-generic-over-a-nullable-scalar-bound.loft	link	G-Mono,Slice-Value	2026-11-26	a generic over nullable scalar elements: slice appended, null elements preserved
+selfhost/front/cells/a-keyed-collection-returned-and-bound-from-a-call.loft	link	O-Move,Col-Lookup	2026-11-26	hash and sorted locals returned whole and bound / rebound from calls
+selfhost/front/cells/a-keyed-literal-at-a-functions-tail.loft	link	Col-Insert,Col-Lookup	2026-11-26	a vector literal as the tail of a hash- and a sorted-returning function
+selfhost/front/cells/a-keyed-local-bound-from-a-field-or-an-if.loft	link	Col-Copy,B-Copy	2026-11-26	keyed whole-value binds from a field and from an if over two locals
+selfhost/front/cells/a-lambda-answers-a-place-inside-its-parameter.loft	link	O-Move,F-Ret	2026-11-26	lambdas answering a vector field / element of their parameter
+selfhost/front/cells/a-lambda-appends-to-a-captured-records-field.loft	link	L-CapRef	2026-11-26	a lambda capturing a &S parameter increments a field and appends to a vector field
+selfhost/front/cells/a-lambda-captures-a-closure-bound-local.loft	link	L-CapHeap,L-CapOwn	2026-11-26	a lambda capturing a local bound to a capturing lambda
+selfhost/front/cells/a-lambda-captures-a-function-local.loft	link	L-CapHeap	2026-11-26	a lambda capturing a fn-valued local whose lambda captures nothing
+selfhost/front/cells/a-lambda-captures-a-function-parameter.loft	link	L-CapHeap,L-Escape	2026-11-26	a returned lambda capturing a fn-valued parameter (loft#1869)
+selfhost/front/cells/a-lambda-captures-a-ref-parameter.loft	link	L-CapRef,F-ParamRef	2026-11-26	a returned closure capturing a &S parameter
+selfhost/front/cells/a-lambda-captures-a-ref-scalar-parameter.loft	link	L-CapRef,F-ParamRef	2026-11-26	a lambda capturing a &integer parameter, then the link written
+selfhost/front/cells/a-lambda-captures-a-ref-text-parameter.loft	link	L-CapRef,F-ParamRef	2026-11-26	a lambda capturing a &text parameter, then the link appended to
+selfhost/front/cells/a-lambda-inside-a-lambda-is-numbered-in-its-functions-sequence.loft	link	L-Apply	2026-11-26	nested lambdas in three functions, numbered per enclosing function
+selfhost/front/cells/a-lambda-writes-a-captured-record-whole.loft	link	L-CapRef,B-Ref-Write	2026-11-26	a lambda capturing &S writes a whole record literal through it
+selfhost/front/cells/a-lambdas-tail-call-delivers-into-its-buffer.loft	link	F-Ret,I-Map	2026-11-26	lambdas returning vectors by tail call and by literal, directly and through map
+selfhost/front/cells/a-link-that-walks-a-chain-of-child-records.loft	link	B-Ref-Write,B-OutOfLine	2026-11-26	a & link to an out-of-line child written with its own next while walking a chain
+selfhost/front/cells/a-link-to-a-record-local.loft	link	B-Ref-Write,B-Ref-Read	2026-11-26	a & link to a record local, field written and read through it
+selfhost/front/cells/a-link-to-an-out-of-line-child.loft	link	B-Ref-Write,B-OutOfLine	2026-11-26	a & link to an out-of-line child field, written through
+selfhost/front/cells/a-literal-demoting-its-local-into-its-own-child.loft	link	B-OutOfLine,E-Asgn	2026-11-26	a record literal rebinding its own local into its out-of-line child, in a loop and from null
+selfhost/front/cells/a-literal-tail-names-no-buffer-on-the-first-pass.loft	link	F-Ret,O-Move	2026-11-26	vector-returning functions with literal, local, call, branch and early-return tails
+selfhost/front/cells/a-local-field-link-handed-to-a-slot-parameter.loft	link	F-ParamRef,B-Ref-Write	2026-11-26	a & link to an out-of-line field handed to a &T? parameter that writes it
+selfhost/front/cells/a-map-or-filter-bind-is-a-copy-only-over-a-local-receiver.loft	link	I-Map,I-Filter	2026-11-26	map and filter over local, literal, call, and slice receivers
+selfhost/front/cells/a-map-or-filter-call-form-bind-is-no-copy.loft	link	I-Map,I-Filter	2026-11-26	free-function and method spellings of map / filter
+selfhost/front/cells/a-map-or-filter-of-vectors-copies-at-the-element-vectors-type.loft	link	I-Map,I-Filter	2026-11-26	map to vector-valued bodies and filter over vector elements
+selfhost/front/cells/a-match-arm-calling-for-a-fresh-record-beside-the-parameter.loft	link	O-Move,M-Variant	2026-11-26	match tails answering a parameter or a fresh call result, recursive and declared below
+selfhost/front/cells/a-match-arm-that-can-leave-builds-its-exit-into-the-buffer.loft	link	F-Return,F-Ret	2026-11-26	record match tails whose arms may return early, four spellings
+selfhost/front/cells/a-match-on-a-subject-not-typed-on-the-first-pass.loft	link	M-Variant,F-Return	2026-11-26	match on a recursive-enum element inside a loop, returning a formatted text
+selfhost/front/cells/a-match-over-a-nullable-call-holds-the-record.loft	link	N-Match,M-Variant	2026-11-26	match over a call answering T?, with and without a null arm
+selfhost/front/cells/a-match-tail-of-literal-vectors-delivers-each-arm.loft	link	M-Expr,F-Ret	2026-11-26	vector functions whose tail is a match of literal arms
+selfhost/front/cells/a-match-tail-of-literals-beside-a-call-into-the-buffer.loft	link	M-Expr,F-Ret	2026-11-26	a recursive vector function whose match arms are a call and literals
+selfhost/front/cells/a-nested-literals-element-temp-is-the-nested-vector.loft	link	Col-Len	2026-11-26	nested vector literals in six positions, counted
+selfhost/front/cells/a-nested-vector-literal-in-value-position.loft	link	G-Mono,Slice-Value	2026-11-26	nested vector literals as a generic's argument and as a for source
+selfhost/front/cells/a-null-arm-on-the-line-of-the-closing-brace.loft	link	E-IfT,E-Coalesce	2026-11-26	if-else tails with a null else arm on the closing-brace line
+selfhost/front/cells/a-nullable-branch-of-null-and-a-renamed-local.loft	link	F-Ret,F-Render	2026-11-26	a nullable vector function answering null or a local
+selfhost/front/cells/a-nullable-branch-tail-copied-arm-by-arm.loft	link	N-Join,F-Ret	2026-11-26	nullable branch tails of a match-extracted enum, a field and a parameter beside null
+selfhost/front/cells/a-nullable-default-lends-its-local-to-a-call.loft	link	E-Coalesce,O-Move	2026-11-26	a coalesce on a nullable record local, bound and passed to a call that answers it
+selfhost/front/cells/a-nullable-integer-element-read-and-written.loft	link	H-Index,L-Null	2026-11-26	vector<integer?> elements read in a loop, at a negative index, and written
+selfhost/front/cells/a-nullable-record-slot-as-an-argument.loft	link	L-Null-Tag,E-Record	2026-11-26	tagged S? vector elements and fields passed to S? parameters
+selfhost/front/cells/a-nullable-text-function-returns-early.loft	link	F-Return,E-Coalesce	2026-11-26	text? functions with early returns of every text spelling
+selfhost/front/cells/a-nullable-vector-tail-viewing-a-local.loft	link	F-Ret,B-Copy	2026-11-26	nullable vector function answering a copied element local and an element read
+selfhost/front/cells/a-par-loop-over-a-hash.loft	link	C-Par,C-Det	2026-11-26	par loop over a hash
+selfhost/front/cells/a-par-loop-over-a-range.loft	link	C-Par,C-Det	2026-11-26	par loops over exclusive and inclusive ranges and a vector
+selfhost/front/cells/a-par-loop-over-a-sorted-collection.loft	link	C-Par,C-Det	2026-11-26	par loop over a sorted collection
+selfhost/front/cells/a-par-loop-over-a-text.loft	link	C-Par,I-Text	2026-11-26	par loop over a text
+selfhost/front/cells/a-par-loop-over-vector-elements.loft	link	C-Par,C-Det	2026-11-26	par loop over a vector of vectors
+selfhost/front/cells/a-par-text-worker-and-an-empty-range-comprehension.loft	link	I-Range,C-Par	2026-11-26	empty-range comprehension, literal comprehension, par loop with a text worker

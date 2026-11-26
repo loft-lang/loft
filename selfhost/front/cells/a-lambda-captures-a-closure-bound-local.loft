@@ -4,6 +4,8 @@
 // Gate E cell: `h` captures `g`, a local bound to ONE capturing lambda: its closure half is
 // typed with that lambda's own record (`g__clos: __closure_outer_0`, `fn_lambda_of`), and
 // `h`'s cascade frees it.
+// @FR-L-CapHeap: a lambda capturing a local bound to a capturing lambda calls it through the shared record (12).
+// @FR-L-CapOwn: the captured closure record is released once, by the capturing record's cascade.
 // Prints: 12
 
 fn outer() -> integer {

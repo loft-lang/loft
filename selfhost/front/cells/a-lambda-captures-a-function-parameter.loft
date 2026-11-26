@@ -6,6 +6,8 @@
 // closure record, typed `__fn_record` (its lambda is a run-time fact); each call loads the
 // placeholder from the record ("captured_fn_ref_call"), and the record's cascade drops the
 // held function (`__held_fn`) before freeing it.
+// @FR-L-CapHeap: a lambda capturing a function-valued parameter calls it (say 2 / say 3).
+// @FR-L-Escape: the returned closure keeps that capture after `wrap` returns.
 // Prints: say 2 / say 3
 
 fn wrap(f: fn(integer)) -> fn(integer) { fn(x: integer) { f(x); f(x + 1); } }

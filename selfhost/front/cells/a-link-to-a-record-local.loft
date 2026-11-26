@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: a link to a record LOCAL is the local's slot (`OpCreateStack`), typed as a link borrowing it; its fields are read and written through it as the record's are.
+// @FR-B-Ref-Write: `pc.x = 5` through a link to a record local writes the local (5).
+// @FR-B-Ref-Read: `pc.x` reads the source's current value (7).
 // Prints: 5 7
 
 struct P { x: integer, s: text }

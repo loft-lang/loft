@@ -3,6 +3,7 @@
 //
 // Gate E cell: `p.v += [7]` in a lambda over a captured `&S` appends to the field of the record
 // the capture points at, `OpPushInt(OpGetField(OpGetDbRef(__closure, 0), …), 7)`.
+// @FR-L-CapRef: a lambda over a captured `&S` parameter writes and appends to the caller's record (3 2).
 // Prints: 3 2
 
 struct S { n: integer, v: vector<integer> }

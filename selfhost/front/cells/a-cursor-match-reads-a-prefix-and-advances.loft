@@ -4,6 +4,7 @@
 // Gate E cell: a match on a cursor (a struct with a vector source and an integer `pos`) reads
 // its patterns as prefixes from the entry position; the arm that wins advances the cursor, and
 // a rule answering a record or null is typed nullable.
+// @FR-P-Cursor: a match on a cursor reads its pattern as a prefix from `pos`, the winning arm advances `pos`, and the next call reads from there (4 true 1).
 // Prints: 4 true 1
 
 enum Tok { Id { x: integer }, LP { x: integer } }

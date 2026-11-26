@@ -4,6 +4,8 @@
 // Gate E cell: a lambda capturing a `&text` parameter copies the text the link names when the
 // closure is built (`OpSetText(___clos_1, 0, s)`, field `s: text`), so a later append through
 // the link is not seen by the closure.
+// @FR-L-CapRef: a captured `&text` is copied at the build, so the later append is not seen (ab!).
+// @FR-F-ParamRef: `s += "z"` on the `&text` parameter reaches the caller (abz).
 // Prints: ab! abz
 
 fn cr_text(s: &text) -> text {

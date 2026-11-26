@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // Gate E cell: `ys = xs.map(f)` / `xs.filter(f)` over a LOCAL is copy_bound (the result a copied place); a literal, a call, a slice receiver is not.
+// @FR-I-Map: `map` over a local, a literal, a call and slices appends f of each element in order.
+// @FR-I-Filter: `filter` keeps the elements the predicate holds for, over a local and a literal.
 // Prints: [2,3,4] [11,12,13] [2,4,6] [2,3] [2,3] [2,3] [2,3,4] [2] [2,3]
 
 fn dbl(x: integer) -> integer { x * 2 }
