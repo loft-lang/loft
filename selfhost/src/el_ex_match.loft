@@ -508,7 +508,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           }
           // (An arm answering a vector literal is typed by the literal's own block, the store it
           // mints — not the match's expected type, which may name a renamed buffer.)
-          atp = match el_ir::unspan(b.code) { NdBlock { block: vbk } => if vbk[0].name == "Vector" && !e.first_pass { vbk[0].result[0] ?? b.tp } else { b.tp }, _ => b.tp };
+          atp = arm_own_tp(e, b);
           b.code = el_ir::v_block(binds + [b.code], atp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
@@ -608,7 +608,7 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
               gb = if ug != null || len(al.binds) > 0 { el_ir::v_block(al.binds + [ag], ir::TyBoolean, "match_guard") } else { ag };
               out += [MArm { cond: el_ir::v_if(al.cond, gb, ir::NdBoolean { b: false }), code: ac, tp: b.tp }];
             } else {
-              ai = el_ir::v_block(al.binds + [b.code], b.tp, "match_arm");
+              ai = el_ir::v_block(al.binds + [b.code], arm_own_tp(e, b), "match_arm");
               if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
                 ai = el_ex_null::arm_typed(ai, outside_deps(e, ai, el_types::deps(b.tp)));
               }
@@ -933,6 +933,29 @@ pub fn own_match_arms(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 // The struct enum a match subject of type `t` reads its variant from — the enum, or the enum a
 // variant record belongs to — or -1.
 // Are `a` and `b` both of one struct enum — each the enum or one of its variants?
+// A match arm's block type: an arm answering a vector literal is typed by the literal's own
+// block (the store it mints), one answering a VARIANT literal by that variant, its own store
+// left out (`NdInt { n: m } => NdInt { … }` is `ref(NdInt)` beside a sibling's enum); any other
+// by its value — not by the match's expected type, which may name a renamed buffer or the enum.
+fn arm_own_tp(e: el::El, b: Ex) -> ir::TypeT {
+  if e.first_pass {
+    return b.tp;
+  }
+  match el_ir::unspan(b.code) {
+    NdBlock { block: vbk } => {
+      bt = vbk[0].result[0] ?? b.tp;
+      if vbk[0].name == "Vector" {
+        return bt;
+      }
+      if vbk[0].name == "Object" && match el_types::base(bt) { TyReference { n: von } => el::def(e, von).def_type == el::DT_ENUM_VALUE, _ => false } {
+        return el_types::without_deps(bt);
+      }
+      b.tp
+    },
+    _ => b.tp
+  }
+}
+
 // One alternative of a vector match arm: its test and the bindings it makes (linked into the
 // first alternative's names).
 struct SliceArmAlt {
