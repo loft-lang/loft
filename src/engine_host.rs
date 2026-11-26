@@ -18,25 +18,33 @@
 //! fragmentation, or congestion machinery:
 //!
 //! - One UDP socket on the SAME port number as the TCP listener (zero config).
-//! - Identity = the datagram source address bound by a **cookie handshake**:
-//!   the kernel issues a per-connection cookie (`n_kernel_udp_cookie`); the
-//!   loft side transports it inside its own protocol (cookie *issuance* is
-//!   mechanics, cookie *transport* is meaning); the client echoes it in a
-//!   `H:<cookie>` datagram; the kernel binds the source addr to that cid and
-//!   acks `A:<cid>`.
-//! - Inbound `S:<seq>:<payload>` datagrams **conflate to newest per sender**
-//!   (a higher seq overwrites the slot; stale/reordered seqs are discarded —
-//!   never apply an old pose).  The loft side drains the dirty slots at tick
+//! - Identity = a per-connection **session key**: at the WebSocket upgrade the
+//!   kernel draws 32 random bytes from the OS and hands them over with the cid
+//!   in the 101 response (`X-Loft-UDP: <cid>:<64 hex digits>` — issuance and
+//!   transport both kernel-internal).  Every datagram, both ways, is sealed
+//!   under it ([`seal`]: kind, cid, seq, payload and a 16-byte HMAC-SHA256
+//!   tag); one that does not open, or whose seq was taken already, changes no
+//!   slot, path or keepalive.  The client's sealed hello binds its source addr
+//!   and is acked with a sealed `A`; from then on the source address is a
+//!   routing hint — the newest authenticated datagram moves the path (NAT
+//!   rebinding).  The seal protects the seat and the samples' integrity, not
+//!   their confidentiality, and it is as strong as the channel that carried the
+//!   key: under `ws://` the key crosses the network in plain text, so such a
+//!   session is LAN-grade.  The C runtime (`loft_engine.h`) speaks the same
+//!   datagram; the two interoperate.
+//! - Inbound sync datagrams **conflate to newest per sender** (a higher
+//!   authenticated seq overwrites the slot; stale/reordered seqs are discarded
+//!   — never apply an old pose).  The loft side drains the dirty slots at tick
 //!   time via `n_kernel_sync_next` — late-latch by construction.
 //! - Outbound `n_kernel_sync_send` stamps a per-cid seq and sends a datagram
 //!   when the client has a live UDP path, else falls back to a WS frame —
 //!   phones stay `wss`, native peers ride UDP, same world.
-//! - Any datagram refreshes the path's keepalive; a silent path unbinds after
-//!   [`UDP_TIMEOUT_US`] and sends fall back to WS (the client keeps a steady
-//!   keepalive cadence — which doubles as the phone radio wake).
-//! - Datagrams are capped at [`UDP_MAX_DATAGRAM`] bytes (overlay-shaved MTUs
-//!   fragment silently above ~1200): oversized sync sends are dropped with a
-//!   once-per-kernel warning, never a halt.
+//! - Any authenticated datagram refreshes the path's keepalive; a silent path
+//!   unbinds after [`UDP_TIMEOUT_US`] and sends fall back to WS (the client
+//!   keeps a steady keepalive cadence — which doubles as the phone radio wake).
+//! - Datagrams are capped at [`UDP_MAX_DATAGRAM`] bytes, seal included
+//!   (overlay-shaved MTUs fragment silently above ~1200): oversized sync sends
+//!   are dropped with a once-per-kernel warning, never a halt.
 //!
 //! Wire: WebSocket text frames (`<msg_id>:<payload>` convention is the loft
 //! side's concern — the kernel passes payloads through verbatim).
@@ -45,8 +53,6 @@
 // paths, so they read as unused in wasm / feature-restricted builds.
 #[allow(unused_imports)]
 use std::collections::VecDeque;
-#[cfg(not(target_arch = "wasm32"))]
-use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(not(target_arch = "wasm32"))]
 use std::io::{ErrorKind, Read, Write};
 #[cfg(not(target_arch = "wasm32"))]
@@ -205,12 +211,244 @@ pub fn n_kernel_event_status(stores: &mut Stores, stack: &mut DbRef) {
 /// (~500 ms — also the phone radio wake) keeps a live path far inside it.
 const UDP_TIMEOUT_US: i64 = 3_000_000;
 #[cfg(not(target_arch = "wasm32"))]
-/// Datagram payload cap — overlay/VPN-shaved MTUs fragment silently above
-/// ~1200 bytes, and a fragmented "fast path" is slower than the WS one.
+/// The whole datagram's cap, seal included (`seal::OVERHEAD` bytes, so a payload gets
+/// 1171) — overlay/VPN-shaved MTUs fragment silently above ~1200 bytes, and a fragmented
+/// "fast path" is slower than the WS one.
 const UDP_MAX_DATAGRAM: usize = 1200;
 
+// ── The state-sync datagram's seal (both roles; the C twin is `loft_engine.h`) ──────────────
+//
+// A connection's UDP path is keyed by a random 32-byte session key the listener draws at the
+// WebSocket upgrade and hands over in the 101 response (`X-Loft-UDP: <cid>:<64 hex digits>`).
+// Every datagram, both ways:
+//
+//   kind (1 byte) | cid (4 bytes, big-endian) | seq (8 bytes, big-endian) | payload | tag (16 bytes)
+//
+// `tag` is the first 16 bytes of HMAC-SHA256 under the session key over the direction byte
+// (`c` toward the listener, `s` toward the client — a datagram reflected back at its sender
+// does not verify) followed by everything before the tag.  HMAC-SHA256 rather than Poly1305:
+// both twins already carry SHA-256 (`sha2` here, `loft_sha256` in the C runtime), and Poly1305
+// needs a fresh one-time key per message, which means a stream cipher beside it.
+//
+// A receiver checks the tag before anything else, then the seq against a 64-wide replay window
+// (`Replay`); a datagram that fails either changes nothing.  Only the newest authenticated seq
+// moves the path to the datagram's source address (NAT rebinding), and the same seq is the
+// one a sync sample conflates with, so a forged or replayed seq can never make a genuine
+// sample stale.
 #[cfg(not(target_arch = "wasm32"))]
-/// A client's bound UDP path (the source addr proven by the cookie handshake).
+mod seal {
+    use sha2::{Digest, Sha256};
+
+    pub(super) const KEY_BYTES: usize = 32;
+    pub(super) type Key = [u8; KEY_BYTES];
+    const HEAD: usize = 13;
+    const TAG: usize = 16;
+    /// The bytes a sealed datagram adds to its payload.
+    pub(super) const OVERHEAD: usize = HEAD + TAG;
+    /// The direction byte of a datagram toward the listener / toward the client.
+    pub(super) const TO_LISTENER: u8 = b'c';
+    pub(super) const TO_CLIENT: u8 = b's';
+
+    /// HMAC-SHA256 (RFC 2104) of the concatenated `parts` under a key of at most 64 bytes.
+    pub(super) fn hmac_sha256(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
+        debug_assert!(key.len() <= 64);
+        let mut ipad = [0x36u8; 64];
+        let mut opad = [0x5cu8; 64];
+        for (i, k) in key.iter().enumerate() {
+            ipad[i] ^= k;
+            opad[i] ^= k;
+        }
+        let mut inner = Sha256::new();
+        inner.update(ipad);
+        for p in parts {
+            inner.update(p);
+        }
+        let mut outer = Sha256::new();
+        outer.update(opad);
+        outer.update(inner.finalize());
+        outer.finalize().into()
+    }
+
+    fn tag(key: &Key, dir: u8, body: &[u8]) -> [u8; TAG] {
+        let mac = hmac_sha256(key, &[&[dir], body]);
+        let mut t = [0u8; TAG];
+        t.copy_from_slice(&mac[..TAG]);
+        t
+    }
+
+    /// A datagram of `kind` carrying `payload`, sealed under `key` for direction `dir`.
+    pub(super) fn seal(
+        key: &Key,
+        dir: u8,
+        kind: u8,
+        cid: u32,
+        seq: u64,
+        payload: &[u8],
+    ) -> Vec<u8> {
+        let mut d = Vec::with_capacity(OVERHEAD + payload.len());
+        d.push(kind);
+        d.extend_from_slice(&cid.to_be_bytes());
+        d.extend_from_slice(&seq.to_be_bytes());
+        d.extend_from_slice(payload);
+        let t = tag(key, dir, &d);
+        d.extend_from_slice(&t);
+        d
+    }
+
+    /// The connection a datagram names, read before its key is known; `None` for a runt.
+    pub(super) fn cid_of(d: &[u8]) -> Option<usize> {
+        if d.len() < OVERHEAD {
+            return None;
+        }
+        Some(u32::from_be_bytes([d[1], d[2], d[3], d[4]]) as usize)
+    }
+
+    /// `(kind, seq, payload)` of a datagram whose tag verifies under `key` for direction `dir`,
+    /// with a seq in `1..=i64::MAX`; `None` for anything else.
+    pub(super) fn open<'a>(key: &Key, dir: u8, d: &'a [u8]) -> Option<(u8, i64, &'a [u8])> {
+        if d.len() < OVERHEAD {
+            return None;
+        }
+        let (body, got) = d.split_at(d.len() - TAG);
+        let want = tag(key, dir, body);
+        // Constant time: the comparison reveals nothing about how much of a forged tag held.
+        if want.iter().zip(got).fold(0u8, |acc, (a, b)| acc | (a ^ b)) != 0 {
+            return None;
+        }
+        let mut s = [0u8; 8];
+        s.copy_from_slice(&body[5..HEAD]);
+        let seq = i64::try_from(u64::from_be_bytes(s))
+            .ok()
+            .filter(|&q| q > 0)?;
+        Some((body[0], seq, &body[HEAD..]))
+    }
+
+    /// The authenticated seqs a receiver has taken: the highest, and which of the 63 below it.
+    #[derive(Default)]
+    pub(super) struct Replay {
+        hi: i64,
+        seen: u64,
+    }
+
+    impl Replay {
+        /// Take `seq` once: `Some(true)` when it is the newest yet, `Some(false)` when it is an
+        /// older one not seen before (reordered on the way), `None` when it was seen already or
+        /// is older than the window.
+        pub(super) fn admit(&mut self, seq: i64) -> Option<bool> {
+            if seq > self.hi {
+                let shift = seq - self.hi;
+                self.seen = if shift >= 64 { 0 } else { self.seen << shift };
+                self.seen |= 1;
+                self.hi = seq;
+                return Some(true);
+            }
+            let back = self.hi - seq;
+            if back >= 64 || self.seen & (1 << back) != 0 {
+                return None;
+            }
+            self.seen |= 1 << back;
+            Some(false)
+        }
+    }
+
+    /// A session key from the operating system's random source; `None` when it gave none — the
+    /// connection then gets no UDP path and everything rides the WebSocket.
+    pub(super) fn fresh_key() -> Option<Key> {
+        let mut k = [0u8; KEY_BYTES];
+        getrandom::getrandom(&mut k).ok()?;
+        Some(k)
+    }
+
+    /// The `X-Loft-UDP` value: `<cid>:<key as 64 lowercase hex digits>`.
+    pub(super) fn offer(cid: usize, key: &Key) -> String {
+        use std::fmt::Write as _;
+        let mut s = format!("{cid}:");
+        for b in key {
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    }
+
+    /// The `(cid, key)` an `X-Loft-UDP` value offers; `None` for anything malformed.
+    pub(super) fn parse_offer(v: &str) -> Option<(u32, Key)> {
+        let (cid, hex) = v.trim().split_once(':')?;
+        if hex.len() != 2 * KEY_BYTES || !cid.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        let mut k = [0u8; KEY_BYTES];
+        for (i, b) in k.iter_mut().enumerate() {
+            *b = u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok()?;
+        }
+        Some((cid.parse().ok()?, k))
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        /// RFC 4231 test case 1: the HMAC-SHA256 the seal is built on.
+        #[test]
+        fn hmac_sha256_matches_rfc_4231() {
+            let mac = hmac_sha256(&[0x0b; 20], &[b"Hi ", b"There"]);
+            let want = "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7";
+            let want: Vec<u8> = (0..32)
+                .map(|i| u8::from_str_radix(&want[2 * i..2 * i + 2], 16).unwrap())
+                .collect();
+            assert_eq!(mac.to_vec(), want);
+        }
+
+        #[test]
+        fn a_sealed_datagram_opens_only_under_its_key_and_direction() {
+            let key = [7u8; KEY_BYTES];
+            let d = seal(&key, TO_LISTENER, b'S', 3, 42, b"2:7,1,2");
+            assert_eq!(cid_of(&d), Some(3));
+            assert_eq!(
+                open(&key, TO_LISTENER, &d),
+                Some((b'S', 42, &b"2:7,1,2"[..]))
+            );
+            assert_eq!(open(&key, TO_CLIENT, &d), None, "reflected");
+            assert_eq!(
+                open(&[8u8; KEY_BYTES], TO_LISTENER, &d),
+                None,
+                "another key"
+            );
+            let mut flipped = d.clone();
+            flipped[10] ^= 1;
+            assert_eq!(open(&key, TO_LISTENER, &flipped), None, "a changed seq");
+            assert_eq!(
+                open(&key, TO_LISTENER, &d[..d.len() - 1]),
+                None,
+                "a cut tag"
+            );
+        }
+
+        #[test]
+        fn the_replay_window_takes_each_seq_once() {
+            let mut r = Replay::default();
+            assert_eq!(r.admit(5), Some(true));
+            assert_eq!(r.admit(5), None);
+            assert_eq!(r.admit(3), Some(false));
+            assert_eq!(r.admit(3), None);
+            assert_eq!(r.admit(200), Some(true));
+            assert_eq!(r.admit(136), None, "older than the window");
+            assert_eq!(r.admit(137), Some(false));
+        }
+
+        #[test]
+        fn an_offer_round_trips() {
+            let key: Key = std::array::from_fn(|i| i as u8 * 9);
+            assert_eq!(parse_offer(&offer(12, &key)), Some((12, key)));
+            assert_eq!(
+                parse_offer("0123456789abcdef"),
+                None,
+                "16 hex digits with no cid is no offer"
+            );
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+/// A client's bound UDP path: where its newest authenticated datagram came from.
 struct UdpPath {
     addr: SocketAddr,
     last_seen_us: i64,
@@ -236,8 +474,11 @@ struct SyncSlot {
 /// Per-connection network state beyond the TCP stream itself; lives and dies
 /// with the connection slot (a reused cid starts fresh).
 struct ClientNet {
-    /// The UDP handshake cookie for this WS session ("" = no UDP listener).
-    cookie: String,
+    /// The UDP session key for this WS session (`None` = no UDP listener, or no random
+    /// source: everything rides WS).
+    key: Option<seal::Key>,
+    /// The authenticated seqs taken from this client's datagrams.
+    rx: seal::Replay,
     path: Option<UdpPath>,
     /// One outbound seq space per peer for ALL sync-channel sends — datagrams
     /// AND keyframes — so the receiver's slots totally order them even when
@@ -250,9 +491,10 @@ struct ClientNet {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl ClientNet {
-    fn new(cookie: String) -> Self {
+    fn new(key: Option<seal::Key>) -> Self {
         ClientNet {
-            cookie,
+            key,
+            rx: seal::Replay::default(),
             path: None,
             out_seq: 0,
             slots: Vec::new(),
@@ -423,7 +665,7 @@ struct Kernel {
     udp: Option<UdpSocket>,
     /// Slot-indexed connections; `None` = free slot (cid = index, reused).
     conns: Vec<Option<TcpStream>>,
-    /// Parallel to `conns`: cookie / UDP path / conflation slot per client.
+    /// Parallel to `conns`: session key / UDP path / conflation slot per client.
     net: Vec<ClientNet>,
     events: VecDeque<Event>,
     /// The event handed out by the last `n_kernel_next_event`.
@@ -459,17 +701,10 @@ impl Kernel {
         self.start.elapsed().as_micros() as i64
     }
 
-    /// A fresh handshake cookie: 16 hex chars from the OS-seeded `RandomState`
-    /// hasher mixed with the clock and cid.  Spoof-resistant on a LAN; not
-    /// cryptographic (DTLS is the eventual answer for hostile networks).
-    fn fresh_cookie(&self, cid: usize) -> String {
-        if self.udp.is_none() {
-            return String::new();
-        }
-        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
-        self.start.elapsed().as_nanos().hash(&mut h);
-        cid.hash(&mut h);
-        format!("{:016x}", h.finish())
+    /// A fresh UDP session key for a new connection, `None` without a UDP socket.
+    fn fresh_key(&self) -> Option<seal::Key> {
+        self.udp.as_ref()?;
+        seal::fresh_key()
     }
 }
 
@@ -525,7 +760,8 @@ pub(crate) fn debug(stores: &mut Stores) -> &mut crate::live_control::DebugCx {
 /// the debug control channel does not — `control_only` refuses it before the handshake is
 /// answered.
 ///
-/// A non-empty `udp_cookie` rides the 101 response as an `X-Loft-UDP` header —
+/// A non-empty `udp_offer` (`<cid>:<session key>`, [`seal::offer`]) rides the 101 response as
+/// an `X-Loft-UDP` header —
 /// the transport negotiation is **fully kernel-internal** (user directive,
 /// 2026-06-10: the game developer is never bothered with transport).  Browsers
 /// cannot read upgrade-response headers from JS and ignore it; a native
@@ -533,7 +769,7 @@ pub(crate) fn debug(stores: &mut Stores) -> &mut crate::live_control::DebugCx {
 /// zero meaning-level code on either side.
 fn ws_upgrade(
     mut stream: TcpStream,
-    udp_cookie: &str,
+    udp_offer: &str,
     control_only: bool,
 ) -> Option<(TcpStream, bool, bool)> {
     // BSD/macOS accepted sockets INHERIT the listener's non-blocking flag
@@ -585,10 +821,10 @@ fn ws_upgrade(
         return None;
     }
     let accept = crate::ws_handshake::ws_accept_key(&key);
-    let udp_header = if udp_cookie.is_empty() {
+    let udp_header = if udp_offer.is_empty() {
         String::new()
     } else {
-        format!("X-Loft-UDP: {udp_cookie}\r\n")
+        format!("X-Loft-UDP: {udp_offer}\r\n")
     };
     let resp = format!(
         "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\n\
@@ -814,48 +1050,71 @@ fn pump_udp(k: &mut Kernel, sync: &SyncIds) {
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
             Err(_) => break,
         };
-        let Ok(text) = std::str::from_utf8(&buf[..len]) else {
-            continue; // not ours (binary lands with the wire-schema table)
+        // The tag is checked before anything else: a datagram that does not open under its
+        // connection's key changes no path, keepalive or slot (see `seal`).
+        let d = &buf[..len];
+        let Some(cid) = seal::cid_of(d) else {
+            continue;
         };
-        if let Some(cookie) = text.strip_prefix("H:") {
-            // Handshake: bind the source addr to the cid owning this cookie.
-            let found = k
-                .net
-                .iter()
-                .position(|n| !n.cookie.is_empty() && n.cookie == cookie);
-            if let Some(cid) = found
-                && k.conns.get(cid).is_some_and(Option::is_some)
-            {
-                k.net[cid].path = Some(UdpPath {
+        if !k.conns.get(cid).is_some_and(Option::is_some) {
+            continue;
+        }
+        let net = &mut k.net[cid];
+        let Some(key) = net.key.as_ref() else {
+            continue;
+        };
+        let Some((kind, seq, payload)) = seal::open(key, seal::TO_LISTENER, d) else {
+            continue;
+        };
+        if !matches!(kind, b'H' | b'K' | b'S') {
+            continue;
+        }
+        // A seq taken once is never taken again: a replay changes nothing either.
+        let Some(newest) = net.rx.admit(seq) else {
+            continue;
+        };
+        // The source address is where to send, not who is speaking: the newest datagram
+        // moves the path (NAT rebinding), any authenticated one keeps it alive.
+        match net.path.as_mut() {
+            Some(p) => {
+                p.last_seen_us = now;
+                if newest {
+                    p.addr = from;
+                }
+            }
+            None if newest => {
+                net.path = Some(UdpPath {
                     addr: from,
                     last_seen_us: now,
                 });
-                let _ = udp.send_to(format!("A:{cid}").as_bytes(), from);
             }
-            // Unknown cookie: silently dropped (spoof/staleness — the client
-            // retries its hello until acked).
-            continue;
+            None => {}
         }
-        // Everything else requires a bound path (identity = source addr).
-        let Some(cid) = k
-            .net
-            .iter()
-            .position(|n| n.path.as_ref().is_some_and(|p| p.addr == from))
-        else {
-            continue;
-        };
-        if let Some(p) = k.net[cid].path.as_mut() {
-            p.last_seen_us = now; // any datagram is a keepalive
+        match kind {
+            b'H' => {
+                // The hello's ack, to wherever the path now points.
+                if let Some(addr) = net.path.as_ref().map(|p| p.addr) {
+                    net.out_seq += 1;
+                    let ack = seal::seal(
+                        key,
+                        seal::TO_CLIENT,
+                        b'A',
+                        cid as u32,
+                        net.out_seq as u64,
+                        b"",
+                    );
+                    let _ = udp.send_to(&ack, addr);
+                }
+            }
+            b'S' => {
+                // Conflate per (sender, msg_id): two sync kinds from one client each keep
+                // their own newest; stale/reordered seqs drop.
+                if let Ok(payload) = std::str::from_utf8(payload) {
+                    conflate_slot(sync, &mut net.slots, seq, payload);
+                }
+            }
+            _ => {} // `K` (keepalive): the refresh above is all it does
         }
-        if let Some(rest) = text.strip_prefix("S:")
-            && let Some((seq_s, payload)) = rest.split_once(':')
-            && let Ok(seq) = seq_s.parse::<i64>()
-        {
-            // Conflate per (sender, msg_id): two sync kinds from one client
-            // each keep their own newest; stale/reordered seqs drop.
-            conflate_slot(sync, &mut k.net[cid].slots, seq, payload);
-        }
-        // "K:" (bare keepalive) needs nothing beyond the refresh above.
     }
     // Expire silent paths — sends fall back to WS transparently.
     for n in &mut k.net {
@@ -892,11 +1151,14 @@ fn pump_kernel(k: &mut Kernel, ctl: &mut EngineCtl) -> i64 {
                         .iter()
                         .position(Option::is_none)
                         .unwrap_or(k.conns.len());
-                    // Mint the cookie BEFORE the upgrade so the 101 response
-                    // carries the same value `ClientNet` stores — the whole
+                    // Mint the session key BEFORE the upgrade so the 101 response
+                    // carries the same key `ClientNet` stores — the whole
                     // negotiation stays kernel-internal.
-                    let cookie = k.fresh_cookie(cid);
-                    if let Some((s, foreign_page, agent)) = ws_upgrade(stream, &cookie, false) {
+                    let key = k.fresh_key();
+                    let offer = key
+                        .as_ref()
+                        .map_or_else(String::new, |key| seal::offer(cid, key));
+                    if let Some((s, foreign_page, agent)) = ws_upgrade(stream, &offer, false) {
                         // A reused cid starts fresh here too.
                         if foreign_page {
                             k.foreign_pages.insert(cid);
@@ -908,7 +1170,7 @@ fn pump_kernel(k: &mut Kernel, ctl: &mut EngineCtl) -> i64 {
                         } else {
                             k.debug_agents.remove(&cid);
                         }
-                        let net = ClientNet::new(cookie);
+                        let net = ClientNet::new(key);
                         if cid == k.conns.len() {
                             k.conns.push(Some(s));
                             k.net.push(net);
@@ -978,11 +1240,11 @@ fn pump_kernel(k: &mut Kernel, ctl: &mut EngineCtl) -> i64 {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-/// Close a connection slot: the cookie dies with the WS session (the UDP path
+/// Close a connection slot: the session key dies with the WS session (the UDP path
 /// and conflation slot go with it) and a disconnect event is queued.
 fn disconnect(k: &mut Kernel, cid: usize) {
     k.conns[cid] = None;
-    k.net[cid] = ClientNet::new(String::new());
+    k.net[cid] = ClientNet::new(None);
     k.events.push_back(Event {
         cid: cid as i64,
         kind: 2,
@@ -1065,10 +1327,18 @@ fn deliver(k: &mut Kernel, cid: usize, msg: &str, sync: bool) -> bool {
     if sync
         && let Some(net) = k.net.get_mut(cid)
         && let Some(addr) = net.path.as_ref().map(|p| p.addr)
+        && let Some(key) = net.key.as_ref()
         && let Some(udp) = k.udp.as_ref()
     {
         net.out_seq += 1;
-        let dgram = format!("S:{}:{msg}", net.out_seq);
+        let dgram = seal::seal(
+            key,
+            seal::TO_CLIENT,
+            b'S',
+            cid as u32,
+            net.out_seq as u64,
+            msg.as_bytes(),
+        );
         if dgram.len() > UDP_MAX_DATAGRAM {
             if !k.warned_oversize {
                 k.warned_oversize = true;
@@ -1081,7 +1351,7 @@ fn deliver(k: &mut Kernel, cid: usize, msg: &str, sync: bool) -> bool {
             }
             return false;
         }
-        return udp.send_to(dgram.as_bytes(), addr).is_ok();
+        return udp.send_to(&dgram, addr).is_ok();
     }
     // Event class, or no UDP path: the reliable channel.
     let Some(Some(stream)) = k.conns.get_mut(cid) else {
@@ -1330,7 +1600,7 @@ pub fn n_kernel_sync_payload_dest(stores: &mut Stores, stack: &mut DbRef) {
 // ── The connector role — the client-side kernel (one core, two roles) ───────
 //
 // A native client's half of the auto-path: connect + WS upgrade, read the
-// `X-Loft-UDP` cookie from the 101 head, auto-hello until acked, keepalive
+// `X-Loft-UDP` session key from the 101 head, auto-hello until acked, keepalive
 // cadence (the phone-radio wake), class-routed `client_send`, and inbound
 // conflation through the SAME `conflate_slot`/`SYNC_IDS` machinery the
 // listener uses — the queue semantics never fork between roles.  The loft
@@ -1353,8 +1623,11 @@ struct ClientKernel {
     /// control endpoint all work; sends report false, the pump reads nothing.
     conn: Option<TcpStream>,
     udp: Option<UdpSocket>,
-    /// From the 101 head; "" = the server offered no UDP (everything WS).
-    cookie: String,
+    /// From the 101 head: this connection's cid and UDP session key; `None` = the server
+    /// offered no UDP (everything WS).
+    udp_seat: Option<(u32, seal::Key)>,
+    /// The authenticated seqs taken from the server's datagrams.
+    rx: seal::Replay,
     udp_bound: bool,
     last_hello_us: i64,
     last_keepalive_us: i64,
@@ -1440,7 +1713,7 @@ fn write_frame_masked(stream: &mut TcpStream, opcode: u8, payload: &[u8]) -> std
 #[cfg(not(target_arch = "wasm32"))]
 /// `kernel_connect(host, port, tick_interval_us) -> boolean` — TCP connect,
 /// WS upgrade (the fixed RFC sample key: the key field is anti-cache, not
-/// auth), capture the `X-Loft-UDP` cookie, prepare the UDP socket.  Queues a
+/// auth), capture the `X-Loft-UDP` session key, prepare the UDP socket.  Queues a
 /// kind-0 event so `on_event` sees the connect like the listener side does.
 pub fn n_kernel_connect(stores: &mut Stores, stack: &mut DbRef) {
     let tick_us = stores.get::<i64>(stack);
@@ -1468,7 +1741,8 @@ fn local_init(e: &mut EngineCx, tick_us: i64) {
         e.client = Some(ClientKernel {
             conn: None,
             udp: None,
-            cookie: String::new(),
+            udp_seat: None,
+            rx: seal::Replay::default(),
             udp_bound: false,
             last_hello_us: i64::MIN / 2,
             last_keepalive_us: 0,
@@ -1539,19 +1813,18 @@ fn client_connect(e: &mut EngineCx, host: &str, port: u16, tick_us: i64) -> Opti
     if !head.contains(" 101 ") {
         return None;
     }
-    let cookie = head
-        .lines()
-        .find_map(|l| {
-            let (k, v) = l.split_once(':')?;
-            k.trim()
-                .eq_ignore_ascii_case("x-loft-udp")
-                .then(|| v.trim().to_string())
-        })
-        .unwrap_or_default();
+    let udp_seat = head.lines().find_map(|l| {
+        let (k, v) = l.split_once(':')?;
+        if k.trim().eq_ignore_ascii_case("x-loft-udp") {
+            seal::parse_offer(v)
+        } else {
+            None
+        }
+    });
     // Frame phase: the listener's peek pattern bounds idle reads.
     conn.set_read_timeout(Some(Duration::from_millis(20)))
         .ok()?;
-    let udp = if cookie.is_empty() {
+    let udp = if udp_seat.is_none() {
         None
     } else {
         UdpSocket::bind("0.0.0.0:0").ok().and_then(|s| {
@@ -1564,7 +1837,8 @@ fn client_connect(e: &mut EngineCx, host: &str, port: u16, tick_us: i64) -> Opti
         e.client = Some(ClientKernel {
             conn: Some(conn),
             udp,
-            cookie,
+            udp_seat,
+            rx: seal::Replay::default(),
             udp_bound: false,
             last_hello_us: i64::MIN / 2,
             last_keepalive_us: 0,
@@ -1753,15 +2027,24 @@ fn pump_client(c: &mut ClientKernel, ctl: &mut EngineCtl) -> i64 {
                     Err(ref e) if e.kind() == ErrorKind::WouldBlock => break,
                     Err(_) => break,
                 };
-                let Ok(text) = std::str::from_utf8(&buf[..len]) else {
+                // The server's datagrams carry this connection's cid and open under its
+                // key, each seq once; anything else changes nothing (see `seal`).
+                let d = &buf[..len];
+                let Some((cid, key)) = c.udp_seat.as_ref() else {
+                    break;
+                };
+                if seal::cid_of(d) != Some(*cid as usize) {
+                    continue;
+                }
+                let Some((kind, seq, payload)) = seal::open(key, seal::TO_CLIENT, d) else {
                     continue;
                 };
-                if text.starts_with("A:") {
+                if !matches!(kind, b'A' | b'S') || c.rx.admit(seq).is_none() {
+                    continue;
+                }
+                if kind == b'A' {
                     c.udp_bound = true;
-                } else if let Some(rest) = text.strip_prefix("S:")
-                    && let Some((seq_s, payload)) = rest.split_once(':')
-                    && let Ok(seq) = seq_s.parse::<i64>()
-                {
+                } else if let Ok(payload) = std::str::from_utf8(payload) {
                     if drop_nth > 0 {
                         let nth = RECV_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         if nth.is_multiple_of(drop_nth) {
@@ -1773,13 +2056,22 @@ fn pump_client(c: &mut ClientKernel, ctl: &mut EngineCtl) -> i64 {
             }
             // Hello until acked; keepalive once bound (the radio wake).
             let now = c.now_us();
-            if !c.udp_bound && !c.cookie.is_empty() && now - c.last_hello_us > HELLO_INTERVAL_US {
-                let _ = udp.send(format!("H:{}", c.cookie).as_bytes());
-                c.last_hello_us = now;
-            }
-            if c.udp_bound && now - c.last_keepalive_us > KEEPALIVE_INTERVAL_US {
-                let _ = udp.send(b"K:");
-                c.last_keepalive_us = now;
+            // Every datagram takes the next seq of the one outbound space.
+            if let Some((cid, key)) = c.udp_seat.as_ref() {
+                if !c.udp_bound && now - c.last_hello_us > HELLO_INTERVAL_US {
+                    c.out_seq += 1;
+                    let hello =
+                        seal::seal(key, seal::TO_LISTENER, b'H', *cid, c.out_seq as u64, b"");
+                    let _ = udp.send(&hello);
+                    c.last_hello_us = now;
+                }
+                if c.udp_bound && now - c.last_keepalive_us > KEEPALIVE_INTERVAL_US {
+                    c.out_seq += 1;
+                    let keep =
+                        seal::seal(key, seal::TO_LISTENER, b'K', *cid, c.out_seq as u64, b"");
+                    let _ = udp.send(&keep);
+                    c.last_keepalive_us = now;
+                }
             }
         }
         added
@@ -1915,12 +2207,20 @@ fn client_send_impl(c: &mut ClientKernel, msg: &str, sync: bool) -> bool {
     if sync
         && c.udp_bound
         && let Some(udp) = c.udp.as_ref()
+        && let Some((cid, key)) = c.udp_seat.as_ref()
     {
-        let dgram = format!("S:{}:{msg}", c.out_seq);
-        if dgram.len() > UDP_MAX_DATAGRAM {
+        if msg.len() + seal::OVERHEAD > UDP_MAX_DATAGRAM {
             return false; // state frames must stay small (see the listener)
         }
-        return udp.send(dgram.as_bytes()).is_ok();
+        let dgram = seal::seal(
+            key,
+            seal::TO_LISTENER,
+            b'S',
+            *cid,
+            c.out_seq as u64,
+            msg.as_bytes(),
+        );
+        return udp.send(&dgram).is_ok();
     }
     let Some(conn) = c.conn.as_mut() else {
         return false; // local kernel: there is no peer to send to

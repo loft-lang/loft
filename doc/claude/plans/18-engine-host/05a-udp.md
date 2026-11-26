@@ -12,20 +12,32 @@ Kernel mechanics (`src/engine_host.rs`):
 
 - **One UDP socket on the SAME port number** as the WS listener (zero config;
   a UDP bind failure is a warning — everything rides WS until restart).
-- **Cookie handshake** ties the UDP path to the WS session: the kernel issues
-  a per-connection cookie (`RandomState`-seeded, 16 hex chars — LAN
-  spoof-resistance, not crypto; DTLS is the eventual hostile-network answer).
+- **A session key ties the UDP path to the WS session**: at the upgrade the
+  kernel draws a random 32-byte key per connection from the OS and hands it
+  over with the cid.  **Every datagram, both ways, is sealed under it**:
+  `kind | cid | seq | payload | tag`, the tag 16 bytes of HMAC-SHA256 over a
+  direction byte and everything before it (the format: `src/engine_host.rs`
+  § the seal; the C runtime's `loft_engine.h` speaks the same and the two
+  interoperate).  A datagram whose tag does not hold, or whose seq was taken
+  already (a 64-wide replay window), changes nothing — no slot, no path, no
+  keepalive.  The hello carries no secret.  The source address is a routing
+  hint: the newest authenticated datagram moves the path (NAT rebinding).
+  The seal protects the seat and the integrity of the samples, not their
+  confidentiality, and it is only as strong as the channel that carried the
+  key: under `ws://` the key crosses the network in plain text, so such a
+  session is LAN-grade.
   **The negotiation is fully kernel-internal** (user directive 2026-06-10 — a
   core lavition/loft value: never bother the developer with details that
-  don't aid them): the cookie rides the WS **101 upgrade response** as an
-  `X-Loft-UDP` header — browsers can't read upgrade-response headers from JS
-  and ignore it; a native client's kernel reads it and echoes `H:<cookie>`,
-  the kernel binds the datagram source addr to that cid and acks `A:<cid>`.
-  No loft code on either side ever touches the cookie (the original
-  `udp_cookie()` surface was removed the same day it shipped — GOALS § Goal F
-  records this as the engine-surface instance of the friction test).
+  don't aid them): the offer rides the WS **101 upgrade response** as an
+  `X-Loft-UDP: <cid>:<key>` header — browsers can't read upgrade-response
+  headers from JS and ignore it; a native client's kernel reads it and sends
+  a sealed hello, which binds the datagram source addr to that cid and is
+  acked with a sealed `A`.  No loft code on either side ever touches the key
+  (the original `udp_cookie()` surface was removed the same day it shipped —
+  GOALS § Goal F records this as the engine-surface instance of the friction
+  test).
 - **Inbound conflation slots** (their first consumer, as deferred from phase
-  01): `S:<seq>:<payload>` datagrams conflate to newest per sender — a higher
+  01): sync datagrams (kind `S`) conflate to newest per sender — a higher
   seq overwrites the slot, a stale/reordered seq is **discarded** (never apply
   an old pose; minimal-latency goal).  The loft side drains dirty slots with
   `sync_next()` inside `on_tick` — **late-latch by construction** (the
@@ -33,11 +45,11 @@ Kernel mechanics (`src/engine_host.rs`):
 - **Outbound `sync_send(cid, msg)`**: stamps a per-cid seq and sends a
   datagram when the path is bound, else falls back to a plain WS frame — the
   transport split is invisible to meaning.
-- **Keepalive/timeout**: any datagram refreshes the path; silence past 3 s
+- **Keepalive/timeout**: any authenticated datagram refreshes the path; silence past 3 s
   unbinds it and sends revert to WS transparently.  (The client's steady
   keepalive cadence doubles as the phone radio wake.)
-- **≤1200 B datagram cap** (overlay-shaved MTUs fragment silently above
-  that): oversized sync sends drop with a once-per-kernel warning — never a
+- **≤1200 B datagram cap**, the 29 bytes of seal included (overlay-shaved
+  MTUs fragment silently above that): oversized sync sends drop with a once-per-kernel warning — never a
   halt; bulk belongs on the WS channel.
 
 Loft surface (`lib/engine_host`): `sync_class(msg_id)` (the wire-schema
@@ -80,12 +92,19 @@ injected drop, only the promoted samples arrive.
 
 ## Acceptance
 
-`tests/engine_host_udp.rs` (end-to-end, real sockets): cookie read from the
-101 `X-Loft-UDP` header (the fixture program never references transport) →
-WS-fallback beacons pre-hello → `H:`/`A:` binding → the same `sync_send`
-arriving as seq-stamped datagrams → a same-tick burst (seq 10, 12, then stale
-11) yields **exactly one** echo (the newest, 12) → a stale seq 5 is never
-echoed → 3 s of silence reverts beacons to WS.  Green (~6.5 s, includes the
+`tests/engine_host_udp.rs` (end-to-end, real sockets, the datagram written
+from its description in `tests/common/udp_wire.rs`): cid and key read from
+the 101 `X-Loft-UDP` header (the fixture program never references transport)
+→ WS-fallback beacons pre-hello → sealed hello / ack binding → the same
+`sync_send` arriving as sealed datagrams → a same-tick burst (seq 110, 112,
+then reordered 111) yields **exactly one** echo (the newest, 112) → a stale
+seq 105 is never echoed → 3 s of silence reverts beacons to WS.  Beside it,
+datagrams the session's holder did not send: a forged sample claiming the
+highest seq neither applies nor makes the next genuine one stale; a hello
+seen on the path and replayed from another address takes no seat; forged and
+replayed keepalives do not hold a quiet path open; a genuine datagram from a
+new address moves the path.  `tests/c_emit.rs` runs a C listener with an
+interpreted seat and the other way round over the same datagrams.  Green (~6.5 s, includes the
 timeout wait).
 
 **The auto-path proof on the real consumer** (user-directed 2026-06-10):

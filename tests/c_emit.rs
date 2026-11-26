@@ -7,6 +7,9 @@ use loft::file_access as fa;
 use loft::parser::Parser;
 use std::fmt::Write as _;
 
+#[path = "common/udp_wire.rs"]
+mod udp_wire;
+
 const SRC: &str = r#"
 fn fib(n: integer) -> integer {
   if n <= 1 { n } else { fib(n - 1) + fib(n - 2) }
@@ -7099,13 +7102,14 @@ fn in_binary_natives_run_on_the_c_as_on_the_interpreter() {
 
 /// @PLN203 C5 — `lib/engine_host`'s kernel on the C (`loft_engine.h`) and on the interpreter,
 /// driven from outside by a WebSocket and a UDP peer, every message written out by hand: the
-/// 101 response carries the UDP cookie (`X-Loft-UDP`); the connect handler's greeting arrives
-/// (`hello 0`, the first slot's cid); a text frame is echoed; `H:<cookie>` is acked `A:0`; a
-/// seq-stamped datagram of a declared sync kind reaches `on_event` at the next tick and is
-/// echoed over the WebSocket; `quit` stops the run and the program exits 0.
+/// 101 response carries the cid and UDP session key (`X-Loft-UDP`); the connect handler's
+/// greeting arrives (`hello 0`, the first slot's cid); a text frame is echoed; a sealed hello
+/// is acked with a sealed `A` (`tests/common/udp_wire.rs`); a sealed datagram of a declared
+/// sync kind reaches `on_event` at the next tick and is echoed over the WebSocket, while one
+/// under another key does not; `quit` stops the run and the program exits 0.
 /// A port free for TCP AND UDP at once: the engine host binds both on one number, and a port
 /// free for TCP alone was taken for UDP by a test running beside it on a busy Windows leg — the
-/// host then served without UDP (no `X-Loft-UDP` cookie), as it should.
+/// host then served without UDP (no `X-Loft-UDP` offer), as it should.
 fn free_tcp_and_udp_port() -> u16 {
     for _ in 0..64 {
         let tcp = std::net::TcpListener::bind("127.0.0.1:0").expect("a free TCP port");
@@ -7191,13 +7195,13 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
             head.contains("Sec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n"),
             "{backend}: the RFC 6455 sample key's accept value: {head}"
         );
-        let cookie = head
-            .lines()
-            .find_map(|l| l.strip_prefix("X-Loft-UDP: "))
-            .unwrap_or_else(|| panic!("{backend}: no cookie: {head}"))
-            .trim()
-            .to_string();
-        assert_eq!(cookie.len(), 16, "{backend}: a 16-hex cookie: {cookie}");
+        let seat = udp_wire::Seat::of(
+            head.lines()
+                .find_map(|l| l.strip_prefix("X-Loft-UDP: "))
+                .unwrap_or_else(|| panic!("{backend}: no UDP offer: {head}"))
+                .trim(),
+        );
+        assert_eq!(seat.cid, 0, "{backend}: the first connection's cid");
         let recv = || -> String {
             let mut h = [0u8; 2];
             (&ws).read_exact(&mut h).unwrap();
@@ -7219,22 +7223,28 @@ fn the_engine_host_kernel_serves_the_same_on_the_c_and_the_interpreter() {
         let udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         udp.set_read_timeout(Some(Duration::from_millis(300)))
             .unwrap();
-        let mut ack = String::new();
+        let mut ack = None;
         for _ in 0..20 {
-            udp.send_to(format!("H:{cookie}").as_bytes(), ("127.0.0.1", port))
-                .unwrap();
-            let mut buf = [0u8; 64];
+            udp.send_to(&seat.hello(), ("127.0.0.1", port)).unwrap();
+            let mut buf = [0u8; 128];
             if let Ok((n, _)) = udp.recv_from(&mut buf) {
-                ack = String::from_utf8_lossy(&buf[..n]).to_string();
+                ack = seat.open(&buf[..n]);
                 break;
             }
         }
-        assert_eq!(ack, "A:0", "{backend}: the hello's ack");
-        udp.send_to(b"S:5:7:pose", ("127.0.0.1", port)).unwrap();
+        assert!(
+            ack.as_ref().is_some_and(|(k, _, _)| *k == 'A'),
+            "{backend}: the hello's sealed ack, got {ack:?}"
+        );
+        for d in seat.forged(b'S', 1 << 40, "7:forged") {
+            udp.send_to(&d, ("127.0.0.1", port)).unwrap();
+        }
+        udp.send_to(&seat.sync(50, "7:pose"), ("127.0.0.1", port))
+            .unwrap();
         assert_eq!(
             recv(),
             "echo:7:pose",
-            "{backend}: the sync datagram, at the next tick"
+            "{backend}: the sealed sync datagram, at the next tick (a forged one is not applied)"
         );
         send("quit");
         let out = child.wait_with_output().expect("kernel output");
@@ -7355,6 +7365,103 @@ fn an_engine_host_seat_talks_to_its_listener_on_the_c_and_the_interpreter() {
                  server got bye\nserver saw disconnect 0\n"
             ),
             "{backend}: the listener's lines\n{}",
+            String::from_utf8_lossy(&listener.stderr)
+        );
+    }
+}
+
+/// The sealed state-sync datagram is one format on both runtimes: a seat and a listener on
+/// DIFFERENT backends (the C listener with an interpreted seat, and the other way round) talk
+/// over UDP.  The seat sends `7:udp` only once its path is acked, so the sample can only arrive
+/// as a datagram the listener opened; the listener answers `7:back`, a sync kind, on a path
+/// that sample just proved, so the answer can only arrive as a datagram the seat opened.
+///
+/// @falsified-at: 60acdddde — by hand: the C runtime's direction byte toward the listener
+/// changed (`LOFT_EH_TO_LISTENER`), so C seals what the Rust kernel does not open: red on both
+/// pairs, while the all-C seat cell stays green.  The C tag check off reddens the kernel cell
+/// above, whose forged sample is then applied.
+#[test]
+fn a_seat_and_a_listener_on_different_backends_share_the_sealed_datagram() {
+    use std::time::{Duration, Instant};
+    if !have_cc() || !loft::platform::c_runtime_has_sockets() {
+        eprintln!("skipped: no cc on PATH, or a host without sockets");
+        return;
+    }
+    let loft = env!("CARGO_BIN_EXE_loft");
+    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("lib");
+    let dir = scratch("sealed_twins");
+    let file = dir.join("twins.loft");
+    fa::write(
+        &file,
+        "use engine_host;\nstruct S { sent: boolean not null }\nfn main() {\n  \
+         role = env_variable(\"ROLE\") ?? \"server\";\n  \
+         port = (env_variable(\"PORT\") ?? \"0\") as integer ?? 0;\n  \
+         engine_host::sync_class(7);\n  if role == \"client\" {\n    s = S { sent: false };\n    \
+         engine_host::run_client(engine_host::default_host(), port, 5000,\n      \
+         fn(ev: engine_host::Event) {\n        \
+         if ev.kind == 1 && ev.payload == \"7:back\" {\n          \
+         println(\"client got 7:back\");\n          \
+         engine_host::client_send(\"bye\");\n          engine_host::client_stop();\n        }\n      },\n      \
+         fn() {\n        if !s.sent && engine_host::client_udp_bound() {\n          \
+         s.sent = true;\n          engine_host::client_send(\"7:udp\");\n        }\n      });\n    \
+         return;\n  }\n  \
+         engine_host::run(port, 5000,\n    fn(ev: engine_host::Event) {\n      \
+         if ev.kind == 1 && ev.payload == \"7:udp\" {\n        \
+         println(\"server got 7:udp\");\n        engine_host::send(ev.cid, \"7:back\");\n      }\n      \
+         if ev.kind == 1 && ev.payload == \"bye\" { println(\"server got bye\"); }\n      \
+         if ev.kind == 2 { engine_host::stop(); }\n    },\n    fn() {});\n}\n",
+    )
+    .expect("write program");
+    for (server_backend, client_backend) in
+        [("--native-c", "--interpret"), ("--interpret", "--native-c")]
+    {
+        let port = free_tcp_and_udp_port();
+        let start = |backend: &str, role: &str| {
+            loft::platform::process::harness_command(loft)
+                .arg(backend)
+                .arg("--lib")
+                .arg(&lib)
+                .arg(&file)
+                .env("ROLE", role)
+                .env("PORT", port.to_string())
+                .env("LOFT_TIMEOUT", "60")
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .expect("start loft")
+        };
+        let pair = format!("{server_backend} listener, {client_backend} seat");
+        let mut server = start(server_backend, "server");
+        let deadline = Instant::now() + Duration::from_secs(90);
+        while std::net::TcpStream::connect(("127.0.0.1", port)).is_err() {
+            if Instant::now() > deadline || server.try_wait().ok().flatten().is_some() {
+                let _ = server.kill();
+                let out = server.wait_with_output().expect("listener output");
+                panic!(
+                    "{pair}: the listener never listened\n{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let seat = start(client_backend, "client")
+            .wait_with_output()
+            .expect("seat output");
+        let listener = server.wait_with_output().expect("listener output");
+        assert_eq!(
+            String::from_utf8_lossy(&seat.stdout),
+            "client got 7:back\n",
+            "{pair}: the seat's lines\n{}",
+            String::from_utf8_lossy(&seat.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&listener.stdout),
+            format!(
+                "engine_host: listening on ws://0.0.0.0:{port}/ (tick every 5000 us)\n\
+                 server got 7:udp\nserver got bye\n"
+            ),
+            "{pair}: the listener's lines\n{}",
             String::from_utf8_lossy(&listener.stderr)
         );
     }
