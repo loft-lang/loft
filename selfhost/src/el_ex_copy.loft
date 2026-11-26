@@ -128,16 +128,12 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     }
   }
   x = el_ir::unspan(src);
-  user = el_ex_into::any_user_call(e, [x]);
   kt = ir::NdInt { n: el::def(e, td).known_type };
   b = ir::NdVar { n: rb };
   copy = el_ir::v_block([el_ir::v_set(rb, ir::NdNull), el_ir::cl(e, "OpDatabase", [b, kt]), el_ir::cl(e, "OpCopyRecord", [src, b, kt]), b], owned, "materialized_view_return");
   // The copy is bare only where its source is PROVEN present (`copy_source_is_present`); any
   // other source with no user call in it is tested by reading it again.
-  guard = match x {
-    NdVar { n: v } => v != vars.copy_present && record_may_be_absent(vars, v, []),
-    _ => !user && !source_is_present(e, vars, x)
-  };
+  guard = copy_needs_test(e, vars, x);
   if guard {
     copy = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [if (x is NdVar) { x } else { src }]), el_ir::cl(e, "OpNullRefSentinel", []), copy);
   }
@@ -145,6 +141,17 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
     copy = el_ir::v_block(binds + [copy], owned, "return_source");
   }
   copy
+}
+
+// `materialize_return_into`'s `absent_guard` (`@FR-N-Road`): a copy is tested unless its source
+// is PROVEN present — a test too many is one branch, a test too few an empty record handed up
+// for an absent value — and only where no user call is in it, which a re-read would repeat.
+pub fn copy_needs_test(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  x = el_ir::unspan(n);
+  match x {
+    NdVar { n: v } => v != vars.copy_present && record_may_be_absent(vars, v, []),
+    _ => !el_ex_into::any_user_call(e, [x]) && !source_is_present(e, vars, x)
+  }
 }
 
 // The value a block (or an inserted group) ends in, through its nesting.
@@ -220,8 +227,7 @@ pub fn copy_source_may_be_absent(e: el::El, vars: el_vars::Vars, n: ir::Node) ->
       if nm == "OpGetField" && len(args) == 3 {
         return copy_source_may_be_absent(e, vars, args[0]!);
       }
-      // (A LINKED vector's element read, `OpVectorRef`, misses past the end as `OpGetVector` does.)
-      starts_with(nm, "OpGet") || nm == "OpVectorRef" || !starts_with(nm, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0
+      starts_with(nm, "OpGet") || !starts_with(nm, "Op") && heap_def(el::def(e, def_nr).returned[0] ?? ir::TyVoid) >= 0
     },
     _ => false
   }
