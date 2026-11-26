@@ -15,6 +15,9 @@
 // CHANNEL: the asserts, and the expected failure's message.
 // WITNESS: `assertion failed: fixed message` — the counter's own assert, at 1000.
 // HOLDS: a constant-message and a no-message assert pass as before.
+//
+// @FR-E-Assert: `m` is not evaluated while the condition holds, and is reduced for the halt when it
+//   fails.
 
 struct Calls { n: integer }
 

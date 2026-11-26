@@ -27,6 +27,10 @@
 //   ARMED: nothing.
 //   HOLDS: every value assertion, on both trees and both backends — the writes were lost before
 //     the fix as after it; only the report moved.
+//
+// @FR-B-Copy: `xs = s.items; xs += [7]` leaves `s.items` as built — for vectors, keyed collections
+//   and texts.
+// @FR-B-Ref-Alias: `lk_xs = &s.items; lk_xs += [7]` writes through to `s.items`.
 
 struct K1840 { k: integer, v: integer }
 struct S1840 { items: vector<integer>, more: vector<integer>, keyed: hash<K1840[k]>, name: text }

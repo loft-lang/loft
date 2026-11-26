@@ -17,6 +17,11 @@
 //   length read refuses as an out-of-bounds reference.  This file adds the runtime half:
 //   with `fs_file_map` answering `fs_read_bytes` (the copy) every cell still passes, which
 //   is the point — the two paths are observationally one.
+//
+// @FR-Const-Foreign: `file_map(path)` serves its bytes as a plain `vector<u8>` answering every read
+//   the copying `read_bytes` answers.
+// @FR-B-Copy: `w = m` and `w2 = s1` copy the mapping/view into an ordinary writable vector, the
+//   source untouched.
 
 // 64 bytes: "hello, foreign!" (15) then a byte pattern 32 + (i * 7) % 90 for i in 15..64
 // (byte 15 is 32 + 15 = 47, byte 63 is 32 + 81 = 113)

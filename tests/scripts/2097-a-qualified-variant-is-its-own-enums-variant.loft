@@ -17,6 +17,9 @@
 // CHANNEL: the asserts.
 // WITNESS: `Pq2.Item.v = 6`.
 // HOLDS: the unit variants beside them.
+//
+// @FR-D-Rec: the bare variant value takes its own declared field defaults.
+// @FR-M-Variant: `Pq2::Item { v }` matches and binds the variant's payload field.
 
 enum Pq1 { NoneA, Item { v: text = "x", w: text = "y" } }
 enum Pq2 { NoneB, Item { v: integer = 42 } }
