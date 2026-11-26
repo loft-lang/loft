@@ -3425,6 +3425,23 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
 
 
 // The block at syntax node `n` ends in a `[]` with no items (`block_tail_empty_literal`).
+// The `[]` node `syntax_tail_empty` finds at `n`'s tail, else -1.
+pub fn syntax_tail_lit(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SVecLit { items } => if len(items) == 0 { n } else { -1 },
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return -1;
+      }
+      match e.p.nodes[stmts[-1]!] {
+        SStmt { e: se, semi } => if semi || se == null { -1 } else { syntax_tail_lit(e, se!) },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
 pub fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] {
     // A match arm's body may be the literal itself (`_ => []`).
@@ -3452,9 +3469,14 @@ pub fn syntax_tail_empty(e: el::El, n: integer) -> boolean {
 
 // An arm answering the untyped `[]`, built as an empty vector of `like`'s element; typed as
 // `as_tp`, or as the literal it now answers where that is void.
-pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT, elm: boolean = true) -> Ex {
+pub fn empty_arm(e: el::El, vars: el_vars::Vars, arm: Ex, like: ir::TypeT, as_tp: ir::TypeT, elm: boolean = true, syn: integer = -1) -> Ex {
   vt = el_types::without_deps(el_types::base(like));
   if e.first_pass {
+    // (Read against the vector type, the `[]` registers its element's rows where it is read, as
+    // a tail's does — `empty_literal_to`'s first-pass half.)
+    if syn >= 0 {
+      empty_literal_to(e, vars, vt, elm: false, lit: syntax_tail_lit(e, syn), mint: false);
+    }
     // (`parse_vector` with the element known mints the literal's `_vec_N` and `elm` on this
     // pass too, the temp typed by the vector's content.)
     fv = el_vars::create_unique(vars, "vec", vt);
@@ -3501,8 +3523,21 @@ fn holds_vector_literal(e: el::El, n: integer) -> boolean {
 
 // The untyped `[]` converted to vector type `t`: an empty value literal of its element, in a
 // store of its own (`Vector`), its `_vec_N` minted here as the conversion mints it.
-pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vector<integer> = [], elm: boolean = true) -> ir::Node {
+pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: vector<integer> = [], elm: boolean = true, lit: integer = -1, mint: boolean = true) -> ir::Node {
   inner = match t { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
+  // (`convert` of the untyped `[]` to a declared vector registers the element's `vector<T>` and
+  // `main_vector<T>` on the first pass where the literal was read — the parser's position after
+  // its `]` — when no earlier site made them.)
+  if e.first_pass && lit >= 0 {
+    lnm = el_types::elem_name(e, inner);
+    ltok = match e.p.nodes[lit] { SVecLit { at } => at, _ => -1 };
+    if lnm != "" && ltok >= 0 && el::def_nr(e, "main_vector<{lnm}>") < 0 && struct_ref(e, el_types::base(inner)) >= 0 {
+      el_schema::make_vector_def(e, inner, lnm, el::pos_at(e, closing_bracket(e, ltok)), true);
+    }
+  }
+  if !mint {
+    return ir::NdNull;
+  }
   v = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
   // `parse_vector` with the element type known mints the literal's `elm` too (`unique_elm_var`);
   // `empty_vector_value`, the `[]` then arm built from its `else`, mints none.

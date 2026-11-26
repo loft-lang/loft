@@ -1694,7 +1694,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   forget_facts(vars, facts);
   // An untyped `[]` arm where the bind's target names the vector is built in its place.
   if el_types::base(expected) is TyVector && el_ex_pattern::syntax_tail_empty(e, then) {
-    t = el_ex_pattern::empty_arm(e, vars, t, expected, ir::TyVoid);
+    t = el_ex_pattern::empty_arm(e, vars, t, expected, ir::TyVoid, syn: then);
   }
   if other == null && t.tp is TyNever {
     // A then arm that only jumps, with nothing after it: a statement — after which the test
@@ -1855,9 +1855,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   // vector's empty literal, built once the other arm is read.
   if then_empty && el_types::base(f.tp) is TyVector {
     // Built after the `else`, the arm takes the `else`'s type (`true_type = false_type`).
-    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp, elm: false);
+    t = el_ex_pattern::empty_arm(e, vars, t, f.tp, f.tp, elm: false, syn: then);
   } else if el_ex_pattern::syntax_tail_empty(e, other!) && el_types::base(t.tp) is TyVector {
-    f = el_ex_pattern::empty_arm(e, vars, f, t.tp, ir::TyVoid);
+    f = el_ex_pattern::empty_arm(e, vars, f, t.tp, ir::TyVoid, syn: other!);
   }
   // `@FR-N-Join`: a null else arm beside a scalar then arm is that scalar's null, read against
   // the then arm's type (`convert_admitting` at the block's tail), and the `if` is the scalar `?`.

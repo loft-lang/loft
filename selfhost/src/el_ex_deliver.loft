@@ -462,7 +462,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   // An untyped `[]` at the tail of a vector-returning body is that vector's empty literal, built
   // in a store of its own as a literal with items is (`convert` of the tail to the result).
   if lit >= 0 && match e.p.nodes[lit] { SVecLit { items: lvi } => len(lvi) == 0, _ => false } && len(bl.operators) > 0 && !(tail is NdBlock) {
-    et = el_ex_pattern::empty_literal_to(e, vars, el_types::without_deps(el_types::base(result)));
+    et = el_ex_pattern::empty_literal_to(e, vars, el_types::without_deps(el_types::base(result)), lit: lit);
     bl.operators[-1] = el_ir::respan(bl.operators[-1], et);
     tail = et;
     code = ir::NdBlock { block: [bl] };
@@ -476,6 +476,12 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   elem_tail = !field_tail && match tail { NdCall { def_nr: etd } => projection_op(el::def(e, etd).name) && place_root(e, tail) >= 0 && !vars.vars[place_root(e, tail)]!.argument, _ => false };
   // A top-level vector constant's view (`{ NUMS }`, `is_const_view`): `Bind` on its anchor, the
   // constant copied into the buffer after the tail statement (loft#2585's tail spelling).
+  // `tail_call_borrows_temp_subject` (A1b, @PLN90 W1): a call answering a vector, handed a
+  // temporary — a literal, a built value, no plain variable — at a visible record, vector or
+  // struct-enum parameter, may answer a view into that temporary: `Bind` on the call's own
+  // buffer, no substitution, its answer copied into the function's (`one_buffer_vec_copy`)
+  // before the temporary goes (`@FR-F-Ret`).
+  tsubj = temp_subject_call(e, vars, tail);
   cview = calls(e, tail, "OpConstRef");
   cview_anchor = if cview { el_types::deps(bl.result[0] ?? ir::TyVoid)[0] ?? -1 } else { -1 };
   if cview && cview_anchor >= 0 {
@@ -510,7 +516,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     if literal && !lexit {
       if !e.owed_buffer.contains(d) { e.owed_buffer += [d]; }
     }
-    if (lexit || local >= 0 || field_tail || elem_tail || cview) && !el_types::deps(ret).contains(ba) {
+    if tsubj >= 0 {
+      el_trace::retpromo(e, vars, tsubj, "Bind");
+    }
+    if (lexit || local >= 0 || field_tail || elem_tail || cview || tsubj >= 0) && !el_types::deps(ret).contains(ba) {
       e.b.data.definitions[d].returned = [el_types::with_deps(ret, el_types::deps(ret) + [ba])];
     } else if !literal && local < 0 && el_ex_copy::returned_local(vars, tail) >= 0 {
       // A trailing `return v` is delivered in the buffer, renamed onto `v`'s literal backing on
@@ -624,7 +633,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     rename_onto(e, vars, rb, db[0]);
     buf = db[0];
     bl.result = [el_types::without_deps(el_types::base(result))];
-  } else if local >= 0 || field_tail || cview {
+  } else if local >= 0 || field_tail || cview || tsubj >= 0 {
     nm = el_types::elem_name(e, elem);
     // A record element's own row; any other's content type (a narrow integer is stored at its
     // width, `byte` for `u8`, which its name does not say).
@@ -637,7 +646,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     b = ir::NdVar { n: rb };
     src = if local >= 0 { ir::NdVar { n: local } } else { tail };
     if !cview {
-      el_trace::retpromo(e, vars, if local >= 0 { local } else { place_root(e, tail) }, "Bind");
+      el_trace::retpromo(e, vars, if local >= 0 { local } else if tsubj >= 0 { tsubj } else { place_root(e, tail) }, "Bind");
     }
     bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, src, ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
     bl.result = [own];
@@ -1378,6 +1387,36 @@ fn call_buffer_of(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, v: inte
     }
   }
   -1
+}
+
+// `tail_call_borrows_temp_subject`: the hidden buffer of a tail call (through blocks and
+// returns) answering a vector, one of whose visible record, vector or struct-enum arguments is
+// no plain variable; else -1.
+fn temp_subject_call(e: el::El, vars: el_vars::Vars, n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => temp_subject_call(e, vars, inner),
+    NdBlock { block } => if len(block[0].operators) > 0 { temp_subject_call(e, vars, el_ir::unspan(block[0].operators[-1]!)) } else { -1 },
+    NdInsert { items } => if len(items) > 0 { temp_subject_call(e, vars, el_ir::unspan(items[-1]!)) } else { -1 },
+    NdReturn { inner } => temp_subject_call(e, vars, el_ir::unspan(inner)),
+    NdCall { def_nr, args } => {
+      hr = hidden_ref_args(e, vars, n);
+      cd = el::def(e, def_nr);
+      if len(hr) == 0 || !(el_types::base(cd.returned[0] ?? ir::TyVoid) is TyVector) {
+        return -1;
+      }
+      for a in args {
+        at = cd.attributes[a#index];
+        // (On the first pass a plain struct's literal argument is read as the variable it builds
+        // in — measured: `gb(Box { items: v })` takes no `Bind` there, `g(Filled { items: v })`
+        // does — so only a struct enum's or a vector's temporary counts on that pass.)
+        if at != null && !at!.hidden && match el_types::base(at!.typedef[0] ?? ir::TyVoid) { TyReference { n: an } => !e.first_pass || el::def(e, an).def_type != el::DT_STRUCT, TyVector { inner: _ } => true, TyEnum { is_ref } => is_ref, _ => false } && !(el_ir::unspan(a) is NdVar) {
+          return hr[0]!;
+        }
+      }
+      -1
+    },
+    _ => -1
+  }
 }
 
 // A `one_buffer_chain` block answering buffer `w`.
