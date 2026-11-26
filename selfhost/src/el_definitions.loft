@@ -228,9 +228,20 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
     el::refuse(e, "a `use self::` of a package's own module");
     return;
   }
-  if package_root(e.file) != "" {
-    el::refuse(e, "a `use` inside a package (its manifest resolves it)");
-    return;
+  // Inside a package, `Parser::lib_path`'s first probe (`probe_own_package`): the package's own
+  // NAME is its `[library] entry`.  Every other name there is resolved by the manifest's later
+  // steps, which this port does not carry.
+  root = package_root(e.file);
+  if root != "" && !el::use_exists(e, lib) {
+    own_entry = own_package_entry(root, lib);
+    if own_entry == "" {
+      el::refuse(e, "a `use` inside a package (its manifest resolves it)");
+      return;
+    }
+    load_library(e, lib, alias, own_entry);
+    if !el::use_exists(e, lib) {
+      return;
+    }
   }
   if !el::use_exists(e, lib) {
     f = lib_path(e, lib);
@@ -444,6 +455,37 @@ fn apply_pending_imports(e: el::El) {
       }
     }
   }
+}
+
+// `Parser::probe_own_package`: the entry file of the package at `root` when its manifest's
+// `[package] name` is `id` — its `[library] entry`, else `src/<name>.loft`
+// (`Manifest::entry_or_default`) — where that file exists; else "".
+fn own_package_entry(root: text, id: text) -> text {
+  section = "";
+  name = "";
+  entry = "";
+  for raw in (file("{root}/loft.toml").content() ?? "").split('\n') {
+    ln = raw.trim();
+    eq = ln.find("=");
+    if starts_with(ln, "[") {
+      section = ln;
+    } else if eq != null && !starts_with(ln, "#") {
+      key = ln[..eq!].trim();
+      q = ln.find("\"");
+      if q != null && (section == "[package]" && key == "name" || section == "[library]" && key == "entry") {
+        rest = ln[q! + 1..];
+        r = rest.find("\"");
+        if r != null {
+          if key == "name" { name = rest[..r!]; } else { entry = rest[..r!]; }
+        }
+      }
+    }
+  }
+  if name != id {
+    return "";
+  }
+  f = "{root}/{if entry != "" { entry } else { "src/{name}.loft" }}";
+  if exists(f) { f } else { "" }
 }
 
 // The directory holding a `loft.toml` at or above `f`'s, or "".
