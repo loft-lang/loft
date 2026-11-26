@@ -1660,6 +1660,16 @@ static loft_ref loft_read_bytes(loft_cx *cx, loft_str raw) {
     FILE *h = path ? loft_fopen(path, "rb") : 0;
     free(path);
     if (!h) return loft_ref_null(cx);
+    /* A vector counts its elements in 32 bits: a file with more bytes than that is refused by
+     * its size, before a byte of it is read — the capacity check refuses the count held at the
+     * largest one, as it does below for a file that grew while it was read. */
+#if defined(LOFT_POSIX)
+    struct stat st;
+    if (fstat(fileno(h), &st) == 0 && (uint64_t) st.st_size > UINT32_MAX) (void) loft_vec_cap_words(cx, UINT32_MAX, 1);
+#elif defined(_WIN32)
+    struct _stat64 st;
+    if (_fstat64(_fileno(h), &st) == 0 && (uint64_t) st.st_size > UINT32_MAX) (void) loft_vec_cap_words(cx, UINT32_MAX, 1);
+#endif
     /* The whole file first, then one exact claim of its length, an empty file's included
      * (`vector::alloc_vector_from_bytes`, `@FR-Col-Capacity`): appended a byte at a time, the
      * vector took the growth step's room instead. */
