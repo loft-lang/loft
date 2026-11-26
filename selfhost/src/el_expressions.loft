@@ -1018,7 +1018,10 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
     NdTupleGet { var: tb, idx: _ } => tb >= 0 && tb < len(vars.vars) && !vars.vars[tb].argument,
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
-      if (nm != "OpGetField" && nm != "OpGetVector") || len(args) == 0 {
+      // (A LINKED vector's element read — `OpVectorRef`, where a keyed collection over the
+      // element type exists — is the `OpGetVector` Rust classifies before its linked-layout
+      // rewrite: the same projection.)
+      if (nm != "OpGetField" && nm != "OpGetVector" && nm != "OpVectorRef") || len(args) == 0 {
         return false;
       }
       // The first pass's `!` read of a subject that is no local stands for its `_ncr_N`.
