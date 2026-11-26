@@ -2027,7 +2027,11 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
       return null;
     }
     // A boxed tuple (`boxed_tuple_return`) is carried where a destructure takes it apart.
-    if match rp { TyReference { n: btn } => starts_with(el::def(e, btn).name, "__tuple<"), _ => false } && !(vars.boxed_tuple_at >= 0 && vars.boxed_tuple_at == vars.call_at) {
+    // (…and where it IS the function's tail, answering the same boxed tuple: the caller's buffer
+    // is renamed onto the one handed to it, as a record call's is — `ref_return`'s `Rename`.)
+    btail = el_ex_deliver::tail_syntax(e, vars.body);
+    tail_call = btail >= 0 && match e.p.nodes[btail] { SCall { at: bta } => bta == vars.call_at, _ => false } && el_types::is_equal(e, el_types::without_deps(rp), el_types::without_deps(el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid)));
+    if match rp { TyReference { n: btn } => starts_with(el::def(e, btn).name, "__tuple<"), _ => false } && !(vars.boxed_tuple_at >= 0 && vars.boxed_tuple_at == vars.call_at) && !tail_call {
       el::refuse(e, "a call answering a boxed tuple outside a destructure");
       return null;
     }

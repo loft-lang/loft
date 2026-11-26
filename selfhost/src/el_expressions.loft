@@ -55,7 +55,9 @@ pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, 
     },
     NdBlock { block } => {
       ab = block[0];
-      if ab.name != "block" || len(ab.operators) == 0 {
+      // (A `match` tail is its arms' `if` chain behind the subject's hold: each arm builds into
+      // the same record.)
+      if !(ab.name == "block" || ab.name == "scalar_match" || ab.name == "match") || len(ab.operators) == 0 {
         return null;
       }
       r = boxed_tail_into(e, vars, el_ir::last(ab.operators), w, td);
@@ -353,6 +355,13 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // tuple literal into a work ref of the `__tuple<…>` record (`synthetic_tuple_return`): a
   // record member copied into its slot, a scalar set.  Any other tail is refused by name.
   btd = match el_types::base(result) { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 };
+  // (A tail CALL answering the same boxed tuple is delivered as a record's tail call is: the
+  // buffer renamed onto the one handed to it, `ref_return`'s `Rename`.)
+  btail_syn = el_ex_deliver::tail_syntax(e, vars.body);
+  boxed_call_tail = btd >= 0 && btail_syn >= 0 && e.p.nodes[btail_syn] is SCall && match body_tail(code) { NdCall { def_nr: bcd } => !starts_with(el::def(e, bcd).name, "Op"), _ => e.first_pass };
+  if boxed_call_tail {
+    btd = -1;
+  }
   boxed_bad = false;
   if btd >= 0 {
     // (Minted on the second pass alone, after the body's own work refs.)
