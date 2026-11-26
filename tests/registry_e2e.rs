@@ -2359,6 +2359,12 @@ fn an_index_older_than_the_cached_one_is_refused() {
 // The cells below hold the install to the feed it already has, to the seed its loft bundle
 // carries, and to the age of the copy in use.  Every feed here is unsigned, read with
 // `allow_unsigned`: no test can sign with the registry's keys.
+//
+// @falsified-at: d57c5b799 — by hand, one part switched off at a time: the feed loader
+// dropping the verified copy on a refused fetch fails the replayed cell; an install reading an
+// error as no feed fails the unreadable cell; no seed fails the blocked and month cells; ages
+// read from the files' mtime fail the month cell; a seed and an import written over a newer
+// copy (both forward-only checks off) fail the never-back cell.
 
 /// Atomically swap `LOFT_REGISTRY_SEED`.
 struct SeedGuard {
