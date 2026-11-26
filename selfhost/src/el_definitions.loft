@@ -235,14 +235,7 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
   // where one of them could answer first the `use` stays refused.
   root = package_root(e.file);
   if root != "" && !el::use_exists(e, lib) {
-    own_entry = own_package_entry(root, lib);
-    // (A `--lib` directory never rebinds a module beside the importing file.)
-    if own_entry == "" && !exists("{beside_dir(e.file)}/{lib}.loft") {
-      own_entry = flag_lib_entry(lib);
-    }
-    if own_entry == "" && !unported_road_answers(e, lib, root) {
-      own_entry = pinned_entry(e, lib);
-    }
+    own_entry = package_lib_path(e, lib, root);
     if own_entry == "" {
       el::refuse(e, "a `use` inside a package (its manifest resolves it)");
       return;
@@ -565,12 +558,228 @@ fn manifest_entry_in(dir: text, id: text) -> text {
   package_entry(pkg, id)
 }
 
-// The roads `Parser::lib_path` takes before a lock's pin that this port does not carry: a
-// `{ path = … }` dependency of the package (`probe_manifest_path_dep`) and a module beside the
-// importing file (`probe_cur_dir_flat`, `resolve_pinned`'s first step).  No program of the
-// corpus reaches either (measured 2026-11-26).  True where one of them could answer.
-fn unported_road_answers(e: el::El, id: text, root: text) -> boolean {
-  inline_field(toml_raw("{root}/loft.toml", "[dependencies]", 0, id), "path") != "" || exists("{beside_dir(e.file)}/{id}.loft")
+// `Parser::lib_path` for a `use` in a file inside the package at `root`, in its order (`@C173`):
+// the package's own name; a `--lib` directory (unless a module sits beside the file); a
+// `{ path = … }` dependency of the nearest manifest, then of the program's root manifest
+// (`probe_manifest_path_dep`, `probe_root_path_dep`); then, for a name the governing lock pins,
+// a module beside the file or that version's registry install (`resolve_pinned`); for any other
+// name the directory probes and the flat module beside the file.  Every candidate inside the
+// package passes the dependency-shadow guard (`blocked`).  "" where nothing answers, and where
+// a road this port does not carry could (`LOFT_LIB`, an installed package, an auto-install or
+// the registry cache's newest version) — the `use` is then refused.
+fn package_lib_path(e: el::El, id: text, root: text) -> text {
+  cur_dir = script_dir(e.file);
+  base_dir = tests_base_dir(cur_dir);
+  prog = if e.entry != "" { e.entry } else { e.file };
+  f = own_package_entry(root, id);
+  if f == "" && !exists("{beside_dir(e.file)}/{id}.loft") {
+    f = flag_lib_entry(id);
+  }
+  if f == "" {
+    f = path_dep_entry(root, id);
+  }
+  if f == "" && package_root(prog) != "" {
+    f = path_dep_entry(package_root(prog), id);
+  }
+  if shadowed(f, id, root) {
+    f = "";
+  }
+  if lock_pin_in_force(e, id) != "" {
+    beside = "{beside_dir(e.file)}/{id}.loft";
+    if f == "" && exists(beside) && !shadowed(beside, id, root) {
+      f = beside;
+    }
+    if f == "" {
+      f = pinned_entry(e, id);
+    }
+    return f;
+  }
+  if f != "" {
+    return f;
+  }
+  c = if exists("lib/{id}.loft") { "lib/{id}.loft" } else { "{id}.loft" };
+  if !exists(c) && cur_dir != "" {
+    c = "{cur_dir}/lib/{id}.loft";
+  }
+  if !exists(c) && base_dir != "" {
+    c = "{base_dir}/lib/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if !exists(c) {
+    sib = sibling_file(script_dir(root), id);
+    if sib != "" {
+      c = sib;
+    }
+  }
+  if !exists(c) && len(e.file) >= 5 {
+    c = "{e.file[..len(e.file) - 5]}/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  dirs = program_lib_dirs(prog);
+  if !exists(c) {
+    for l in dirs {
+      if !exists(c) && exists("{l}/{id}.loft") {
+        c = "{l}/{id}.loft";
+      }
+    }
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if !exists(c) {
+    for l in dirs {
+      if !exists(c) {
+        pe = manifest_entry_in(l, id);
+        if pe != "" {
+          c = pe;
+        }
+      }
+    }
+  }
+  if !exists(c) && ((env_variable("LOFT_LIB") ?? "") != "" || exists("{home_dir()}/.loft/lib/{id}") || exists("{home_dir()}/.loft/lib/{id}.loft")) {
+    return "";
+  }
+  if !exists(c) && cur_dir != "" {
+    c = "{cur_dir}/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if !exists(c) && registry_has(id) {
+    return "";
+  }
+  if !exists(c) && base_dir != "" {
+    c = "{base_dir}/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if exists(c) { c } else { "" }
+}
+
+// `Parser::probe_manifest_path_dep` at the manifest in `dir`: where it declares `id` as a
+// `{ path = … }` dependency, that package's `[library] entry`, else `src/<id>.loft`; "".
+fn path_dep_entry(dir: text, id: text) -> text {
+  rel = inline_field(toml_raw("{dir}/loft.toml", "[dependencies]", 0, id), "path");
+  if rel == "" {
+    return "";
+  }
+  pkg = "{dir}/{rel}";
+  entry = toml_unquote(toml_raw("{pkg}/loft.toml", "[library]", 0, "entry"));
+  file = if entry != "" { "{pkg}/{entry}" } else { "{pkg}/src/{id}.loft" };
+  if exists(file) { file } else { "" }
+}
+
+// `lib_path`'s dependency-shadow guard (`blocked`): a candidate inside the package at `root` is
+// refused for a name its manifest declares as a dependency — that name must resolve as the
+// dependency, never as a same-named file of the package — unless it lies inside the directory
+// a `{ path = … }` declaration of it names (loft#963).
+fn shadowed(cand: text, id: text, root: text) -> boolean {
+  if cand == "" || toml_raw("{root}/loft.toml", "[dependencies]", 0, id) == "" {
+    return false;
+  }
+  c = absolute(cand);
+  rel = inline_field(toml_raw("{root}/loft.toml", "[dependencies]", 0, id), "path");
+  if rel != "" && starts_with(c, "{absolute("{root}/{rel}")}/") {
+    return false;
+  }
+  starts_with(c, "{absolute(root)}/")
+}
+
+// A path as one space to compare in: relative to the working directory made absolute, `.` and
+// `..` steps folded (`plain_canonical`, without following links).
+fn absolute(p: text) -> text {
+  full = if starts_with(p, "/") { p } else { "{env_variable("PWD") ?? ""}/{p}" };
+  parts: vector<text> = [];
+  for seg in full.split('/') {
+    if seg == "" || seg == "." {
+      continue;
+    }
+    if seg == ".." {
+      if len(parts) > 0 {
+        parts = parts[..len(parts) - 1];
+      }
+      continue;
+    }
+    parts += [seg];
+  }
+  "/{join(parts, "/")}"
+}
+
+// `Parser::find_sibling_file`: package `id` beside the package, `<parent>/<id>/src/<id>.loft`,
+// else a flat `<parent>/<id>.loft`; "".
+fn sibling_file(parent: text, id: text) -> text {
+  if parent == "" {
+    return "";
+  }
+  if exists("{parent}/{id}/src/{id}.loft") {
+    return "{parent}/{id}/src/{id}.loft";
+  }
+  if exists("{parent}/{id}.loft") { "{parent}/{id}.loft" } else { "" }
+}
+
+// The run's `lib_dirs` (main.rs): the `--lib` directories, then, from the program's own manifest
+// (`add_package_paths`), its source directory — the `[library] entry`'s directory, else `src`
+// (`Manifest::source_dir`) — and the package's parent where it declares dependencies.
+fn program_lib_dirs(prog: text) -> vector<text> {
+  out: vector<text> = [];
+  for d in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
+    if d != "" {
+      out += [d];
+    }
+  }
+  pr = package_root(prog);
+  if pr == "" {
+    return out;
+  }
+  entry = toml_unquote(toml_raw("{pr}/loft.toml", "[library]", 0, "entry"));
+  sd = if entry == "" { "src" } else { script_dir(entry) };
+  out += [if sd == "" { pr } else { "{pr}/{sd}" }];
+  if toml_has_keys("{pr}/loft.toml", "[dependencies]") && script_dir(pr) != "" {
+    out += [script_dir(pr)];
+  }
+  out
+}
+
+// Whether the TOML file at `path` has a `key = value` line in section `section`.
+fn toml_has_keys(path: text, section: text) -> boolean {
+  cur = "";
+  for raw in (file(path).content() ?? "").split('\n') {
+    ln = raw.trim();
+    if starts_with(ln, "[") {
+      cur = ln;
+    } else if cur == section && ln.find("=") != null && !starts_with(ln, "#") {
+      return true;
+    }
+  }
+  false
+}
+
+// `LOFT_HOME`, else `HOME` (`registry_index::cache_dir`'s home).
+fn home_dir() -> text {
+  h = env_variable("LOFT_HOME") ?? "";
+  if h == "" { env_variable("HOME") ?? "." } else { h }
+}
+
+// Whether the registry cache holds any version of `id` (`<home>/.loft/registry/<id>-<v>`), which
+// Rust's `probe_cache_newest` / `probe_auto_install` would answer and this port does not.
+fn registry_has(id: text) -> boolean {
+  for ent in file("{home_dir()}/.loft/registry").files() {
+    if starts_with(file_name_of(ent.path), "{id}-") {
+      return true;
+    }
+  }
+  false
+}
+
+// The last name of a path.
+fn file_name_of(p: text) -> text {
+  d = script_dir(p);
+  if d == "" { p } else { p[len(d) + 1..] }
 }
 
 // `Parser::beside_dir`: the importing file's directory, `.` for a file named without one.
@@ -645,11 +854,7 @@ fn pinned_entry(e: el::El, id: text) -> text {
   if version == "" {
     return "";
   }
-  home = env_variable("LOFT_HOME") ?? "";
-  if home == "" {
-    home = env_variable("HOME") ?? ".";
-  }
-  package_entry("{home}/.loft/registry/{id}-{version}", "{id}-{version}")
+  package_entry("{home_dir()}/.loft/registry/{id}-{version}", "{id}-{version}")
 }
 
 // `registry_index::compare_semver`'s parts: major, minor and patch (a patch's `-…` suffix
