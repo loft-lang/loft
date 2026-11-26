@@ -3182,7 +3182,9 @@ pub fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
 // declines one of them it is refused, not instantiated: an instance would be a definition only
 // the port registers (`port-only-definitions.md`).
 pub fn rust_builds_in_place(e: el::El, name: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> boolean {
-  if len(types) == 0 {
+  // (Inside a template the types are open: there the body keeps the call of the generic, as
+  // Rust's does — try ddbe54a9e lost `keep<T>(v, f) { filter(v, f) }` refused this way.)
+  if len(types) == 0 || open_types(e, types) {
     return false;
   }
   recv = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0]! };
