@@ -957,23 +957,14 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       _ => {}
     }
   }
-  // Two record tails Rust delivers by rules this port does not carry, refused by name: a view
-  // read through a `!` (copied into the buffer, `materialized_view_return`), and a `match`
-  // answering a parameter beside a variant it builds (the body then borrows the parameter).
+  // A record tail Rust delivers by a rule this port does not carry, refused by name: a view read
+  // through a `!` (copied into the buffer, `materialized_view_return`).  (A `match` answering a
+  // parameter beside a variant it builds answers its arms as they stand — `param_join_return`,
+  // the variant arm typed by its variant, the body borrowing the parameter.)
   if !e.first_pass && heap_def(result) >= 0 {
     bt = el_ir::unspan(body_tail(code));
     if bt is NdCall && under_ncr(bt) {
       el::refuse(e, "a record tail that views its argument through a `!` read");
-    }
-    match bt {
-      NdIf { cond: _, t: mt, f: mf } => {
-        arm_built = match el_ir::unspan(mt) { NdBlock { block: mb } => mb[0].name == "match_arm", _ => false };
-        param_arm = match el_ir::unspan(mf) { NdVar { n: pv } => vars.vars[pv].argument, _ => false };
-        if arm_built && param_arm {
-          el::refuse(e, "a match tail answering a parameter beside a variant it builds");
-        }
-      },
-      _ => {}
     }
   }
   // A hoisted default's record body is typed by its buffer as that variable is named now
@@ -2725,6 +2716,13 @@ fn enum_arms(e: el::El, n: ir::Node, et: ir::TypeT) -> ir::Node {
         return n;
       }
       vd = match el_types::base(b.result[0] ?? ir::TyVoid) { TyReference { n: rn } => rn, _ => -1 };
+      // (A `match` arm whose value IS the variant literal keeps that variant — Rust's
+      // `match_arm` block is `ref(NdInt)` beside a sibling answering the enum; one whose value is
+      // a block ending in the literal (`NBlk { ops } => { …; NBlk { ops: o2 } }`) joins to the
+      // enum as an `if`'s arms do.)
+      if b.name == "match_arm" && match el_ir::unspan(b.operators[-1]!) { NdBlock { block: mlb } => mlb[0].name == "Object", _ => false } {
+        return n;
+      }
       if b.name == "scalar_match" {
         b.operators[-1] = enum_arms(e, b.operators[-1]!, et);
         return ir::NdBlock { block: [b] };

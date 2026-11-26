@@ -525,8 +525,26 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       _ => {}
     }
     lroot = place_root(e, el_ir::unspan(p.code));
-    place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
-    if lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
+    // (`variant_reads_place`: an out-of-line field whose value views the place — a match binding
+    // of the element being rewritten — takes the copy road below, built apart.)
+    lreads = false;
+    if lvd >= 0 && lroot >= 0 {
+      for lfi in lfs {
+        match e.p.nodes[lfi] {
+          SFieldInit { name: lfn, e: lfe } => {
+            lfa = attr_nr(el::def(e, lvd), lfn);
+            if lfe != null && lfa >= 0 && el_schema::out_of_line(e, lvd, lfa) && match e.p.nodes[lfe!] { SName { name: lsn, member: lsm } => lsm == "" && el_vars::var(vars, lsn) >= 0 && el_types::deps(el_vars::tp(vars, el_vars::var(vars, lsn))).contains(lroot), _ => false } {
+              lreads = true;
+            }
+          },
+          _ => {}
+        }
+      }
+    }
+    if !lreads {
+      place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
+    }
+    if lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 && !lreads {
       if e.first_pass {
         el_ex_pattern::first_pass_fields(e, vars, lvd, lfs);
         return ex(ir::NdNull, ir::TyVoid);
