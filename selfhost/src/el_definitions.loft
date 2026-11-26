@@ -236,6 +236,10 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
   root = package_root(e.file);
   if root != "" && !el::use_exists(e, lib) {
     own_entry = own_package_entry(root, lib);
+    // (A `--lib` directory never rebinds a module beside the importing file.)
+    if own_entry == "" && !exists("{beside_dir(e.file)}/{lib}.loft") {
+      own_entry = flag_lib_entry(lib);
+    }
     if own_entry == "" && !unported_road_answers(e, lib, root) {
       own_entry = pinned_entry(e, lib);
     }
@@ -532,16 +536,40 @@ fn package_entry(dir: text, id: text) -> text {
   if exists(f) { f } else { "" }
 }
 
-// The roads `Parser::lib_path` takes before a lock's pin that this port does not carry: a
-// `--lib` directory naming `id` (`probe_flag_lib_dirs`), a `{ path = … }` dependency of the
-// package (`probe_manifest_path_dep`), and a module beside the importing file
-// (`probe_cur_dir_flat`, `resolve_pinned`'s first step).  True where one of them could answer.
-fn unported_road_answers(e: el::El, id: text, root: text) -> boolean {
+// `Parser::probe_flag_lib_dirs`: the first `--lib` directory (`LOFT_ELAB_LIB`, in order) that
+// answers `id` — its flat `<dir>/<id>.loft`, else the package there (`lib_path_manifest`); "".
+fn flag_lib_entry(id: text) -> text {
   for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
-    if dir != "" && (exists("{dir}/{id}.loft") || exists("{dir}/{id}/loft.toml") || exists("{dir}/{id}/src/{id}.loft")) {
-      return true;
+    if dir != "" {
+      if exists("{dir}/{id}.loft") {
+        return "{dir}/{id}.loft";
+      }
+      pe = manifest_entry_in(dir, id);
+      if pe != "" {
+        return pe;
+      }
     }
   }
+  ""
+}
+
+// `Parser::lib_path_manifest_resolve`: the entry of package `id` found in `dir` — `dir` itself
+// when it is that package (its last name is `id` and it holds a manifest, #408), else
+// `<dir>/<id>` — where that directory and its entry exist; "".
+fn manifest_entry_in(dir: text, id: text) -> text {
+  last = if script_dir(dir) == "" { dir } else { dir[len(script_dir(dir)) + 1..] };
+  pkg = if last == id && exists("{dir}/loft.toml") { dir } else { "{dir}/{id}" };
+  if !exists(pkg) {
+    return "";
+  }
+  package_entry(pkg, id)
+}
+
+// The roads `Parser::lib_path` takes before a lock's pin that this port does not carry: a
+// `{ path = … }` dependency of the package (`probe_manifest_path_dep`) and a module beside the
+// importing file (`probe_cur_dir_flat`, `resolve_pinned`'s first step).  No program of the
+// corpus reaches either (measured 2026-11-26).  True where one of them could answer.
+fn unported_road_answers(e: el::El, id: text, root: text) -> boolean {
   inline_field(toml_raw("{root}/loft.toml", "[dependencies]", 0, id), "path") != "" || exists("{beside_dir(e.file)}/{id}.loft")
 }
 
@@ -750,15 +778,12 @@ fn lib_path(e: el::El, id: text) -> text {
   if !exists(f) && len(e.file) >= 5 {
     f = "{e.file[..len(e.file) - 5]}/{id}.loft";
   }
-  // `--lib` directories (the gate passes a program's `@ARGS` ones as `LOFT_ELAB_LIB`), flat; a
-  // package there is resolved by its manifest.
-  for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
-    if dir != "" && !exists(f) {
-      if exists("{dir}/{id}.loft") {
-        f = "{dir}/{id}.loft";
-      } else if exists("{dir}/{id}/loft.toml") {
-        return "";
-      }
+  // `--lib` directories (the gate passes a program's `@ARGS` ones as `LOFT_ELAB_LIB`): flat, or a
+  // package there by its manifest (`probe_flag_lib_dirs`).
+  if !exists(f) {
+    fl = flag_lib_entry(id);
+    if fl != "" {
+      f = fl;
     }
   }
   if !exists(f) && (len(env_variable("LOFT_LIB")) > 0 || exists("{env_variable("HOME")}/.loft/lib/{id}")) {
