@@ -71,9 +71,9 @@ static void loft_eh_queue_free(loft_cx *cx, loft_eh_queue *q) {
 /* ── The wire-schema table and conflation (shared by both roles) ── */
 
 /* `msg_id -> keyed?` for the kinds whose messages are latest-value state. */
-static int64_t *loft_eh_sync_id = 0;
-static uint8_t *loft_eh_sync_keyed = 0;
-static size_t loft_eh_nsync = 0;
+LOFT_STATE int64_t *loft_eh_sync_id LOFT_INIT(0);
+LOFT_STATE uint8_t *loft_eh_sync_keyed LOFT_INIT(0);
+LOFT_STATE size_t loft_eh_nsync LOFT_INIT(0);
 
 static void loft_eh_sync_declare(loft_cx *cx, int64_t id, uint8_t keyed) {
     for (size_t i = 0; i < loft_eh_nsync; i++) {
@@ -210,16 +210,16 @@ static loft_text loft_eh_copy(loft_cx *cx, const loft_text *t) {
  * drained into the pumping host's queue as an ordinary kind-3 event (cid = the request id). ── */
 
 typedef struct { int64_t id, status; loft_text body; } loft_eh_done;
-static loft_eh_done *loft_eh_dones = 0;
-static size_t loft_eh_ndone = 0;
-static int64_t loft_eh_http_next = 1;
+LOFT_STATE loft_eh_done *loft_eh_dones LOFT_INIT(0);
+LOFT_STATE size_t loft_eh_ndone LOFT_INIT(0);
+LOFT_STATE int64_t loft_eh_http_next LOFT_INIT(1);
 /* The lock between a worker parking its completion and the pump draining them. */
 #if defined(LOFT_EH_THREADS) && defined(_WIN32)
-static SRWLOCK loft_eh_done_lock = SRWLOCK_INIT;
+LOFT_STATE SRWLOCK loft_eh_done_lock LOFT_INIT(SRWLOCK_INIT);
 #define LOFT_EH_LOCK() AcquireSRWLockExclusive(&loft_eh_done_lock)
 #define LOFT_EH_UNLOCK() ReleaseSRWLockExclusive(&loft_eh_done_lock)
 #elif defined(LOFT_EH_THREADS)
-static pthread_mutex_t loft_eh_done_lock = PTHREAD_MUTEX_INITIALIZER;
+LOFT_STATE pthread_mutex_t loft_eh_done_lock LOFT_INIT(PTHREAD_MUTEX_INITIALIZER);
 #define LOFT_EH_LOCK() pthread_mutex_lock(&loft_eh_done_lock)
 #define LOFT_EH_UNLOCK() pthread_mutex_unlock(&loft_eh_done_lock)
 #else
@@ -336,8 +336,8 @@ static int loft_eh_os_random(uint8_t *out, size_t n) {
 /* `debug_token::token` (`@C172`): this run's debug token — `LOFT_DEBUG_TOKEN` when it holds 32 to
  * 128 hexadecimal digits and nothing else, else 128 bits of the OS's random source as 32 digits —
  * or NULL when none can be had, and then no debug connection is answered. */
-static char loft_eh_tok[129];
-static int loft_eh_tok_state = -1;
+LOFT_STATE char loft_eh_tok[129];
+LOFT_STATE int loft_eh_tok_state LOFT_INIT(-1);
 static const char *loft_eh_debug_token(loft_cx *cx) {
     int st;
     LOFT_PUB_GET(loft_eh_tok_state, st);
@@ -611,7 +611,7 @@ typedef struct {
     int debug_agent;   /* the upgrade named this run's debug token (`@C172`) */
 } loft_eh_conn;
 
-static struct {
+LOFT_STATE struct {
     int up, alive, listener, udp, warned_oversize;
     loft_eh_conn *conns;
     size_t nconns;
@@ -638,7 +638,7 @@ static void loft_eh_conn_reset(loft_cx *cx, loft_eh_conn *c) {
 
 /* ── The connector (or local) kernel ── */
 
-static struct {
+LOFT_STATE struct {
     int up, alive, conn, udp, udp_bound, ctl;
     char cookie[64];
     int64_t last_hello, last_keepalive, out_seq;
@@ -659,19 +659,19 @@ static int64_t loft_ehc_now(loft_cx *cx) { return loft_now_us(cx) - loft_ehc.sta
  * acknowledged, and eval / resume / reload are queued without a reply — what an unbooted live
  * tier answers. ── */
 
+LOFT_STATE int loft_fs_loft_eh_debug_on_seen LOFT_INIT(-1);
 static int loft_eh_debug_on(loft_cx *cx) {
-    static int seen = -1;
     int on;
-    LOFT_PUB_GET(seen, on);
+    LOFT_PUB_GET(loft_fs_loft_eh_debug_on_seen, on);
     if (on < 0) {
         const char *v = getenv("LOFT_DEBUG_CONTROL");
         on = v && strcmp(v, "1") == 0;
-        LOFT_PUB_SET(seen, on);
+        LOFT_PUB_SET(loft_fs_loft_eh_debug_on_seen, on);
     }
     return on;
 }
 
-static int loft_eh_quit = 0;
+LOFT_STATE int loft_eh_quit LOFT_INIT(0);
 
 /* `{:?}` of a text, as the Rust kernel quotes an unknown command. */
 static void loft_eh_debug_quote(loft_cx *cx, loft_text *o, const char *p, size_t n) {
@@ -698,10 +698,10 @@ static uint8_t loft_swap_start(loft_cx *cx, loft_str artifact);
 /* `D!:swap dev` asked for the program interpreted again, not a binary: the swap step spawns the
  * driver with `--interpret`, the libraries and the source (`LOFT_LIVE_*`).  Read and cleared by
  * the swap. */
-static int loft_sw_dev_next = 0;
+LOFT_STATE int loft_sw_dev_next LOFT_INIT(0);
 /* `D!:rebuild fast` asked for the shipped tier (`--ship`), the speed the game ships at; a build
  * swapped in at full speed (`LOFT_LIVE_SHIP=1`) rebuilds at it too. */
-static int loft_rb_ship_next = 0;
+LOFT_STATE int loft_rb_ship_next LOFT_INIT(0);
 
 /* `debug_cmd_dispatch`, the command core both roles share: 1 and the immediate reply in `r`, or 0
  * for a command whose answer would come from the pause loop. */
@@ -796,10 +796,10 @@ static void loft_eh_close_all(void) {
     }
 }
 
+LOFT_STATE int loft_fs_loft_eh_close_at_exit_armed LOFT_INIT(0);
 static void loft_eh_close_at_exit(loft_cx *cx) {
-    static int armed = 0;
     int was;
-    LOFT_PUB_SWAP(armed, 1, was);
+    LOFT_PUB_SWAP(loft_fs_loft_eh_close_at_exit_armed, 1, was);
     if (was) return;
     atexit(loft_eh_close_all);
 }
@@ -1515,6 +1515,8 @@ static void loft_ehc_lost(loft_cx *cx) {
  * keyframe or a plain sync-class frame conflates, the rest queues), its datagrams (the ack, the
  * sync traffic — `LOFT_UDP_DROP_NTH=N` drops every Nth, for measurement), then the hello and
  * keepalive cadences. */
+LOFT_STATE int64_t loft_fs_loft_kernel_client_pump_drop_seen LOFT_INIT(-1);
+LOFT_STATE uint64_t loft_fs_loft_kernel_client_pump_received LOFT_INIT(0);
 static int64_t loft_kernel_client_pump(loft_cx *cx) {
     if (!loft_ehc.up) return 0;
     int64_t added = 0;
@@ -1550,15 +1552,13 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
         free(msg.p);
     }
     if (loft_ehc.udp >= 0) {
-        static int64_t drop_seen = -1;
-        static uint64_t received = 0;
         loft_word drop_nth;
-        LOFT_PUB_GET(drop_seen, drop_nth);
+        LOFT_PUB_GET(loft_fs_loft_kernel_client_pump_drop_seen, drop_nth);
         if (drop_nth < 0) {
             const char *v = getenv("LOFT_UDP_DROP_NTH");
             int64_t d = 0;
             drop_nth = v && loft_eh_int(cx, v, strlen(v), &d) && d > 0 ? d : 0;
-            LOFT_PUB_SET(drop_seen, drop_nth);
+            LOFT_PUB_SET(loft_fs_loft_kernel_client_pump_drop_seen, drop_nth);
         }
         char buf[2048];
         for (;;) {
@@ -1572,7 +1572,7 @@ static int64_t loft_kernel_client_pump(loft_cx *cx) {
                 loft_ehc.udp_bound = 1;
             } else if (loft_eh_seq_frame(cx, buf, (size_t) len, &seq, &body, &bl)) {
                 uint64_t nth = 0;
-                if (drop_nth > 0) LOFT_PUB_ADD(received, 1u, nth);
+                if (drop_nth > 0) LOFT_PUB_ADD(loft_fs_loft_kernel_client_pump_received, 1u, nth);
                 if (drop_nth > 0 && nth % (uint64_t) drop_nth == 0) continue;
                 loft_eh_conflate(cx, &loft_ehc.slots, seq, body, bl);
             }
@@ -1692,7 +1692,7 @@ typedef void (*loft_swap_show_fn)(loft_cx *cx, loft_text *s, loft_ref r);
 #define LOFT_SW_WAITING 2
 #define LOFT_SW_DONE 3
 
-static struct {
+LOFT_STATE struct {
     int registered;
     loft_ref w;
     uint16_t tp;
@@ -1703,7 +1703,7 @@ static struct {
     char *artifact, *ready, *snap;
     long pid;
     int64_t deadline;
-} loft_sw = { 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 };
+} loft_sw LOFT_INIT({ 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 });
 
 static char *loft_sw_join(loft_cx *cx, const char *a, const char *b) {
     size_t n = strlen(a), m = strlen(b);
@@ -2083,7 +2083,7 @@ static int64_t loft_kernel_swap_step(loft_cx *cx) {
 static uint8_t loft_swap_retired(loft_cx *cx) { return loft_sw.phase == LOFT_SW_DONE; }
 
 /* ── The background rebuild (src/live_rebuild.rs): 0 idle, 1 building, 2 ready, 3 failed ── */
-static struct {
+LOFT_STATE struct {
     int state;
     long pid;
     char *snapshot;
@@ -2091,7 +2091,7 @@ static struct {
     char *out, *err, *artifact;
     char failure[512];
     unsigned seq;
-} loft_rb = { 0, -1, 0, 0, 0, 0, 0, { 0 }, 0 };
+} loft_rb LOFT_INIT({ 0, -1, 0, 0, 0, 0, 0, { 0 }, 0 });
 
 #ifdef LOFT_SW_CAN
 /* `spawn_build`: one background `--check --native-c` build of `src` through the driver, its output

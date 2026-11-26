@@ -296,6 +296,38 @@ the same order, so no answer, free or leak changes; the rule and its premises ar
   names each function it shortened.
 - **Guard:** `tests/c_tail.rs`.
 
+## The split build: one unit per source file (opt-in)
+
+A big program's edit–build–test loop spends most of its gcc time recompiling C that did not
+change.  `LOFT_C_UNITS=1` writes one C unit per `.loft` file, plus a shared unit and a unit for
+the cold runtime.  The C driver compiles each unit to an object and links the objects
+(`src/c/units.rs`, `c_driver::split_build`).  It is for DEVELOPMENT passes.  It gives up
+inlining between files and whole-program optimisation (`-flto`), so a program built this way
+can run somewhat slower.  `--ship`, a hosted unit, a page and a wasm module always build one
+unit, whatever the switch says.
+
+- **What a unit holds:** its file's functions, and only the head items it names: types,
+  tables, constants and prototypes, and what those name in turn.  Every unit carries the hot
+  runtime (its types, macros and inline-hinted helpers).  The cold runtime, the plain `static`
+  functions, is one unit of its own: the exception to @C169.  An item the cut misses is a
+  compile error in that unit, never a different program.
+- **The runtime's state is one:** a file-scope variable is declared through `LOFT_STATE`. It is
+  defined in the shared unit (`-DLOFT_SPLIT_OWN`) and `extern` in every other unit
+  (`-DLOFT_SPLIT_USE`).  A pointer to constant data (`static const T *p`) is state too.  A
+  mutable `static` left outside `LOFT_STATE` stops the build with an `#error` that names it.
+- **The object cache:** each object is kept in `.loft/cache/units/` beside the program.  It is
+  keyed by the unit's C text, the compiler and its identity, every flag and the unit's role.
+  Only a unit whose C changed is compiled.  The key is the C, never the sources it came from: a
+  unit carries other files' types and prototypes, so an edit to one file changes the C of every
+  unit that names what it changed.  A unit's source is written as `u-<key>.c`, so the same
+  program links the same bytes whatever the cache held.  The directory keeps the 4096 most
+  recently used objects.  `LOFT_NO_CACHE` and a lint (`LOFT_C_LINT`) compile every unit.
+- **Switches:** `LOFT_C_UNITS=1` turns it on.  `LOFT_C_UNITS_JOBS=<n>` sets how many units
+  compile at once (default 4, largest first); a single large build sets it to its cores.
+- **Guards:** `units::tests` (the cut, the linkage, the state check),
+  `a_split_build_compiles_only_the_units_a_change_reaches` in `tests/c_emit.rs`, and the
+  language suite run with `LOFT_C_UNITS=1`.
+
 ## The model
 
 The C runtime's stores are the standard of [STORE_MODEL.md](STORE_MODEL.md) (@PLN206): one

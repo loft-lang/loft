@@ -19,6 +19,32 @@
  *                         integer's null. */
 #ifndef LOFT_WIDTH_H
 #define LOFT_WIDTH_H
+
+/* @PLN229 B1a — the runtime's STATE, spelled once for every build.  Here, in the header every
+ * assembly of the runtime reaches before any state (the unit, a `[c] shim`, a component).
+ *
+ * Every unit carries the whole runtime (`@C169`), so in a program written as one unit each piece
+ * of runtime state is `static` there, as it always was.  A program written as several units
+ * (the opt-in split build) carries the runtime's functions in each of them, but its state must
+ * stay ONE: the main context, the thread pool, the locks, the open trace files.  So each piece
+ * of state is declared `LOFT_STATE <type> <name> LOFT_INIT(<initializer>);`:
+ *
+ *   one unit (no LOFT_SPLIT_*)   static <type> <name> = <initializer>;
+ *   the unit that owns it        <type> <name> = <initializer>;          (LOFT_SPLIT_OWN)
+ *   every other unit             extern <type> <name>;                    (LOFT_SPLIT_USE)
+ *
+ * An initializer holding a directive cannot be a macro argument: it is written between
+ * `#ifndef LOFT_SPLIT_USE` and `#endif` instead (`loft_main_cx`). */
+#if defined(LOFT_SPLIT_USE)
+#define LOFT_STATE extern
+#define LOFT_INIT(...)
+#elif defined(LOFT_SPLIT_OWN)
+#define LOFT_STATE
+#define LOFT_INIT(...) = __VA_ARGS__
+#else
+#define LOFT_STATE static
+#define LOFT_INIT(...) = __VA_ARGS__
+#endif
 #include <stdint.h>
 typedef int64_t loft_word;
 typedef double loft_fword;

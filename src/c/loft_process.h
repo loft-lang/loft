@@ -102,10 +102,10 @@ static void loft_proc_say(loft_cx *cx, loft_proc_answer *a, int64_t code, const 
 /* ── The child: spawn, ask, stop (platform_process.rs) ── */
 
 /* The owned groups a forwarded signal reaches, and what each forwarded signal did before. */
-static volatile sig_atomic_t loft_proc_groups[256];
+LOFT_STATE volatile sig_atomic_t loft_proc_groups[256];
 static const int loft_proc_forwarded[4] = { SIGINT, SIGQUIT, SIGHUP, SIGTERM };
-static struct sigaction loft_proc_previous[4];
-static uint8_t loft_proc_was_ignored[4];
+LOFT_STATE struct sigaction loft_proc_previous[4];
+LOFT_STATE uint8_t loft_proc_was_ignored[4];
 
 static void loft_proc_forward(int sig) {
     for (size_t i = 0; i < 256; i++)
@@ -121,10 +121,10 @@ static void loft_proc_forward(int sig) {
     }
 }
 
+LOFT_STATE int loft_fs_loft_proc_track_once LOFT_INIT(0);
 static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
-    static int once = 0;
-    /* `@FR-C-Publish`: the handlers installed once, by the first thread that starts a child. */
-    if (loft_once_begin(&once)) {
+    /* `@FR-C-Publish`: the handlers installed loft_fs_loft_proc_track_once, by the first thread that starts a child. */
+    if (loft_once_begin(&loft_fs_loft_proc_track_once)) {
         for (int i = 0; i < 4; i++) {
             sigaction(loft_proc_forwarded[i], 0, &loft_proc_previous[i]);
             /* An ignored signal is ignored by the children too: there is nothing to pass on. */
@@ -137,7 +137,7 @@ static void loft_proc_track(loft_cx *cx, pid_t group, int on) {
             sigemptyset(&act.sa_mask);
             sigaction(loft_proc_forwarded[i], &act, 0);
         }
-        loft_once_end(&once);
+        loft_once_end(&loft_fs_loft_proc_track_once);
     }
     /* The groups table: any thread that starts or ends a child writes it, and the signal
      * handler reads it — each slot taken or given back by one compare-and-swap. */
@@ -349,7 +349,7 @@ static int loft_child_pump(loft_cx *cx, loft_child *c, loft_text *out, loft_text
  * its handle (`_get_osfhandle`), never the CRT's text translation. */
 typedef int loft_pid; /* 1 + the child's row in `loft_win_children`; 0 for none */
 typedef struct { HANDLE proc, job; } loft_win_child;
-static loft_win_child loft_win_children[256];
+LOFT_STATE loft_win_child loft_win_children[256];
 typedef struct { loft_pid pid; int in, out, err; } loft_child;
 
 static void loft_proc_close(loft_cx *cx, int fd) { _close(fd); }
@@ -729,11 +729,12 @@ static void loft_rec_write(loft_cx *cx, const char *entry, const char *name, con
     fclose(f);
 }
 
+LOFT_STATE loft_text * loft_fs_loft_rec_replay_used_key LOFT_INIT(0);
+LOFT_STATE size_t * loft_fs_loft_rec_replay_used_n LOFT_INIT(0);
+LOFT_STATE size_t loft_fs_loft_rec_replay_nused LOFT_INIT(0);
 static int loft_rec_replay(loft_cx *cx, loft_words *w, const char *in, size_t inlen, loft_proc_answer *a) {
     const char *dir = loft_rec_dir(cx, "LOFT_RUN_REPLAY");
     if (!dir) return 0;
-    static loft_text *used_key = 0;
-    static size_t *used_n = 0, nused = 0;
     loft_text key = { 0, 0, 0 };
     if (!loft_rec_key(cx, w, &key)) {
         a->code = -1;
@@ -768,18 +769,18 @@ static int loft_rec_replay(loft_cx *cx, loft_words *w, const char *in, size_t in
     } else {
         /* `@FR-C-Publish`: the replay's count per key is the program's, under the lock. */
         loft_pub_lock();
-        size_t slot = nused;
-        for (size_t i = 0; i < nused; i++)
-            if (used_key[i].len == key.len && memcmp(used_key[i].p, key.p, key.len) == 0) slot = i;
-        if (slot == nused) {
-            used_key = (loft_text *) realloc(used_key, (nused + 1) * sizeof *used_key);
-            used_n = (size_t *) realloc(used_n, (nused + 1) * sizeof *used_n);
-            if (!used_key || !used_n) { fputs("loft: out of memory\n", stderr); abort(); }
-            used_key[nused] = loft_text_own(cx, loft_view(cx, &key));
-            used_n[nused++] = 0;
+        size_t slot = loft_fs_loft_rec_replay_nused;
+        for (size_t i = 0; i < loft_fs_loft_rec_replay_nused; i++)
+            if (loft_fs_loft_rec_replay_used_key[i].len == key.len && memcmp(loft_fs_loft_rec_replay_used_key[i].p, key.p, key.len) == 0) slot = i;
+        if (slot == loft_fs_loft_rec_replay_nused) {
+            loft_fs_loft_rec_replay_used_key = (loft_text *) realloc(loft_fs_loft_rec_replay_used_key, (loft_fs_loft_rec_replay_nused + 1) * sizeof *loft_fs_loft_rec_replay_used_key);
+            loft_fs_loft_rec_replay_used_n = (size_t *) realloc(loft_fs_loft_rec_replay_used_n, (loft_fs_loft_rec_replay_nused + 1) * sizeof *loft_fs_loft_rec_replay_used_n);
+            if (!loft_fs_loft_rec_replay_used_key || !loft_fs_loft_rec_replay_used_n) { fputs("loft: out of memory\n", stderr); abort(); }
+            loft_fs_loft_rec_replay_used_key[loft_fs_loft_rec_replay_nused] = loft_text_own(cx, loft_view(cx, &key));
+            loft_fs_loft_rec_replay_used_n[loft_fs_loft_rec_replay_nused++] = 0;
         }
-        size_t k = used_n[slot] < nm - 1 ? used_n[slot] : nm - 1;
-        used_n[slot]++;
+        size_t k = loft_fs_loft_rec_replay_used_n[slot] < nm - 1 ? loft_fs_loft_rec_replay_used_n[slot] : nm - 1;
+        loft_fs_loft_rec_replay_used_n[slot]++;
         loft_pub_unlock();
         loft_text code = { 0, 0, 0 };
         a->code = -1;
@@ -845,9 +846,9 @@ static void loft_run_until(loft_cx *cx, loft_words *w, const char *in, size_t in
 /* ── Started programs and line cursors, by the handle the library holds ── */
 
 typedef struct { int64_t h; loft_pid pid; } loft_started;
-static loft_started *loft_started_tab = 0;
-static size_t loft_nstarted = 0;
-static int64_t loft_next_started = 1;
+LOFT_STATE loft_started *loft_started_tab LOFT_INIT(0);
+LOFT_STATE size_t loft_nstarted LOFT_INIT(0);
+LOFT_STATE int64_t loft_next_started LOFT_INIT(1);
 
 static loft_started *loft_started_find(loft_cx *cx, int64_t h) {
     for (size_t i = 0; i < loft_nstarted; i++)
@@ -873,9 +874,9 @@ typedef struct {
     int finished;
     int64_t code;
 } loft_cursor;
-static loft_cursor **loft_cursors = 0;
-static size_t loft_ncursors = 0;
-static int64_t loft_next_cursor = 1;
+LOFT_STATE loft_cursor **loft_cursors LOFT_INIT(0);
+LOFT_STATE size_t loft_ncursors LOFT_INIT(0);
+LOFT_STATE int64_t loft_next_cursor LOFT_INIT(1);
 
 static loft_cursor *loft_cursor_find(loft_cx *cx, int64_t h) {
     for (size_t i = 0; i < loft_ncursors; i++)

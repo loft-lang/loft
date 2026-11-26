@@ -32,6 +32,7 @@ mod tail;
 mod tidy;
 pub(crate) mod tls;
 mod unicode;
+mod units;
 mod wide_ledger;
 
 use crate::data::{Data, DefType, Type, Value};
@@ -248,7 +249,7 @@ pub(crate) struct Cx<'a> {
     deliver_descs: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
     /// A page's flatten walkers (`loft_dlk{tp}`), by type: the body of each.
     deliver_flats: std::cell::RefCell<std::collections::BTreeMap<u16, String>>,
-    /// Every compile-time constant the unit reads (`loft_const{d}`), by definition number.
+    /// Every compile-time constant the unit reads (`loft_const_<ident>`, [`Cx::const_ident`]), by definition number.
     consts: std::cell::RefCell<std::collections::BTreeSet<u32>>,
     /// The signatures the unit calls function values through: `loft_call{n}`.
     /// The dispatcher signatures: each parameter's shape and whether it is a `&` link.
@@ -272,6 +273,9 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// @PLN229 B1: this unit is cut into the units of a split build, so a function's body
+    /// (`<name>__fr`) is marked with the file it is declared in, as the function is.
+    pub(crate) split_units: std::cell::Cell<bool>,
     /// `@FR-R-Version`: each function's leaf plan, and the leaves whose precondition is written
     /// (into `gen_decls`, `body::version`).
     pub(crate) version_leaves: std::cell::RefCell<
@@ -338,6 +342,8 @@ pub(crate) struct Cx<'a> {
     pub(crate) source_roots: crate::source_name::Roots,
     /// Each type's C name ([`Cx::type_ident`]), worked out once per unit.
     type_idents: std::cell::OnceCell<Vec<String>>,
+    /// The part of a C name that stands for each built constant: [`Cx::const_ident`].
+    const_idents: std::cell::OnceCell<std::collections::HashMap<u32, String>>,
     pub(crate) browser: bool,
     /// The unit is compiled to wasm32 — a page's module or a `--native-wasm` program
     /// ([`emit_wasm_program`]): no shared library can be opened there.
@@ -485,6 +491,7 @@ impl<'a> Cx<'a> {
             open: false,
             source_roots: data.source_roots(None),
             type_idents: std::cell::OnceCell::new(),
+            const_idents: std::cell::OnceCell::new(),
             tuples: std::cell::RefCell::new(Vec::new()),
             tuple_casts: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             copy_types: std::cell::RefCell::new(std::collections::BTreeSet::new()),
@@ -509,6 +516,7 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            split_units: std::cell::Cell::new(false),
             version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_callees: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
@@ -1077,6 +1085,78 @@ impl<'a> Cx<'a> {
         })
     }
 
+    /// @PLN229 B0 — tuple struct `id`'s name part: one letter per member's C shape, a nested
+    /// tuple or a transient record as a letter, its part's length and the part — so two shapes
+    /// never share a name, and the name does not depend on which tuple the writer met first.
+    fn tuple_code(&self, id: u32) -> String {
+        self.tuple_shapes(id)
+            .iter()
+            .map(|c| match c {
+                CType::Int => "l".to_string(),
+                CType::Int32 => "i".to_string(),
+                CType::Bool => "b".to_string(),
+                CType::Text => "t".to_string(),
+                CType::Ref => "r".to_string(),
+                CType::Enum => "e".to_string(),
+                CType::Float => "d".to_string(),
+                CType::Single => "f".to_string(),
+                CType::Char => "c".to_string(),
+                CType::Fn => "n".to_string(),
+                CType::TrVec => "v".to_string(),
+                CType::Void => "z".to_string(),
+                CType::Tuple(t) => {
+                    let inner = self.tuple_code(*t);
+                    format!("T{}{inner}", inner.len())
+                }
+                CType::Tr(g) => {
+                    let ident = self.type_ident(*g);
+                    format!("R{}{ident}", ident.len())
+                }
+            })
+            .collect()
+    }
+
+    /// @PLN229 B0 — `text` with every tuple struct named from its members' shapes
+    /// (`loft_tup_<code>`, [`Cx::tuple_code`]) in place of its number of first use
+    /// (`loft_tup<n>`, and a cast's `loft_tup<n>_as<m>`), in one pass: a unit's C then changes only
+    /// where a tuple it uses changes.  A unit with no tuple is returned as it is.
+    pub(crate) fn name_tuples(&self, text: String) -> String {
+        let n = self.tuples.borrow().len();
+        if n == 0 {
+            return text;
+        }
+        let codes: Vec<String> = (0..n as u32).map(|i| self.tuple_code(i)).collect();
+        // The number at the start of `s` that names a tuple, and how many bytes it takes.
+        let number = |s: &str| -> Option<(usize, usize)> {
+            let digits = s.bytes().take_while(u8::is_ascii_digit).count();
+            let i = s[..digits].parse::<usize>().ok().filter(|&i| i < n)?;
+            Some((i, digits))
+        };
+        let mut out = String::with_capacity(text.len() + text.len() / 64);
+        let mut rest = text.as_str();
+        while let Some(at) = rest.find("loft_tup") {
+            let after = &rest[at + "loft_tup".len()..];
+            out.push_str(&rest[..at]);
+            out.push_str("loft_tup");
+            let Some((i, len)) = number(after) else {
+                rest = after;
+                continue;
+            };
+            out.push('_');
+            out.push_str(&codes[i]);
+            rest = &after[len..];
+            if let Some(cast) = rest.strip_prefix("_as")
+                && let Some((j, len)) = number(cast)
+            {
+                out.push_str("_as_");
+                out.push_str(&codes[j]);
+                rest = &cast[len..];
+            }
+        }
+        out.push_str(rest);
+        out
+    }
+
     /// The number of the tuple struct with these element shapes, made on first use.
     pub(crate) fn tuple_id(&self, shapes: Vec<CType>) -> u32 {
         let mut t = self.tuples.borrow_mut();
@@ -1568,7 +1648,39 @@ impl<'a> Cx<'a> {
             return Err("a constant that was not built".into());
         }
         self.consts.borrow_mut().insert(d);
-        Ok(format!("loft_const{d}"))
+        Ok(format!("loft_const_{}", self.const_ident(d)))
+    }
+
+    /// The part of a C name that stands for constant `d` (`loft_const_<ident>`,
+    /// `loft_cwords_<ident>`): the constant's own name made an identifier ([`c_ident`]), never its
+    /// definition number, which moves whenever a definition is added before it (@PLN229: a
+    /// unit's text depends on the constants it reads, not on the others).  Two constants that
+    /// share a name keep their number beside it, so no two C names collide.
+    fn const_ident(&self, d: u32) -> String {
+        let all = self.const_idents.get_or_init(|| {
+            let built: Vec<(u32, String)> = (0..self.data.definitions())
+                .filter(|&c| self.data.def(c).const_ref.is_some())
+                .map(|c| (c, c_ident(&self.data.def(c).name)))
+                .collect();
+            let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for (_, n) in &built {
+                *seen.entry(n.as_str()).or_default() += 1;
+            }
+            built
+                .iter()
+                .map(|(c, n)| {
+                    (
+                        *c,
+                        if seen[n.as_str()] > 1 {
+                            format!("{n}_{c}")
+                        } else {
+                            n.clone()
+                        },
+                    )
+                })
+                .collect()
+        });
+        all.get(&d).cloned().unwrap_or_else(|| d.to_string())
     }
 
     /// Each constant's store, as words, and `loft_init`, which loads them before `main` runs.
@@ -1580,13 +1692,14 @@ impl<'a> Cx<'a> {
                 continue;
             };
             let (n, words) = const_words(self.stores, &r);
+            let c = self.const_ident(d);
             let _ = writeln!(
                 out,
-                "static const uint32_t loft_cwords{d}[] = {{ {words} }};\nstatic loft_ref loft_const{d};"
+                "static const uint32_t loft_cwords_{c}[] = {{ {words} }};\nLOFT_STATE loft_ref loft_const_{c};"
             );
             let _ = writeln!(
                 init,
-                "    loft_const{d} = loft_const_store(cx, loft_cwords{d}, {n});"
+                "    loft_const_{c} = loft_const_store(cx, loft_cwords_{c}, {n});"
             );
         }
         init.push_str("}\n");
@@ -1862,7 +1975,7 @@ pub fn c_name(data: &Data, d: u32) -> String {
     let held = data.fn_dups_memo.with(|m: &mut FnDups| m.clone());
     let dups =
         held.unwrap_or_else(|| std::sync::Arc::new(crate::opt::names::duplicate_fn_names(data)));
-    crate::opt::names::disambiguated_fn_ident(&dups, data.def(d))
+    crate::opt::names::disambiguated_fn_ident(&dups, data, data.def(d))
 }
 
 /// The function names two definitions share ([`crate::opt::names::duplicate_fn_names`]), kept
@@ -2293,6 +2406,13 @@ fn emit_unit_with(
     // The analysis memos of the definitions this writer works from (`Data::nn_memo`).
     crate::opt::non_sentinel::begin_c_generation(data);
     let _fn_dups = FnDupsScope::enter(data);
+    // The callee facts the writer asks per function and per assignment (each callee's return
+    // class and its round's definitions walk, each callee's parameter writes), once for the
+    // unit, as the bytecode generator does (loft#2620): writing a body changes no body, and
+    // `data` is borrowed shared for the whole emission.  Opened per function, a call chain
+    // re-derived every callee below each function: a 4 000-deep chain took 35 s (@PLN229 A3).
+    let _param_writes = crate::parser::param_writes_summary(data);
+    let _own_memo = crate::use_analysis::ownership_memo_scope(data);
     // A closure's drop cascade (`OpDropFnRef`) is called through the value, never by name: each
     // lambda the program reaches brings its record's cascade along.
     let mut all: Vec<u32> = roots.to_vec();
@@ -2358,13 +2478,24 @@ fn emit_unit_with(
             }
         }
     }
+    let split = split_units_asked(hosted.is_some() || shape.browser || shape.wasm);
+    cx.split_units.set(split);
     for &d in &fns {
         let (sig, body) = function(&cx, d, 0).map_err(|why| Refusal {
             function: data.def(d).original_name().clone(),
             why,
         })?;
         let _ = writeln!(protos, "{sig};");
-        let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+        if split {
+            // @PLN229 B1: each function's body goes to the unit of the file it is declared in.
+            let _ = write!(
+                bodies,
+                "\n{SPLIT_FN}{}*/\n{sig} {{\n{body}}}\n{SPLIT_FN_END}\n",
+                data.def(d).position.file.as_str()
+            );
+        } else {
+            let _ = write!(bodies, "\n{sig} {{\n{body}}}\n");
+        }
     }
     // The place twins the functions call, and the ones those call in turn.
     let mut written = 0;
@@ -2396,9 +2527,10 @@ fn emit_unit_with(
     // is no defect of it, and neither is a helper that takes the store context first without
     // reading it (every runtime function does, `@PLN226`), so gcc and clang are told not to
     // report those there — and only there, the program's own functions after it are reported.
-    // `LOFT_C_LINT=all` lifts it.
+    // `LOFT_C_LINT=all` lifts it.  A piece of the runtime's state (`LOFT_STATE`, @PLN229 B1a)
+    // whose only reader is a function the unit does not call is unused the same way.
     out.push_str(
-        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#endif\n",
+        "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#pragma GCC diagnostic ignored \"-Wunused-variable\"\n#endif\n",
     );
     if let Some(define) = split::above_define() {
         out.push_str(&define);
@@ -2424,6 +2556,9 @@ fn emit_unit_with(
     }
     out.push_str(&cx.gen_decls.borrow());
     out.push_str(&protos);
+    if split {
+        out.push_str(SPLIT_SHARED);
+    }
     out.push_str(&dispatch);
     // The closure release only where something calls it: a unit with no function value
     // holding a closure writes none.
@@ -2486,8 +2621,26 @@ fn emit_unit_with(
         })?;
         out.push_str(&written);
     }
-    Ok(out)
+    Ok(cx.name_tuples(out))
 }
+
+/// @PLN229 B1 — the opt-in split build (`LOFT_C_UNITS=1`): one C unit per source file, compiled
+/// apart and linked.  For a development pass of a large program: no inlining between files and no
+/// whole-program optimisation, so it is never the shipped tier (`--ship` keeps one unit), nor a
+/// hosted unit, a page or a wasm module.
+fn split_units_asked(other_kind: bool) -> bool {
+    !other_kind
+        && !crate::ship_tier::shipped_units()
+        && crate::env_once!(std::env::var("LOFT_C_UNITS").is_ok_and(|v| v != "0"))
+}
+
+/// Where the split build's shared part starts (`units::into_units`).
+pub(crate) const SPLIT_SHARED: &str = "\n/*@LOFT_SPLIT_SHARED*/\n";
+/// The head and the end of one function's body in a unit to be split: the head names its file.
+pub(crate) const SPLIT_FN: &str = "/*@LOFT_SPLIT_FN ";
+pub(crate) const SPLIT_FN_END: &str = "/*@LOFT_SPLIT_FN_END*/";
+/// The line each unit of a split build starts with, as the C driver reads it (`c_driver`).
+pub const SPLIT_UNIT: &str = "/*@LOFT_UNIT ";
 
 /// `LOFT_TRACE_TABLES=1` — the unit's type tables as the bodies registered them: the copy
 /// table's types, the described ones, whether the code names the table at all, the default
@@ -2734,9 +2887,16 @@ fn c_libraries(
     {
         links.push(arg.to_string());
     }
-    // A shim is linked into the binary: its symbols are there, and asked for nothing.
+    // A shim is linked into the binary: its symbols are there, and asked for nothing.  A hosted
+    // unit opens it by its path (`loft_host_bind_libraries`); a program only compares a name with
+    // it (`c_library_available`), so its entry is the file's name, which is the same in every
+    // checkout (REPRODUCIBLE_OUTPUT.md).
     for lib in data.c_libraries.iter().filter(|l| !l.shim.is_empty()) {
-        carried.push(body::c_string(&lib.name));
+        carried.push(body::c_string(&if hosted {
+            lib.name.clone()
+        } else {
+            crate::file_access::file_name(lib.name.as_str()).unwrap_or_else(|| lib.name.clone())
+        }));
         syms.push(Vec::new());
     }
     for (i, own) in syms.iter().enumerate() {
@@ -3394,7 +3554,10 @@ fn emit_program_counted(
         anchor(stores),
     );
     // The finished program names what it uses: what nothing names is not written.
-    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
+    let out = tidy::drop_unnamed(&out, RUNTIME_END);
+    // @PLN229 B1: the split build's units are cut last, from the finished unit — after `main` is
+    // added and what nothing names is dropped, both of which read the program as one unit.
+    Ok(units::into_units(&out, RUNTIME_END))
 }
 
 /// The program's `main` and the C statement that calls it, as the interpreter's
@@ -5517,24 +5680,28 @@ fn always_inline_body(storage: &str) -> String {
 }
 
 /// Whether `d`'s calls reach `d` again — directly, or through other functions with a body.
+/// Answered for every function the question reaches at once, by the call graph's strongly
+/// connected components (`opt::frame_calls::call_sccs`): a function is on a cycle when its
+/// component holds another function, or it calls itself.  Walked function by function over
+/// the closure, a call chain re-walked everything below each function (@PLN229 A3).
 fn on_call_cycle(cx: &Cx, d: u32) -> bool {
     if let Some(&known) = cx.on_cycle.borrow().get(&d) {
         return known;
     }
-    let mut seen = std::collections::HashSet::new();
-    let mut todo: Vec<u32> = direct_callees(cx, d);
-    let mut found = false;
-    while let Some(f) = todo.pop() {
-        if f == d {
-            found = true;
-            break;
-        }
-        if seen.insert(f) {
-            todo.extend(direct_callees(cx, f));
+    let sccs = {
+        let known = cx.on_cycle.borrow();
+        crate::opt::frame_calls::call_sccs(d, &|f| direct_callees(cx, f), &|f| {
+            known.contains_key(&f)
+        })
+    };
+    let mut memo = cx.on_cycle.borrow_mut();
+    for scc in sccs {
+        let cyclic = scc.len() > 1;
+        for &f in &scc {
+            memo.insert(f, cyclic || direct_callees(cx, f).contains(&f));
         }
     }
-    cx.on_cycle.borrow_mut().insert(d, found);
-    found
+    memo.get(&d).copied().unwrap_or(false)
 }
 
 /// Every function `d`'s body calls by name.  A missed call could hide a cycle and leave a
@@ -5659,7 +5826,16 @@ fn framed(
         ),
         None => whole,
     };
-    let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
+    if cx.split_units.get() {
+        // @PLN229 B1: the body goes to its function's unit, beside the frame wrapper.
+        let _ = write!(
+            cx.gen_bodies.borrow_mut(),
+            "\n{SPLIT_FN}{}*/\n{text}{SPLIT_FN_END}\n",
+            def.position.file.as_str()
+        );
+    } else {
+        let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
+    }
     let args: Vec<String> = if params == "void" {
         Vec::new()
     } else {
@@ -5951,5 +6127,7 @@ fn emit_tests_shaped(
         .rfind("\nint main(int argc, char **argv) {")
         .unwrap_or(out.len());
     out.insert_str(at, &format!("\n{wrappers}"));
-    Ok(tidy::drop_unnamed(&out, RUNTIME_END))
+    // What nothing names is not written; then the split build's units, cut last (B1).
+    let out = tidy::drop_unnamed(&out, RUNTIME_END);
+    Ok(units::into_units(&out, RUNTIME_END))
 }

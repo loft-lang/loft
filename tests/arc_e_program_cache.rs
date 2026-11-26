@@ -1515,3 +1515,84 @@ fn a_manifest_takes_only_the_image_it_was_written_with() {
     let _ = fa::remove_dir_all(&cache);
     let _ = fa::remove_dir_all(&control);
 }
+
+/// A `[c] shim` the C writer finds beside its package is opened at start and called through
+/// its handle; one it does not find is linked by name — so the C depends on the shim's file
+/// being there.  A warm load whose shim was removed since the cold run (a cleaned
+/// `native-auto/`) is a miss: the cold path rebuilds the shim, and the program is written as
+/// the same C (`startup_cache::c_library_files`, the manifest's `cfnd` line).
+#[test]
+fn a_warm_load_whose_shim_is_gone_writes_the_same_c() {
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return; // no C compiler: no shim is built
+    }
+    let pid = std::process::id();
+    let tree = std::env::temp_dir().join(format!("loft_arce_shim_{pid}"));
+    let _ = fa::remove_dir_all(&tree);
+    let pkg = tree.join("libs").join("twice");
+    fa::create_dir_all(pkg.join("c")).expect("shim dir");
+    fa::create_dir_all(pkg.join("src")).expect("src dir");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"twice\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+         [library]\nentry = \"src/twice.loft\"\n\n[c]\nshim = \"c/twice.c\"\n",
+    )
+    .expect("manifest");
+    fa::write(
+        pkg.join("c").join("twice.c"),
+        "#include <stdint.h>\nint64_t tw_twice(int64_t v);\nint64_t tw_twice(int64_t v) { return v * 2; }\n",
+    )
+    .expect("shim");
+    fa::write(
+        pkg.join("src").join("twice.loft"),
+        "fn tw_twice(v: integer) -> integer;\n#c \"tw_twice\" \"int64_t(int64_t)\"\n\
+         pub fn twice(v: integer) -> integer { tw_twice(v) }\n",
+    )
+    .expect("library");
+    let script = tree.join("main.loft");
+    fa::write(
+        &script,
+        "use twice;\nfn main() {\n  println(\"{twice::twice(21)}\");\n}\n",
+    )
+    .expect("script");
+    let cache_dir = tree.join("cache");
+    let emit = |out: &str| {
+        let c = tree.join(out);
+        let ran = loft::platform::process::harness_command(loft_bin())
+            .arg("--lib")
+            .arg(tree.join("libs"))
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&script)
+            .current_dir(&tree)
+            .env_remove("LOFT_NO_CACHE")
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env("XDG_CACHE_HOME", &cache_dir)
+            .output()
+            .expect("run loft");
+        assert!(
+            ran.status.success(),
+            "{out}: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        fa::read_to_string(&c).expect("read the C")
+    };
+    let cold = emit("cold.c");
+    assert!(
+        fa::exists(pkg.join("native-auto")),
+        "the cold run builds the shim beside its package"
+    );
+    assert_eq!(emit("warm.c"), cold, "a warm load writes the cold run's C");
+    fa::remove_dir_all(pkg.join("native-auto")).expect("remove native-auto");
+    assert_eq!(
+        emit("gone.c"),
+        cold,
+        "with the shim removed since the cold run, the program is written as the same C"
+    );
+    let _ = fa::remove_dir_all(&tree);
+}

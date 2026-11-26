@@ -342,6 +342,12 @@ gate cannot disagree.  `doc_hygiene::every_guard_says_how_to_score_it_again` hol
 `tests/falsified_docs.baseline`, which is **empty**: a new guard whose receipt lacks the fields
 fails outright, and the cure is to write the fields, never to re-add a line to the baseline.
 
+## A guard that times: the scaling guard
+
+A cost that grows faster than the program is no wrong answer, so no value guard sees it.
+`scripts/scaling-guard.sh` times loft writing a program and its twin of twice the size; its
+receipt and the profiling method are [PROFILING.md § loft's own compile time](PROFILING.md#lofts-own-compile-time).
+
 ## The defect no guard can catch — the corpus EMISSION diff
 
 `make falsify` scores a guard, and a guard scores a program someone wrote.  Neither sees *"a
