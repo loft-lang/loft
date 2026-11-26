@@ -254,7 +254,11 @@ pub(crate) fn into_units(unit: &str, runtime_end: &str) -> String {
     let mut lines = kept.split_inclusive('\n');
     while let Some(line) = lines.next() {
         let bare = without_storage(line);
-        if is_definition(bare) && function_name(bare).is_some_and(|n| callbacks.contains(n)) {
+        let named = function_name(bare).is_some_and(|n| callbacks.contains(n));
+        if named && !is_definition(bare) && !bare.trim_end().ends_with(';') {
+            // a whole definition on its line
+            called_back.push_str(bare);
+        } else if named && is_definition(bare) {
             called_back.push_str(bare);
             for body in lines.by_ref() {
                 called_back.push_str(body);
