@@ -2297,12 +2297,11 @@ fn every_rule_citation_resolves() {
 /// A test program names the rule it tests, so the per-rule curation can weigh it
 /// (TESTING.md § Curating the suite): no home under `tests/scripts`, `tests/docs` or
 /// `selfhost/front/cells` holds more programs citing no `@FR-` rule than
-/// `index/uncited_tests.baseline` records.  A program no single rule describes says
-/// `// @no-rule: <why>` in its header.
+/// `index/uncited_tests.baseline` records: no test runs without a link to a rule, and a program
+/// whose rule is not found is read, then moves to the suite's attic.
 ///
 /// @falsified-at: none — the ratchet is new with its guard; checked by hand: a new uncited
-/// program in `tests/scripts` fails `uncited --check`, and passes once it cites a rule or says
-/// `@no-rule:`.
+/// program in `tests/scripts` fails `uncited --check`, and passes once it cites a rule.
 #[test]
 fn every_test_program_names_its_rule() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

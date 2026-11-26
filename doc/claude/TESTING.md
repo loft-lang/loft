@@ -607,16 +607,33 @@ them after the `todo` rules, most grown first.  Two more views feed a pass:
 
 ```bash
 scripts/suite_curate.py uncited [--list]  # the test programs that cite no rule, per home
+scripts/suite_curate.py attribute         # for each not yet read: the rules it most likely tests
+scripts/suite_curate.py verdict <program> link <Rule>… | new-rule <Name> | attic  <why>
+scripts/suite_curate.py verdicts          # how far the reading is
 scripts/suite_curate.py dups [<rule>]     # programs whose code sits mostly inside another one
 ```
 
-Only a program that names its rule can be curated, so every test program in `tests/scripts`,
-`tests/docs` and `selfhost/front/cells` cites the `@FR-` rule it tests, or says why none fits
-(`// @no-rule: <why>`, a whole program or a library walk); a test of a language rule belongs in
-the suite.  `index/uncited_tests.baseline` holds the count per home, and
-`every_test_program_names_its_rule` fails when one rises: lower it, in the commit that names a
-program's rule, with `uncited --write-baseline`.  `dups` is evidence for a fold, not a verdict:
-read the part a program does not share, and leave a refusal twin (marked) apart.
+**No test runs without a link to a rule** (owner).  Every test program in `tests/scripts`,
+`tests/docs` and `selfhost/front/cells` cites the `@FR-` rule it tests; a test of a language rule
+belongs in the suite under that rule.  `index/uncited_tests.baseline` holds the count of those
+that do not, per home, and `every_test_program_names_its_rule` fails when one rises: lower it with
+`uncited --write-baseline` in the commit that links a program, until it is zero.
+
+A program that cites no rule is READ before anything moves: it may test a rule whose link was
+missed, or describe behaviour no rule states yet.  `attribute` gives the leads (the rules of the
+rule-citing programs it most resembles; for a defect's regression, the rules its `Fixes #N`
+commit cites), and `verdict` records what the reading found in `index/attribution.tsv`:
+
+- `link <Rule>…` — it tests that rule: name it in the program's header.
+- `new-rule <Name>` — it describes behaviour no rule states.  A rule is more than its text: it is
+  written in `formal/`, its enforcing code sites cite it (`rule_tags.py sites`), and this program
+  is its first guard, falsified ([STABILITY_METHOD.md § The rule-led walk](STABILITY_METHOD.md#the-rule-led-walk--the-standing-practice)).
+- `attic` — read, and no rule describes it.  Only this verdict moves a program: to the suite's
+  `attic/`, which is still tested, nightly on both backends as a report (`attic` in `miri.yml`),
+  and which it leaves only when a rule claims it.
+
+`dups` is evidence for a fold, not a verdict: read the part a program does not share, and leave
+a refusal twin (marked) apart.
 
 **"Covers totally"** is measured, never assumed: every composition-axis value the rule's cells
 reach today (`rule_axes.tsv`, `matrix_axes.census`) and every defect a cell names stays covered.
