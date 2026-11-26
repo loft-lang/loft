@@ -2956,7 +2956,14 @@ pub fn method_call(e: el::El, vars: el_vars::Vars, at: integer, re: integer, nam
 }
 
 // `method_call` over a receiver already read.
-pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, re: integer, name: text, args: vector<integer>) -> Ex {
+pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: integer, name: text, args: vector<integer>) -> Ex {
+  // (A tagged `__nullable<S>` slot receiver — a `vector<S?>` element, an `S?` field — is read as
+  // the `S?` it holds (`read_through_tag`): the overload set selects on that.)
+  rx = el_ex_into::read_through_tag(e, vars, x0);
+  if rx == null {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  x = rx!;
   list: vector<ir::Node> = [x.code];
   types: vector<ir::TypeT> = [x.tp];
   // The method call's `hint_nr`: the definition whose parameters type the arguments before the
