@@ -1662,6 +1662,10 @@ pub struct Parser {
     pub(crate) assign_target_discounted: u16,
     /// Whether the route lowering that `=` already took its target's mention back from `uses`.
     pub(crate) assign_target_taken: bool,
+    /// The value of the last `=` parsed was spelled with a `&` (`rhs_link` in
+    /// `parse_assign_op_inner`).  At a `&` record link, no `&` means the write goes THROUGH
+    /// the link (`@FR-B-Ref-Write`), so the lints count it as a read of the binding.
+    pub(crate) assign_rhs_link: bool,
     /// Post-2c: captures the most recently parsed `as <alias>` cast target's
     /// def_nr when the alias has a `size(N)` annotation.  Consumed by
     /// `append_to_file` so that `f += x as i32` narrows the serialised
@@ -2446,6 +2450,7 @@ impl Parser {
             is_capture_aliases: Vec::new(),
             capture_took_body: None,
             assign_target_discounted: u16::MAX,
+            assign_rhs_link: false,
             assign_target_taken: false,
             is_capture_bindings: Vec::new(),
             last_cast_alias: u32::MAX,

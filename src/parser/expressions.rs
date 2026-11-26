@@ -4711,7 +4711,19 @@ use a separate collection or add after the loop"
         let place_fact = std::mem::take(&mut self.operand_fact);
         let outer_snapshot = self.tuple_self_snapshot.take();
         self.last_forward_call = None;
+        self.assign_rhs_link = false;
         let tp = self.parse_assign_op_inner(code, op, f_type, to, parent_tp, var_nr, skip_validate);
+        // `@FR-B-Ref-Write` — a `&` RECORD link (`l = &h.a`) is written through by every value
+        // not spelled with a `&` (`towards_set`), and that write reads the binding.  Only the
+        // parsed value says which it was, so it is asked here, after the parse, and the earlier
+        // bind is neither taken back nor reported as dead.
+        let target = if target != u16::MAX && self.vars.is_amp_link(target) && !self.assign_rhs_link
+        {
+            u16::MAX
+        } else {
+            target
+        };
+        let counted = counted && target != u16::MAX;
         if op == "=" {
             self.fix_place_before_value(code, to);
         }
@@ -5565,6 +5577,13 @@ use a separate collection or add after the loop"
         };
         self.in_bind_rhs = prev_bind_rhs;
         self.append_dest = prev_append_dest;
+        // `@FR-B-Ref-Repoint` against `@FR-B-Ref-Write` — was the value spelled with a `&`
+        // (or bound under a `&` annotation)?  Asked here, while the parse still knows: a `&`
+        // at a struct projection is invisible in the IR (`l = &g.a` and `l = g.a` emit the
+        // same ops, @PLN130 F9), and the steps below clear `amp_pending`.  `towards_set`
+        // reads it to tell a re-point of a `&` link from a write through it.
+        let rhs_link = op == "=" && self.amp_pending;
+        self.assign_rhs_link = rhs_link;
         // A right-hand side that reported its own error answers `void` because it failed:
         // that error is the one mistake, so the bind below adds none.
         let rhs_failed = self.lexer.diagnostics().error_count() > errors_before_rhs;
@@ -9177,6 +9196,7 @@ use a separate collection or add after the loop"
             let lhs = crate::parser::collections::AssignPlace {
                 parent_tp: &lhs_parent_tp,
                 fn_attr: lhs_fn_attr,
+                rhs_link,
             };
             *code = self.towards_set(to, code, f_type, &s_type, &op[0..1], &lhs);
             // Plan-22 phase 02d-iii.e — wrap a first-set boxed-

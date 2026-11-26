@@ -1708,7 +1708,20 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   vb = el_types::base(el_vars::tp(vars, v));
   // `copy_ref` (loft#1376): a literal or a fresh call's record is copied into the place the
-  // link names (a call's store given away); a bare record local re-points the link, as a view.
+  // link names (a call's store given away).  So is a named record (loft#2653,
+  // `@FR-B-Ref-Write`): only a value spelled `&` re-points (`@FR-B-Ref-Repoint`).  Its store
+  // stays its own, so no give-away bit; a shape this does not carry yet is refused by name.
+  if !amp_rhs && vars.amp_places.contains(v) && struct_ref(e, vb) >= 0 && op == "=" && e.p.nodes[rhs!] is SName {
+    nx = expression(e, vars, rhs!);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    if el_ir::unspan(nx.code) is NdVar && !(nx.tp is TyOptional) && struct_ref(e, el_types::base(nx.tp)) == struct_ref(e, vb) {
+      return ex(el_ir::cl(e, "OpCopyRecord", [nx.code, ir::NdVar { n: v }, ir::NdInt { n: el::def(e, struct_ref(e, vb)).known_type }]), ir::TyVoid);
+    }
+    el::refuse(e, "a whole-value write through a `&` link to a record place");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
   if !amp_rhs && vars.amp_places.contains(v) && struct_ref(e, vb) >= 0 && op == "=" && !(e.p.nodes[rhs!] is SName) {
     lit = e.p.nodes[rhs!] is SStructLit && struct_literal_def(e, rhs!) == struct_ref(e, vb);
     if lit || e.p.nodes[rhs!] is SCall {
