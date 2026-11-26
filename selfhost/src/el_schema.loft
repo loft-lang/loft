@@ -460,6 +460,11 @@ pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position, typed: bool
   match inner {
     TyTuple { elems: te } => {
       tsp = el_types::tuple_spelling_e(e, te, ", ");
+      // (A record with borrows, an enum, a nullable or a vector member is spelled by its
+      // `Type::name` all the same: `vector<(P, Hue)>`, `vector<(integer, integer?)>`.)
+      if tsp == "" && el_types::nameable_members(e, te) {
+        tsp = join([for m in te { el_types::key_name(e, el_types::without_deps(m)) }], ", ");
+      }
       if tsp != "" && el::def_nr(e, "main_vector<({tsp})>") < 0 && !el_types::any_names_type_var(e, te) {
         for m in te {
           tuple_wrapper_records(e, m, pos);
