@@ -1726,8 +1726,10 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
   // is the shared placeholder) has no concrete type yet: it targets the callee's TEMPLATE
   // (loft#761), and each instance of this template retargets it (`instantiate_nested_generics`).
   if def.def_type == el::DT_GENERIC && !(!e.first_pass && binds_to_itself(e, d, types)) {
+    // (Rust predicts with the lexer past the call: a tuple record it closes is made there.)
+    past = if vars.call_tok >= 0 { el_ex_object::past_call(e, vars.call_tok) } else { -1 };
     if e.first_pass {
-      p = el_ex_object::predict_template_return(e, d, types);
+      p = el_ex_object::predict_template_return(e, d, types, at: past);
       return ex(ir::NdNull, p ?? ir::TyUnknown { n: 0 });
     }
     // A tuple argument that binds a variable has its `__tuple<…>` record made here, where the
@@ -1742,6 +1744,12 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
     }
     inst = instance_for(e, d, types);
     if inst < 0 {
+      // Refused, but answered as Rust types it — the instance's result — so the bind or the
+      // call around it registers what Rust registers there (register, then refuse).
+      p2 = el_ex_object::predict_template_return(e, d, types, at: past);
+      if p2 != null && !el_types::is_unknown(p2!) {
+        return ex(ir::NdNull, p2!);
+      }
       return null;
     }
     return call_args(e, vars, inst, given, types);
