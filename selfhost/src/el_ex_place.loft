@@ -517,7 +517,12 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   // set in place, its `enum` field the variant's ordinal.
   lit_sed = el_types::struct_enum_def(el_types::base(p.tp));
   unqualify_literal(e, rhs);
-  if op == "=" && lit_sed >= 0 && !(p.tp is TyOptional) && calls(e, el_ir::unspan(p.code), "OpGetField") && el_ex_pattern::variant_literal(e, rhs) {
+  // (…a FIELD declared `E?` alike: Rust writes the literal into the inline field as it does into
+  // a dense one — the `?` is the field's tag 0, which the ordinal overwrites.  Not where the `?`
+  // is the receiver's, a nullable pointer or local.)
+  lit_recv = match el_ir::unspan(p.code) { NdCall { args: lra } => el_ir::unspan(lra[0] ?? ir::NdNull), _ => ir::NdNull };
+  lit_field_opt = p.tp is TyOptional && !calls(e, lit_recv, "OpGetDbRef") && !calls(e, lit_recv, "OpGetVector") && match lit_recv { NdVar { n: lrv } => !(el_vars::tp(vars, lrv) is TyOptional), _ => true };
+  if op == "=" && lit_sed >= 0 && (!(p.tp is TyOptional) || lit_field_opt) && calls(e, el_ir::unspan(p.code), "OpGetField") && el_ex_pattern::variant_literal(e, rhs) {
     lfs: vector<integer> = [];
     lvd = -1;
     match e.p.nodes[rhs] {
@@ -540,6 +545,38 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
           _ => {}
         }
       }
+    }
+    // (`primed_reads_place`: a member vector literal whose items are records is primed into the
+    // place — its elements built there — so on the second pass the literal declines the place:
+    // built apart, its `Object` in a `__ref_p2_N`, and copied in whole (`OpCopyRecord`).  The
+    // first pass builds in place, its `_elm_N` left declared.)
+    lprimed = 0;
+    for lpi in lfs {
+      match e.p.nodes[lpi] {
+        SFieldInit { e: lpe } => {
+          if lpe != null && match e.p.nodes[lpe!] { SVecLit { items: lpits } => len([for lpit in lpits if e.p.nodes[lpit] is SStructLit { 1 }]) > 0, _ => false } {
+            lprimed += 1;
+          }
+        },
+        _ => {}
+      }
+    }
+    if lprimed > 0 && !lreads && !e.first_pass && lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
+      place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "decline_place:primed_reads_place");
+      // (The in-place attempt the decline abandons made its element temp first: declared, an
+      // inline ref borrowing nothing, never set.)
+      lk = 0;
+      while lk < lprimed {
+        lat = el_vars::create_unique(vars, "elm", ir::TyReference { n: lit_sed, dep: [] });
+        el_vars::mark_inline(vars, lat, "unique_elm_var");
+        el_vars::set_skip_free(vars, lat, "parse_vector_inner");
+        lk += 1;
+      }
+      lx = el_ex_assign::expression(e, vars, rhs);
+      if el_types::is_unknown(lx.tp) {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(el_ir::cl(e, "OpCopyRecord", [lx.code, el_ir::unspan(p.code), ir::NdInt { n: el::def(e, lit_sed).known_type }]), ir::TyVoid);
     }
     if !lreads {
       place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
