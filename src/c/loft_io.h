@@ -940,9 +940,9 @@ static void loft_release_file_leases(loft_cx *cx, uint16_t nr) {
 #endif
 }
 
-static void (*loft_file_lease_hook)(loft_cx *cx, loft_ref f) = loft_file_lease;
-static void (*loft_file_release_hook)(loft_cx *cx, loft_ref f) = loft_file_release;
-static void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr) = loft_release_file_leases;
+LOFT_STATE void (*loft_file_lease_hook)(loft_cx *cx, loft_ref f) LOFT_INIT(loft_file_lease);
+LOFT_STATE void (*loft_file_release_hook)(loft_cx *cx, loft_ref f) LOFT_INIT(loft_file_release);
+LOFT_STATE void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr) LOFT_INIT(loft_release_file_leases);
 
 static void loft_file_set_long(loft_cx *cx, loft_ref f, uint32_t fld, int64_t v) {
     memcpy(loft_at(cx, loft_store_of(cx, f), f.rec, f.pos + fld), &v, 8);

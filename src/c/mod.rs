@@ -273,6 +273,9 @@ pub(crate) struct Cx<'a> {
     pub(crate) gen_decls: std::cell::RefCell<String>,
     /// The generators' resume and release functions, written after them.
     pub(crate) gen_bodies: std::cell::RefCell<String>,
+    /// @PLN229 B1: this unit is cut into the units of a split build, so a function's body
+    /// (`<name>__fr`) is marked with the file it is declared in, as the function is.
+    pub(crate) split_units: std::cell::Cell<bool>,
     /// `@FR-R-Version`: each function's leaf plan, and the leaves whose precondition is written
     /// (into `gen_decls`, `body::version`).
     pub(crate) version_leaves: std::cell::RefCell<
@@ -510,6 +513,7 @@ impl<'a> Cx<'a> {
             unicode: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             gen_decls: std::cell::RefCell::new(String::new()),
             gen_bodies: std::cell::RefCell::new(String::new()),
+            split_units: std::cell::Cell::new(false),
             version_leaves: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_callees: std::cell::RefCell::new(std::collections::HashMap::new()),
             version_pres: std::cell::RefCell::new(std::collections::HashSet::new()),
@@ -1583,7 +1587,7 @@ impl<'a> Cx<'a> {
             let (n, words) = const_words(self.stores, &r);
             let _ = writeln!(
                 out,
-                "static const uint32_t loft_cwords{d}[] = {{ {words} }};\nstatic loft_ref loft_const{d};"
+                "static const uint32_t loft_cwords{d}[] = {{ {words} }};\nLOFT_STATE loft_ref loft_const{d};"
             );
             let _ = writeln!(
                 init,
@@ -2360,6 +2364,7 @@ fn emit_unit_with(
         }
     }
     let split = split_units_asked(hosted.is_some() || shape.browser || shape.wasm);
+    cx.split_units.set(split);
     for &d in &fns {
         let (sig, body) = function(&cx, d, 0).map_err(|why| Refusal {
             function: data.def(d).original_name().clone(),
@@ -5695,7 +5700,16 @@ fn framed(
         ),
         None => whole,
     };
-    let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
+    if cx.split_units.get() {
+        // @PLN229 B1: the body goes to its function's unit, beside the frame wrapper.
+        let _ = write!(
+            cx.gen_bodies.borrow_mut(),
+            "\n{SPLIT_FN}{}*/\n{text}{SPLIT_FN_END}\n",
+            def.position.file.as_str()
+        );
+    } else {
+        let _ = write!(cx.gen_bodies.borrow_mut(), "\n{text}");
+    }
     let args: Vec<String> = if params == "void" {
         Vec::new()
     } else {

@@ -57,7 +57,7 @@ extern const size_t loft_asset_count;
 
 /* An open asset: which one, and how far it has been read. */
 #define LOFT_ASSET_FDS 16
-static struct {
+LOFT_STATE struct {
     const struct loft_asset *a;
     size_t pos;
 } loft_asset_fd[LOFT_ASSET_FDS];

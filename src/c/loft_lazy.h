@@ -210,7 +210,7 @@ static uint8_t loft_lazy_bind_coll(loft_cx *cx, loft_ref coll, loft_str source, 
 typedef struct { int kind; int64_t i; double f; loft_text t; } loft_sql_cell;  /* kind 0 NULL, 1 int, 2 real, 3 text */
 
 #if defined(LOFT_DL)
-static struct {
+LOFT_STATE struct {
     int tried, ok;
     int (*open_v2)(const char *, void **, int, const char *);
     int (*prepare)(void *, const char *, int, void **, const char **);
@@ -844,4 +844,4 @@ static int loft_swap_blocked(loft_cx *cx) {
 #endif
         ;
 }
-static int (*loft_swap_blocked_hook)(loft_cx *cx) = loft_swap_blocked;
+LOFT_STATE int (*loft_swap_blocked_hook)(loft_cx *cx) LOFT_INIT(loft_swap_blocked);

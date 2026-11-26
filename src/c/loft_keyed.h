@@ -1570,7 +1570,7 @@ static void loft_relink_group_views(loft_cx *cx, const loft_tdesc *T, uint16_t t
     }
 }
 
-static void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref to) = loft_relink_group_views;
+LOFT_STATE void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref to) LOFT_INIT(loft_relink_group_views);
 
 /* ── par (parallel_natives.rs): the rows in order ──
  * A `for x in v par(r = f(x), n)` loop hands every row to the worker and reads the results back

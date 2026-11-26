@@ -104,7 +104,7 @@ static void loft_proc_say(loft_cx *cx, loft_proc_answer *a, int64_t code, const 
 /* The owned groups a forwarded signal reaches, and what each forwarded signal did before. */
 LOFT_STATE volatile sig_atomic_t loft_proc_groups[256];
 static const int loft_proc_forwarded[4] = { SIGINT, SIGQUIT, SIGHUP, SIGTERM };
-static struct sigaction loft_proc_previous[4];
+LOFT_STATE struct sigaction loft_proc_previous[4];
 LOFT_STATE uint8_t loft_proc_was_ignored[4];
 
 static void loft_proc_forward(int sig) {

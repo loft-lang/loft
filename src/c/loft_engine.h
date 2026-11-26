@@ -611,7 +611,7 @@ typedef struct {
     int debug_agent;   /* the upgrade named this run's debug token (`@C172`) */
 } loft_eh_conn;
 
-static struct {
+LOFT_STATE struct {
     int up, alive, listener, udp, warned_oversize;
     loft_eh_conn *conns;
     size_t nconns;
@@ -638,7 +638,7 @@ static void loft_eh_conn_reset(loft_cx *cx, loft_eh_conn *c) {
 
 /* ── The connector (or local) kernel ── */
 
-static struct {
+LOFT_STATE struct {
     int up, alive, conn, udp, udp_bound, ctl;
     char cookie[64];
     int64_t last_hello, last_keepalive, out_seq;
@@ -1692,7 +1692,7 @@ typedef void (*loft_swap_show_fn)(loft_cx *cx, loft_text *s, loft_ref r);
 #define LOFT_SW_WAITING 2
 #define LOFT_SW_DONE 3
 
-static struct {
+LOFT_STATE struct {
     int registered;
     loft_ref w;
     uint16_t tp;
@@ -1703,7 +1703,7 @@ static struct {
     char *artifact, *ready, *snap;
     long pid;
     int64_t deadline;
-} loft_sw = { 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 };
+} loft_sw LOFT_INIT({ 0, { 0xFFFF, 0, 0, 0 }, 0, 0, 0, 0, LOFT_SW_IDLE, 0, 0, 0, -1, 0 });
 
 static char *loft_sw_join(loft_cx *cx, const char *a, const char *b) {
     size_t n = strlen(a), m = strlen(b);
@@ -2083,7 +2083,7 @@ static int64_t loft_kernel_swap_step(loft_cx *cx) {
 static uint8_t loft_swap_retired(loft_cx *cx) { return loft_sw.phase == LOFT_SW_DONE; }
 
 /* ── The background rebuild (src/live_rebuild.rs): 0 idle, 1 building, 2 ready, 3 failed ── */
-static struct {
+LOFT_STATE struct {
     int state;
     long pid;
     char *snapshot;
@@ -2091,7 +2091,7 @@ static struct {
     char *out, *err, *artifact;
     char failure[512];
     unsigned seq;
-} loft_rb = { 0, -1, 0, 0, 0, 0, 0, { 0 }, 0 };
+} loft_rb LOFT_INIT({ 0, -1, 0, 0, 0, 0, 0, { 0 }, 0 });
 
 #ifdef LOFT_SW_CAN
 /* `spawn_build`: one background `--check --native-c` build of `src` through the driver, its output

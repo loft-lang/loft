@@ -459,7 +459,7 @@ static FILE *loft_trace_file(loft_cx *cx) {
     return loft_fs_loft_trace_file_f;
 }
 /* The line of the events that follow (loft_rt.h, which sets it once the frames exist). */
-static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f);
+LOFT_STATE void (*loft_trace_site_hook)(loft_cx *cx, FILE *f);
 /* A `par` worker's name (`loft_par_job_run`; 0 on the main thread): a worker's table is a copy
  * of its caller's, so its stores' serials repeat another thread's.  A store records the worker
  * that made it (`trace_worker`), and the trace names it `<worker>.<serial>` as the
@@ -942,9 +942,9 @@ static void loft_lazy_delete(loft_cx *cx, loft_store_t *s, uint32_t rec) {
 /* A store bound to a file (loft_mapped.h, which sets it when it binds one): the file and its
  * mapping resized to `words` words, `buf` and `size` following; 0 when the OS refused, the
  * store then as it was.  Null in a unit that binds no file, where no store is mapped. */
-static int (*loft_map_resize_hook)(loft_cx *cx, loft_store_t *s, uint32_t words);
+LOFT_STATE int (*loft_map_resize_hook)(loft_cx *cx, loft_store_t *s, uint32_t words);
 /* Its release: unmapped and closed, the store left with no buffer (`loft_st_close_mapped`). */
-static void (*loft_map_release_hook)(loft_cx *cx, loft_store_t *s);
+LOFT_STATE void (*loft_map_release_hook)(loft_cx *cx, loft_store_t *s);
 
 static void loft_resize_store(loft_cx *cx, loft_store_t *s, uint32_t to_size) {
     if (to_size <= s->size) return;

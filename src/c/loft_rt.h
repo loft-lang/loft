@@ -826,8 +826,8 @@ static void loft_halt_claim(loft_cx *cx) {
 
 /* A production run's fault logger (`loft_log_production_fault`), bound by a unit's `main`; null
  * in a runtime built without one, where every fault halts. */
-static int (*loft_fault_logger)(loft_cx *cx, int sev, const char *label, const char *prefix, loft_str message,
-                                loft_str file, int64_t line) = 0;
+LOFT_STATE int (*loft_fault_logger)(loft_cx *cx, int sev, const char *label, const char *prefix, loft_str message,
+                                loft_str file, int64_t line) LOFT_INIT(0);
 
 static void loft_assert(loft_cx *cx, uint8_t test, loft_str message, loft_str file, int64_t line) {
     if (test == 1) return;
@@ -851,7 +851,7 @@ static void loft_assert(loft_cx *cx, uint8_t test, loft_str message, loft_str fi
 
 /* A production run's discard of a locked write (`loft_log_locked_write`), bound by a unit's
  * `main`; null in a runtime built without one, where every locked write halts. */
-static int (*loft_locked_logger)(loft_cx *cx, const char *advice) = 0;
+LOFT_STATE int (*loft_locked_logger)(loft_cx *cx, const char *advice) LOFT_INIT(0);
 
 /* What locked a store (`Store::lock_origin`), kept in its `read_only` byte: the author's
  * `#lock = true`, a constant (`Store::lock_constant`), or bytes the program does not own
@@ -982,7 +982,7 @@ static void loft_trace_site(loft_cx *cx, FILE *f) {
     cx->trace_last_site = key;
     fprintf(f, fr->site ? "@ %u\n" : "@ ~%u\n", (unsigned) (key & 0x7FFFFFFFu));
 }
-static void (*loft_trace_site_hook)(loft_cx *cx, FILE *f) = loft_trace_site;
+LOFT_STATE void (*loft_trace_site_hook)(loft_cx *cx, FILE *f) LOFT_INIT(loft_trace_site);
 #endif
 /* A test that failed left its frames pushed (`longjmp`); the next starts from none. */
 #define LOFT_FRAMES_RESET() (cx->nframes = 0)
@@ -1484,7 +1484,7 @@ static loft_ref loft_ref_null_reported(loft_cx *cx) {
  * site writes one Warn record `[<label>] <message>` at the site's file and line.  The logger is
  * the unit's (`loft_log_warn`), bound by its `main`; a runtime built without one says nothing,
  * and so does a test, which runs with no logger on the interpreter. */
-static void (*loft_warn_logger)(loft_cx *cx, loft_str, loft_str, int64_t) = 0;
+LOFT_STATE void (*loft_warn_logger)(loft_cx *cx, loft_str, loft_str, int64_t) LOFT_INIT(0);
 static LOFT_COLD void loft_fault_report(loft_cx *cx, const char *message, const char *file, uint32_t line) {
     if (loft_warn_logger && !cx->in_test)
         loft_warn_logger(cx, loft_lit(cx, message, strlen(message)), loft_lit(cx, file, strlen(file)), line);
@@ -2138,7 +2138,7 @@ static void loft_gen_free(loft_cx *cx, loft_ref g);
 /* `Stores::release_file_leases` (loft_io.h, which sets it): a store that is freed returns the
  * leases its records hold.  A tentative definition, so a unit without the file layer — the
  * allocator and keyed harnesses — leaves it null. */
-static void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr);
+LOFT_STATE void (*loft_release_file_leases_hook)(loft_cx *cx, uint16_t nr);
 
 /* `@FR-R-Transient`: the arena a transient value lives in — a value built, read and dropped
  * without being stored, held outside every store.  One block per thread, then a chain of
@@ -3808,8 +3808,8 @@ LOFT_STATE uint32_t loft_T_n LOFT_INIT(0);
 /* `@FR-H-Handle` (loft_io.h, which sets them): a `File` record's lease on its OS handle, taken
  * by a copy and returned by a record's death; the handle closes at the last return.  Null in a
  * unit without the file layer, which holds no `File`. */
-static void (*loft_file_lease_hook)(loft_cx *cx, loft_ref f);
-static void (*loft_file_release_hook)(loft_cx *cx, loft_ref f);
+LOFT_STATE void (*loft_file_lease_hook)(loft_cx *cx, loft_ref f);
+LOFT_STATE void (*loft_file_release_hook)(loft_cx *cx, loft_ref f);
 
 /* The hash's, the index's and the trees' halves of a copy and a release (loft_hash.h,
  * loft_btree.h, loft_radix.h). */
@@ -3830,7 +3830,7 @@ static void loft_copy_bytes(loft_cx *cx, loft_ref to, uint32_t to_off, loft_ref 
 
 /* `relink_group_views` (loft_keyed.h, which sets it): a tentative definition, so a unit without
  * the keyed collections — and so without linked groups — leaves it null. */
-static void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref to);
+LOFT_STATE void (*loft_relink_hook)(loft_cx *cx, const loft_tdesc *T, uint16_t tp, loft_ref to);
 
 /* `@FR-L-OutOfLine`: the child records a copy or a release has met and not yet walked, and how
  * deep the walk is; the outermost call walks them as a loop, so a chain of any length takes no
@@ -4010,7 +4010,7 @@ static void loft_copy_claims_one(loft_cx *cx, const loft_tdesc *T, uint16_t tp, 
  * that `tp`'s tree holds no stored reference, which could name the source store. */
 /* `Stores::swap_stores_in_as`'s live-state gate (loft_lazy.h, which sets it): null in a unit
  * without the walk scratches and lazy bindings it reads. */
-static int (*loft_swap_blocked_hook)(loft_cx *cx);
+LOFT_STATE int (*loft_swap_blocked_hook)(loft_cx *cx);
 
 /* `reset_dest`: the destination must hold nothing but its root (a copy's); a keyed rebind's
  * destination is its collection's own store, whose old content leaves with the released slot. */
@@ -7127,7 +7127,7 @@ static void loft_init(loft_cx *cx);
  * threads here) the bound is the driver's or the wasm host's. */
 LOFT_STATE char loft_timeout_msg[96];
 LOFT_STATE size_t loft_timeout_len LOFT_INIT(0);
-static unsigned long loft_timeout_secs = 0;
+LOFT_STATE unsigned long loft_timeout_secs LOFT_INIT(0);
 #if defined(LOFT_POSIX_HOST)
 #include <signal.h>
 #include <unistd.h>

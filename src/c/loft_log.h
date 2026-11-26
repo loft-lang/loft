@@ -18,7 +18,7 @@
 typedef struct { char *key; int sev; } loft_log_level;
 typedef struct { char *file; int64_t line, window_us; uint32_t count, suppressed; } loft_log_rate;
 
-static struct {
+LOFT_STATE struct {
     int ready;
     char *conf, *path, *base;
     int64_t conf_mtime, checked_us;
