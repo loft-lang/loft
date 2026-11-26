@@ -626,7 +626,7 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     nullable_receiver = calls(e, recv, "OpGetDbRef") || match recv { NdVar { n } => el_vars::tp(vars, n) is TyOptional, _ => false };
     // (…and an element of a vector whose element type is declared `τ?` — `vector<u8?>` — is
     // such a slot too: it holds its null, `0..=254` beside it.)
-    celem_nullable = !cfield && match cplace { NdCall { args: cea } => place_type(e, vars, cea[0] ?? ir::NdNull) is TyOptional, _ => false };
+    celem_nullable = !cfield && nullable_narrow_read(e, cplace);
     held = pt is TyOptional && ((cfield && !nullable_receiver) || celem_nullable);
     g = el_convert::guard_compound(e, x.code, if held { pt } else { el_types::base(pt) }, held);
     cw = place_write(e, cplace, g);
@@ -736,20 +736,25 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
         nl = if field_place || elem_nullable { el_convert::null_of(e, pb) } else { null };
         nv = if nl == null { null } else { el_convert::guard_range(e, nl!, pt, x.tp, true) };
       } else {
-        // (`convert` to the slot's own `τ?` at the assignment seam: a value that may not fit is
-        // the checked cast (`dn4cast`) of the value as it is, the slot's range guard around it;
-        // one that fits is still guarded against the nullable range — a `u8` into a `u8?` meets
-        // `0..=254`.)
-        vars.assign_seam = true;
-        nv = stored(e, vars, x, pt);
-        // (Rust's place assignment converts the value twice, the first answer dropped: a checked
-        // cast mints its `__dn4_N` both times, the first left unscoped.)
-        if nv != null && !e.first_pass && match el_ir::unspan(nv!) { NdBlock { block: nvb } => nvb[0].name == "dn4cast", _ => false } {
+        // (A slot DECLARED nullable — read through its nullable op — converts to its own `τ?` at
+        // the assignment seam: a value that may not fit is the checked cast (`dn4cast`) of the
+        // value as it is, the slot's range guard around it; one that fits is still guarded against
+        // the nullable range — a `u8` into a `u8?` meets `0..=254`.  A dense slot whose `?` is its
+        // receiver's (`v[i].typedef`, a `u16`) takes the value as its base does.)
+        if nullable_narrow_read(e, rd_place) {
+          vars.assign_seam = true;
           nv = stored(e, vars, x, pt);
-        }
-        vars.assign_seam = false;
-        if nv != null && !e.first_pass {
-          nv = el_convert::guard_range(e, nv!, pt, el_convert::guard_source(vars, nv!, x.tp), true);
+          // (Rust's place assignment converts the value twice, the first answer dropped: a
+          // checked cast mints its `__dn4_N` both times, the first left unscoped.)
+          if nv != null && !e.first_pass && match el_ir::unspan(nv!) { NdBlock { block: nvb } => nvb[0].name == "dn4cast", _ => false } {
+            nv = stored(e, vars, x, pt);
+          }
+          vars.assign_seam = false;
+          if nv != null && !e.first_pass {
+            nv = el_convert::guard_range(e, nv!, pt, el_convert::guard_source(vars, nv!, x.tp), true);
+          }
+        } else {
+          nv = stored(e, vars, x, pb);
         }
       }
       if nv != null {
@@ -1080,6 +1085,15 @@ fn record_compound(e: el::El, vars: el_vars::Vars, bin: text, place: ir::Node, p
 // (`w.p = v`, `xs[i] = mk(9)`): the value copied into the place (`OpCopyRecord`), the source's
 // store freed after when the value is a call that gives it away (`call_gives_away_its_store`).
 // Another record's value and a record holding a closure are refused by name.
+// Is `place` a narrow slot DECLARED nullable — read through its nullable op (`OpGetByteNullable`,
+// `OpGetShort`), not a dense one (`OpGetByte`, `OpGetShortRaw`) whose `?` is its receiver's?
+fn nullable_narrow_read(e: el::El, place: ir::Node) -> boolean {
+  match el_ir::unspan(place) {
+    NdCall { def_nr } => el::def(e, def_nr).name == "OpGetByteNullable" || el::def(e, def_nr).name == "OpGetShort",
+    _ => false
+  }
+}
+
 pub fn record_place_write(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir::TypeT, x: Ex) -> Ex {
   rd = struct_ref(e, pt);
   // (An element of a LINKED vector — any keyed collection over the record exists — is read
