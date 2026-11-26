@@ -429,7 +429,7 @@ fn record_heap_member_link(e: el::El, vars: el_vars::Vars, t: integer, i: intege
           return;
         }
       }
-      _ = el_types::tuple_def(e, [for x in elems { el_types::without_deps(x) }], el::pos_at(e, el_ex_object::past_call(e, vars.call_tok)));
+      _ = el_types::tuple_def(e, [for x in elems { el_types::without_deps(x) }], el::pos_at(e, el::past_call(e, vars.call_tok)));
     },
     _ => {}
   }

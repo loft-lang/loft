@@ -1674,7 +1674,8 @@ fn is_foreign_self_reference(e: el::El, d: integer, g: integer) -> boolean {
 // port: data.rs open_instance_bindings (@PLN165 D5)
 // Each OPEN instance whose arguments mention a variable this monomorph binds is closed — minted at
 // the bound arguments, in creation order, so a nested one finds its inner argument paired — as
-// Rust does before declaring the monomorph, predicting its result and ranking it.  A tuple or a
+// Rust does before declaring the monomorph, predicting its result and ranking it — each with the
+// lexer past the call, where a tuple it closes is made (`at`, else the call at `e.at`).  A tuple or a
 // foreign self-reference closes only where the template's own types name it (loft#2546).  The
 // pairs are not carried: the port substitutes each type where it reads it (`close_open`).
 pub fn open_instance_bindings(e: el::El, g: integer, vars: vector<integer>, bounds: vector<ir::TypeT>, at: integer = -1) {
@@ -1696,7 +1697,7 @@ pub fn open_instance_bindings(e: el::El, g: integer, vars: vector<integer>, boun
         }
         if hit {
           args = [for a in el::def(e, d).instance_args { close_open(e, a, binds) }];
-          bound = if tuple_record { tuple_def(e, args, if at >= 0 { el::pos_at(e, at) } else if e.at >= 0 { el::pos_at(e, e.at) } else { ir::Position { ..el::def(e, d).position } }) } else { instance_def(e, el::def(e, d).instance_of, args) };
+          bound = if tuple_record { tuple_def(e, args, if at >= 0 { el::pos_at(e, at) } else if e.at >= 0 { el::pos_at(e, el::past_call(e, e.at)) } else { ir::Position { ..el::def(e, d).position } }) } else { instance_def(e, el::def(e, d).instance_of, args) };
           if bound >= 0 && bound != d {
             binds += [TypeBinding { holder: d, bound: el::def(e, bound).returned[0] ?? ir::TyReference { n: bound, dep: [] } }];
           }

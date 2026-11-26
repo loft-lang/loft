@@ -855,7 +855,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         vpt = if el::def(e, vpd).def_type == el::DT_STRUCT { ir::TyReference { n: vpd, dep: [] } } else { el_types::without_deps(el::def(e, vpd).returned[0] ?? ir::TyUnknown { n: 0 }) };
         vpn = el_types::elem_name(e, vpt);
         if vpn != "" && el_schema::wants_vector_def(e, vpn) {
-          el_schema::make_vector_def(e, vpt, vpn, el::pos_at(e, el_ex_object::past_call(e, vpa)), true);
+          el_schema::make_vector_def(e, vpt, vpn, el::pos_at(e, el::past_call(e, vpa)), true);
         }
       }
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
