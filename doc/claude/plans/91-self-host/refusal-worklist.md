@@ -213,7 +213,10 @@ instances; Rust-only definitions 270), one to four per program.  What each open 
   `vector<vector<Ent>>`, parent `Ent`): Rust's `check_vector` at the
   wrapper's field fill (`typedef.rs` `fill_database`, the `main_vector<iterator<…>>` place) on
   the SECOND pass; the port fills that wrapper on the first pass only, where an iterator field
-  has no content type (`c = -1`), so it refuses before its `check_vector` arm.
+  has no content type (`c = -1`), so it refuses before its `check_vector` arm.  Giving it the
+  `iterator` definition's known type (Rust's `vector_element_type`) panics: the port's own type
+  table has no entry at that index (`e.b.types[content] is null`) — the standard library's
+  `iterator` row is not carried in the port's schema, which this group needs first.
 - the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
