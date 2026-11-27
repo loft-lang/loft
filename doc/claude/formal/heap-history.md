@@ -561,6 +561,12 @@ the two `(B-Disturb)` controls that stay views).
   loses its push header — measured on the `enum_record`, `mint_window` and `copy_in_place`
   emission pins.  Guard
   `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c10`.
+- **Reopened and closed 2026-11-27:** the closure typed the element from the literal's HINT, so
+  a literal no context types — a `for` source, a format hole — still minted its element as the
+  placeholder before its first item was read: `for x in [A { id: 1 }, B, A { id: 2 }]` traced
+  `dA1,dB,dA2,dB` on both backends.  `Parser::type_placeholder_element` types that element once
+  the items are read (loft-keyed-ranges 9ddc90efad; the @PLN91 port's twin 737214177c).  Guard:
+  the suite cell `heap/H-Move/an-unbound-literal-of-struct-enum-variants-releases-each-element-once`.
 
 ### D-heap-34 — OPENED AND CLOSED (2026-09-22, loft#1597): a vector of vectors never released its inner elements
 
