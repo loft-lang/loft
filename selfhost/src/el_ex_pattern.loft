@@ -779,6 +779,17 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   } else {
     fr = field_get(e, proj!.vd, proj!.fa, slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at])));
     if fr == null || !(el_convert::plain_scalar(proj!.ft) || proj!.ft is TyText) {
+      // (Refused, but the vector the repetition collects the field into is registered first, as
+      // Rust's `vector_def` makes it: `[(Pt { p })*]` collects a `vector<Point>`.)
+      pnm = el_types::elem_name(e, el_types::without_deps(proj!.ft));
+      if pnm != "" && el_schema::wants_vector_def(e, pnm) {
+        // (At the arm's `=>`, where Rust's lexer stands once the pattern is read.)
+        fa = if e.at >= 0 { e.at } else { 0 };
+        while fa < len(e.p.src) && !(e.p.src[fa] is FatArrow) {
+          fa += 1;
+        }
+        el_schema::make_vector_def(e, el_types::without_deps(proj!.ft), pnm, el::pos_at(e, fa), false);
+      }
       el::refuse(e, "a projected repetition field of this type: {type_kind(proj!.ft)}");
       return null;
     }
