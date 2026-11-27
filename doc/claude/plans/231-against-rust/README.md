@@ -41,7 +41,7 @@ revisit trigger).
 
 | ID | Restriction | Bites? | Verdict | Cause | Probes |
 |---|---|---|---|---|---|
-| R11 | Consumers work around restrictions loft has lifted | **yes** — dryopea's notes cite 13 loft issues, all closed | lifted; the notes are stale | nothing tells a consumer an issue closed | 42–51 |
+| R11 | Consumers work around restrictions loft has lifted | **yes** — dryopea's notes cite 13 loft issues, all closed | lifted; the notes are stale | nothing tells a consumer an issue closed | 42–52 |
 | R10 | A function cannot return a place (`-> &T`) | **yes** — dryopea's lost writes through an accessor (loft#894, LOFT_GOTCHAS.md § Values, copies and tail calls) | real, and the rules allow it | the refusal at the `&` return type; `(F-Ret)` names a `&T` return as its exception | 18, 19 |
 | R1 | No proof against aliasing or data races | one loft-found case (loft#1605); no consumer | partial; the data-race half is not one | @C79, @C86; `par` isolation | 03, 04, 13, 14, 16 |
 | R2 | No moves, no consuming `self` | through R10: copies are what accessors lose writes to | by design | @C86 | 03 |
@@ -113,8 +113,10 @@ revisit trigger).
   restriction pays for it in every file it writes.  dryopea's `CLAUDE.md` § Loft language
   gotchas and `docs/LOFT_GOTCHAS.md` steer its code by thirteen loft issues — loft#873, #876,
   #877, #880, #894, #914, #915, #918, #935, #955, #962, #969, #974 — and **all thirteen are
-  closed**.  hexbody's `CLAUDE.md` carries the loop-variable rule too.
-- **Measured on main** (probes 42–51, both backends):
+  closed**.  hexbody's `CLAUDE.md` carries the loop-variable rule too.  crawler's `CLAUDE.md`
+  § "the traps that will bite you today" cites loft#338, #392 and #854, all three closed, and
+  calls its `ortler` tools unusable because of #854.
+- **Measured on main** (probes 42–52, both backends):
 
   | Workaround the consumer still writes | Issue | On main |
   |---|---|---|
@@ -127,6 +129,8 @@ revisit trigger).
   | an inner tail call bound to a local before returning | #880 | two nested tail calls keep the loop's 4 cells |
   | a helper declared above its caller before a local binds its call | #918 | a call to a lower function binds: `later 6` |
   | a keyed record read inline, never through an accessor | #974 | three accessor reads with a struct made between: `2 2 2` |
+  | crawler: never swap struct elements through a held link | #338 | the swap answers `2 1` (probe 52) |
+  | crawler: the `ortler` tools are unusable, an 86 400-element literal takes 18 min to parse | #854 | parses and runs in 1.8 s on the interpreter, `last 657` as computed (generate it: `const BIG: vector<integer> = [i % 997 for i in 0..86400]` written out as a literal) |
 
 - **Cause.**  Nothing in loft: the notes were written when the defects were live, and nothing
   tells a consumer that a cited issue closed.

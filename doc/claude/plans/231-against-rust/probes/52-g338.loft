@@ -1,0 +1,11 @@
+// @PLN231 R11 probe — two struct elements swapped while a link to one is held (loft#338)
+// Expect on both backends: 2 1
+struct P { x: integer }
+fn main() {
+  v = [P { x: 1 }, P { x: 2 }];
+  t = &v[0];
+  tmp = P { x: t.x };
+  v[0] = v[1];
+  v[1] = tmp;
+  println("{v[0].x} {v[1].x}");
+}
