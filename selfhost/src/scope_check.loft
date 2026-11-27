@@ -31,6 +31,7 @@ use scope_bound_append;
 use scope_buffer_detach;
 use scope_take_local;
 use scope_byte_copy;
+use scope_loop_kernel;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -191,7 +192,9 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     }
     // `(R-MoveLast)`'s local clause, after `(R-Compact)` (refused above where it would fire).
     code = scope_take_local::rewrite(b, ph.code, ph.function);
-    // `@FR-R-ByteCopy`, after `loop_kernel_rewrite` (refused above where it would fire).
+    // `(R-BoundedNest)`'s reduction is its loop kernel's call.
+    code = scope_loop_kernel::rewrite(b, code);
+    // `@FR-R-ByteCopy`.
     code = scope_byte_copy::rewrite(b, code);
     // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
     code = scope_wrapper::rewrite(b, code);
@@ -423,8 +426,8 @@ fn join_rewrites(f: ir::Function) -> text {
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
 // is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
-// `compact`, `take_local`, `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`,
-// `slice_text`, `slice_into`.
+// `compact`, `byte_copy`'s vector clause, `repeat_run`, `vec_copy`, `slice_text`, `slice_into`.
+// `take_local`, `loop_kernel_rewrite` and `byte_copy` are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
   for x in f.variables {
@@ -469,9 +472,6 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
       }
     },
     NdBlock { block } => {
-      if reduction_shape(b, block[0]) {
-        note(w, "loop_kernel_rewrite::rewrite: a sum loop over a vector");
-      }
       // `repeat_run`: four or more consecutive pushes of one constant into one target.
       run = 0;
       prev = "";
@@ -693,33 +693,3 @@ fn contains_call(b: ir::Bundle, n: ir::Node, prefix: text) -> boolean {
   false
 }
 
-// `loop_kernel_rewrite::reduction`'s shape, short of its counting step and accumulation:
-// `{ end = len(v); idx = -1; loop { i = <step>; { <one statement> } } }`.
-fn reduction_shape(b: ir::Bundle, bl: ir::Block) -> boolean {
-  st = [for o in bl.operators if !(scope_fn::unspan(o) is NdLine) { scope_fn::unspan(o) }];
-  if len(st) != 3 {
-    return false;
-  }
-  len_ok = match st[0]! {
-    NdSet { inner } => match scope_fn::unspan(inner) {
-      NdCall { def_nr, args } => {
-        nm = scope_args::def_name(b, def_nr);
-        (nm == "t_6vector_len" || nm == "OpLengthVector") && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar
-      },
-      _ => false
-    },
-    _ => false
-  };
-  idx_ok = match st[1]! {
-    NdSet { inner } => scope_fn::unspan(inner) == ir::NdInt { n: -1 },
-    _ => false
-  };
-  loop_ok = match st[2]! {
-    NdLoop { block } => {
-      ls = [for o in block[0].operators if !(scope_fn::unspan(o) is NdLine) { scope_fn::unspan(o) }];
-      len(ls) == 2 && ls[0]! is NdSet && ls[1]! is NdBlock
-    },
-    _ => false
-  };
-  len_ok && idx_ok && loop_ok
-}
