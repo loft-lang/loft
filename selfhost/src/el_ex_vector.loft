@@ -1810,13 +1810,26 @@ pub fn plus_run(e: el::El, vars: el_vars::Vars, at: integer, l: integer, r: inte
     opt = ir::TyOptional { inner: cat.tp };
     return ex(el_ir::v_block([el_ir::v_set(tmp, a.code), el_ir::v_if(el_ir::cl(e, "OpConvBoolFromText", [held]), cat.code, el_ir::cl(e, "OpConvTextFromNull", []))], opt, "nullable_concat"), opt);
   }
-  if a.tp is TyCharacter {
-    el::refuse(e, "a concatenation that starts with a character");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  // A character on the left JOINS a text or a character (`'a' + "bc"` is "abc", `'a' + 'b'` "ab"):
+  // the text is built from an empty start, the character its first operand (`OpAppendText(w, "")`,
+  // then the character's concatenation operand).  Beside an integer it ADDS (`'a' + 1` is 98).
+  first_b: Ex? = null;
+  if a.tp is TyCharacter && len(rights) > 0 {
+    fb = el_ex_assign::expression(e, vars, rights[0]!);
+    if el_types::base(fb.tp) is TyText || el_types::base(fb.tp) is TyCharacter {
+      parts: vector<Ex> = [a, fb];
+      for n in rights {
+        if n#index > 0 {
+          parts += [el_ex_assign::expression(e, vars, n)];
+        }
+      }
+      return append_text(e, vars, ex(ir::NdText { s: "" }, ir::TyText { dep: [] }), parts);
+    }
+    first_b = fb;
   }
   acc = a;
   for n in rights {
-    b = el_ex_assign::expression(e, vars, n);
+    b = if n#index == 0 && first_b != null { first_b! } else { el_ex_assign::expression(e, vars, n) };
     x = el_ex_null::builtin_op(e, vars, "+", acc, b);
     x = el_ex_call::width32_op(e, "+", acc.tp, b.tp, x);
     x.tp = el_ex_call::propagated(acc, b, x.tp);
