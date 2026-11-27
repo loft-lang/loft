@@ -194,7 +194,9 @@ a new one; a write inside a branch joins the written and the kept state
 (`LOFT_RECORDS_NO_CALL_WRITE_BACK=1`, `LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1`).  A read through a name
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
-read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
+read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).  A call argument that is a value block answering a
+variable (a null check's `{#ncr …; x}`, how a nullable local is read) reads that variable as the
+bare spelling does (`LOFT_RECORDS_NO_TAIL_USE=1` counts the bare spelling only).
 **The drop lease (`@PLN228` P9; `LOFT_RECORDS_NO_LEASE=1` turns it off).**  A type that owns a
 droppable has a LEASE per value: its hook runs once.  The records follow, per path, the stores a
 hook ran on (may and must), a hook guarded by `OpDistinctStore(v, w)` (settled except where `v` is
@@ -223,7 +225,13 @@ A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@F
 gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
 `r` names an ended generation from there, and writing it into a field is a use after its end —
 every later read of that field finds the wiped record
-(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
+(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).  The same re-mint ends the
+record for every other name that may hold the store `h` alone holds (`@FR-O-Detach`): a binding
+left naming a construction temporary's record, read after the temporary's next `OpDatabase`, reads
+the cleared record (`LOFT_RECORDS_NO_REMINT_ENDS_ALIASES=1` leaves such a name live).  A store key
+that joins a live generation of its site with an ended one is correlated with the names its live
+part holds, so an alias of one of those reads the live record and an alias of any other name reads
+the end.
 A bind that joins at run time, first or a reassignment, copies what lies in its witness's
 store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second

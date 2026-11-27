@@ -2948,6 +2948,22 @@ impl Function {
         self.current_loop
     }
 
+    /// Was `var_nr` first created inside the innermost loop being parsed now — a local its
+    /// body binds, bound afresh on every pass?  Asked by the loop's per-pass ORDINAL: a loop's
+    /// number differs between the two parser passes (`loop_ord`), and the variable was
+    /// created on the first.
+    #[must_use]
+    pub fn created_in_current_loop(&self, var_nr: u16) -> bool {
+        self.current_loop != u16::MAX
+            && match (
+                self.loop_ord_of.get(&self.created_in_loop(var_nr)),
+                self.loop_ord_of.get(&self.current_loop),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            }
+    }
+
     /// The loop a variable was first created inside, or `u16::MAX` at function scope.
     #[must_use]
     pub fn created_in_loop(&self, var_nr: u16) -> u16 {

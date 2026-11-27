@@ -1253,9 +1253,14 @@ impl Run<'_> {
     fn read(st: &State, v: u16) -> Val {
         let pts = Self::pts(st, v);
         let single = pts.len() == 1;
+        // A key that joins a live generation and an ended one (`demote`) is correlated with a
+        // name the live part holds, and not with any other: a may-stale name reads the end.
         let corr = Self::stores_of(&pts)
             .into_iter()
-            .filter(|k| single || info_of(st, *k).live.contains(&v))
+            .filter(|k| {
+                let info = info_of(st, *k);
+                info.live.contains(&v) || (single && !(info.has(ENDED) && info.has(LIVE)))
+            })
             .collect();
         Val { pts, corr }
     }
@@ -1329,7 +1334,13 @@ impl Run<'_> {
                         a.insert(v);
                     }
                 }
-                if single && info.status & ENDED != 0 {
+                // Not where the value was read from a name the store's LIVE part holds: a key
+                // can join two generations of one site (a loop's re-mint demotes the live one
+                // onto an ended one), and an alias of the live name names the live record.
+                if single
+                    && info.status & ENDED != 0
+                    && !(info.status & LIVE != 0 && val.corr.contains(&k))
+                {
                     info.ended.insert(v);
                 }
                 // An alias made after the end points into it wherever it is ended.

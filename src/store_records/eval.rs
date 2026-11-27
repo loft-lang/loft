@@ -1745,6 +1745,14 @@ impl Run<'_> {
             let (s2, value) = self.eval(a, s)?;
             if let Value::Var(x) = a.unspan() {
                 self.use_var(&s2, *x, "a call");
+            } else if matches!(a.unspan(), Value::Block(_))
+                && let Some(x) = Self::tail_var(a)
+                && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_TAIL_USE").is_some())
+            {
+                // A value block answering a variable — a null check's `{#ncr …; x}`, which a
+                // nullable local is read through — reads that variable as the bare spelling
+                // does.  `LOFT_RECORDS_NO_TAIL_USE=1` counts the bare spelling only.
+                self.use_var(&s2, x, "a call");
             }
             if let Some(h) = Self::tail_var(a) {
                 self.use_points(&s2, h);

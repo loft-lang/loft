@@ -321,6 +321,14 @@ impl Run<'_> {
     /// generation of the store from here, and a use of it is a use after its end
     /// (`@FR-H-RefHome`, loft#2621: a holder re-minted in a loop cleared the record its field
     /// was about to name).  `LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live.
+    ///
+    /// The same holds for a variable that names `x`'s record itself (`@FR-O-Detach`): the
+    /// re-init is the release of what the record held, so a binding left naming it — `c`, bound
+    /// on an earlier pass to the literal a construction temporary `w` built, re-initialised by
+    /// the next pass's `OpDatabase(w)` before the literal's initialisers read `c` — reads the
+    /// cleared record (loft#2667).  A name that may hold the store, where `x` holds nothing else;
+    /// the compiler's own witnesses (`__…`) name a store for its identity, never its content.
+    /// `LOFT_RECORDS_NO_REMINT_ENDS_ALIASES=1` leaves such a name live.
     pub(super) fn remint_ends_placed(&mut self, st: &mut State, x: u16, kept: &Pts) {
         let placed: Vec<u16> = st
             .placed
@@ -328,12 +336,41 @@ impl Run<'_> {
             .filter(|(_, h)| *h == x)
             .map(|(r, _)| *r)
             .collect();
+        let aliases_end =
+            !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_REMINT_ENDS_ALIASES").is_some());
+        // A `&` link on either side is the same place under two names (`@FR-B-Ref-Alias`):
+        // the re-mint through one is the new value the other reads.  A COLLECTION's link is
+        // lowered to a plain view of its source (`c = &n` on a `hash` reads `n`'s store), so
+        // only a RECORD's re-mint is asked: its links are `&`-typed.
+        let vars = &self.data.def(self.d_nr).variables;
+        let is_link =
+            |v: u16| v < vars.count() && matches!(vars.tp(v), crate::data::Type::RefVar(_));
+        let record = x < vars.count()
+            && matches!(
+                vars.tp(x).base(),
+                crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _)
+            );
         for k in Self::stores_of(kept) {
-            let gone: Vec<u16> = placed
+            let held_by_x = Self::pts(st, x)
+                .iter()
+                .all(|p| *p == Pt::Store(k) || *p == Pt::Null);
+            let mut gone: Vec<u16> = placed
                 .iter()
                 .copied()
                 .filter(|r| Self::pts(st, *r).contains(&Pt::Store(k)))
                 .collect();
+            if aliases_end && held_by_x && record && !is_link(x) && info_of(st, k).has(LIVE) {
+                for (&r, p) in &st.vars {
+                    if r != x
+                        && !gone.contains(&r)
+                        && p.contains(&Pt::Store(k))
+                        && !is_link(r)
+                        && !self.var_name(r).starts_with("__")
+                    {
+                        gone.push(r);
+                    }
+                }
+            }
             if gone.is_empty() {
                 continue;
             }

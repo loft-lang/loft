@@ -66,6 +66,16 @@ the source is ZEROED so the next turn's clear and the callee's refill find an em
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
 bisect step for a wrong or emptied vector after such a rebind; `LOFT_TRACE_PLACE=1` names each
 decision (`[take-local]`).
+**`LOFT_NO_REBIND_DETACH=1`** (`@FR-O-Detach`, parse time, BOTH backends) re-initialises a
+record literal's construction temporary in place again when the literal rebinds a local that
+views (`x = v[i]` before it, `x = S { …, f: x }` in a loop the local was bound outside of) —
+with it off, the temporary lets go
+of its record (`OpRefAlias` + `OpInitRefSentinel`), builds in a fresh one and releases the old one
+after the last initialiser (`OpFreeRefIfDistinct`), so every read of `x` in the literal sees the
+value `x` holds.  The bisect step for a field that reads null, zero or empty after such a rebind
+ran twice; it is a correctness switch, the falsifier of
+`rules/ownership/O-Detach/2667-a-literal-rebinding-a-view-in-a-loop-reads-what-it-holds.loft` and
+of the store records' re-mint clause (STORE_RECORDS.md).
 **`LOFT_NO_KEYED_FIELD_RETURN_COPY=1`** (`@FR-F-Ret`, parse time, BOTH backends) returns a keyed
 collection that is a field of a local record as the place it is — with it off
 (`Parser::keyed_local_field_copy_out`), the field is copied into a local that owns its store
