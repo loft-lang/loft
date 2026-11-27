@@ -681,10 +681,11 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       return ex(ir::NdCall { def_nr: pf, args: [ir::NdVar { n: fv }] }, el::def(e, pf).returned[0] ?? ir::TyUnknown { n: 0 });
     }
   }
-  if attr == "index" && arg == null && tp == null {
+  // (`x#next` likewise: a text walk's position past `x`, the loop's own `x#next`.)
+  if (attr == "index" || attr == "next") && arg == null && tp == null {
     lv = el_vars::var(vars, var);
     if lv >= 0 {
-      idx = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#index");
+      idx = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#{attr}");
       if idx >= 0 {
         el_vars::in_use(vars, idx, true);
         return ex(ir::NdVar { n: idx }, count_type(e));
