@@ -2325,12 +2325,14 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           heap_default = !el_convert::plain_scalar(el_types::base(t!)) && !(el_types::base(t!) is TyText) && !(el_types::base(t!) is TyTuple) && !(el_types::base(t!) is TyEnum && match el_types::base(t!) { TyEnum { is_ref } => !is_ref, _ => false });
           // (…and so is a nullable narrow parameter's, which the checked narrowing hoists
           // whatever it reads: `a: u8? = b + 1`.)
-          // (A method's default is named by its owner and is a method itself — its function takes
-          // `self` — `t_<n><S>___dflt_<S>_<fn>_<param>`: registered bare beside the refusal.)
+          // (A method's default is named by its owner — `__dflt_<S>_<fn>_<param>` — and is a method
+          // itself where it reads `self`, `t_<n><S>___dflt_…`: registered bare beside the refusal.)
           if d == null && method && (heap_default || hoists_default(e, init!, t!)) && e.first_pass && tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 {
             own = match el_types::base(arguments[0].typedef) { TyReference { n: on } => el::def(e, on).name, TyEnum { n: on } => el::def(e, on).name, _ => "" };
             if own != "" {
-              mn = "t_{len(own)}{own}___dflt_{own}_{name}_{an}";
+              // (Only a default that reads `self` takes it, as a method; any other is a plain
+              // function under its owner's name: `n___dflt_S_method_t` for `t: N = Void`.)
+              mn = if names_any(e, init!, ["self"]) { "t_{len(own)}{own}___dflt_{own}_{name}_{an}" } else { "n___dflt_{own}_{name}_{an}" };
               if el::def_nr(e, mn) < 0 {
                 mat2 = match e.p.nodes[init!] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, STupleLit { at: ta } => ta, _ => leftmost_token(e, init!) };
                 mdd = el::add_def(e, mn, el::pos_at(e, mat2), el::DT_FUNCTION);
