@@ -354,8 +354,10 @@ fn construct_drop(
 /// EVERY guard: `a`'s construction is a contiguous run of statements immediately before the copy
 /// that references only `a` or a **never-written parameter** (B1.4 — a param's value is constant,
 /// so hoisting reads the same value; any other var could be a local built between `base` and `a`
-/// → SKIP); the run contains `a`'s `OpDatabase`; and `a` is genuinely allocated AFTER the source's
-/// backing (a real reorder). B1.4 also lifts the one-construct-per-fn cap — each safe construct is
+/// → SKIP); the run contains `a`'s `OpDatabase`; `a` is genuinely allocated AFTER the source's
+/// backing (a real reorder); and nothing the run is hoisted across names `a`, a view of its
+/// store, or binds `a` (`@FR-O-Detach`, loft#2668: the run's `OpDatabase` re-initialises a
+/// store `a` already names). B1.4 also lifts the one-construct-per-fn cap — each safe construct is
 /// rewritten independently (a cross-construct dependency is a non-`a`, non-param run var → SKIPs
 /// that one). B1.4 (nested) walks EVERY block, so a construct inside an `if`/loop body is handled
 /// too — its `a`-alloc + `base`-build + copy are flat within that block. Anything else stays a
@@ -517,6 +519,21 @@ fn try_fresh_one(
     {
         Some(vi) if vi < ps => {}
         _ => return false,
+    }
+    // `@FR-O-Detach` — the run's `OpDatabase(a)` is `a`'s DETACH: where `a` already names a store
+    // (a call's result, a record built on an earlier pass of a loop) it re-initialises that store
+    // in place, so it must stay after every read of it.  The hoist moves the run to the top of
+    // the block, ahead of every statement in `[0, ps)`; any of them that names `a`, a local
+    // viewing its store, or binds `a` would read the cleared record or rebind over the build.
+    // `scanned = mk(i)`, matched to its `items`, then `ops = [for x in items { x }]; scanned =
+    // Ins { items: ops }` walked the cleared `items` — and grew the field it was walking
+    // (loft#2668).  The same question B1.3d asks of its own region (`touches_store`).
+    let viewers: Vec<u16> = function.store_viewers(a).into_iter().collect();
+    if b.operators[..ps]
+        .iter()
+        .any(|op| touches_store(op, a, &viewers))
+    {
+        return false;
     }
 
     // Rebuild: [a-construction run] ++ [base's build, wrapper dropped + retargeted] ++ [rest].
@@ -768,21 +785,14 @@ fn try_replace_one(
     // the moved clear has emptied it, and the field keeps only what was appended after the
     // walk (loft#2445).  So the region names neither `a` nor any local whose deps reach its
     // store (`store_viewers`).
-    let viewers: Vec<u16> = vars.store_viewers(a).into_iter().collect();
-    if (bs..c2).any(|i| {
-        !chain.contains(&i)
-            && (refs_var(&b.operators[i], a)
-                || viewers.iter().any(|w| refs_var(&b.operators[i], *w)))
-    }) {
-        return false;
-    }
     // `@FR-R-MoveLast` — nor may the region BIND `a`: the build lands in the `a.field` that exists
     // at `bs`, and a rebind before the store (`m9 = mo`, a call result, an arm of an `if`) puts a
     // different record there, so the built elements were lost with no diagnostic on both
     // backends — and on `--native` a FRESH `a` was used before its `let` (loft#1741).  An
     // `OpDatabase` of `a` after `bs` is refused above; a binding by assignment allocates nothing,
     // which is how it passed as "pre-existing".
-    if (bs..c2).any(|i| !chain.contains(&i) && binds_var(&b.operators[i], a)) {
+    let viewers: Vec<u16> = vars.store_viewers(a).into_iter().collect();
+    if (bs..c2).any(|i| !chain.contains(&i) && touches_store(&b.operators[i], a, &viewers)) {
         return false;
     }
 
@@ -882,6 +892,15 @@ fn binds_var(op: &Value, v: u16) -> bool {
     let mut found = false;
     walk(op, v, &mut found);
     found
+}
+
+/// Does `op` name the container `a` or any local in `viewers` (the locals whose deps reach `a`'s
+/// store, `Function::store_viewers`), or bind `a`?  The one question both build-into reorders
+/// ask of the statements they move a write of `a` across (B1.3c's hoisted `OpDatabase(a)`,
+/// B1.3d's moved `OpClearVector(a.field)`): such a statement read `a`'s store before the write
+/// and would read it after (`@FR-O-Detach`), or rebinds `a` over the build (loft#1741).
+fn touches_store(op: &Value, a: u16, viewers: &[u16]) -> bool {
+    refs_var(op, a) || binds_var(op, a) || viewers.iter().any(|w| refs_var(op, *w))
 }
 
 /// Is `Var(v)` referenced in any operator strictly after index `idx`?
