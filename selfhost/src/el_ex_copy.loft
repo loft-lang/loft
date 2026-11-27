@@ -569,9 +569,11 @@ pub fn if_tail_params(e: el::El, vars: el_vars::Vars, code: ir::Node) -> vector<
 
 // `if_tail_params` with the binds the enclosing blocks made (`sets`), so a local arm — an `ncr`
 // temp (`h.ds[0]!`), a `??` temp (`__ncc_N`) — reads back to the parameter its bind views.
-fn if_tail_params_in(e: el::El, vars: el_vars::Vars, code: ir::Node, sets: vector<ir::Node>, in_arm: boolean) -> vector<integer>? {
-  // A body's block is read at its tail; a record literal's block is the arm itself.
-  tail = match code { NdBlock { block } => if block[0].name == "Object" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
+fn if_tail_params_in(e: el::El, vars: el_vars::Vars, spanned: ir::Node, sets: vector<ir::Node>, in_arm: boolean) -> vector<integer>? {
+  code = el_ir::unspan(spanned);
+  // A body's block is read at its tail; a record literal's block is the arm itself, and so is a
+  // call arm's home (`join-arm-owner`), which a `match` arm is without a block around it.
+  tail = match code { NdBlock { block } => if block[0].name == "Object" || block[0].name == "join-arm-owner" { code } else { el_ir::unspan(el_ir::last(block[0].operators)) }, _ => code };
   inner_sets: vector<ir::Node> = [for s0 in sets { s0 }];
   match code {
     NdBlock { block: cb } => {
