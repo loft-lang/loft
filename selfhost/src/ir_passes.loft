@@ -8,6 +8,7 @@
 // difference.
 use ir;
 use ir_arg_copy;
+use ir_leaf_inline;
 use ir_zero_count;
 use ir_exp_pow;
 use ir_forward_walk;
@@ -30,6 +31,9 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   // `@FR-F-ParamText` — a store-viewing text argument keeps its copy only where the call can
   // write a store.
   ir_arg_copy::rewrite_program(b);
+  // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the inlined
+  // bodies) — after the value records, so a leaf it inlines is final.
+  ir_leaf_inline::rewrite_program(b);
   // `@FR-R-ZeroCount` — a character count compared with zero reads the byte count.
   ir_zero_count::rewrite_program(b);
   // `@FR-R-ExpPow` — `pow(E, x)` is `exp(x)`.
