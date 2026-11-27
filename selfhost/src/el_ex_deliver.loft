@@ -797,7 +797,11 @@ pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::Ty
     // A branch tail or a whole vector handed back is delivered into the lambda's buffer too
     // (`materialize_vector_arms_into`, `borrow_tail_copy`), the buffer's own type borrowing it:
     // not carried for a lambda, refused by name.
-    if el_ir::unspan(bl.operators[-1]) is NdIf || el_ir::unspan(bl.operators[-1]) is NdVar {
+    // (So is a `match` tail — each arm delivered into the buffer, an empty `[]` arm copied in
+    // too — which this port left as it stood: a silent differ.)
+    ltail = el_ir::unspan(bl.operators[-1]);
+    lmatch = match ltail { NdBlock { block: lmb } => lmb[0].name == "scalar_match" || lmb[0].name == "match" || lmb[0].name == "vector_match", _ => false };
+    if ltail is NdIf || ltail is NdVar || lmatch {
       el::refuse(e, "a lambda returning a vector from a branch or a variable");
     }
     return code;
