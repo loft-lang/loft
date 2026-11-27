@@ -907,7 +907,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  v = stored(e, vars, x, pt);
+  // (`null` into a dense plain-scalar place stores the type's own null — `v[1] = null` is
+  // `OpSetInt(…, OpConvIntFromNull())`; a narrow one, whose null is range-checked, is not carried.)
+  nullw: ir::Node? = null;
+  if x.tp is TyNull && op == "=" && el_convert::plain_scalar(pt) && !(pt is TyOptional) && !(match pt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0 || nsp.forced_size != 0, _ => false }) {
+    nullw = el_convert::null_of(e, pt);
+  }
+  v = if nullw != null { nullw } else { stored(e, vars, x, pt) };
   if v == null {
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
     return ex(ir::NdNull, ir::TyVoid);
