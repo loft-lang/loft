@@ -14,6 +14,7 @@ use ir_forward_walk;
 use ir_self_replace;
 use ir_single_use;
 use ir_discharge_into;
+use ir_keyed_entry;
 use ir_text_len;
 use ir_complete_write;
 
@@ -40,6 +41,8 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   ir_single_use::rewrite_program(b);
   // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
   ir_discharge_into::rewrite_program(b);
+  // `@FR-R-KeyedEntry` — a keyed insert written into the entry its key names.
+  ir_keyed_entry::rewrite_program(b);
   // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written.
   ir_text_len::rewrite_program(b);
   // `@FR-R-CompleteWrite` — a copy into a field of an element its literal just minted is flagged

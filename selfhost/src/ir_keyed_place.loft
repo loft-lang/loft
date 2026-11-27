@@ -1,0 +1,180 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/keyed_place.rs` transcribed (`@FR-R-InPlaceLiteral`'s KEYED clause): the
+// keyed literal assignment `h[k] = R { … }` — `OpSetKeyed(coll, { B = mint; set B.f…; B }, tp,
+// keys…)` — as the site `keyed_entry`'s subscript clause reads.
+
+use ir;
+use scope_fn;
+use opt_push;
+use ir_pass_tree;
+
+// An admitted `OpSetKeyed(coll, { B = mint; set B.f…; B }, tp, keys…)`: the collection, its type
+// with the free-source flag masked off, the keys, the buffer, and the literal's statements after
+// its mint in program order (`ok` false for no site).
+pub struct Site {
+  pub ok: boolean,
+  pub coll: ir::Node,
+  pub tp: integer,
+  pub keys: vector<ir::Node>,
+  pub buf: integer,
+  pub body: vector<ir::Node>
+}
+
+fn none() -> Site {
+  Site { ok: false, coll: ir::NdNull, tp: 0, keys: [], buf: -1, body: [] }
+}
+
+fn is_var(v: ir::Node, x: integer) -> boolean {
+  (ir_pass_tree::var_of(v) ?? -1) == x
+}
+
+// `mentions`: the `Var(x)` nodes of `v` (`Value::walk` sees through spans).
+pub fn mentions(v: ir::Node, x: integer) -> integer {
+  n = match v { NdVar { n: y } => if y == x { 1 } else { 0 }, _ => 0 };
+  for c in scope_fn::children(v) {
+    n += mentions(c, x);
+  }
+  n
+}
+
+// A key the caller's subscript can be emitted twice for (begin and finish) with no effect.
+fn pure_key(v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  u is NdVar || u is NdInt || u is NdLong || u is NdFloat || u is NdSingle
+}
+
+// port: keyed_place.rs fn site — the statement `stmt` of function `d_nr`, when it is a keyed
+// literal assignment the clause admits.
+pub fn site(b: ir::Bundle, stmt: ir::Node, d_nr: integer) -> Site {
+  u = scope_fn::unspan(stmt);
+  if ir_pass_tree::def_name(b, ir_pass_tree::call_def(u)) != "OpSetKeyed" {
+    return none();
+  }
+  args = ir_pass_tree::args_of(u);
+  if len(args) < 4 {
+    return none();
+  }
+  coll = args[0]!;
+  value = args[1]!;
+  tp = match args[2]! { NdInt { n } => n, _ => return none() };
+  match args[3]! { NdInt => {}, _ => return none() }
+  keys = [for k in 4..len(args) { args[k]! }];
+  // The collection is re-derived for the finish: a pure path, the same place both times.
+  root = -1;
+  if opt_push::vector_path(b, coll, root) == "" {
+    return none();
+  }
+  for k in keys {
+    if !pure_key(k) {
+      return none();
+    }
+  }
+  bl = match scope_fn::unspan(value) { NdBlock { block } => block[0]!, _ => return none() };
+  ops = [for o in bl.operators if !(o is NdLine) { o }];
+  if len(ops) == 0 {
+    return none();
+  }
+  buf = match scope_fn::unspan(ops[len(ops) - 1]!) { NdVar { n } => n, _ => return none() };
+  body: vector<ir::Node> = [];
+  sets = 0;
+  minted = false;
+  for op in ops {
+    if op#index == len(ops) - 1 {
+      break;
+    }
+    ou = scope_fn::unspan(op);
+    nm = ir_pass_tree::def_name(b, ir_pass_tree::call_def(ou));
+    oa = ir_pass_tree::args_of(ou);
+    null_decl = match ou { NdSet { var, inner } => var == buf && scope_fn::unspan(inner) is NdNull, _ => false };
+    if null_decl {
+      continue;
+    }
+    if ou is NdCall && (nm == "OpDatabase" || nm == "OpDatabaseNP") && len(oa) > 0 && is_var(oa[0]!, buf) {
+      minted = true;
+      continue;
+    }
+    // A field write of the literal: the buffer as its base, nowhere in its values.  A text field
+    // declines — its staged value can borrow the store the claim mutates.
+    if ou is NdCall && nm.starts_with("OpSet") && nm != "OpSetText" && len(oa) > 0 && is_var(oa[0]!, buf) {
+      clean = true;
+      for k in 1..len(oa) {
+        if mentions(oa[k]!, buf) != 0 {
+          clean = false;
+        }
+      }
+      if clean {
+        sets += 1;
+        body += [op];
+        continue;
+      }
+    }
+    // A statement computing a value for a later write: it runs where it stood.
+    if mentions(op, buf) == 0 {
+      body += [op];
+      continue;
+    }
+    return none();
+  }
+  if !minted || sets == 0 {
+    return none();
+  }
+  // The buffer is the literal's alone: outside this statement only its null declaration and its
+  // frees name it.
+  inside = mentions(stmt, buf);
+  code = b.data.definitions[d_nr]!.code[0] ?? ir::NdNull;
+  if mentions(code, buf) != inside + freed(b, code, buf) {
+    return none();
+  }
+  if tp & 32767 < 0 || tp & 32767 > 65535 {
+    return none();
+  }
+  Site { ok: true, coll: coll, tp: tp & 32767, keys: keys, buf: buf, body: body }
+}
+
+// The `Var(buf)` arguments of the frees in `n`.
+fn freed(b: ir::Bundle, n: ir::Node, buf: integer) -> integer {
+  k = 0;
+  match n {
+    NdCall { def_nr, args } => {
+      nm = ir_pass_tree::def_name(b, def_nr);
+      if nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRefTag" {
+        for a in args {
+          if is_var(a, buf) {
+            k += 1;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    k += freed(b, c, buf);
+  }
+  k
+}
+
+// One `(setter, byte offset)` of `Site::setters`.
+pub struct Setter { pub name: text, pub off: integer }
+
+// port: keyed_place.rs fn Site::setters — the literal's field writes, an offset that is not a
+// constant reading 65535.
+pub fn setters(b: ir::Bundle, s: Site) -> vector<Setter> {
+  out: vector<Setter> = [];
+  for op in s.body {
+    u = scope_fn::unspan(op);
+    a = ir_pass_tree::args_of(u);
+    if u is NdCall && len(a) > 0 && is_var(a[0]!, s.buf) {
+      off = match scope_fn::unspan(a[1] ?? ir::NdNull) { NdInt { n } => if n >= 0 && n <= 65535 { n } else { 65535 }, _ => 65535 };
+      out += [Setter { name: ir_pass_tree::def_name(b, ir_pass_tree::call_def(u)), off: off }];
+    }
+  }
+  out
+}
+
+// port: keyed_place.rs fn constant — a constant operand of a setter, which needs no staging.
+pub fn constant(v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  u is NdInt || u is NdLong || u is NdFloat || u is NdSingle || u is NdBoolean
+}
