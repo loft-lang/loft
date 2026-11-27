@@ -196,13 +196,15 @@ def main():
         # The front runner holds the elaborator beside the writer and the runner: its optimised
         # build needs more than the 9 GB the C compiler is allowed here (`virtual memory
         # exhausted`), so it is a development build — a measurement, not what ships.
-        p = subprocess.run([loft, "--native-c", *([] if o.front else ["--ship"]), "--out", out,
+        # `LOFT_RUNNER_BIN`: a runner already built from this tree (the build is minutes).
+        prebuilt = os.environ.get("LOFT_RUNNER_BIN")
+        p = subprocess.CompletedProcess([], 0, "", "") if prebuilt else subprocess.run([loft, "--native-c", *([] if o.front else ["--ship"]), "--out", out,
                             "--lib", os.path.join(root, "selfhost", "src"),
                             "--lib", os.path.join(root, "selfhost", "crt", "src"),
                             os.path.join(root, "selfhost", "bench",
                                          "run_front.loft" if o.front else "run_image_run.loft")],
                            capture_output=True, text=True, env=env, timeout=1800)
-        runner = os.path.join(out, "run_front" if o.front else "run_image_run")
+        runner = prebuilt or os.path.join(out, "run_front" if o.front else "run_image_run")
         if not os.path.exists(runner):
             sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
         # Absolute: each program runs from its own directory, where a path relative to the
