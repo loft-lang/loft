@@ -71,7 +71,9 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   both and prints `CLEAN` only where no verdict worsens (refused → differ included), no program
   gains differing headers and no body is lost — proven on 1990's `n_j20` (a body, 2026-11-27)
   and H-Free/a-discharged-call-answer's refused → differ (a verdict).  Build the base from a detached worktree of
-  loft30-gate.  A struct-enum twin of a shape that agrees for a record is a good place to look
+  loft30-gate.  Choose the LIST by the construct's keyword (every program with a `match `,
+  ~1200), not by a regex for the new spelling: a lifted refusal exposes whatever older gap the
+  program holds, and a narrow regex missed 10-match.loft that way.  A struct-enum twin of a shape that agrees for a record is a good place to look
   for a SILENT differ (four found on 2026-11-27: `τ?` match and `if` joins, a returned join, a
   held view-call subject).  Open: Rust's stub for a qualified `Color::Green` written above
   `enum Color` (371-p375).
