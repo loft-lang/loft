@@ -4,9 +4,9 @@
 // @PLN91 — `src/scopes/args.rs` `scan_args` transcribed: a call's arguments, each scanned, and
 // the preamble a lifted argument leaves before the call — the lifts of an inline record or
 // collection a call answers (`scope_inline_returns`), the hoisted preambles, `@FR-E-Left`'s
-// operand order, the text copy of a by-value operand a later operand writes.  Refused by name:
-// a `&` write-back's owned copy, a tuple literal's member lifts, a borrow source the bracket
-// cannot name, the vector copy beside a writing operand.
+// operand order, the text copy of a by-value operand a later operand writes, the borrow sources
+// the bracket cannot name.  Refused by name: a `&` write-back's owned copy, a tuple literal's
+// member lifts, the vector copy beside a writing operand.
 
 use ir;
 use scope_fn;
@@ -580,6 +580,191 @@ fn accessor_root_var(b: ir::Bundle, v: ir::Node) -> integer {
   }
 }
 
+// What `inline_built_borrow_source` answers: the work-ref `w` the block fills, and the block's
+// scope to absorb into the one hoisted into (-1 for none).
+struct BuiltSource {
+  w: integer,
+  absorb: integer,
+}
+
+// port: args.rs fn inline_built_borrow_source — loft#1029, the work-ref an argument BUILT INLINE
+// yields, at a call whose return may borrow it (`borrows`: a loft-defined callee answering a
+// borrowed view, not a closure).  Read on the argument as given: a spanned block is not one.
+fn inline_built_borrow_source(s: scope_scan::Scopes, arg: ir::Node, borrows: boolean) -> BuiltSource? {
+  if !borrows {
+    return null;
+  }
+  bl = match arg { NdBlock { block } => block[0]!, _ => return null };
+  n = len(bl.operators);
+  res = bl.result[0] ?? ir::TyVoid;
+  heap = match scope_fn::base(res) {
+    TyReference => true,
+    TyVector => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  };
+  if n < 2 || !heap {
+    return null;
+  }
+  w = match scope_fn::unspan(bl.operators[n - 1]!) { NdVar { n: x } => x, _ => return null };
+  owners = scope_fn::depend(res);
+  if len(owners) != 1 || !scope_encloses(s, owners[0]!) {
+    return null;
+  }
+  if scope_encloses(s, w) {
+    absorb = if (scope_fn::base(res) is TyVector) || env_variable("LOFT_NO_STRUCT_LITERAL_ABSORB") == null { bl.scope } else { -1 };
+    return BuiltSource { w: w, absorb: absorb };
+  }
+  if scope_scan::get(s.var_scope, w) == bl.scope {
+    return BuiltSource { w: w, absorb: bl.scope };
+  }
+  null
+}
+
+// port: args.rs fn hoist_built_block — the block's operators but its tail into the preamble, its
+// scope's variables declared where they now stand.
+fn hoist_built_block(s: scope_scan::Scopes, block: ir::Node, absorb: integer, preamble: vector<ir::Node>) {
+  bl = match block { NdBlock { block: x } => x[0]!, _ => return };
+  if absorb >= 0 {
+    for i in 0..len(s.var_scope) {
+      if s.var_scope[i]! == absorb {
+        s.var_scope[i] = s.scope;
+      }
+    }
+  }
+  n = len(bl.operators);
+  for op in bl.operators[0..n - 1] {
+    preamble += [op];
+  }
+}
+
+// port: args.rs fn unnameable_borrow_source — loft#1105, the type to bind an argument the @P290
+// bracket cannot NAME to: the callee's parameter shape carrying the deps the value borrows.
+fn unnameable_borrow_source(b: ir::Bundle, arg: ir::Node, callee: ir::Definition?, arg_idx: integer, borrows: boolean) -> ir::TypeT? {
+  if !borrows {
+    return null;
+  }
+  if scope_fn::unspan(arg) is NdVar {
+    return null;
+  }
+  // A join one of whose arms builds a store in a buffer the caller frees is bound even where
+  // the bracket can name it (loft#2638).
+  if own::bracket_can_name(b, arg) && (env_variable("LOFT_NO_JOIN_ARG_LIFT") != null || !builds_into_tail(arg)) {
+    return null;
+  }
+  pa = callee!.attributes[arg_idx];
+  if pa == null {
+    return null;
+  }
+  tp = pa!.typedef[0] ?? ir::TyVoid;
+  if !scope_fn::is_dbref(scope_fn::base(tp)) {
+    return null;
+  }
+  deps = lift_view_deps(b, arg);
+  if deps == null {
+    return null;
+  }
+  scope_inline_returns::with_deps(tp, deps!)
+}
+
+// `arg.any_node(Block of several operators whose last is a `Var`)`.
+fn builds_into_tail(n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  hit = match u {
+    NdBlock { block } => len(block[0]!.operators) > 1 && scope_fn::unspan(block[0]!.operators[len(block[0]!.operators) - 1]!) is NdVar,
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for c in scope_fn::children(u) {
+    if builds_into_tail(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: args.rs fn lift_view_deps — the variables whose stores the argument's value lies in, null
+// where the walk cannot name them.
+fn lift_view_deps(b: ir::Bundle, arg: ir::Node) -> vector<integer>? {
+  match scope_fn::unspan(arg) {
+    NdVar { n: v } => [v],
+    NdTupleGet { var } => [var],
+    NdBlock { block } => {
+      d = scope_fn::depend(block[0]!.result[0] ?? ir::TyVoid);
+      if len(d) == 0 { null } else { d }
+    },
+    NdIf { t, f } => {
+      d = lift_view_deps(b, t);
+      e = lift_view_deps(b, f);
+      if d == null || e == null {
+        return null;
+      }
+      out = d!;
+      for x in e! {
+        if !scope_fn::has(out, x) {
+          out += [x];
+        }
+      }
+      out
+    },
+    NdCall { def_nr, args } => {
+      if own::is_projection_op(b, def_nr) {
+        if len(args) == 0 {
+          return null;
+        }
+        return lift_view_deps(b, args[0]!);
+      }
+      if env_variable("LOFT_NO_RETBUF_ARG_LIFT") != null {
+        return null;
+      }
+      // A call whose answer lies in the hidden return buffer its caller passes.
+      def = b.data.definitions[def_nr]!;
+      buf = binds::hidden_return_buffer_attr(def);
+      if buf == null {
+        return null;
+      }
+      deps = heap_dep(def.returned[0] ?? ir::TyVoid);
+      if deps == null {
+        return null;
+      }
+      // Every dep `DepEntry::Attr(buf)`: a callee-frame entry carries bit 0x8000, so it never
+      // equals an attribute index.
+      only_buffer = len(deps!) > 0;
+      for x in deps! {
+        if x != buf! {
+          only_buffer = false;
+        }
+      }
+      a = args[buf!];
+      if a == null {
+        return null;
+      }
+      match scope_fn::unspan(a!) {
+        NdVar { n: bv } => if only_buffer { [bv] } else { null },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
+// port: data.rs fn heap_dep — the dep list of a heap type, read through `base()`.
+fn heap_dep(t: ir::TypeT) -> vector<integer>? {
+  match scope_fn::base(t) {
+    TyReference { dep } => dep,
+    TyVector { dep } => dep,
+    TyEnum { is_ref, dep } => if is_ref { dep } else { null },
+    TySorted { dep } => dep,
+    TyHash { dep } => dep,
+    TyIndex { dep } => dep,
+    TyRadix { dep } => dep,
+    TyTrie { dep } => dep,
+    _ => null
+  }
+}
+
 // port: args.rs fn scope_encloses
 fn scope_encloses(s: scope_scan::Scopes, v: integer) -> boolean {
   sc = scope_scan::get(s.var_scope, v);
@@ -1029,7 +1214,6 @@ fn hoist_insert(s: scope_scan::Scopes, b: ir::Bundle, items: vector<ir::Node>, f
   }
   tp = scope_inline_returns::inline_struct_return(s, b, final_val, outer_call, f);
   if tp != null {
-    host_store_site(s, b, outer_call, arg_idx, final_val);
     tmp = scope_scan::new_lift_var(s, f, tp!);
     mark_lift_handoff(s, tmp, arg_idx, transfer_copy, moved_arg);
     preamble += [scope_scan::lift_set(s, b, tmp, final_val, f)];
@@ -1038,21 +1222,6 @@ fn hoist_insert(s: scope_scan::Scopes, b: ir::Bundle, items: vector<ir::Node>, f
     ls += [final_val];
   }
   true
-}
-
-// `@FR-R-HostStore`'s literal clause (`host_store::literal_clause`, after the loop): a call's
-// answer lifted into the child field of a record literal may be built in the node's store
-// (`OpStoreBuf`).  Not transcribed: refused where such a lift is made.
-fn host_store_site(s: scope_scan::Scopes, b: ir::Bundle, outer_call: integer, arg_idx: integer, value: ir::Node) {
-  if outer_call < 0 || arg_idx != 1 || def_name(b, outer_call) != "OpSetChildRec" {
-    return;
-  }
-  match scope_fn::unspan(value) {
-    NdCall { def_nr } => if binds::is_loft_defined(b.data.definitions[def_nr]!) {
-      scope_scan::refuse(s, "host_store::literal_clause: a call's answer lifted into a child field");
-    },
-    _ => {}
-  }
 }
 
 // port: args.rs fn scan_args
@@ -1132,7 +1301,6 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
           for op in items[0..k - 1] {
             preamble += [op];
           }
-          host_store_site(s, b, outer_call, arg_idx, tail);
           tmp = scope_scan::new_lift_var(s, f, tp!);
           mark_lift_handoff(s, tmp, arg_idx, transfer_copy, moved_arg);
           preamble += [scope_scan::lift_set(s, b, tmp, tail, f)];
@@ -1148,7 +1316,6 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
     if tp != null {
       // An inline struct- or collection-returning call as an argument: lifted into a temp the
       // scope's exit frees.
-      host_store_site(s, b, outer_call, arg_idx, scanned);
       tmp = scope_scan::new_lift_var(s, f, tp!);
       mark_lift_handoff(s, tmp, arg_idx, transfer_copy, moved_arg);
       home_lasts_as_its_holder(s, b, tmp, outer_call, args, arg_idx);
@@ -1174,13 +1341,22 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
         scope_scan::refuse(s, "args::lift_tuple_call_members: a tuple literal's member lifted");
       },
       _ => {
-        // `inline_built_borrow_source` and `unnameable_borrow_source`: a borrow source the
-        // bracket cannot name, refused as their superset.
-        if borrows && !(scope_fn::unspan(scanned) is NdVar) {
-          pa = callee!.attributes[arg_idx];
-          if pa != null && scope_fn::is_dbref(scope_fn::base(pa!.typedef[0] ?? ir::TyVoid)) {
-            scope_scan::refuse(s, "args::unnameable_borrow_source: a borrow source the bracket cannot name");
-          }
+        // loft#1029 — an argument built inline that the callee's return may borrow: its
+        // construction hoisted, the work-ref passed.
+        built = inline_built_borrow_source(s, scanned, borrows);
+        if built != null {
+          hoist_built_block(s, scanned, built!.absorb, preamble);
+          ls += [ir::NdVar { n: built!.w }];
+          continue;
+        }
+        // loft#1105 — an argument the bracket cannot name, bound to a temp that borrows what
+        // the value borrows.
+        ut = unnameable_borrow_source(b, scanned, callee, arg_idx, borrows);
+        if ut != null {
+          tmp = scope_scan::new_lift_var(s, f, ut!);
+          preamble += [scope_fn::v_set(tmp, scanned)];
+          ls += [ir::NdVar { n: tmp }];
+          continue;
         }
       }
     }

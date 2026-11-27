@@ -1028,6 +1028,12 @@ fn is_projection_op(b: ir::Bundle, d: integer) -> boolean {
   n == "OpGetField" || n == "OpGetVector" || n == "OpVectorRef" || n == "OpGetRecord" || n == "OpRefFromChildRec"
 }
 
+// src/use_analysis.rs fn bracket_can_name — can the @P290 bracket name the store `arg` lies in?
+pub fn bracket_can_name(b: ir::Bundle, arg: ir::Node) -> boolean {
+  out: vector<integer> = [];
+  arg_root_slots(b, arg, out)
+}
+
 // src/use_analysis.rs fn view_root_slots — false for `None`, else the slots in `out`.
 fn view_root_slots(b: ir::Bundle, arg: ir::Node, out: vector<integer>) -> boolean {
   view_roots(b, arg, out, false)

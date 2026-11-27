@@ -1,0 +1,548 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/host_result.rs`'s admission transcribed: `@FR-R-HostStore`'s RESULT clause, a
+// recursion that answers the results of its own calls builds them all in one store.  The
+// rewrite itself (the split local, `place`, `adopt_and_release`, the frame laid out again) is
+// not transcribed: `check` asks `admits` of every settled function after `host_store` and
+// refuses the function where it answers yes.
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+
+struct Ops {
+  database: integer,
+  free_distinct: integer,
+  set_child: integer,
+  null_sentinel: integer,
+  get_field: integer,
+  copy_record: integer,
+  distinct_store: integer,
+  ref_alias: integer,
+  get_enum: integer
+}
+
+// port: host_result.rs fn rewrite_program's gate and `admit` — is `d_nr` admitted?
+pub fn admits(b: ir::Bundle, d_nr: integer) -> boolean {
+  if (env_variable("LOFT_NO_HOST_RESULT") ?? "0") != "0" || env_variable("LOFT_NO_ADOPT_FIRST_BIND") != null {
+    return false;
+  }
+  for nm in ["OpAdoptChildRec", "OpStoreBuf", "OpStoreBufOnly", "OpReleaseRecIfDistinct"] {
+    if scope_fn::def_nr(b, nm) < 0 {
+      return false;
+    }
+  }
+  d = b.data.definitions[d_nr]!;
+  if d.def_type != 1 || !binds::is_loft_defined(d) || len(d.code) == 0 {
+    return false;
+  }
+  ops = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    free_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    set_child: scope_fn::def_nr(b, "OpSetChildRec"),
+    null_sentinel: scope_fn::def_nr(b, "OpNullRefSentinel"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    copy_record: scope_fn::def_nr(b, "OpCopyRecord"),
+    distinct_store: scope_fn::def_nr(b, "OpDistinctStore"),
+    ref_alias: scope_fn::def_nr(b, "OpRefAlias"),
+    get_enum: scope_fn::def_nr(b, "OpGetEnum")
+  };
+  admit(b, d_nr, ops)
+}
+
+fn var_of(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    _ => -1
+  }
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for v in f.variables {
+    if v.name == nm {
+      return v#index;
+    }
+  }
+  -1
+}
+
+// port: host_result.rs fn tails — the values a node answers.
+fn tails(v: ir::Node, out: vector<ir::Node>) {
+  u = scope_fn::unspan(v);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name != "Object" && bl.name != "materialized_view_return" {
+        n = len(bl.operators);
+        if n > 0 {
+          tails(bl.operators[n - 1]!, out);
+        }
+        return;
+      }
+      out += [u];
+    },
+    NdInsert { items } => if len(items) > 0 { tails(items[len(items) - 1]!, out); },
+    NdIf { t, f } => {
+      tails(t, out);
+      tails(f, out);
+    },
+    _ => { out += [u]; }
+  }
+}
+
+// The operators of a block that are not line marks.
+fn body_of(bl: ir::Block) -> vector<ir::Node> {
+  [for o in bl.operators if !(scope_fn::unspan(o) is NdLine) { o }]
+}
+
+// port: host_result.rs fn literal_ref — a literal block `{ OpDatabase(w, tp); …; w }`: `w`.
+fn literal_ref(v: ir::Node, ops: Ops) -> integer {
+  bl = match scope_fn::unspan(v) { NdBlock { block } => block[0]!, _ => return -1 };
+  if bl.name != "Object" {
+    return -1;
+  }
+  body = body_of(bl);
+  if len(body) == 0 {
+    return -1;
+  }
+  w = match scope_fn::unspan(body[0]!) {
+    NdCall { def_nr, args } => if def_nr == ops.database && len(args) > 0 { var_of(args[0]!) } else { -1 },
+    _ => -1
+  };
+  n = len(bl.operators);
+  if w >= 0 && n > 0 && var_of(bl.operators[n - 1]!) == w { w } else { -1 }
+}
+
+// port: host_result.rs fn view_return_local — `{ OpDatabase(buf); OpCopyRecord(l, buf, tp);
+// frees…; return buf }`: `l`.
+fn view_return_local(v: ir::Node, buf: integer, ops: Ops) -> integer {
+  bl = match scope_fn::unspan(v) { NdBlock { block } => block[0]!, _ => return -1 };
+  if bl.name != "materialized_view_return" {
+    return -1;
+  }
+  body = body_of(bl);
+  n = len(body);
+  if n < 3 {
+    return -1;
+  }
+  ok = match scope_fn::unspan(body[0]!) {
+    NdCall { def_nr, args } => def_nr == ops.database && len(args) > 0 && var_of(args[0]!) == buf,
+    _ => false
+  };
+  l = -1;
+  match scope_fn::unspan(body[1]!) {
+    NdCall { def_nr, args } => {
+      if def_nr != ops.copy_record || len(args) < 2 || var_of(args[1]!) != buf {
+        ok = false;
+      }
+      if len(args) > 0 {
+        l = var_of(args[0]!);
+      }
+    },
+    _ => { ok = false; }
+  }
+  match scope_fn::unspan(body[n - 1]!) {
+    NdReturn { inner } => if var_of(inner) != buf { ok = false; },
+    _ => { ok = false; }
+  }
+  if !ok {
+    return -1;
+  }
+  for k in 2..n - 1 {
+    fine = match scope_fn::unspan(body[k]!) {
+      NdCall { def_nr, args } => def_nr == ops.free_distinct && all_vars(args),
+      _ => false
+    };
+    if !fine {
+      return -1;
+    }
+  }
+  l
+}
+
+fn all_vars(args: vector<ir::Node>) -> boolean {
+  for a in args {
+    if var_of(a) < 0 {
+      return false;
+    }
+  }
+  true
+}
+
+// port: host_result.rs fn plain_return
+fn plain_return(t: ir::TypeT) -> boolean {
+  match t {
+    TyOptional { inner } => plain_return(inner),
+    TyBoolean => true,
+    TyInteger => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    _ => false
+  }
+}
+
+// `Value::names_var_here` anywhere in `n` (`Value::reads_var`).
+fn reads(n: ir::Node, v: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  hit = match u {
+    NdVar { n: x } => x == v,
+    NdSet { var: x } => x == v,
+    NdTupleGet { var: x } => x == v,
+    NdTuplePut { var: x } => x == v,
+    NdFnRefDnr { n: x } => x == v,
+    NdCallRef { var: x } => x == v,
+    NdIter { var: x } => x == v,
+    NdFnRef { var: x } => x == v,
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for c in scope_fn::children(u) {
+    if reads(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Scan {
+  d_nr: integer,
+  buf: integer,
+  buf_at: integer,
+  calls: integer = 0,
+  binds: integer = 0,
+  bad_bind: boolean = false,
+  arg_reads: boolean = false,
+  results: vector<integer>,
+  answers: vector<ir::Node>
+}
+
+fn count_walk(n: ir::Node, f: ir::Function, st: Scan) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr } => if def_nr == st.d_nr { st.calls += 1; },
+    NdSet { var: l, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr, args } => if def_nr == st.d_nr {
+        st.binds += 1;
+        w = var_of(args[st.buf_at] ?? ir::NdNull);
+        if !(w >= 0 && w != st.buf && scope_fn::name(f, w).starts_with("__ref_")) {
+          st.bad_bind = true;
+        }
+        if l != st.buf && scope_fn::is_argument(f, l) {
+          st.bad_bind = true;
+        }
+        if !scope_fn::has(st.results, l) {
+          st.results += [l];
+        }
+      },
+      _ => {}
+    },
+    NdReturn { inner } => tails(inner, st.answers),
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    count_walk(c, f, st);
+  }
+}
+
+fn arg_walk(n: ir::Node, tracked: vector<integer>, st: Scan) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if def_nr == st.d_nr {
+      for a in args {
+        for t in tracked {
+          if reads(a, t) {
+            st.arg_reads = true;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    arg_walk(c, tracked, st);
+  }
+}
+
+// port: host_result.rs fn once_per_path
+fn once_per_path(v: ir::Node, d_nr: integer, bound: vector<integer>) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdLoop { block } => {
+      for o in block[0]!.operators {
+        if calls_self(o, d_nr) {
+          return false;
+        }
+      }
+      return true;
+    },
+    NdSet { var: l, inner } => if (match scope_fn::unspan(inner) { NdCall { def_nr } => def_nr == d_nr, _ => false }) {
+      if scope_fn::has(bound, l) {
+        return false;
+      }
+      bound += [l];
+      return true;
+    },
+    NdIf { cond, t, f } => {
+      if !once_per_path(cond, d_nr, bound) {
+        return false;
+      }
+      other = [for x in bound { x }];
+      ok = once_per_path(t, d_nr, bound) && once_per_path(f, d_nr, other);
+      for l in other {
+        if !scope_fn::has(bound, l) {
+          bound += [l];
+        }
+      }
+      return ok;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if !once_per_path(c, d_nr, bound) {
+      return false;
+    }
+  }
+  true
+}
+
+fn calls_self(n: ir::Node, d_nr: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr } => if def_nr == d_nr { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if calls_self(c, d_nr) {
+      return true;
+    }
+  }
+  false
+}
+
+// The non-null binds of `r` anywhere in `n`: their tails into `out`.
+fn ret_binds(n: ir::Node, r: integer, out: vector<ir::Node>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: x, inner } => if x == r && !(scope_fn::unspan(inner) is NdNull) { tails(inner, out); },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    ret_binds(c, r, out);
+  }
+}
+
+// An `OpDatabase` whose work ref is neither an answered literal's nor the buffer.
+fn stray_mint(n: ir::Node, ops: Ops, minted: vector<integer>, buf: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if def_nr == ops.database {
+      w = if len(args) > 0 { var_of(args[0]!) } else { -1 };
+      if !(w >= 0 && (scope_fn::has(minted, w) || w == buf)) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if stray_mint(c, ops, minted, buf) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: host_result.rs fn admit
+fn admit(b: ir::Bundle, d_nr: integer, ops: Ops) -> boolean {
+  d = b.data.definitions[d_nr]!;
+  ba = binds::hidden_return_buffer_attr(d);
+  if ba == null {
+    return false;
+  }
+  rec = match d.returned[0] ?? ir::TyVoid {
+    TyEnum { is_ref } => is_ref,
+    TyReference => true,
+    _ => false
+  };
+  if !rec {
+    return false;
+  }
+  code = d.code[0]!;
+  f = d.variables;
+  buf = var_named(f, d.attributes[ba!]!.name);
+  st = Scan { d_nr: d_nr, buf: buf, buf_at: ba!, results: [], answers: [] };
+  count_walk(code, f, st);
+  if st.calls == 0 || buf < 0 || !scope_fn::is_argument(f, buf) || st.bad_bind || st.binds != st.calls {
+    return false;
+  }
+  tracked = [for r in st.results { r }];
+  tracked += [buf];
+  arg_walk(code, tracked, st);
+  if st.arg_reads || !once_per_path(code, d_nr, []) {
+    return false;
+  }
+  entry = var_named(f, "__rbw_{scope_fn::name(f, buf)}");
+  expanded: vector<ir::Node> = [];
+  for a in st.answers {
+    r = var_of(a);
+    if r >= 0 && !scope_fn::has(tracked, r) {
+      if !scope_fn::name(f, r).starts_with("__ret_") {
+        return false;
+      }
+      ret_binds(code, r, expanded);
+    } else {
+      expanded += [a];
+    }
+  }
+  minted: vector<integer> = [];
+  for a in expanded {
+    u = scope_fn::unspan(a);
+    fine = match u {
+      NdVar { n: r } => scope_fn::has(tracked, r),
+      NdNull => true,
+      NdReturn => true,
+      NdCall { def_nr } => def_nr == ops.null_sentinel,
+      _ => false
+    };
+    if fine {
+      continue;
+    }
+    w = literal_ref(u, ops);
+    if w >= 0 {
+      if !scope_fn::name(f, w).starts_with("__ref_") {
+        return false;
+      }
+      if !scope_fn::has(minted, w) {
+        minted += [w];
+      }
+      continue;
+    }
+    l = view_return_local(u, buf, ops);
+    if l >= 0 {
+      if !scope_fn::has(st.results, l) || l == buf {
+        return false;
+      }
+      continue;
+    }
+    // A `Var` that is not a result, and every other answer: declined.
+    return false;
+  }
+  if stray_mint(code, ops, minted, buf) {
+    return false;
+  }
+  cx = Check { b: b, d_nr: d_nr, ops: ops, tracked: tracked, minted: minted, buf: buf, entry: entry };
+  valid(cx, code)
+}
+
+struct Check {
+  b: ir::Bundle,
+  d_nr: integer,
+  ops: Ops,
+  tracked: vector<integer>,
+  minted: vector<integer>,
+  buf: integer,
+  entry: integer
+}
+
+fn is_tracked(cx: Check, v: ir::Node) -> boolean {
+  x = var_of(v);
+  x >= 0 && scope_fn::has(cx.tracked, x)
+}
+
+// port: host_result.rs fn Check::valid — is every mention of a result (or the buffer) one the
+// rewrite knows?
+fn valid(cx: Check, v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  ops = cx.ops;
+  match u {
+    NdVar { n: x } => return !scope_fn::has(cx.tracked, x),
+    NdSet { var: x, inner } => {
+      if scope_fn::has(cx.tracked, x) {
+        return match scope_fn::unspan(inner) {
+          NdNull => true,
+          NdCall { def_nr, args } => def_nr == cx.d_nr && valid_all(cx, args),
+          _ => false
+        };
+      }
+      if cx.entry >= 0 && x == cx.entry {
+        return match scope_fn::unspan(inner) {
+          NdCall { def_nr, args } => def_nr == ops.ref_alias && len(args) == 1 && var_of(args[0]!) == cx.buf,
+          _ => false
+        };
+      }
+    },
+    NdReturn { inner } => if is_tracked(cx, inner) { return true; },
+    NdCall { def_nr, args } => {
+      if def_nr == ops.free_distinct {
+        for a in args {
+          if var_of(a) < 0 && !valid(cx, a) {
+            return false;
+          }
+        }
+        return true;
+      }
+      if def_nr == ops.set_child && len(args) > 1 && is_tracked(cx, args[1]!) {
+        return match scope_fn::unspan(args[0]!) {
+          NdCall { def_nr: gf, args: ga } => gf == ops.get_field && len(ga) > 0 && var_of(ga[0]!) >= 0 && scope_fn::has(cx.minted, var_of(ga[0]!)),
+          _ => false
+        };
+      }
+      if def_nr == ops.get_enum && len(args) > 0 && is_tracked(cx, args[0]!) {
+        for a in args {
+          if a#index >= 1 && !valid(cx, a) {
+            return false;
+          }
+        }
+        return true;
+      }
+      if def_nr != cx.d_nr {
+        g = cx.b.data.definitions[def_nr]!;
+        if g.def_type == 1 && binds::is_loft_defined(g) && plain_return(g.returned[0] ?? ir::TyVoid) {
+          for a in args {
+            if !is_tracked(cx, a) && !valid(cx, a) {
+              return false;
+            }
+          }
+          return true;
+        }
+      }
+    },
+    NdIf { cond, t, f } => if distinct_store_guard(cx, cond, t) {
+      return scope_fn::unspan(f) is NdNull;
+    },
+    NdBlock { block } => if block[0]!.name == "materialized_view_return" {
+      return view_return_local(u, cx.buf, ops) >= 0;
+    },
+    _ => {}
+  }
+  valid_all(cx, scope_fn::children(u))
+}
+
+fn valid_all(cx: Check, kids: vector<ir::Node>) -> boolean {
+  for c in kids {
+    if !valid(cx, c) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: host_result.rs fn distinct_store_guard — `if OpDistinctStore(buf, entry)
+// OpFreeRefIfDistinct(buf, x)`.
+fn distinct_store_guard(cx: Check, c: ir::Node, t: ir::Node) -> boolean {
+  if cx.entry < 0 {
+    return false;
+  }
+  guard = match scope_fn::unspan(c) {
+    NdCall { def_nr, args } => def_nr == cx.ops.distinct_store && len(args) > 1 && var_of(args[0]!) == cx.buf && var_of(args[1]!) == cx.entry,
+    _ => false
+  };
+  guard && match scope_fn::unspan(t) {
+    NdCall { def_nr, args } => def_nr == cx.ops.free_distinct && len(args) > 0 && var_of(args[0]!) == cx.buf,
+    _ => false
+  }
+}

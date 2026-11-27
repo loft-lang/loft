@@ -47,6 +47,8 @@ use scope_copy_view;
 use scope_use_analysis;
 use scope_move_elide;
 use scope_compact;
+use scope_host_store;
+use scope_host_result;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -312,6 +314,18 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       scope_buffer_detach::detach_owned_buffers(b, d#index);
     }
   }
+  // `@FR-R-HostStore` — a recursion's result written back into the field it came from is built
+  // in the field's store: decided on every callee's settled IR.
+  for i in scope_host_store::rewrite_program(b, settled) {
+    refused += ["{b.data.definitions[i]!.name}: host_store::rewrite_program: a callee this pass refused decides the write-back"];
+  }
+  // …and its result clause (`host_result::rewrite_program`), whose rewrite is not transcribed:
+  // a function it admits refuses.
+  for d in b.data.definitions {
+    if d.source != 0 && (settled[d#index] ?? false) && scope_host_result::admits(b, d#index) {
+      refused += ["{d.name}: host_result::rewrite_program: a recursion answering its own calls' results"];
+    }
+  }
   // After the loop: the cascades left with nothing to do are retired, and every call of one
   // dropped (`prune_empty_cascades`); `cascade_before_record_frees` runs a record's cascade
   // before each release of it.
@@ -390,8 +404,9 @@ fn callees(n: ir::Node, out: vector<integer>) {
 
 // The whole-program rewrites `check` runs on the parser's bodies before the loop are all
 // transcribed (`pure_reuse`, `bound_append`, `elide_borrows`, `move_elide`, `value_struct_copy`);
-// the post-loop ones on the settled bodies (`text_replace::admit`, `host_store`,
-// `rebound_captures`, `owner_handover`, `lease_calls`) are refused where they are bound.
+// the post-loop ones on the settled bodies (`text_replace::admit`, `host_store`) are
+// transcribed, and `host_result`, `rebound_captures`, `owner_handover`, `lease_calls` are
+// refused where they are bound.
 fn program_rewrites(b: ir::Bundle, free: vector<boolean>, code: ir::Node, f: ir::Function) -> text {
   ""
 }
@@ -634,4 +649,3 @@ fn contains_call(b: ir::Bundle, n: ir::Node, prefix: text) -> boolean {
   }
   false
 }
-
