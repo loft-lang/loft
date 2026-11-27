@@ -3217,6 +3217,12 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   if !e.first_pass && unrenamed && el_ex_deliver::fresh_literal_ref(x) >= 0 {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
+  // (`ref_return`'s `ls` for a literal is empty: no promotion on the first pass, and none on the
+  // second where the tail renamed the buffer onto a local of its own (`r = mk(n); r`) — the
+  // literal is handed up from its work ref.)
+  if el_ex_deliver::fresh_literal_ref(x) >= 0 && (e.first_pass || (!unrenamed && !starts_with(el_vars::name_of(vars, return_buffer(e, vars)), "__ref_"))) {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
   // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
   // caller's: a literal is built into it as into `__retbuf`.
   if !e.first_pass && !unrenamed && !el_ex_assign::returns_projection(e, vars.body) {
@@ -3813,7 +3819,9 @@ pub fn all_hoistable(e: el::El, l: vector<ir::Node>) -> boolean {
 // A `τ?` result keeps the declared type, borrows and all (`chain_site_set_shape`'s `other`
 // arm); a record or a vector borrows `w`.
 pub fn buffer_chain(call: ir::Node, w: integer, result: ir::TypeT) -> ir::Node {
-  own = if (result is TyOptional) { result } else { el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]) };
+  // (`chain_site_set_shape`: a record or a vector result is typed as borrowing `w`; any other —
+  // a `τ?`, a struct enum's `Type::Enum` — is the declared result as it stands.)
+  own = if result is TyReference || result is TyVector { el_types::with_deps(el_types::without_deps(result), [w]) } else { result };
   el_ir::v_block([el_ir::v_set(w, call), ir::NdVar { n: w }], own, "one_buffer_chain")
 }
 
