@@ -1,0 +1,4 @@
+// @PLN231 R11 probe — a file-scope const vector holding a negative number (loft#955)
+// Expect on both backends: len 3 b1 -5
+const B: vector<integer> = [10, -5, 9];
+fn main() { println("len {len(B)} b1 {B[1]}"); }

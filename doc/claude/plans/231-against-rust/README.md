@@ -41,6 +41,7 @@ revisit trigger).
 
 | ID | Restriction | Bites? | Verdict | Cause | Probes |
 |---|---|---|---|---|---|
+| R11 | Consumers work around restrictions loft has lifted | **yes** — dryopea's notes cite 13 loft issues, all closed | lifted; the notes are stale | nothing tells a consumer an issue closed | 42–47 |
 | R10 | A function cannot return a place (`-> &T`) | **yes** — dryopea's lost writes through an accessor (loft#894, LOFT_GOTCHAS.md § Values, copies and tail calls) | real, and the rules allow it | the refusal at the `&` return type; `(F-Ret)` names a `&T` return as its exception | 18, 19 |
 | R1 | No proof against aliasing or data races | one loft-found case (loft#1605); no consumer | partial; the data-race half is not one | @C79, @C86; `par` isolation | 03, 04, 13, 14, 16 |
 | R2 | No moves, no consuming `self` | through R10: copies are what accessors lose writes to | by design | @C86 | 03 |
@@ -105,6 +106,31 @@ revisit trigger).
 - **Verdict.** Liftable, narrowly, and the formal rule already describes it.  Out of the plan as
   [loft#2659](https://github.com/loft-lang/loft/issues/2659) (the probe table and the four
   questions) and the deviation **D-call-32** in `formal/calls.md`.
+
+### R11 — restrictions consumers still work around, which loft has lifted
+
+- **Does it bite?**  Yes, and it is the cheapest bite to remove: a consumer that still believes a
+  restriction pays for it in every file it writes.  dryopea's `CLAUDE.md` § Loft language
+  gotchas and `docs/LOFT_GOTCHAS.md` steer its code by thirteen loft issues — loft#873, #876,
+  #877, #880, #894, #914, #915, #918, #935, #955, #962, #969, #974 — and **all thirteen are
+  closed**.  hexbody's `CLAUDE.md` carries the loop-variable rule too.
+- **Measured on main** (probes 42–47, both backends):
+
+  | Workaround the consumer still writes | Issue | On main |
+  |---|---|---|
+  | loop variables prefixed per function (`tslr_w`), because a name keeps one type per function | #915 | two loops reuse `e` at two types: `t=6`; a name rebinds after its loop |
+  | a negative number kept out of a file-scope `const vector` | #955 | `len 3`, `B[1] == -5` |
+  | a struct always built from `*_empty()`, never a partial literal; fields named so that zero is the safe value (`top_removed` for `has_top`) | #914, #876 | a declared default is honoured (`200`); an undeclared one gets `advice[omitted-field-zero]` |
+  | a call bound to a local before it is indexed in tail position | #877 | `steps(a)[0] ?? -1` answers `5` |
+  | an accessor never written through | #894 | still lost, and now warned — that one is R10 |
+
+- **Cause.**  Nothing in loft: the notes were written when the defects were live, and nothing
+  tells a consumer that a cited issue closed.
+- **Can we lift it?**  The restrictions are already lifted; what is left is the consumers'
+  notes.  Their trees are read-only to this stream, so the report lands here, for their agents:
+  each row above is a line in their notes to retire, and the probe beside it is the evidence.
+  Of the thirteen issues, only the five in the table are re-measured; the other eight are
+  closed, not yet re-run.
 
 ### R1 — aliasing and data races
 

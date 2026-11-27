@@ -1,0 +1,5 @@
+// @PLN231 R11 probe — a call's result indexed in tail position (loft#877)
+// Expect on both backends: pick 5
+fn steps(a: integer) -> vector<integer> { [a, a + 1] }
+fn pick(a: integer) -> integer { steps(a)[0] ?? -1 }
+fn main() { println("pick {pick(5)}"); }

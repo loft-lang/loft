@@ -1,0 +1,4 @@
+// @PLN231 R11 probe — an omitted field with no declared default (loft#914)
+// Expect on both backends: advice[omitted-field-zero], then budget 0
+struct W { budget: float, spent: float }
+fn main() { w = W { spent: 1.0 }; println("budget {w.budget}"); }
