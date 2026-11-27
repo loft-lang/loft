@@ -2939,14 +2939,28 @@ pub fn append_data(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: 
 }
 
 // `append_data` under a spec; `stack`: a `&text` accumulator (a promoted return buffer) takes the
-// `OpFormatStack…` ops.  A width on a value that renders through no padded op (a character, a
-// record, a vector, an enum: `append_data`'s scratch-text composition) is refused by name.
+// `OpFormatStack…` ops.
 pub fn append_spec(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean, f: Fmt) {
   start = if stack { "OpFormatStack" } else { "OpFormat" };
   w = ir::NdVar { n: var };
   b = el_types::base(tp);
-  if f.width != ir::NdInt { n: 0 } && (b is TyCharacter || b is TyVector || b is TyReference || b is TyEnum) {
+  // `@FR-F-Spec` composed with `@FR-F-Render`: a width on a value that renders through no padded
+  // op (a character, a record, a vector, an enum) renders into a scratch work text with the
+  // padding removed, then that text is formatted with it — the second pass's composition.
+  // (A type variable's value is the instance's to compose — it pads at its bound type: refused.)
+  if f.width != ir::NdInt { n: 0 } && el_types::type_var(e, b) >= 0 {
     el::refuse(e, "a padded value of this type: {type_kind(b)}");
+    return;
+  }
+  if !e.first_pass && f.width != ir::NdInt { n: 0 } && (b is TyCharacter || b is TyVector || b is TyReference || b is TyEnum) {
+    wv = el_vars::work_text(vars);
+    inner = f;
+    inner.width = ir::NdInt { n: 0 };
+    inner.dir = plain_fmt().dir;
+    inner.pad = plain_fmt().pad;
+    list += [el_ir::v_set(wv, ir::NdText { s: "" })];
+    append_spec(e, vars, list, wv, val, tp, false, inner);
+    list += [format_text_as(e, start, w, ir::NdVar { n: wv }, f)];
     return;
   }
   db = (if f.note { 1 } else { 0 }) + (if f.radix < 0 { 2 } else { 0 });
