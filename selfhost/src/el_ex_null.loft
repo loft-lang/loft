@@ -3396,7 +3396,9 @@ pub fn owned_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
     NdIf { cond: _, t, f } => owned_arms(e, vars, t) && owned_arms(e, vars, f),
     NdBlock { block } => len(block[0].operators) > 0 && owned_arms(e, vars, block[0].operators[-1]!),
     // A local the first pass renamed the buffer onto is a hidden parameter on the second.
-    NdVar { n: v } => (!vars.vars[v].argument || hidden_param(e, vars, v)) && heap_def(el_vars::tp(vars, v)) >= 0,
+    // (A local VIEWING a store of the frame — a match capture `_mv_inner_N` of `vt` — owns
+    // nothing: it is copied in (`MaterializeView`), never the buffer.)
+    NdVar { n: v } => (!vars.vars[v].argument || hidden_param(e, vars, v)) && heap_def(el_vars::tp(vars, v)) >= 0 && !el_ex_copy::views_local(vars, v),
     // (A `null` arm answers the sentinel and owns nothing: `return if c { d } else { null }`.)
     NdNull => true,
     NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || (!returns_argument_view(el::def(e, def_nr)) && hidden_ref_arg(vars, args) >= 0),
