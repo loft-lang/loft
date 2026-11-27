@@ -3254,6 +3254,19 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
           w = vhr;
           chain = true;
           own_view = true;
+        } else if vhr >= 0 && (starts_with(el::def(e, def_nr).name, "n_") || starts_with(el::def(e, def_nr).name, "t_")) && len(vdeps) == 1 && vdeps[0]! != vhr && vdeps[0]! >= 0 && vdeps[0]! < len(vars.vars) {
+          // (…which the rename takes — a loft call with a buffer of its own, not a field read
+          // `p.b`: `ls = ["x"]`, the local renamed onto the buffer on the first pass and the call handed back as it stands, the result borrowing it — `MergeAttr`
+          // on the second.)
+          xl = vdeps[0]!;
+          xa = attr_nr(el::def(e, d), el_vars::name_of(vars, xl));
+          if e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && !vars.vars[xl].argument && el_expressions::rename_candidate(e, vars, v.code, ir::NdVar { n: xl }) == xl {
+            w = xl;
+            own_view = true;
+          } else if !e.first_pass && xa >= 0 && el::def(e, d).attributes[xa].hidden {
+            w = xl;
+            own_view = true;
+          }
         }
       }
     },
