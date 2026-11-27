@@ -1188,9 +1188,11 @@ impl Function {
         f
     }
 
-    /// @PLN233 (`LOFT_NO_PASS1_DEPS=1` while phase 3 lands): take the dependency lists pass 1
-    /// left on every local of the table pass 2 starts from OUT of their types, so pass 2 derives
-    /// each list itself, and keep each as the variable's lookahead record (`pass1_deps`).
+    /// @PLN233: take the dependency lists pass 1 left on every local of the table pass 2 starts
+    /// from OUT of their types, so pass 2 derives each list itself, and keep each as the
+    /// variable's lookahead record (`pass1_deps`).  A parameter keeps its list: that is the
+    /// signature's, not pass 1's analysis.  Unioned into pass 2 instead, a caller typed against a
+    /// callee's pass-1 return kept a borrow of a store it owned, and never freed it (loft#2660).
     pub fn strip_carried_deps(&mut self) {
         for v in &mut self.variables {
             if !v.argument {

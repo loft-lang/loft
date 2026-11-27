@@ -3547,7 +3547,9 @@ impl Parser {
         let returned_fact = std::mem::take(&mut self.type_fact);
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
-        if !self.first_pass && std::env::var_os("LOFT_NO_PASS1_DEPS").is_some() {
+        // @PLN233: a variable's dependencies are the ones its FINAL pass computed — pass 2
+        // starts from clean lists, and keeps pass 1's apart as a lookahead record.
+        if !self.first_pass {
             self.vars.strip_carried_deps();
         }
         if self.first_pass {
