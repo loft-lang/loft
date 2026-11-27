@@ -119,7 +119,12 @@ def cap_memory():
     if resource is None:
         return
     limit = 8 * 1024 ** 3
-    resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    try:
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+    except ValueError:
+        # macOS refuses an address-space cap ("current limit exceeds maximum limit"): the run
+        # goes uncapped there rather than failing before it starts.
+        pass
 
 
 def run(loft, cell, switch, timeout):
