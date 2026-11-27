@@ -743,6 +743,22 @@ impl Run<'_> {
     /// of a native whose parameters hold no store at all is a store of its own (`json_parse`).  Read as unknown,
     /// a local bound from a view of a lifted native answer was freed beside the lift and no
     /// finding could say so.  `LOFT_RECORDS_NO_NATIVE_ANSWERS=1` reads every native as unknown.
+    /// One row a `par` body reads (`n_parallel_buf_get_ref(idx)`): where the worker answers its
+    /// element (summary `Arg(0)`), the row IS the element, a record inside the iterated vector's
+    /// store, so the body owns none of it — a free of it ends the caller's vector, which the
+    /// later reads and the vector's own free then meet.  A worker answering a store of its own
+    /// hands it to the par buffer, which `n_parallel_buf_drop_ref` releases: the records do not
+    /// follow that buffer, so such a row (and a row outside any queue) stays unknown.
+    pub(super) fn par_row(&self) -> Val {
+        match self.par_sources.last() {
+            Some((input, worker)) if self.summaries.get(worker) == Some(&Summary::Arg(0)) => Val {
+                pts: input.pts.clone(),
+                corr: BTreeSet::new(),
+            },
+            _ => Val::unknown(),
+        }
+    }
+
     pub(super) fn native_answer(
         &mut self,
         node: &Value,

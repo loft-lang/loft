@@ -1317,6 +1317,22 @@ impl Run<'_> {
                 Some(Summary::Arg(_) | Summary::Args(_))
             )
             && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_FN_RETURN").is_some());
+        // A `par` loop's queue names the vector it iterates and its worker; the rows the body
+        // reads answer from them until the buffer is dropped (`Run::par_row`).
+        match def.name() {
+            "n_parallel_queue_ref" => {
+                let worker = match args.get(4).map(Value::unspan) {
+                    Some(Value::Int(w)) => u32::try_from(*w).unwrap_or(u32::MAX),
+                    _ => u32::MAX,
+                };
+                let input = vals.first().cloned().unwrap_or_else(Val::unknown);
+                self.par_sources.push((input, worker));
+            }
+            "n_parallel_buf_drop_ref" => {
+                self.par_sources.pop();
+            }
+            _ => {}
+        }
         if def.returned().heap_dep().is_none() && !fn_answer {
             return Some((s, Val::null()));
         }
@@ -1417,6 +1433,8 @@ impl Run<'_> {
                 }
             } else if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
+            } else if def.name() == "n_parallel_buf_get_ref" {
+                self.par_row()
             } else {
                 self.native_answer(node, d, &vals, &mut s)
             };

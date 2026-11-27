@@ -1157,6 +1157,9 @@ struct Run<'a> {
     /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's
     /// work-ref): each still owns the record it holds, wherever a reference to it is written.
     freed_temps: BTreeSet<u16>,
+    /// The `par` loops being read, innermost last: the iterated vector and the worker, from
+    /// each `n_parallel_queue_ref` until its `n_parallel_buf_drop_ref` (`Run::par_row`).
+    par_sources: Vec<(Val, u32)>,
     /// A tuple literal met as a MEMBER of an enclosing tuple's value (the tail of a
     /// `tuple_member_move` block): its stores are that member's, not handed on.
     member_tuple: bool,
@@ -1462,6 +1465,7 @@ fn run_fn<'a>(
         protected: Vec::new(),
         call_bracket: None,
         freed_temps: BTreeSet::new(),
+        par_sources: Vec::new(),
         member_tuple: false,
     };
     let body = def.code.clone();
