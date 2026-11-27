@@ -2462,14 +2462,15 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, app
 // literal's `]`, the `__tuple<…>` struct, `vector<(…)>` owned by it and the `main_vector<(…)>`
 // wrapper; on the second pass, once the rows are laid out, `check_vector`'s
 // `vector<__tuple<…>>` under the row's own name, at the same place.
-pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
+pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, at_close: boolean = false) -> VecRows? {
   elems = match t { TyTuple { elems: es } => es, _ => [] };
   sp = el_types::tuple_spelling_e(e, elems, ", ");
   tok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
   // `vector_def`'s position: the `]`, or — for a declared element or an empty `[]` — the token
   // before the `[`, read before the literal is.
   cb = closing_bracket(e, tok);
-  pos = el::pos_at(e, if cb == tok + 1 || declared { tok - 1 } else { cb });
+  // (A field's literal read at the field's type is at its own `]`, even an empty one: `at_close`.)
+  pos = el::pos_at(e, if at_close { cb } else if cb == tok + 1 || declared { tok - 1 } else { cb });
   if sp == "" {
     // Refused, but the tuple's record, `vector<(…)>` and `main_vector<(…)>` are registered
     // first, as Rust's `vector_def` registers them for any element: every definition after them
