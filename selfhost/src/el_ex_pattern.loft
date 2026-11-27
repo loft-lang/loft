@@ -2511,6 +2511,22 @@ pub fn name_fields(e: el::El, d: integer, fields: vector<integer>) {
   }
 }
 
+// The right side of a `+=`: `h += [R { … }]` appends to `h` whatever its type, a keyed
+// collection's included (one this pass may not type yet), and is no vector literal of its own.
+fn appended_literal(e: el::El, n: integer) -> boolean {
+  for x in e.p.nodes {
+    match x {
+      SAssign { op: aop, e: arhs } => {
+        if aop == "+=" && arhs != null && arhs! == n {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
 pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
   if el_trace::on() {
     el_trace::route(e, "parse_vector");
@@ -2787,7 +2803,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         bd = el::def_nr(e, bn);
         lp = el::pos_at(e, ut);
         // (An unnamed `{…}` is typed by its place, which Rust knows.)
-        bn != "" && (bd < 0 || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
+        bn != "" && (bd < 0 || (el::def(e, bd).def_type == el::DT_UNKNOWN && !append && !appended_literal(e, n)) || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
       },
       _ => false
     };
