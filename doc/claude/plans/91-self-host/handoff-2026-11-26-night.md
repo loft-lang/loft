@@ -65,7 +65,9 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 - **Score a try per DEFINITION** (the tester's gate), not per program: a change that registers
   or reorders definitions shifts numbers in refused programs too.  `defcmp.sh BASE NEW FILE`
   (c035ae98 scratchpad) counts the differing `#N` headers, `defbody.py BASE NEW FILE…` the
-  definitions whose BODY equals Rust's on BASE but not on NEW.  `score.sh BASE NEW LIST` runs
+  definitions whose BODY equals Rust's on BASE but not on NEW.  `score_par.sh BASE NEW LIST [J]`
+  is the same check on J workers (12 → ~1 min for 600 programs, the serial `score.sh` an hour
+  or more).  `score.sh BASE NEW LIST` runs
   both and prints `CLEAN` only where no verdict worsens (refused → differ included), no program
   gains differing headers and no body is lost — proven on 1990's `n_j20` (a body, 2026-11-27)
   and H-Free/a-discharged-call-answer's refused → differ (a verdict).  Build the base from a detached worktree of
