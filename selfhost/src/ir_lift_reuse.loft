@@ -1,0 +1,354 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/lift_reuse.rs` transcribed (`@FR-R-LiftReuse`): lifted call results
+// (`__lift_N`) that are tuples of scalars and whose live ranges over the body's top-level
+// operators do not overlap share one variable.  In order of first mention a lift takes a
+// variable of its type whose last range ended before its own begins, or keeps its own; a
+// renumbered lift's entry initialisation goes, and the frame is laid out again.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use opt_vr_layout;
+use el;
+use el_tret;
+use ir_pass_tree;
+
+// The variable THIS node names (`Value::var_named_here`), -1 for none.
+fn var_named_here(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: x } => x,
+    NdSet { var } => var,
+    NdTupleGet { var } => var,
+    NdTuplePut { var } => var,
+    NdFnRefDnr { n: x } => x,
+    NdCallRef { var } => var,
+    NdIter { var } => var,
+    NdFnRef { var } => var,
+    _ => -1,
+  }
+}
+
+// port: lift_reuse.rs fn count — how many nodes of `n` name variable `v`.
+fn count(n: ir::Node, v: integer) -> integer {
+  c = if var_named_here(n) == v { 1 } else { 0 };
+  for k in scope_fn::children(n) {
+    c += count(k, v);
+  }
+  c
+}
+
+// `Value::reads_var`: does any node of `n` name `v`?
+fn reads_var(n: ir::Node, v: integer) -> boolean {
+  if var_named_here(n) == v {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if reads_var(k, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does any node of `n` name a variable or call anything?
+fn names_or_calls(n: ir::Node) -> boolean {
+  if var_named_here(n) >= 0 || n is NdCall {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if names_or_calls(k) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: lift_reuse.rs fn scalar_tuple — a tuple whose every element is a scalar.
+fn scalar_tuple(t: ir::TypeT) -> boolean {
+  match t {
+    // A nullable tuple carries a presence the shared variable would hand from one lift to the
+    // next; `(R-ValueRecord)` keeps such a value a record anyway.
+    TyOptional { inner: _ } => false,
+    TyTuple { elems } => {
+      if len(elems) == 0 {
+        return false;
+      }
+      for e in elems {
+        if opt_vr_layout::value_field_type(e) == "" {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+// port: lift_reuse.rs fn entry_init — `v = <expression naming no variable and calling nothing>`.
+fn entry_init(op: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet { var, inner } => var == v && !names_or_calls(inner),
+    _ => false,
+  }
+}
+
+// One lift's live range: its first and last top-level operator, its entry initialisations.
+struct Range {
+  first: integer,
+  last: integer,
+  v: integer,
+  inits: vector<integer>,
+}
+
+// port: lift_reuse.rs fn live_range — the top-level operators `v` is live over; null where the
+// first mention does not write `v` before anything reads it, or `v` has no entry
+// initialisation.
+fn live_range(ops: vector<ir::Node>, v: integer) -> Range? {
+  first = -1;
+  mine: vector<integer> = [];
+  last = 0;
+  for op in ops {
+    i = op#index;
+    if !reads_var(op, v) {
+      continue;
+    }
+    if first < 0 && entry_init(op, v) {
+      mine += [i];
+      continue;
+    }
+    if first < 0 {
+      first = i;
+    }
+    last = i;
+  }
+  if first < 0 {
+    return null;
+  }
+  writes = match scope_fn::unspan(ops[first]!) {
+    NdSet { var, inner } => if var == v { !reads_var(inner, v) } else { last == first && dominated(ops[first]!, v, count(ops[first]!, v)) },
+    _ => last == first && dominated(ops[first]!, v, count(ops[first]!, v)),
+  };
+  // A lift with no entry initialisation has no top-level declaration to share.
+  if !writes || len(mine) == 0 {
+    return null;
+  }
+  Range { first: first, last: last, v: v, inits: mine }
+}
+
+// port: lift_reuse.rs fn dominated — is the first mention of `v` in `node` a `Set(v, rhs)` that
+// is a direct operator of an operator list holding all `total` of its mentions?
+fn dominated(node: ir::Node, v: integer, total: integer) -> boolean {
+  match scope_fn::unspan(node) {
+    NdBlock { block } => in_list(block[0]!.operators, v, total),
+    NdLoop { block } => in_list(block[0]!.operators, v, total),
+    NdInsert { items } => in_list(items, v, total),
+    NdDrop { inner } => dominated(inner, v, total),
+    _ => false,
+  }
+}
+
+fn in_list(ops: vector<ir::Node>, v: integer, total: integer) -> boolean {
+  k = -1;
+  for op in ops {
+    if reads_var(op, v) {
+      k = op#index;
+      break;
+    }
+  }
+  if k < 0 {
+    return false;
+  }
+  sum = 0;
+  for j in k..len(ops) {
+    sum += count(ops[j]!, v);
+  }
+  if sum != total {
+    return false;
+  }
+  match scope_fn::unspan(ops[k]!) {
+    NdSet { var, inner } => if var == v { !reads_var(inner, v) } else { dominated(ops[k]!, v, total) },
+    _ => dominated(ops[k]!, v, total),
+  }
+}
+
+// What the rewrite does to one function: `(lift, the lift whose variable it takes)` pairs, the
+// top-level operators that go, how many shared variables remain.
+struct Plan {
+  from: vector<integer>,
+  to: vector<integer>,
+  inits: vector<integer>,
+  kept: integer,
+}
+
+// One type's shared variables: each one's variable and the last operator it is live in.
+struct Shared {
+  key: text,
+  vars: vector<integer>,
+  ends: vector<integer>,
+}
+
+// port: lift_reuse.rs fn plan — the plan for definition `d`, null where no lift takes another's
+// variable.
+fn plan(b: ir::Bundle, d: integer) -> Plan? {
+  def = b.data.definitions[d]!;
+  f = def.variables;
+  ops = match scope_fn::unspan(def.code[0]!) {
+    NdBlock { block } => block[0]!.operators,
+    _ => return null,
+  };
+  ranges: vector<Range> = [];
+  for x in f.variables {
+    v = x#index;
+    if !x.name.starts_with("__lift_") || x.argument || !scalar_tuple(x.type_def[0] ?? ir::TyVoid) {
+      continue;
+    }
+    r = live_range(ops, v);
+    if r != null {
+      ranges += [r!];
+    }
+  }
+  if len(ranges) < 2 {
+    return null;
+  }
+  // `sort_unstable` on `(first, last, v)`.
+  order = [for r in ranges { r#index }];
+  for i in 1..len(order) {
+    j = i;
+    while j > 0 && after(ranges[order[j - 1]!]!, ranges[order[j]!]!) {
+      t = order[j - 1]!;
+      order[j - 1] = order[j]!;
+      order[j] = t;
+      j -= 1;
+    }
+  }
+  shared: vector<Shared> = [];
+  from: vector<integer> = [];
+  to: vector<integer> = [];
+  renamed: vector<integer> = [];
+  for o in order {
+    r = ranges[o]!;
+    key = "{f.variables[r.v]!.type_def[0] ?? ir::TyVoid}";
+    i = -1;
+    for s in shared {
+      if s.key == key {
+        i = s#index;
+        break;
+      }
+    }
+    if i < 0 {
+      shared += [Shared { key: key, vars: [], ends: [] }];
+      i = len(shared) - 1;
+    }
+    slot = -1;
+    for e in shared[i]!.ends {
+      if e < r.first {
+        slot = e#index;
+        break;
+      }
+    }
+    if slot >= 0 {
+      from += [r.v];
+      to += [shared[i]!.vars[slot]!];
+      renamed += [o];
+      shared[i].ends[slot] = r.last;
+    } else {
+      shared[i].vars += [r.v];
+      shared[i].ends += [r.last];
+    }
+  }
+  if len(from) == 0 {
+    return null;
+  }
+  kept = 0;
+  for s in shared {
+    kept += len(s.vars);
+  }
+  // A shared variable keeps its own entry initialisation: the rustc writer declared a local at
+  // its first assignment, and that must stand at the top level, ahead of every lift taking it.
+  inits: vector<integer> = [];
+  for o in renamed {
+    for k in ranges[o]!.inits {
+      inits += [k];
+    }
+  }
+  Plan { from: from, to: to, inits: inits, kept: kept }
+}
+
+// `(first, last, v)` of `a` above `c`'s.
+fn after(a: Range, c: Range) -> boolean {
+  if a.first != c.first {
+    return a.first > c.first;
+  }
+  if a.last != c.last {
+    return a.last > c.last;
+  }
+  a.v > c.v
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// port: lift_reuse.rs fn rewrite_program — every function's lifts shared; answers how many
+// lifts were renumbered onto another lift's variable.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_LIFT_REUSE") ?? "0") != "0" {
+    return 0;
+  }
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || el::is_operator(d) || d.rust != "" {
+      continue;
+    }
+    p = plan(b, d#index);
+    if p == null {
+      continue;
+    }
+    code = d.code[0]!;
+    code = drop_inits(code, p!.inits);
+    // A shared variable is live across top-level operators of the body, so the body's scope is
+    // the one that encloses every use (`@FR-B-Scope`); its first lift's may be a block's.
+    body_scope = match scope_fn::unspan(code) {
+      NdBlock { block } => block[0]!.scope,
+      _ => 0,
+    };
+    f = b.data.definitions[d#index]!.variables;
+    for fr in p!.from {
+      t = p!.to[fr#index]!;
+      code = el_tret::renumber(code, fr, t);
+      for x in f.variables {
+        f.variables[x#index].type_def = [for y in x.type_def { el_tret::renumber_type(y, fr, t) }];
+      }
+      f.variables[t].scope = body_scope;
+    }
+    b.data.definitions[d#index].code = [code];
+    ir_pass_tree::relayout(b, d#index);
+    total += len(p!.from);
+  }
+  total
+}
+
+// The body under its spans without its top-level operators `inits`.
+fn drop_inits(code: ir::Node, inits: vector<integer>) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: drop_inits(inner, inits) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      kept: vector<ir::Node> = [];
+      for o in bl.operators {
+        if !has(inits, o#index) {
+          kept += [o];
+        }
+      }
+      ir::NdBlock { block: [ir_pass_tree::with_operators(bl, kept)] }
+    },
+    _ => code,
+  }
+}
