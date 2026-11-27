@@ -87,10 +87,12 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       if orig < 0 || !scope_fn::is_argument(f, p) {
         continue;
       }
+      // A rebound parameter this exit HANDS OUT is the caller's to take (`(F-ParamRebind)`).
       if p == ret_var || scope_fn::has(delivered.sources, p) {
         continue;
       }
-      scope_scan::refuse(s, "get_free_vars: a rebound parameter (rebind_params)");
+      // @PLN87 P2.1 — its CURRENT store is freed iff it differs from the caller's original.
+      ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: p }, ir::NdVar { n: orig }] }];
     }
     if scope_fn::base(b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid) is TyIterator {
       scope_scan::refuse(s, "get_free_vars: a generator returning function (its handle parameters)");
@@ -348,8 +350,8 @@ fn pair_literal_buffers(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, l
   if !any {
     return;
   }
-  // A rebound parameter (refused at a function exit) and a local renamed onto the return buffer
-  // (refused by the phase) release at exit through their entry witness.
+  // A rebound parameter and a local renamed onto the return buffer (refused by the phase)
+  // release at exit through their entry witness.
   rebound_params: vector<integer> = [];
   for p in 0..scope_fn::count(f) {
     if scope_fn::is_argument(f, p) && scope_fn::rebind_orig(f, p) >= 0 {
