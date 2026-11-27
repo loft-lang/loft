@@ -34,8 +34,12 @@ def one(loft, defs, passed, std, path, tmp, env, i):
     lib_args = [a for d in elab_gate.lib_dirs(text) for a in ("--lib", d)]
     pre, post = os.path.join(tmp, f"p{i}.pre"), os.path.join(tmp, f"p{i}.post")
     try:
-        r = subprocess.run([loft] + lib_args + [path], env=dict(env, LOFT_EMIT_SCOPED=pre),
-                           capture_output=True, timeout=180)
+        # The scoped image is taken under `--emit-image` too (it exits after writing it, before
+        # the passes): a plain run parses some programs otherwise (the parser's `synth text
+        # dest` around a library's text-returning call), so its scoped image was not the input
+        # the closed image's `close_program` had.
+        r = subprocess.run([loft] + lib_args + ["--emit-image", post, path],
+                           env=dict(env, LOFT_EMIT_SCOPED=pre), capture_output=True, timeout=180)
         q = subprocess.run([loft] + lib_args + ["--emit-image", post, path], env=env,
                            capture_output=True, timeout=180)
         if r.returncode != 0 or q.returncode != 0 or not os.path.exists(pre) or not os.path.exists(post):
@@ -56,17 +60,24 @@ def one(loft, defs, passed, std, path, tmp, env, i):
     if m.returncode != 0:
         return "differ", {"(program)": ("differ", f"passed exited {m.returncode}: {m.stderr.strip()[-200:]}")}
     lines = m.stdout.splitlines()
-    refused = {}
+    refused, prefill = {}, {}
     for l in lines:
         if l.startswith("unscoped: "):
             name, _, why = l[len("unscoped: "):].partition(": ")
             refused[name] = why
-    mine = own_definitions([l for l in lines if not l.startswith("unscoped: ")])
+        elif l.startswith("fact: "):
+            # A stored fact the report does not print (`no_prefill`, a closure's field
+            # layout), differing from Rust's.
+            name, _, why = l[len("fact: "):].partition(": ")
+            prefill[name] = why
+    mine = own_definitions([l for l in lines if not l.startswith(("unscoped: ", "fact: "))])
     want = own_definitions(o.stdout.splitlines())
     fns = {}
     for name in sorted(set(mine) | set(want)):
         if name in refused:
             fns[name] = ("refused", refused[name])
+        elif name in prefill and mine.get(name) == want.get(name):
+            fns[name] = ("differ", (prefill[name], ""))
         elif mine.get(name) == want.get(name):
             fns[name] = ("agree", "")
         else:

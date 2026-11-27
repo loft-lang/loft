@@ -11,6 +11,7 @@ use ir_arg_copy;
 use ir_value_record;
 use ir_leaf_inline;
 use ir_tail_self;
+use ir_capture_ownership;
 use ir_zero_count;
 use ir_exp_pow;
 use ir_ctor_literal;
@@ -37,6 +38,8 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   // ctor_literal, forward_walk, same_read, self_replace, in_range, single_use, discharge_into,
   // fill_loop, keyed_entry, elem_first, text_len, loop_buffer, complete_write, loop_record,
   // lift_reuse.
+  // A closure record's borrowed capture laid out as the borrowed pointer shape.
+  ir_capture_ownership::rewrite_program(b);
   // `@FR-F-ParamText` — a store-viewing text argument keeps its copy only where the call can
   // write a store.
   ir_arg_copy::rewrite_program(b);
@@ -94,6 +97,45 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
 // The host's `Definition::native` marks of `closed` carried into `b`: the bridge symbol a native
 // library build exports, set between the scope pass and `close_program` (`native_adopt`), so a
 // scoped image does not hold it.  The passes gate hands it over (`selfhost/compare/passed.loft`).
+// The facts the passes store that the definition report does not print, against the closed
+// image `closed` (Rust's, for the passes gate): a definition's `no_prefill`
+// (`@FR-R-CompleteWrite`) and a closure record's capture field layout
+// (`sync_capture_ownership`).  One `<name>: <what differs>` row per definition from `from` on.
+pub fn fact_rows(b: ir::Bundle, closed: ir::Bundle, from: integer) -> vector<text> {
+  rows: vector<text> = [];
+  for d in b.data.definitions {
+    p = closed.data.definitions[d#index];
+    if d#index < from || p == null || p.name != d.name {
+      continue;
+    }
+    if p.no_prefill != d.no_prefill {
+      rows += ["{d.name}: no_prefill rust '{p.no_prefill}' loft '{d.no_prefill}'"];
+    }
+    if d.name.starts_with("__closure_") && d.known_type >= 0 && d.known_type < len(b.types) && d.known_type < len(closed.types) {
+      mine = field_layout(b, d.known_type);
+      want = field_layout(closed, d.known_type);
+      if mine != want {
+        rows += ["{d.name}: fields rust '{want}' loft '{mine}'"];
+      }
+    }
+  }
+  rows
+}
+
+// A record type's fields as `name:<content type name>`.
+fn field_layout(b: ir::Bundle, tp: integer) -> text {
+  r = "";
+  match b.types[tp].parts[0] {
+    PtStruct { fields } => {
+      for f in fields {
+        r += " {f.name}:{b.types[f.content].name}";
+      }
+    },
+    _ => {}
+  }
+  r
+}
+
 pub fn carry_native(b: ir::Bundle, closed: ir::Bundle) {
   for d in b.data.definitions {
     p = closed.data.definitions[d#index];

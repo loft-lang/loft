@@ -7,14 +7,15 @@
 // created, so it releases nothing there and a null source writes the field type's defaults
 // (`@C137`).  The flags are written whatever `LOFT_NO_COMPLETE_WRITE` says.
 //
-// NOT transcribed yet: the stored fact `Definition::no_prefill` (`complete_writes`' `db_vars` and
-// `mint_tps`, decided by `loop_records::group_covers_type`).  The passes gate does not print it,
-// so a function whose fact Rust sets still agrees there; the writers read it from Rust's image.
+// The stored fact `Definition::no_prefill` — `complete_writes`' `db_vars` and `mint_tps`
+// (`ir_loop_records::complete_writes`), `NoPrefill::encode`d — is decided here too, before the
+// flags, and only while `LOFT_NO_COMPLETE_WRITE` is off.
 
 use ir;
 use scope_fn;
 use lower;
 use ir_pass_tree;
+use ir_loop_records;
 
 // `keys::COPY_FRESH_DEST`
 COPY_FRESH_DEST = 16384;
@@ -142,8 +143,39 @@ fn is_operator(d: ir::Definition) -> boolean {
   d.def_type == 1 && len(d.name) > 2 && d.name.starts_with("Op") && d.name[2] >= 'A' && d.name[2] <= 'Z'
 }
 
-// port: complete_write.rs fn rewrite_program — every function's fresh-field copies flagged.
+// `complete_write::enabled`
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_COMPLETE_WRITE") ?? "0") == "0"
+}
+
+// `NoPrefill::encode`: `l<locals>;m<mints>`, each set ascending and comma-separated; "" for
+// none.
+fn encode(locals: vector<integer>, mints: vector<integer>) -> text {
+  if len(locals) == 0 && len(mints) == 0 {
+    return "";
+  }
+  l = [for x in locals { x }];
+  l.sort();
+  m = [for x in mints { x }];
+  m.sort();
+  "l{join_ints(l)};m{join_ints(m)}"
+}
+
+fn join_ints(v: vector<integer>) -> text {
+  r = "";
+  for x in v {
+    if x#index > 0 {
+      r += ",";
+    }
+    r += "{x}";
+  }
+  r
+}
+
+// port: complete_write.rs fn rewrite_program — every function's no-prefill fact decided and its
+// fresh-field copies flagged.
 pub fn rewrite_program(b: ir::Bundle) {
+  on = enabled();
   ops = Ops {
     copy_record: lower::find(b, "OpCopyRecord") ?? -1,
     get_field: lower::find(b, "OpGetField") ?? -1,
@@ -153,6 +185,13 @@ pub fn rewrite_program(b: ir::Bundle) {
   for d in b.data.definitions {
     if !ir_pass_tree::has_body(d) || is_operator(d) || d.rust != "" {
       continue;
+    }
+    if on {
+      cw = ir_loop_records::complete_writes(b, d#index, 0);
+      fact = encode(cw.db_vars, cw.mint_tps);
+      if fact != "" {
+        b.data.definitions[d#index].no_prefill = fact;
+      }
     }
     c = Count { n: 0 };
     code = walk(ops, d.code[0]!, c);
