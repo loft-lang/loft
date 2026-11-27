@@ -507,8 +507,17 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         }
         // An untyped `[]` arm is read against the match's vector type (`parse_vector` with the
         // arm's expectation): built as an empty vector of its element, in a store of its own.
-        if body != null && el_types::base(expected) is TyVector && el_ex_pattern::syntax_tail_empty(e, body!) {
-          b = el_ex_pattern::empty_arm(e, vars, b, expected, ir::TyVoid, syn: body!);
+        // (At the body's tail, before any arm settled the match, the function's declared vector
+        // result is the expectation: `-> vector<integer> { match k { 0 => [], _ => [k] } }`.)
+        eexp = expected;
+        if body != null && !(el_types::base(eexp) is TyVector) && node >= 0 && el_ex_deliver::tail_syntax(e, vars.body) == node && e.context >= 0 && el_ex_pattern::syntax_tail_empty(e, body!) {
+          dret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+          if el_types::base(dret) is TyVector {
+            eexp = el_types::without_deps(el_types::base(dret));
+          }
+        }
+        if body != null && el_types::base(eexp) is TyVector && el_ex_pattern::syntax_tail_empty(e, body!) {
+          b = el_ex_pattern::empty_arm(e, vars, b, eexp, ir::TyVoid, syn: body!);
         }
         // The bindings' spellings name what they named before the arm.
         for al in rev(aliases) {
