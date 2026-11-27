@@ -163,7 +163,7 @@ open plan.  Silent-wrong defects are issues, not plans: `gh issue list --label s
 
 | Plan | status | What it is |
 |---|---|---|
-| [@PLN231](plans/231-against-rust/README.md) | active | Against Rust — each restriction's cause, whether it is one, what we could do, and the comparison probes as tests |
+| [@PLN231](plans/231-against-rust/README.md) | active | Restrictions that bite — which ones real programs run into, what causes each, and whether we can lift it |
 | [@PLN192](https://github.com/loft-lang/plans/issues/192) | future | Regex captures, find-all and replace — a `Match` whose texts the compiler can keep a view of the subject ([plan](plans/192-regex-captures-as-spans.md)) |
 | [@PLN171](https://github.com/loft-lang/plans/issues/171) | future | LSP / DAP follow-ups |
 | [@PLN66](https://github.com/loft-lang/plans/issues/66) | future | Viewer ↔ LSP bridge |

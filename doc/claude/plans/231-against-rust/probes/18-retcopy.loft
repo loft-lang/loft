@@ -1,0 +1,15 @@
+// @PLN231 probe — a write through a struct an accessor returned (dryopea's loft#894 shape)
+// Expect on both backends: warning[lost-write] at line 9, then via accessor: 100 / inline: 90 / loop var: 80
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy> }
+fn first(s: State) -> Enemy { s.enemies[0] }
+fn hurt(e: Enemy, d: integer) { e.hp -= d; }
+fn main() {
+  s = State { enemies: [Enemy { hp: 100 }] };
+  hurt(first(s), 10);
+  println("via accessor: {s.enemies[0].hp}");
+  hurt(s.enemies[0], 10);
+  println("inline: {s.enemies[0].hp}");
+  for e in s.enemies { hurt(e, 10); }
+  println("loop var: {s.enemies[0].hp}");
+}
