@@ -751,6 +751,29 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       code = tail_call_into_local(e, vars, code);
     }
   }
+  // `RetPromotion::Bind { substitute }` for a tail call whose buffer an earlier `return` of a
+  // call has renamed onto its own `__ref_N` (`MidReturn`'s chain site): the tail call's work ref
+  // is that buffer, substituted and retired (`unregister_work_ref`), on both passes.  (A callee
+  // that builds its answer takes the buffer through `one_buffer_chain` further on; this is the
+  // callee that hands an argument back, which that road leaves.)
+  if rb >= 0 && !mat_tail && !renamed_now && attr_nr(el::def(e, e.context), "__retbuf") < 0 {
+    cbuf = el_ex_null::return_buffer(e, vars);
+    cbl = match code { NdBlock { block: cbb } => cbb[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+    if cbuf >= 0 && starts_with(el_vars::name_of(vars, cbuf), "__ref_") && len(cbl.operators) > 0 {
+      match el_ir::unspan(cbl.operators[-1]) {
+        NdCall { def_nr: ctd, args: cta } => {
+          cw = el_ex_base::hidden_ref_arg(vars, cta);
+          if cw >= 0 && cw != cbuf && !vars.vars[cw].argument && el_ex_base::returns_argument_view(el::def(e, ctd)) {
+            el_trace::retpromo(e, vars, cw, "Bind");
+            el_vars::unregister_work_ref(vars, cw);
+            cbl.operators[-1] = el_ex_base::rename_var(cbl.operators[-1]!, cw, cbuf);
+            code = ir::NdBlock { block: [cbl] };
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   if rb >= 0 && !mat_tail && attr_nr(el::def(e, e.context), "__retbuf") >= 0 {
     delivered = var_return(e, vars, code, rb);
     if delivered == null {
