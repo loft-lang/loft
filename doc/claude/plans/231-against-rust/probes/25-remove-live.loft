@@ -1,0 +1,7 @@
+// @PLN231 R10 probe — an element removed while a link to another is used after
+// Expect on both backends: refused at compile time (a remove reshapes the vector)
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy>, name: text }
+fn hurt(e: Enemy, d: integer) { e.hp -= d; }
+fn mk() -> State { State { enemies: [Enemy { hp: 100 }, Enemy { hp: 50 }], name: "s" } }
+fn main() { s = mk(); e = &s.enemies[1]; s.enemies.remove(0); e.hp -= 10; println("{s.enemies[0].hp}"); }

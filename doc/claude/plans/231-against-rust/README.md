@@ -12,7 +12,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 | Stage | Status |
 |---|---|
 | A — Which restrictions bite | 🟡 the loft tracker and four consumers' loft notes read (dryopea, crawler, moros, routing); R10 bites, the rest show no consumer evidence yet |
-| B — Cause and lift per biting restriction | 🟡 R10 read against the formal rules; the others carry a first reading |
+| B — Cause and lift per biting restriction | 🟡 R10 feasible (probes 20–30); `map`/`filter`/`reduce` feasible (R5); the others carry a first reading |
 | C — Lifts | ⏸️ each lift the owner approves becomes its own plan or fix |
 
 ## Goal
@@ -68,13 +68,43 @@ revisit trigger).
   *"a `&T` return … an explicit borrow of an addressable input"* as its one exception.  So the
   rules allow what the compiler refuses — by the doctrine, the code is the deviation, unless the
   owner rules the exception out of the rule.
-- **Can we lift it?**  The lift the rule describes is narrow: a `&T` return whose place is
-  rooted in a PARAMETER (an addressable input), never in a local.  That is the one case a
-  lifetime is not needed for, because the place outlives the call by construction; the caller's
-  `&` parameter machinery already links a place.  What must be settled first: what the caller
-  may do with the returned link (bind it with `&`, pass it on, write through it), and that a
-  reshape of the container while the link lives stays a compile error (@C86).  Effort M; the
-  first step is a probe matrix over those three uses on both backends, written before any code.
+- **Can we lift it?  Feasible — every part but the return already exists.**  The probes use the
+  shape the lift would hand a caller: a local link to the same place (`e = &s.enemies[0]`), which
+  is what `first(s)` would return.  All ten answer as computed by hand, on both backends:
+
+  | Probe | Use of the link | Answer |
+  |---|---|---|
+  | 20 | write a field through it | lands (90) |
+  | 21 | pass it to a writing callee | lands (90) |
+  | 22 | a link rooted in a PARAMETER, made in a callee | lands, the sibling untouched (90 / 50) |
+  | 23 | grow the container while the link is used after | refused at compile time |
+  | 24 | grow it after the link's last use | runs (90 / 3) |
+  | 25 | remove an element while a link to another is used after | refused at compile time |
+  | 26 | link to an element that does not exist | no write, the program runs on (100 / 2) |
+  | 27 | link into a `hash` element | lands (40) |
+  | 28 | replace the whole value through the link | lands, the sibling untouched (7 / 50) |
+  | 29 | append to a text field through a link | lands (`s!`) |
+
+  The return itself needs only the two facts that already meet nowhere (probe 30,
+  `LOFT_VAR_TABLE`): `first` is typed `Reference(…, Deps { items: [0] })` — the return records
+  that it borrows parameter 0, `(O-Move)`'s `{Attr(param)}` — and a link binds with
+  `deps=[st]`, the dependency `src/scopes/reshape_refusals.rs` reads for probes 23 and 25.
+  Today the caller binds `first(st)` as `OWNS`, a copy.  The lift is the call site of a `-> &T`
+  function binding its result with the return's dependency mapped onto the argument, exactly
+  as `l = &st.enemies[0]` binds; and the callee refusing a `-> &T` whose returned place depends
+  on no parameter (a local, a fresh value).
+- **Still open — the design questions the lift has to answer before it is built:**
+  1. An argument that is a temporary (`first(mk())`): the place dies at the end of the
+     statement.  Refuse the call, or materialise the value as a copy (what happens today)?
+  2. A `const` argument: a link into it would allow a write the `const` forbids.  Refuse, or
+     hand back a read-only view?
+  3. A callee that returns a link it received (`fn pick(a: &T, b: &T) -> &T`): the dependency
+     is on BOTH parameters, so the caller's reshape check must hold both arguments.
+  4. The rule text: `(F-Ret)` says "an addressable input" — the lift above is that rule, so the
+     rule needs no change; LOFT_DECLARATIONS.md's "no `&T` return type" does.
+- **Verdict.** Liftable, narrowly, and the formal rule already describes it.  What leaves the
+  plan is a deviation entry under `formal/calls.md` and an issue carrying the probe table and
+  the four questions above.
 
 ### R1 — aliasing and data races
 
