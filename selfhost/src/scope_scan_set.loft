@@ -87,10 +87,12 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     s.written_out_t += ["{value}"];
   }
   sunk = if writes_out { sink_set_into_arms(b, v, ov, value, f, false) } else { null };
-  // A reassignment kept in its value form beside the written-out rule reads facts (the arms'
-  // construction work-refs of a promoted return buffer) this transcription does not yet settle.
-  if writes_out && sunk == null {
-    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch kept in its value form");
+  // A reassignment kept in its value form beside the written-out rule is carried, but where the
+  // binding is the frame's promoted return buffer (its arms' construction work-refs are the
+  // buffer's) or an arm is a `??` chain (whose arms' ownership decides the sink): those read
+  // facts this transcription does not yet settle.
+  if writes_out && sunk == null && (scope_fn::is_argument(f, ov) || has_ncc_arm(value)) {
+    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch kept in its value form (a promoted buffer, a `??` arm)");
   }
   if sunk != null {
     for src in branch_tail_vars(value) {
@@ -1059,6 +1061,20 @@ fn ends_in_if(v: ir::Node) -> boolean {
       k = len(items);
       k > 0 && ends_in_if(items[k - 1]!)
     },
+    _ => false
+  }
+}
+
+// Does an arm tail of the value branch `n` end in a `??` chain's block?
+fn has_ncc_arm(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf { t, f } => has_ncc_arm(t) || has_ncc_arm(f),
+    NdBlock { block } => {
+      bl = block[0]!;
+      k = len(bl.operators);
+      bl.name == "ncc" || (k > 0 && has_ncc_arm(bl.operators[k - 1]!))
+    },
+    NdInsert { items } => len(items) > 0 && has_ncc_arm(items[len(items) - 1]!),
     _ => false
   }
 }
