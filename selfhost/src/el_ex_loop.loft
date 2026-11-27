@@ -1374,6 +1374,17 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   } else if !ranged && !keyed {
     in_type = el_types::base(x.tp);
     if !(in_type is TyVector) || x.tp is TyOptional {
+      // (A struct walked by its `next` operator has no element type on Rust's first pass: its
+      // wrapper is `main_vector<unknown>`, made at the first such comprehension's `]`.)
+      if e.first_pass && in_type is TyReference && el::def_nr(e, "main_vector<unknown>") < 0 {
+        ctok = match e.p.nodes[n] { SComprehension { at } => at, _ => -1 };
+        if ctok >= 0 {
+          cum = el::add_def(e, "main_vector<unknown>", el::pos_at(e, el_ex_base::closing_bracket(e, ctok)), el::DT_STRUCT);
+          el::make_global(e, cum);
+          e.b.data.definitions[cum].returned = [ir::TyReference { n: cum, dep: [] }];
+          e.b.data.definitions[cum].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
+        }
+      }
       if !el_types::is_unknown(x.tp) {
         el::refuse(e, "a comprehension over this source: {type_kind(x.tp)}");
       }
