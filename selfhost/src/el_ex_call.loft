@@ -2143,6 +2143,12 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
       return ex(ir::NdCall { def_nr: d, args: list + [ir::NdVar { n: bbuf }] }, ir::TyReference { n: btd, dep: [] });
     }
   }
+  // (On the first pass a callee answering a record declared below it still answers the
+  // stub's `Unknown` — adopted by the declaration since, resolved after the file: the call
+  // answers it as it stands.)
+  if e.first_pass && match el_types::base(ret) { TyUnknown { n: un } => un > 0, _ => false } {
+    return ex(ir::NdCall { def_nr: d, args: list }, ret);
+  }
   if !scalar(el_types::base(ret)) && !(ret is TyIterator) && !plain_fn && !plain_tuple {
     el::refuse(e, "a call returning a heap value: {type_kind(el_types::base(ret))}");
     return null;
