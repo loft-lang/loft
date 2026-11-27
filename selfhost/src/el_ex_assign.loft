@@ -1361,6 +1361,37 @@ fn keyed_join_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, kcur: ir::
   null
 }
 
+// `rebind_param_through_link` (`@FR-F-ParamRebind`, `@FR-O-Complete`): `set` writes link `v`,
+// which names ONE plain record or struct-enum parameter.  A value that is no plain place read
+// (`OpCreateStack`, `OpVarRef`, `OpGetField`, `OpGetVector`, `OpVectorRef`) takes that parameter's
+// rebind witness; where the value reads neither the link nor the parameter, what the parameter
+// named is freed first (`OpFreeRefIfDistinct`).  Second pass only; `LOFT_NO_LINK_PARAM_REBIND`.
+fn link_param_rebind(e: el::El, vars: el_vars::Vars, v: integer, set: ir::Node) -> ir::Node {
+  if e.first_pass || (env_variable("LOFT_NO_LINK_PARAM_REBIND") ?? "") != "" {
+    return set;
+  }
+  lpar = match el_vars::tp(vars, v) { TyRefVar { inner: lpi } => if len(el_types::deps(lpi)) == 1 { el_types::deps(lpi)[0]! } else { -1 }, _ => -1 };
+  if lpar < 0 || lpar >= len(vars.vars) || !vars.vars[lpar].argument || el_types::base(el_vars::tp(vars, lpar)) is TyRefVar || el_vars::is_compiler_generated(vars, lpar) || hidden_param(e, vars, lpar) {
+    return set;
+  }
+  pb = el_types::base(el_vars::tp(vars, lpar));
+  if struct_ref(e, pb) < 0 && !el_convert::struct_enum(pb) {
+    return set;
+  }
+  rhs = match set { NdSet { inner } => inner, _ => return set };
+  for pr in ["OpCreateStack", "OpVarRef", "OpGetField", "OpGetVector", "OpVectorRef"] {
+    if calls(e, el_ir::unspan(rhs), pr) {
+      return set;
+    }
+  }
+  reads = el_ir::reads_var(rhs, v) || el_ir::reads_var(rhs, lpar);
+  orig = el_vars::rebind_witness(vars, lpar);
+  if reads {
+    return set;
+  }
+  ir::NdInsert { items: [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: lpar }, ir::NdVar { n: orig }]), set] }
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
   via_link = -1;
   el_ex_name::capture_target_placeholder(e, vars, target);
@@ -2063,14 +2094,17 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     x = expression(e, vars, rhs!);
     cur = match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => ir::TyVoid };
     to = match x.tp { TyRefVar { inner } => inner, _ => ir::TyVoid };
-    if !e.first_pass && !el_types::is_equal(e, el_types::without_deps(cur), el_types::without_deps(to)) {
+    // (A link to a record re-pointed at the record's out-of-line CHILD — `cur = &cur.next`, the
+    // field `N?` — names the child's record, absent where none: the link keeps its type.)
+    child = calls(e, el_ir::unspan(x.code), "OpRefFromChildRec") && match x.tp { TyOptional { inner: ci } => struct_ref(e, el_types::base(ci)) >= 0 && struct_ref(e, el_types::base(ci)) == struct_ref(e, el_types::base(cur)), _ => false };
+    if !e.first_pass && !child && !el_types::is_equal(e, el_types::without_deps(cur), el_types::without_deps(to)) {
       refuse_known(e, x.tp, "a link re-pointed at a place of another type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
     if x.tp is TyRefVar {
       el_vars::set_var_type(vars, v, x.tp);
     }
-    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+    return ex(link_param_rebind(e, vars, v, el_ir::v_set(v, x.code)), ir::TyVoid);
   }
   // port: expressions.rs assign_refvar_reference — a whole value written through a `&` link to a
   // record or a struct enum (`@FR-B-Ref-Write`).  A bare variable other than the link itself, or a
@@ -2109,7 +2143,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       // (`convert`'s link arm: a `null` written through the link is the record's null, the
       // reference sentinel — `slot = null` on a `&Tree?` empties the place it names.)
       wv = if x.tp is TyNull { el_ir::cl(e, "OpNullRefSentinel", []) } else { x.code };
-      return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, wv) }, ir::TyVoid);
+      return ex(if e.first_pass { ir::NdNull } else { link_param_rebind(e, vars, v, el_ir::v_set(v, wv)) }, ir::TyVoid);
     }
     rec_tp = if is_senum { ir::TyEnum { n: link_rd, is_ref: true, dep: [] } } else { ir::TyReference { n: link_rd, dep: [] } };
     tmp = el_vars::work_ref(vars, rec_tp);
@@ -2124,7 +2158,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: tmp }, ir::NdInt { n: kt }]),
       ir::NdVar { n: tmp }
     ], el_types::with_deps(rec_tp, [tmp]), "materialized_amp_field");
-    return ex(el_ir::v_set(v, copy), ir::TyVoid);
+    return ex(link_param_rebind(e, vars, v, el_ir::v_set(v, copy)), ir::TyVoid);
   }
   // `@FR-B-Ref-Write` for a vector: a literal written through a `&vector` link replaces the
   // contents in the vector's own store — cleared, then the literal appended as `+=` appends it.

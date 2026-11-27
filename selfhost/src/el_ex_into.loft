@@ -1621,6 +1621,32 @@ fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean 
   true
 }
 
+// Does the built literal `n` set one of its out-of-line fields from `field`'s own child
+// (`OpSetChildRec(_, OpRefFromChildRec(field), _)`)?
+fn sets_child_from(e: el::El, n: ir::Node, field: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpSetChildRec" && len(args) == 3 {
+        match el_ir::unspan(args[1]!) {
+          NdCall { def_nr: rd, args: ra } => {
+            if el::def(e, rd).name == "OpRefFromChildRec" && len(ra) == 1 && el_ir::unspan(ra[0]!) == field {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(el_ir::unspan(n)) {
+    if sets_child_from(e, c, field) {
+      return true;
+    }
+  }
+  false
+}
+
 // `out_of_line_set` (`@FR-B-OutOfLine`): the value at `fe` written into the out-of-line field
 // at `field` (content row `kt`, record `sd`).  `null` releases the child (`OpSetChildRec` of the
 // null sentinel); a literal of the record whose values read no record is built IN the child
@@ -1642,6 +1668,14 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
   x = el_ex_assign::expression(e, vars, fe);
   if e.first_pass {
     return ir::NdInsert { items: [] };
+  }
+  // `place_demote` (`@FR-R-Demote`, the place clause): a literal written into this out-of-line
+  // field whose own out-of-line field is given the field's child (`h.next = N { …, next:
+  // h.next }`) moves the old child's payload instead of copying it, behind the place read the
+  // literal hoists first (`#330`) — neither carried: refused by name.
+  if literal && sets_child_from(e, x.code, el_ir::unspan(field)) {
+    el::refuse(e, "an out-of-line field of a literal given the place it is written into (the place demote)");
+    return null;
   }
   if !literal {
     xc = el_ir::unspan(x.code);
