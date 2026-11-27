@@ -133,6 +133,10 @@ pub struct El {
   // bare name in a tail or an arm): Rust's first pass gave its result that borrow, so a call of
   // it inside its own body gives no store away (`call_gives_away_its_store`).
   pub self_view_tail: boolean,
+  // `Data::fn_fields_settled`: set as the drop cascades are made (the parse unit is finished),
+  // to the number of definitions then.  A definition below it answers for what its fn fields'
+  // closure records hold (`owns_droppable`'s `fn_field_record` arm); 0 before.
+  pub fn_fields_settled: integer,
   // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
   // shared with the lambdas its lambdas make; cleared as each pass starts.
   pub lambda_roots: vector<text>,

@@ -43,6 +43,10 @@ pub fn synth_drop_cascades(e: el::El) {
 }
 
 pub fn synth_copy_cascades(e: el::El) {
+  // `synth_drop_cascades`' first step, taken before it makes the copy cascades (every caller
+  // runs this pass first): the parse unit is finished, so what every fn field holds is known
+  // from here on (`Data::fn_fields_settled`).
+  e.fn_fields_settled = len(e.b.data.definitions);
   synth_cascades(e, copy_hook());
   if !any_hook(e, copy_hook()) {
     return;
