@@ -1264,8 +1264,18 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           return null;
         }
         // R-KeyedEntry: an integer field value that reads the collection its record is written
-        // into is staged in a work variable, where the field is read.
-        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read) {
+        // into — or a local that may view its store (`reads_place`: for a parameter, every other
+        // heap parameter, the caller may hand one store twice) — is staged in a work variable,
+        // where the field is read.
+        kread = !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read);
+        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && !kread {
+          for kw in el_ex_copy::store_viewers(vars, vars.self_read) {
+            if kw != vars.self_read && el_ir::reads_var(fc!, kw) {
+              kread = true;
+            }
+          }
+        }
+        if kread {
           sw = el_vars::work_ref(vars, ir::TyInteger { spec: i32_spec() });
           vars.self_stage += [el_ir::v_set(sw, fc!)];
           fc = ir::NdVar { n: sw };
