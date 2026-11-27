@@ -11905,7 +11905,7 @@ impl Parser {
     /// the `ViewOfLocalCall` classification to check whether the value backing a
     /// forward-borrowed param is a LOCAL built in this block.  `None` when the
     /// argument is not a simple var/composite (e.g. a literal or a call).
-    fn arg_root_var(arg: &Value) -> Option<u16> {
+    pub(super) fn arg_root_var(arg: &Value) -> Option<u16> {
         match arg.unspan() {
             Value::Var(v) => Some(*v),
             Value::Block(bl) => bl.operators.last().and_then(Self::arg_root_var),

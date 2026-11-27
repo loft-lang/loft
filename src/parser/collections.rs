@@ -5871,6 +5871,46 @@ use #count instead"
     // parallel_for IR builder; threads unrelated IR params alongside &mut self — no sensible grouping
     #[allow(clippy::too_many_arguments)]
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// The `par` result binding's type with its borrows in THIS frame.  A worker's return deps
+    /// are its ATTRIBUTE indices (generics.rs re-attaches them as such): parameter 0 is the
+    /// loop element, so a result that borrows it views what the element views — the iterated
+    /// vector — and parameter `j` is extra argument `j - 1`, whose root variable it views.
+    /// Read as frame variable numbers instead, `[0]` named whatever the caller's variable 0 was
+    /// (`@FR-O-Borrow-Final`: the list pass 1 left there hid it).  A dep with no root here (a
+    /// hidden buffer, a literal argument) is dropped: it names no store of this frame, and the
+    /// result then reads as an owner, which is what a hidden-buffer return is.
+    fn par_result_borrows(&self, b_type: Type, elem_var: u16, extra_args: &[Value]) -> Type {
+        let deps = b_type.depend();
+        if deps.is_empty() {
+            return b_type;
+        }
+        let mut roots: Vec<u16> = Vec::new();
+        for d in deps {
+            let here = if d == 0 {
+                let viewed = self.vars.tp(elem_var).depend();
+                if viewed.is_empty() {
+                    vec![elem_var]
+                } else {
+                    viewed
+                }
+            } else {
+                extra_args
+                    .get(d as usize - 1)
+                    .and_then(Self::arg_root_var)
+                    .into_iter()
+                    .collect()
+            };
+            for r in here {
+                if !roots.contains(&r) {
+                    roots.push(r);
+                }
+            }
+        }
+        b_type
+            .without_deps()
+            .with_deps(&crate::data::Deps::frame(roots))
+    }
+
     pub(crate) fn build_parallel_for_ir(
         &mut self,
         code: &mut Value,
@@ -6078,9 +6118,15 @@ use #count instead"
         // var (`r.len()` on a `text` result seen as `integer`).  A loop-keyed
         // name reuses the same entry on both passes.
         let b_var_name = format!("_{result_name}_par{loop_nr}");
+        let b_type = self.par_result_borrows(b_type, elem_var, &extra_args);
         let b_var = self
             .vars
             .add_variable(&b_var_name, &b_type, &mut self.lexer);
+        // `@FR-O-Borrow-Final`: the entry pass 1 made keeps pass 1's type; the borrow is this
+        // pass's, at the same shape.
+        if self.vars.tp(b_var).without_deps() == b_type.without_deps() {
+            self.vars.set_type(b_var, b_type.clone());
+        }
         self.vars.defined(b_var);
         let prior_name_target = self.vars.set_name(result_name, b_var);
         if matches!(b_type, Type::Integer(_) | Type::Unknown(_)) {
@@ -6577,7 +6623,19 @@ use #count instead"
                 block = v_block(vec![init, inner], Type::Void, "fn-queue body");
             }
         } else {
+            // A body variable bound to the RESULT as a whole (`_ = r`, `q = r`) holds what the
+            // accessor reads — a slot of the results buffer the loop's drop releases, or, for
+            // a worker answering its element, the caller's record — and the bind's copy was
+            // decided over `Var(b_var)`, which this substitution turns into that read.  The
+            // element's bindings below take the same mark for the same reason; a text bind
+            // copies its bytes and keeps its free (loft#1357).
+            let result_views = elem_borrow_bindings(&block, b_var);
             replace_var_in_ir(&mut block, b_var, &get_call);
+            for v in result_views {
+                if !matches!(self.vars.tp(v).base(), Type::Text(_)) {
+                    self.vars.set_skip_free(v);
+                }
+            }
         }
 
         // apply the same inline-alias treatment to the outer
