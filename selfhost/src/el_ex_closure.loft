@@ -360,6 +360,10 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       answer = if ret != null { el_types::parse_type(e, ret!) } else { match hint { TyFunction { result } => result, _ => ir::TyVoid } };
       // A record answered beside a shared capture is delivered through the late buffer: a tail
       // reading the capture is copied in (`capture_tail_copy`), any other tail as a function's.
+      // (A vector answer the same way: the late buffer takes it, `one_buffer_vec_copy`.)
+      if (env_variable("LOFT_ELAB_REFUSE_SHARED_VECTOR_LAMBDA") ?? "") == "" && answer != null && el_types::base(answer!) is TyVector {
+        shares = false;
+      }
       if shares && answer != null && !el_types::is_unknown(answer!) && !el_ex_object::scalar_type(answer!) && !(el_types::base(answer!) is TyText) && !(answer! is TyVoid) && !record_type(e, answer!) {
         return refuse_lambda(e, vars, at, params, names, body, "a lambda answering a record or a collection beside a shared capture");
       }
