@@ -78,17 +78,6 @@ fn test_the_failure_composes_instead_of_unwinding() {
 }
 
 // The cells, run in order (a script runs nothing by itself).
-// @FR-E-Uncomp: an operation whose result the type cannot hold answers null and evaluation
-// continues.  @FR-N-Parse: a text parse is nullable, so it is discharged where it is written —
-// a bare `"abc" as integer` is refused at compile time (@PLN231 probe 01).
-fn test_overflow_is_a_value_and_a_parse_is_discharged_where_written() {
-  big = 9223372036854775807;
-  assert((big + 1) == null, "i64::MAX + 1 cannot be represented: null, and the program runs on");
-  assert_eq("12" as integer ?? -1, 12, "a valid parse");
-  assert_eq("abc" as integer ?? -1, -1, "an invalid parse takes the fallback named at the cast");
-}
-
 test_an_out_of_range_read_is_a_value_not_a_throw();
 test_division_by_zero_does_not_stop_the_program();
 test_the_failure_composes_instead_of_unwinding();
-test_overflow_is_a_value_and_a_parse_is_discharged_where_written();

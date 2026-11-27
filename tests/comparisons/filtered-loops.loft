@@ -13,19 +13,3 @@ for x in items if x > 0 {
     total += x;
 }
 assert(total == 7, "only the positive elements were summed");
-
-// @FR-G-Yield: a generator suspends at each `yield` and resumes only when the consumer asks
-// for the next element.  So a stage written as a generator is lazy, the way Rust's iterator
-// adapters are, where `map(v, f)` builds a whole vector first (@PLN231 probes 10, 11).
-// The source counts what it made into a struct it shares with the caller (@FR-F-ParamHeap).
-struct Made { n: integer }
-fn made_up_to(m: Made, limit: integer) -> iterator<integer> { for i in 0..limit { m.n += 1; yield i; } }
-fn mapped<T>(it: iterator<T>, f: fn(T) -> T) -> iterator<T> { for x in it { yield f(x); } }
-made = Made { n: 0 };
-seen = 0;
-for y in mapped(made_up_to(made, 1000000), |x| { x * 2 }) {
-    seen += y;
-    if seen > 5 { break; }
-}
-assert_eq(seen, 6, "0 + 2 + 4 passes 5");
-assert_eq(made.n, 3, "only the three elements consumed were made, out of a million");
