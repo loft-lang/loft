@@ -3333,14 +3333,33 @@ pub fn statement_proofs(e: el::El, vars: el_vars::Vars, code: ir::Node) {
     },
     NdCall { def_nr, args } => {
       if el::def(e, def_nr).name == "n_assert" && len(args) > 0 {
-        p = divisor_proof(e, args[0]);
-        if p.then {
-          push_nonzero(vars, p.v);
+        assert_proofs(e, vars, args[0]!);
+      }
+    },
+    // (The `"assert"` block a non-literal message lowers to: `if <test> <pass> else <fail>`.)
+    NdBlock { block } => {
+      if block[0].name == "assert" && len(block[0].operators) == 1 {
+        match el_ir::unspan(block[0].operators[0]!) {
+          NdIf { cond: ac } => { assert_proofs(e, vars, ac); },
+          _ => {}
         }
-        push_bounds(vars, guard_pairs(e, args[0]));
       }
     },
     _ => {}
+  }
+}
+
+// `@FR-N-Guard`: an `assert` proves its condition on the fall-through — a divisor non-zero, an
+// index in bounds, and a local present (`narrowings_from_condition`, where it holds).
+fn assert_proofs(e: el::El, vars: el_vars::Vars, test: ir::Node) {
+  p = divisor_proof(e, test);
+  if p.then {
+    push_nonzero(vars, p.v);
+  }
+  push_bounds(vars, guard_pairs(e, test));
+  pp = presence_proof(e, vars, test);
+  if pp.then {
+    push_present(vars, pp.v);
   }
 }
 
