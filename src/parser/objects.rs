@@ -7109,7 +7109,7 @@ impl Parser {
             // `@FR-R-InPlaceLiteral` — and only a local no earlier bind left viewing another store
             // (`viewed_by_an_earlier_bind`): its type keeps the last bind's deps alone.
             let viewed_before = self.vars.viewed_by_an_earlier_bind(*v_nr);
-            // @PLN233 — and only a local no LATER bind makes a view either: `owns_store` reads
+            // `@FR-O-Borrow-Final` — and only a local no LATER bind makes a view either: `owns_store` reads
             // this pass's list, which has not met `r = b.tp` further down yet, so pass 1's
             // final list is the lookahead (`viewed_in_pass_one`).  A user local only, as the
             // fresh-buffer arm below takes user locals only.
@@ -7215,7 +7215,7 @@ impl Parser {
                 //   `is_independent` returns false even though `type_matches` is true
                 //   for this struct-literal assignment.  That later statement is a
                 //   LOOKAHEAD only pass 1 has: where pass 2 starts from clean lists
-                //   (@PLN233), `viewed_in_pass_one` asks pass 1's.  Without this branch, the
+                //   (`@FR-O-Borrow-Final`), `viewed_in_pass_one` asks pass 1's.  Without this branch, the
                 //   in-place `v_set(x, Null) + OpDatabase` init above was skipped,
                 //   leaving only field-init calls that wrote into uninitialised storage
                 //   — the subsequent codegen then asserted

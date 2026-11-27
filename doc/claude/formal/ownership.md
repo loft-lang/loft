@@ -79,6 +79,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 carry — that the place it names outlives it — is recorded on the TARGET
                 (`Variable::amp_linked_by`), read by the slot allocator and by nothing else.
                 Two channels, each answering one question.
+  (O-Borrow-Final)  A BORROW LIST IS THE FINAL PASS'S.  The `deps` a local carries name the
+                stores the FINAL pass saw it read; a list left by a pass whose code is
+                discarded names none of them, so pass 2 starts every local (not a parameter:
+                its list is the signature's) from an empty one.  What pass 1 knows ahead — that
+                a LATER bind makes an owner a view — is a lookahead record of its own
+                (`viewed_in_pass_one`), asked where a bind needs it and never read as a borrow.
+                A temp pass 2 re-mints at pass 1's site takes pass 2's list; one pass 2 never
+                names is no variable of the body.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
                 A VIEW owns nothing, so the derivation never frees one: a field hoisted out of a

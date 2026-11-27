@@ -214,20 +214,7 @@ impl Parser {
             crate::diagnostics::set_first_pass(false);
             self.reverse_iterator = false;
             self.iterable_context = false;
-            self.applied_imports.clear();
-            self.deferred_unknown.clear();
-            self.deferred_import_misses.clear();
-            self.resolutions.clear();
-            self.data.reset();
-            if !default {
-                self.data.source = crate::data::MAIN_SOURCE;
-            }
-            self.lambda_counters.clear();
-            self.fn_lambdas.clear();
-            self.store_handoffs.clear();
-            Self::load_main_file(&mut self.lexer, filename, content);
-            self.parse_file();
-            self.resolve_deferred_unknowns();
+            self.reparse_main(filename, content, default);
             // @PLN35 PC3 — reject a left-recursive sub-rule grammar (a cycle in the invocation
             // graph) at compile time, before it can hang at runtime.  Post-parse over pass-2 edges.
             self.check_subrule_wellformedness();
@@ -239,20 +226,7 @@ impl Parser {
                 let before: Vec<Vec<u16>> = (0..self.data.definitions())
                     .map(|d| self.data.def(d).returned().depend())
                     .collect();
-                self.applied_imports.clear();
-                self.deferred_unknown.clear();
-                self.deferred_import_misses.clear();
-                self.resolutions.clear();
-                self.data.reset();
-                if !default {
-                    self.data.source = crate::data::MAIN_SOURCE;
-                }
-                self.lambda_counters.clear();
-                self.fn_lambdas.clear();
-                self.store_handoffs.clear();
-                Self::load_main_file(&mut self.lexer, filename, content);
-                self.parse_file();
-                self.resolve_deferred_unknowns();
+                self.reparse_main(filename, content, default);
                 self.after_pass2();
                 let changed = (0..before.len().min(self.data.definitions() as usize))
                     .filter(|&d| self.data.def(d as u32).returned().depend() != before[d])
@@ -277,6 +251,26 @@ impl Parser {
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
+    }
+
+    /// Parse the main file once more over the definitions the pass before left (`data.reset()`
+    /// keeps them, so def numbers hold): pass 2, and the @PLN233 phase-2a repeat of it.  The
+    /// per-parse tables are cleared here and nowhere else, so the two cannot drift apart.
+    fn reparse_main(&mut self, filename: &str, content: Option<&str>, default: bool) {
+        self.applied_imports.clear();
+        self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
+        self.resolutions.clear();
+        self.data.reset();
+        if !default {
+            self.data.source = crate::data::MAIN_SOURCE;
+        }
+        self.lambda_counters.clear();
+        self.fn_lambdas.clear();
+        self.store_handoffs.clear();
+        Self::load_main_file(&mut self.lexer, filename, content);
+        self.parse_file();
+        self.resolve_deferred_unknowns();
     }
 
     /// Point the lexer at the parse's own entry — the file at `filename`, or

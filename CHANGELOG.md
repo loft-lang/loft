@@ -154,6 +154,12 @@ the work still to do in a vector.
 
 ### Bug fixes
 
+**A recursive function's result is freed when a `match` arm answers it.**  In
+`recv = match f(code) { NdCall { args } => f(args[0]!), _ => … }`, where `f` answers a recursive
+call from one of its own match arms, the result `recv` was never freed: one record left behind
+per call, on both backends, with no message.  It is freed now.  A function declared below the
+one that calls it this way still leaves one behind; that case is being worked on.
+
 **A compiled program that crashes says so.**  When a program built by `loft prog.loft` or
 `--ship` crashed, loft ended with exit code 1 and printed nothing.  It now names the crash (a
 segmentation fault, say), ends with the exit code the program itself had, and for a memory fault,

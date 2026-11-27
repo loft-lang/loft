@@ -222,7 +222,7 @@ pub struct Variable {
     /// yet): pass 2 types it by its field ([`Function::unique`]).  On the variable, which is
     /// what carries over between the passes.
     blind_capture: bool,
-    /// @PLN233 — the dependency list this variable ENDED pass 1 with, kept apart from its type
+    /// `@FR-O-Borrow-Final` — the dependency list this variable ENDED pass 1 with, kept apart from its type
     /// ([`Function::strip_carried_deps`]).  Pass 2 types each bind with its own deps; this is
     /// the LOOKAHEAD pass 1 gives it: a bind that must know whether a LATER statement makes the
     /// variable a view (`r = Lit {}` … `r = b.tp` further down) reads
@@ -1188,7 +1188,7 @@ impl Function {
         f
     }
 
-    /// @PLN233: take the dependency lists pass 1 left on every local of the table pass 2 starts
+    /// `@FR-O-Borrow-Final`: take the dependency lists pass 1 left on every local of the table pass 2 starts
     /// from OUT of their types, so pass 2 derives each list itself, and keep each as the
     /// variable's lookahead record (`pass1_deps`).  A parameter keeps its list: that is the
     /// signature's, not pass 1's analysis.  Unioned into pass 2 instead, a caller typed against a
@@ -1202,7 +1202,7 @@ impl Function {
         }
     }
 
-    /// @PLN233 — whether pass 1 ended with `var_nr` borrowing a store other than its own: the
+    /// `@FR-O-Borrow-Final` — whether pass 1 ended with `var_nr` borrowing a store other than its own: the
     /// LOOKAHEAD a bind reads when a later statement may turn an owner into a view (a literal
     /// bound to `r` that `r = b.tp` rebinds further down): [`Self::is_independent`]'s question,
     /// asked of pass 1's final list.  Empty on pass 1 and wherever the lists stay in the types;
@@ -3166,7 +3166,7 @@ impl Function {
         self.add_variable(&full, type_def, lexer)
     }
 
-    /// @PLN233: a temp re-minted at the SAME shape takes this pass's borrows.  A temp's name is
+    /// `@FR-O-Borrow-Final`: a temp re-minted at the SAME shape takes this pass's borrows.  A temp's name is
     /// minted once per pass (`unique`'s counter restarts in `append`; a match subject is keyed by
     /// its site), so an existing entry is pass 1's, and its dependency list is no fact about
     /// pass 2's value: a match subject `(a, k)` or `t.parts[0]!` borrows parameter `a` / `t`
