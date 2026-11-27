@@ -1447,10 +1447,21 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // (So is a vector element: its handle zeroed, the body's vector copied in, `OpCopyRecord`.)
   made_vec = in_t is TyVector && el_types::elem_name(e, in_t) != "" && !(b.tp is TyOptional);
   made = (in_t is TyText || made_d >= 0 || made_vec) && !(b.tp is TyOptional);
+  // (So is a TUPLE element of plain scalars and texts: the body into `_comp_N`, each member
+  // written at its offset in the element's `__tuple<…>` record, `tuple_elem_set`.)
+  tup_elems = match in_t { TyTuple { elems: tues } => tues, _ => [] };
+  // (A text member the body computes — `(i, "x{i}")` — keeps its work text's borrow in Rust's
+  // element type and in the record's field (`_1: text["#4"]`): not carried, so only a text
+  // member borrowing nothing is.)
+  body_elems = match el_types::base(b.tp) { TyTuple { elems: bes } => bes, _ => [] };
+  // (Only a body that BUILDS its tuple, `{ (i, 10) }`: a whole element of a tuple vector, `{ x }`,
+  // is the element's record to Rust — `ref(__tuple<…>)["_vector_1"]` — collected as such.)
+  tup_built = match el_ir::unspan(b.code) { NdTuple { items: _ } => true, NdBlock { block: tbb } => len(tbb[0].operators) > 0 && el_ir::unspan(el_ir::last(tbb[0].operators)) is NdTuple, _ => false };
+  made_tup = tup_built && len(tup_elems) > 0 && !(b.tp is TyOptional) && len([for tm in tup_elems if !(el_convert::plain_scalar(el_types::base(tm)) || el_types::base(tm) is TyText) { 1 }]) == 0 && len([for bm in body_elems if el_types::base(bm) is TyText && len(el_types::deps(bm)) > 0 { 1 }]) == 0;
   // (A record element keeps what its body VIEWS — a local it hands back — and not the work
   // ref a literal was built in; a text keeps its body's type as it is.)
   rec_t = if made_d >= 0 { el_types::with_deps(in_t, [for dp in el_types::deps(b.tp) if !el_vars::name_of(vars, dp).starts_with("__ref") { dp }]) } else { in_t };
-  if !made && (push == "" || in_t is TyOptional) {
+  if !made && !made_tup && (push == "" || in_t is TyOptional) {
     // Refused, but a local's `vector<…>` is registered first, as Rust's `vector_def` registers
     // it for any element: every definition after it keeps Rust's number.
     // (A tuple element is the `__tuple<…>` record each step copies: its vector is named by the
@@ -1476,11 +1487,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // `build_comprehension_code` — the order the schema numbers them in.
   // (A field's comprehension names no vector type of its own: the field's row is the one its
   // place reads.)
-  rows = if v >= 0 { vector_rows(e, in_t, n, false) } else { field_rows(dest) };
+  rows = if v >= 0 && made_tup { el_ex_base::tuple_vector_rows(e, in_t, n, vars.annotated.contains(v)) } else if v >= 0 { vector_rows(e, in_t, n, false) } else { field_rows(dest) };
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if v >= 0 {
+  if v >= 0 && !made_tup {
     el_ex_pattern::vector_of(e, in_t);
   }
   // (`vector_db`: a local that holds a store already takes a fresh one, as its first bind did —
@@ -1516,7 +1527,24 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
     steps += [fc!];
   }
   r = rows!;
-  if made {
+  if made_tup {
+    if fill_count >= 0 {
+      el::refuse(e, "a range comprehension that fills or unrolls a constant");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    ttd = el_types::tuple_def_of(e, tup_elems);
+    tfs = if ttd >= 0 { el_schema::struct_fields(e, el::def(e, ttd).known_type) } else { [] };
+    if len(tfs) != len(tup_elems) {
+      el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    tsets: vector<ir::Node> = [];
+    for tm in tup_elems {
+      tsets += [el_ir::cl(e, el_ex_object::tuple_set_op(el_types::base(tm)), [ir::NdVar { n: celm }, ir::NdInt { n: tfs[tm#index]!.position }, ir::NdTupleGet { var: comp, idx: tm#index }])];
+    }
+    tek = ir::NdInt { n: r.vec_known };
+    steps += [el_ir::v_set(comp, b.code), el_ir::v_set(celm, el_ir::cl(e, "OpNewRecord", [dest, tek, ir::NdInt { n: 65535 }])), el_ir::v_block(tsets, ir::TyVoid, "tuple_elem_set"), el_ir::cl(e, "OpFinishRecord", [dest, ir::NdVar { n: celm }, tek, ir::NdInt { n: 65535 }])];
+  } else if made {
     if fill_count >= 0 {
       el::refuse(e, "a range comprehension that fills or unrolls a constant");
       return ex(ir::NdNull, ir::TyVoid);
