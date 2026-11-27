@@ -1337,6 +1337,11 @@ fn hoists_default(e: el::El, init: integer, t: ir::TypeT) -> boolean {
   if e.p.nodes[init] is SVecLit && t is TyVector {
     return true;
   }
+  // (A tuple default that builds a value — a member with a text hole, a branch, a match, a call
+  // answering the tuple — is hoisted; a tuple of plain values is replayed in place.)
+  if el_types::base(t) is TyTuple && (builds_tuple_member(e, init) || e.p.nodes[init] is SCall || e.p.nodes[init] is SIf || e.p.nodes[init] is SMatch) {
+    return true;
+  }
   // (A `??` holds its subject in a temporary, which no construction site can replay: Rust
   // hoists it — `e: u8 = (early(12) as u8?) ?? 0`.)
   if has_coalesce(e, init) {
@@ -1405,9 +1410,29 @@ fn dollar_hoists(e: el::El, init: integer, t: ir::TypeT) -> boolean {
   el_types::base(t) is TyText && !(e.p.nodes[init] is SMember || e.p.nodes[init] is SName || e.p.nodes[init] is SDollar)
 }
 
+// A tuple literal one of whose members builds a value (`("v{k}", k)`).
+fn builds_tuple_member(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    STupleLit { at: _ } => {
+      for c in el_length::children(e, n) {
+        if builds_value(e, c) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
 fn builds_value(e: el::El, n: integer) -> boolean {
-  if e.p.nodes[n] is SIf || e.p.nodes[n] is SMatch || e.p.nodes[n] is SVecLit || e.p.nodes[n] is SStructLit || e.p.nodes[n] is SComprehension || e.p.nodes[n] is SBlock || e.p.nodes[n] is SString {
+  if e.p.nodes[n] is SIf || e.p.nodes[n] is SMatch || e.p.nodes[n] is SVecLit || e.p.nodes[n] is SStructLit || e.p.nodes[n] is SComprehension || e.p.nodes[n] is SBlock {
     return true;
+  }
+  // (A text with a hole builds one; a plain text literal is a constant.)
+  match e.p.nodes[n] {
+    SString { parts } => { if len([for p in parts if e.p.nodes[p] is SHole { 1 }]) > 0 { return true; } },
+    _ => {}
   }
   for c in el_length::children(e, n) {
     if builds_value(e, c) {
@@ -1452,7 +1477,7 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
     e.dflt_vars += 1;
   }
   // (An `if` or a `match` default stands at its keyword.)
-  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => leftmost_token(e, init) };
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, STupleLit { at: ta } => ta, _ => leftmost_token(e, init) };
   // (The default is no statement of a block in Rust, so it carries no line marker: the
   // synthetic statement stands at token 0, which gives none.)
   e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
@@ -2300,6 +2325,19 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           heap_default = !el_convert::plain_scalar(el_types::base(t!)) && !(el_types::base(t!) is TyText) && !(el_types::base(t!) is TyTuple) && !(el_types::base(t!) is TyEnum && match el_types::base(t!) { TyEnum { is_ref } => !is_ref, _ => false });
           // (…and so is a nullable narrow parameter's, which the checked narrowing hoists
           // whatever it reads: `a: u8? = b + 1`.)
+          // (A method's default is named by its owner and is a method itself — its function takes
+          // `self` — `t_<n><S>___dflt_<S>_<fn>_<param>`: registered bare beside the refusal.)
+          if d == null && method && (heap_default || hoists_default(e, init!, t!)) && e.first_pass && tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 {
+            own = match el_types::base(arguments[0].typedef) { TyReference { n: on } => el::def(e, on).name, TyEnum { n: on } => el::def(e, on).name, _ => "" };
+            if own != "" {
+              mn = "t_{len(own)}{own}___dflt_{own}_{name}_{an}";
+              if el::def_nr(e, mn) < 0 {
+                mat2 = match e.p.nodes[init!] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, STupleLit { at: ta } => ta, _ => leftmost_token(e, init!) };
+                mdd = el::add_def(e, mn, el::pos_at(e, mat2), el::DT_FUNCTION);
+                el::set_returned(e, mdd, t!);
+              }
+            }
+          }
           if d == null && (heap_default || hoists_default(e, init!, t!)) && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
             _ = hoisted_default(e, "__dflt_{name}_{an}", tp!, init!);
           }
