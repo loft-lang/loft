@@ -982,6 +982,7 @@ fn stmt(p: Syntax) -> integer? {
   match p {
     [Semi] => add(p, SStmt { at: at, e: null, semi: true, orelse: null }),
     [e: loop_like, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: void_block, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: if_no_else, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: expr, (o: store_else)?, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: o }),
     _ => null
@@ -1005,6 +1006,37 @@ fn loop_like(p: Syntax) -> integer? {
     [e: parallel_expr] => e,
     _ => null
   }
+}
+
+// A block at the start of a statement that answers nothing — empty, or its last statement
+// ended by `;` — ends the statement too: `{ x = 7; }` then `-1;` are two statements (the Rust
+// parser's void left operand, read off the block's type; here off its spelling).
+fn void_block(p: Syntax) -> integer? {
+  match p {
+    [_v: void_ahead, b: block] => b,
+    _ => null
+  }
+}
+
+// Zero-width: the `{` here opens a block whose matching `}` closes nothing or follows a `;`.
+fn void_ahead(p: Syntax) -> integer? {
+  if !(p.src[p.pos] is LBrace) {
+    return null;
+  }
+  depth = 0;
+  i = p.pos;
+  while i < len(p.src) {
+    if p.src[i] is LBrace {
+      depth += 1;
+    } else if p.src[i] is RBrace {
+      depth -= 1;
+      if depth == 0 {
+        return if i == p.pos + 1 || p.src[i - 1] is Semi { p.pos } else { null };
+      }
+    }
+    i += 1;
+  }
+  null
 }
 
 // An `if` with no `else` at the start of a statement answers nothing either.
