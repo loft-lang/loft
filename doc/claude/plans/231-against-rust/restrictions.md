@@ -85,6 +85,8 @@ what was measured and whether it can be lifted.  Probe numbers refer to [probes/
   | a helper declared above its caller before a local binds its call | #918 | a call to a lower function binds: `later 6` |
   | a keyed record read inline, never through an accessor | #974 | three accessor reads with a struct made between: `2 2 2` |
   | crawler: never swap struct elements through a held link | #338 | the swap answers `2 1` (probe 52) |
+  | dryopea: never bind a `FlowField` to a local in a per-enemy path (*"2250×"*) | — | no gap against indexing inline, both backends (probes 55, 56) |
+  | routing: walk a collection by index, because `for x in t.routes` copies the records | — | the `for` is the faster one on C (probes 57, 58) |
   | crawler: the `ortler` tools are unusable, an 86 400-element literal takes 18 min to parse | #854 | parses and runs in 1.8 s on the interpreter, `last 657` as computed (the file is generated, not kept: `const BIG: vector<integer> = [ … ]` holding `i % 997` for `i` in `0..86400`, written out by a script) |
 
 - **Cause.**  Nothing in loft: the notes were written when the defects were live, and nothing
@@ -201,8 +203,9 @@ what was measured and whether it can be lifted.  Probe numbers refer to [probes/
 - **And an optimisation, not a restriction:** fusing `map(filter(…))` into one loop is a
   rewrite the layer could admit wherever the difference cannot be observed — where both lambdas
   are pure — as the other `R-` rules carry their admission conditions.  It is not part of the
-  lift; if a profile ever shows the intermediate buffer, it is a candidate `R-` rule with its
-  census row.
+  lift, and it is OWED all the same: measured, the chain is 4–5× the fused comprehension on C
+  (README § The natural form owes its speed, probes 59–60), and goal F gives the natural
+  spelling the efficient code.
 - **Verdict.**  Liftable, and the rules already say how.  Out of the plan as
   [loft#2658](https://github.com/loft-lang/loft/issues/2658) and the deviation **D-iter-18** in
   `formal/iteration.md`.

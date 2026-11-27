@@ -1,0 +1,6 @@
+// @PLN231 goal-F probe — the natural form against its hand rewrite (bind_hand); prints its own time in µs
+// Run with --interpret and without (C is the default); read the answer and the µs
+struct Field { d: vector<integer> }
+struct World { f: Field }
+fn step(w: World, i: integer) -> integer { w.f.d[i % 1000]! }
+fn main() { t0 = ticks(); w = World { f: Field { d: [for i in 0..1000 { i }] } }; s = 0; for k in 0..2000000 { s += step(w, k); } println("inline {s} us {ticks() - t0}"); }

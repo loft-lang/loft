@@ -88,6 +88,31 @@ The consequence for this plan: a representation-layer restriction that a rule al
 the cheapest kind to lift — it is a deviation (R5, possibly R6's `par`); a semantic one needs a
 ruling first (R3, R4, @C116); a cost one is not a restriction at all.
 
+### The natural form owes its speed (GOALS.md § F)
+
+The reason the layers are kept apart: *"the most natural spelling of a program is the CANONICAL
+spelling, and the compiler owes it the efficient code"* (GOALS.md § F, the owner's ruling), and
+a loft rewrite for speed is the last resort (`(Perf-Teach)`, PERFORMANCE.md).  So a developer
+should never rewrite a program for speed, and every hand rewrite a consumer makes is either a
+gap the optimisation layer owes or a stale note.  Measured on main, both backends, timed inside
+the program with `ticks()` (probes 55–60; the answers checked by hand):
+
+| Natural form | Hand rewrite | C | interpreter | Verdict |
+|---|---|---|---|---|
+| bind a field to a local (`fl = w.f; fl.d[i]`) — dryopea: *"NEVER bind a FlowField to a local … 2250×"* | index inline | 18–34 ms against 26–30 ms | 261–300 ms against 236–313 ms | no gap: the note is stale |
+| `for r in v` over records with three text fields — routing: walk by index | `while i < len(v) { v[i] … }` | 5.8–5.9 ms against 7.9–8.0 ms | 244–249 ms against 229–234 ms | no gap; the natural form is faster on C |
+| `map(filter(v, p), f)` | `[for x in v if p(x) { f(x) }]` | **37–53 ms against 8–12 ms** | 323–372 ms against 224–260 ms | **a 4–5× gap on C: owed** |
+
+The third row turns R5's fusion from "an optimisation for later" into a gap goal F owes, since
+`map(filter(…))` is the form a newcomer reaches for.  It is a cost-layer item (a rewrite fusing
+the stages where both lambdas are pure, and placing the lambda bodies inline), separate from the
+source refusal of loft#2658.
+
+**A correction to every earlier measurement in this plan:** a bare `loft prog.loft` runs the C
+backend — native is the default (`loft --help`) — so the runs first recorded as "interpreter
+and `--native`" were C twice.  All 54 probes were re-run with `--interpret` and every one gives
+the same output on both backends, so no verdict moved; the timings above name their backend.
+
 ## Per restriction
 
 The cause, the measurements and the lift of each restriction are in
