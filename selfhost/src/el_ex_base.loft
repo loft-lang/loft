@@ -2402,7 +2402,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, app
   // `Parser::vector_of`, on either pass: an element whose record already has its store type —
   // a library's, laid out when that library's file ended — has its `vector<T>` store type made
   // here, ahead of the `main_vector<T>` wrapper the schema lays out after the pass.
-  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, TyOptional { inner } => match inner { TyEnum { n } => el::def(e, n).known_type, _ => el_schema::NO_TYPE }, _ => el_schema::NO_TYPE };
+  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, TyOptional { inner } => match inner { TyEnum { n } => el::def(e, n).known_type, TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type, _ => el_schema::NO_TYPE }, _ => el_schema::NO_TYPE };
   if vk < 0 && ek != el_schema::NO_TYPE {
     vk = el_schema::vector_type(e, ek);
   }

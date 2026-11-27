@@ -311,7 +311,7 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     // the enum's records, null the zero tag.
     // A nullable plain integer, float or boolean is named the same way (`vector<integer?>`):
     // stored as the scalar it is, null its sentinel.
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: ons } => if elem_name(e, inner) == "integer" { "integer?" } else if narrow_width(ons) > 0 { "{elem_name(e, inner)}?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", _ => "" },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: ons } => if elem_name(e, inner) == "integer" { "integer?" } else if narrow_width(ons) > 0 { "{elem_name(e, inner)}?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", TyCharacter => "character?", _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     // A function value is named as its type is spelled (`fn(integer) -> integer`).
@@ -391,6 +391,8 @@ pub fn nullable_scalar_elem(e: el::El, t: ir::TypeT) -> text {
       TyBoolean => "boolean",
       // (A `text?` element is stored as a `text`, null the text sentinel.)
       TyText { dep: _ } => "text",
+      // (…and a `character?` one as a `character`, its vector the one Rust makes for it.)
+      TyCharacter => "character",
       _ => ""
     },
     _ => ""
