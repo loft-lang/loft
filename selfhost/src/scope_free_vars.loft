@@ -14,6 +14,7 @@ use scope_scan;
 use scope_args;
 use scope_get_free_vars;
 use scope_drops;
+use binds;
 use own;
 use opt_names;
 
@@ -523,11 +524,11 @@ fn free_text(s: scope_scan::Scopes, v: integer) -> ir::Node {
   ir::NdCall { def_nr: s.ops.free_text, args: [ir::NdVar { n: v }] }
 }
 
-// port: free_vars.rs fn bind_return_temp — the branch sink (`sink_return_branch`) answers for
-// an arm borrowing a frame local, a record question; refused where it could.
+// port: free_vars.rs fn bind_return_temp — a value branch an arm of which borrows a frame
+// local is written out per arm (`sink_return_branch`), behind the temp's null.
 fn bind_return_temp(s: scope_scan::Scopes, b: ir::Bundle, tmp: integer, expr: ir::Node, f: ir::Function) -> vector<ir::Node> {
-  if scope_args::is_value_branch(expr) && !scope_fn::is_plain(scope_fn::tp(f, tmp)) {
-    scope_scan::refuse(s, "free_vars::sink_return_branch: a branch returned past frees");
+  if scope_args::is_value_branch(expr) && branch_arm_borrows_a_frame_local(s, b, expr, f) && sinkable(s, expr) {
+    return [scope_fn::v_set(tmp, ir::NdNull), sink(s, expr, tmp)];
   }
   e = scope_fn::unspan(expr);
   match e {
@@ -546,6 +547,93 @@ fn bind_return_temp(s: scope_scan::Scopes, b: ir::Bundle, tmp: integer, expr: ir
     _ => {}
   }
   [scope_fn::v_set(tmp, expr)]
+}
+
+// port: free_vars.rs fn branch_arm_borrows_a_frame_local
+fn branch_arm_borrows_a_frame_local(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f: e } => branch_arm_borrows_a_frame_local(s, b, t, f) || branch_arm_borrows_a_frame_local(s, b, e, f),
+    NdBlock { block } => {
+      if block[0].name == "ncc" {
+        return false;
+      }
+      l = last_non_free_result(s, block[0].operators);
+      l >= 0 && branch_arm_borrows_a_frame_local(s, b, block[0].operators[l]!, f)
+    },
+    NdInsert { items } => {
+      l = last_non_free_result(s, items);
+      l >= 0 && branch_arm_borrows_a_frame_local(s, b, items[l]!, f)
+    },
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr]!;
+      if !binds::is_loft_defined(d) || !scope_fn::is_record(d.returned[0] ?? ir::TyVoid) {
+        return false;
+      }
+      base = match scope_scan::ownership(s, b, u) {
+        Borrowed { base } => base,
+        Join { base } => base,
+        _ => -1
+      };
+      base >= 0 && (base == scope_fn::NONE || (base < scope_fn::count(f) && !scope_fn::is_argument(f, base)))
+    },
+    _ => false
+  }
+}
+
+// port: free_vars.rs fn sink_return_branch's `sinkable`
+fn sinkable(s: scope_scan::Scopes, n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdNull => true,
+    NdVar => true,
+    NdCall => true,
+    NdCallRef => true,
+    NdIf { t, f } => sinkable(s, t) && sinkable(s, f),
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name == "ncc" || bl.name == "Object" {
+        return false;
+      }
+      r = scope_fn::base(bl.result[0] ?? ir::TyVoid);
+      if r is TyVoid || r is TyNull {
+        return false;
+      }
+      l = last_non_free_result(s, bl.operators);
+      l >= 0 && sinkable(s, bl.operators[l]!)
+    },
+    NdInsert { items } => {
+      l = last_non_free_result(s, items);
+      l >= 0 && sinkable(s, items[l]!)
+    },
+    _ => false
+  }
+}
+
+// port: free_vars.rs fn sink_return_branch's `sink` — every arm's value bound to `tmp`.
+fn sink(s: scope_scan::Scopes, n: ir::Node, tmp: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: sink(s, inner, tmp) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: sink(s, t, tmp), f: sink(s, f, tmp) },
+    NdBlock { block } => {
+      bl = block[0];
+      ops = bl.operators;
+      l = last_non_free_result(s, ops);
+      if l >= 0 {
+        ops[l] = sink(s, ops[l]!, tmp);
+      }
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      ops = items;
+      l = last_non_free_result(s, ops);
+      if l >= 0 {
+        ops[l] = sink(s, ops[l]!, tmp);
+      }
+      ir::NdInsert { items: ops }
+    },
+    _ => scope_fn::v_set(tmp, n)
+  }
 }
 
 // port: returns.rs fn is_value_return_type

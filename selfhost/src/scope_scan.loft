@@ -163,9 +163,11 @@ pub struct Scopes {
   pub arm_lift_temps: vector<integer>,
   pub free_transferred: vector<integer>,
   pub local_owns: vector<integer>,
-  // A callee Rust laid out before this function and this pass refused (`check`): an ownership
-  // summary read through it reads its settled body, which the image does not hold.
-  pub stale_callee: text,
+  // The callees named in this body whose ownership summary would read a body Rust laid out
+  // before this function and this pass refused (`check::stale_callees`), and the body itself
+  // (the oracle follows a variable to its binds there).
+  pub stale_defs: vector<integer>,
+  pub orig_code: ir::Node,
   // The first refusal met, "" while the scan is in its domain.
   pub why: text,
   // Every refusal met, in order (`LOFT_SCOPE_ALL_REASONS=1` reports them all: what ranks the
@@ -249,16 +251,66 @@ pub fn defs(s: Scopes, b: ir::Bundle) -> own::Defs {
   s.fn_defs[0]
 }
 
-// Refuse where an ownership summary would read a stale callee (`stale_callee`).
-pub fn oracle_guard(s: Scopes) {
-  if s.stale_callee != "" {
+// Refuse where the ownership oracle asked about `value` would read a stale callee's summary
+// (`stale_defs`): a call or function value in `value`, or in a bind of a variable it reads.
+pub fn oracle_guard(s: Scopes, value: ir::Node) {
+  if len(s.stale_defs) == 0 {
+    return;
+  }
+  seen: vector<integer> = [];
+  if reaches_stale(s, value, seen) {
     refuse(s, "use_analysis::return_ownership: a callee laid out earlier was refused (its summary reads its settled body)");
+  }
+}
+
+fn reaches_stale(s: Scopes, n: ir::Node, seen: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr } => if scope_fn::has(s.stale_defs, def_nr) { return true; },
+    NdFnRef { def_nr } => if scope_fn::has(s.stale_defs, def_nr) { return true; },
+    NdVar { n: x } => if !scope_fn::has(seen, x) {
+      seen += [x];
+      binds: vector<ir::Node> = [];
+      binds_of(s.orig_code, x, binds);
+      for r in binds {
+        if reaches_stale(s, r, seen) {
+          return true;
+        }
+      }
+    },
+    NdCallRef { var: x } => if !scope_fn::has(seen, x) {
+      seen += [x];
+      binds: vector<ir::Node> = [];
+      binds_of(s.orig_code, x, binds);
+      for r in binds {
+        if reaches_stale(s, r, seen) {
+          return true;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if reaches_stale(s, c, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+// The right-hand sides of `x`'s binds in `n`.
+fn binds_of(n: ir::Node, x: integer, out: vector<ir::Node>) {
+  match n {
+    NdSet { var, inner } => if var == x { out += [inner]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    binds_of(c, x, out);
   }
 }
 
 // port: use_analysis.rs fn ownership_of_with, memoised per function as `scan_set` asks it.
 pub fn ownership(s: Scopes, b: ir::Bundle, value: ir::Node) -> own::Own {
-  oracle_guard(s);
+  oracle_guard(s, value);
   own::ownership_of_with(b, s.own_ops, s.d_nr, value, defs(s, b))
 }
 

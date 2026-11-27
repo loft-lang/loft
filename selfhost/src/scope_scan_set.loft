@@ -274,7 +274,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if fn_nr != null && binds::is_loft_defined(b.data.definitions[fn_nr!]!) {
       callee = b.data.definitions[fn_nr!]!;
       adopts_fresh_store = binds::return_adopts_fresh_store(callee);
-      scope_scan::oracle_guard(s);
+      scope_scan::oracle_guard(s, unspanned);
       adopts_minted = binds::adopts_minted_at_bind(b, s.own_ops, f, v, unspanned);
       // @PLN85 `local_source` — `displaced_owned_slots` names a slot whose OWNED store a later
       // borrow or join displaces; it needs a second bind of the slot.

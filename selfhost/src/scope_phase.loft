@@ -30,7 +30,7 @@ pub struct Phase {
 // port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
 // `confined`, `sunk` and `late_owners` are empty on every phase this transcription runs (the
 // confinement rescan, the written-out arms and the late owners are facts of stores).
-pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: text) -> Phase {
+pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>) -> Phase {
   s = scope_scan::Scopes {
     ops: ops,
     d_nr: d_nr,
@@ -90,7 +90,8 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     arm_lift_temps: [],
     free_transferred: [],
     local_owns: [],
-    stale_callee: stale,
+    stale_defs: stale,
+    orig_code: orig_code,
     why: "",
     whys: []
   };
