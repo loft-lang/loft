@@ -40,6 +40,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baseline  # noqa: E402  one baseline format for every survey
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "front"))
+import elab_gate  # noqa: E402  the front layer takes gate E's library directories
 
 
 def proc(cmd, env, timeout, cwd=None):
@@ -99,6 +101,13 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     if len(stem) > 150:
         stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
     img = f[:-5] + ".run" if test else os.path.join(tmp, stem + ".run")
+    if front_std and not test:
+        # The front layer runs what gate E elaborated, so both front ends see the libraries gate E
+        # gives them: the `--lib` directories of the program's own `@ARGS` line.  A blanket
+        # `tests/lib` would let a trigger (`Disp-Trigger`) load a package into Rust's image that
+        # the loft elaborator was never shown.
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            libargs = tuple(a for d in elab_gate.lib_dirs(fh.read()) for a in ("--lib", d))
     rc, _, err = proc([loft, *libargs, "--emit-run-image", img, f], env, timeout, cwd=src_dir)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
@@ -148,7 +157,10 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     if got != want:
         if STORE_REPORT.sub("", got) == STORE_REPORT.sub("", want):
             return f, "stores", [""]
-        return f, "differ", [""]
+        a, b = want.splitlines(), got.splitlines()
+        k = next((i for i in range(min(len(a), len(b))) if a[i] != b[i]), min(len(a), len(b)))
+        return f, "differ", [f"line {k}: {(a[k] if k < len(a) else '(end)')[:60]!r} / {(b[k] if k < len(b) else '(end)')[:60]!r}"
+                             + (f" (stderr: {err2.strip().splitlines()[-1][:80]})" if err2.strip() else "")]
     leaked = [int(m.group(1)) if m else 0
               for m in (re.search(r"(\d+) stores not freed at program exit", e) for e in (err, err2))]
     if leaked[0] != leaked[1]:
