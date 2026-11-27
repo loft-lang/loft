@@ -2643,7 +2643,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   }
   if x.code is NdIter {
     vars.bind_starts = if declaring { v } else { -1 };
-    sb = el_ex_vector::slice_bind(e, vars, v, x);
+    sb = el_ex_vector::slice_bind(e, vars, v, x, rhs ?? -1);
     vars.bind_starts = -1;
     return sb;
   }
