@@ -173,6 +173,10 @@ pub struct El {
   // `Attribute::lexeme` (@PLN35): the `#lexeme` fields of token-enum variants, `"<def>:<field>"`
   // — parse-time only, as Rust's is (no image carries it).
   pub lexeme_fields: vector<text>,
+  // The generic instances `promote_monomorph_text_return` gave a hidden text buffer: their
+  // callers, built against the shorter signature, are patched after the second pass
+  // (`patch_tret_callers`).
+  pub tret_instances: vector<integer>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
   // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
@@ -296,6 +300,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     null_widened: [],
     value_structs: [],
     lexeme_fields: [],
+    tret_instances: [],
     slot_links: [],
     subject_sites: [],
     subject_names: [],

@@ -1253,6 +1253,9 @@ pub fn promote_monomorph_text_return(e: el::El, d: integer) {
   e.context = ctx;
   e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
   e.b.data.definitions[d].variables = el_vars::stored(vars);
+  if !e.tret_instances.contains(d) {
+    e.tret_instances += [d];
+  }
 }
 
 // port: control.rs promote_monomorph_vector_return — the copy of each vector PARAMETER the
