@@ -441,15 +441,26 @@ pub fn generator_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
 // destructured or filtered walk, and an element whose null is no plain integer's are refused by
 // name.
 pub fn user_next_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, nd: integer) -> Ex {
-  it_t = el_types::base(x.tp);
+  // (A literal source's own store is no borrow of the holder: `___iter_obj_1: ref(ObCnt)`.)
+  it_t = el_types::without_deps(el_types::base(x.tp));
   match el_ir::unspan(x.code) {
     NdVar { n } => { it_t = el_types::with_deps(it_t, [n]); },
     _ => {}
   }
-  io = el_vars::create_unique(vars, "__iter_obj", it_t);
-  el_vars::set_defined(vars, io);
   nrt = el::def(e, nd).returned[0] ?? ir::TyVoid;
   step = el_types::without_deps(match nrt { TyOptional { inner } => inner, _ => nrt });
+  // (Rust's first pass walks the source as a positional loop — the counter `x#index`, no
+  // `___iter_obj_N` — its element unknown where the source is a record literal.)
+  if e.first_pass {
+    _ = el_ex_pattern::loop_index(e, vars, h.id);
+    if el_ir::unspan(x.code) is NdNull || match el_ir::unspan(x.code) { NdBlock { block: ub } => ub[0].name == "Object", _ => false } {
+      step = ir::TyUnknown { n: 0 };
+    }
+  }
+  io = if e.first_pass { -1 } else { el_vars::create_unique(vars, "__iter_obj", it_t) };
+  if io >= 0 {
+    el_vars::set_defined(vars, io);
+  }
   if len(h.binds) > 1 || h.filter != null || len(el::def(e, nd).attributes) != 1 {
     el::refuse(e, "a `for` over a user `next` that destructures, filters or takes a buffer");
     return ex(ir::NdNull, ir::TyVoid);
