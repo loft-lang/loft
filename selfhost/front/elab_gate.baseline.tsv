@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	3642dcda3551625c7b8fdae7e97f0271a6e9f89e
+suite	d5e4e3311b29d6c84abe705e2da8dfabb1a9d6f7
 
-layer	elab	agree	1636	of	2277
+layer	elab	agree	1636	of	2278
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -257,6 +257,7 @@ elab	refused	loft-suite/rules/iteration/I-For/a-reverse-walk-over-a-local-filled
 elab	refused	loft-suite/rules/iteration/I-For/a-walk-over-a-link-parameter-is-a-walk-over-the-vector.loft
 elab	refused	loft-suite/rules/iteration/I-For/a-write-the-loop-leaves-right-after-is-not-reported.loft
 elab	refused	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft
+elab	refused	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft
 elab	refused	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft
 elab	refused	loft-suite/rules/iteration/I-RangeNull/a-null-range-bound-makes-the-range-empty-so-the-variable-is-never-null.loft
 elab	refused	loft-suite/rules/iteration/I-Text/a-text-walk-over-a-link-reads-the-linked-text.loft
@@ -648,7 +649,7 @@ elab	refused	tests/scripts/pln125-a2c-companion.loft
 elab	refused	tests/scripts/pln133-optional-unify.loft
 elab	refused	tests/scripts/store_compact_b2.loft
 
-layer	elab-functions	agree	12754	of	19754
+layer	elab-functions	agree	12764	of	19794
 elab-functions	agree	lib/git/src/git.loft::(schema)
 elab-functions	agree	lib/git/src/git.loft::Change
 elab-functions	agree	lib/git/src/git.loft::Commit
@@ -6427,6 +6428,16 @@ elab-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-r
 elab-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::n_walk_head
 elab-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::n_walk_tail
 elab-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::vector<R>
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::E
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_hash_0
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_add
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_addv
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_big
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_dbl
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_keys
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_nums
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_ten
+elab-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_total
 elab-functions	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::Acc
 elab-functions	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::P
 elab-functions	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::__closure_main_0
@@ -13404,7 +13415,7 @@ elab-functions	agree	tests/scripts/store_compact_b2.loft::n_report
 elab-functions	agree	tests/scripts/store_compact_b2.loft::vector<Leaf>
 elab-functions	agree	tests/scripts/store_compact_b2.loft::vector<Tag>
 
-layer	elab-pass1	agree	18110	of	20605
+layer	elab-pass1	agree	18118	of	20614
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -19448,6 +19459,14 @@ elab-pass1	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-
 elab-pass1	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::n_walk_filtered
 elab-pass1	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::n_walk_head
 elab-pass1	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::n_walk_tail
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_add
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_addv
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_big
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_dbl
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_keys
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_nums
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_ten
+elab-pass1	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_total
 elab-pass1	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::n___lambda_main_0
 elab-pass1	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::n___lambda_main_1
 elab-pass1	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::n___lambda_main_2
