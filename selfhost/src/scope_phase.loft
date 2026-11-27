@@ -19,6 +19,7 @@ use scope_witness;
 use scope_backings;
 use scope_buffers;
 use scope_drops;
+use scope_view_walk;
 use opt_names;
 
 pub struct Phase {
@@ -315,9 +316,11 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   if amp_view_local(s, b, code, f) {
     scope_scan::refuse(s, "phase::view_rebind_locals: a record view handed to a `&` parameter");
   }
-  // `collect_views_to_materialise` — a record view of a container the body may disturb.
-  if view_of_disturbed_container(b, code, f) {
-    scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a record view of a container the body may disturb");
+  // `collect_views_to_materialise` — a view used after a disturbance of its container: the
+  // scan's materialise legs (`scan_set`'s dep strip and copy, the materialise buffers, the
+  // split's copy of the order) are not transcribed.
+  if len(scope_view_walk::collect_views_to_materialise(b, code, f, s.ops.disturbed)) > 0 {
+    scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a view used after a disturbance of its container (the materialise legs)");
   }
 }
 
@@ -419,115 +422,6 @@ fn amp_view_local(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Func
   }
   for c in scope_fn::children(n) {
     if amp_view_local(s, b, c, f) {
-      return true;
-    }
-  }
-  false
-}
-
-// The superset of `collect_views_to_materialise`'s answers: a record (or record-enum) local
-// bound to a projection of a container (`projection_container_var`) where the container is
-// reassigned, rebuilt, or handed to any call that is not a read.
-fn view_of_disturbed_container(b: ir::Bundle, code: ir::Node, f: ir::Function) -> boolean {
-  containers: vector<integer> = [];
-  view_containers(b, code, f, containers);
-  for c in containers {
-    if disturbs(b, code, c, false) {
-      return true;
-    }
-  }
-  false
-}
-
-fn view_containers(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
-  match scope_fn::unspan(n) {
-    NdSet { var, inner } => if scope_fn::is_record(scope_fn::tp(f, var)) {
-      // A view the walk copies is read through `plain_element_read` too: a SILENT element read
-      // (`OpGetVectorNullable`, `OpVectorRefNullable`) names its container as the plain one does.
-      c = binds::projection_container_var(b, inner);
-      r = if c != null { c! } else { read_root(b, inner) };
-      if r >= 0 && !scope_fn::has(out, r) {
-        out += [r];
-      }
-    } else if scope_fn::base(scope_fn::tp(f, var)) is TyVector {
-      // A VECTOR view (`xs = s.items`) is copied out through a materialise buffer
-      // (`OpReplaceVector`); a vector bound to its own literal backing or call buffer is no view.
-      c = binds::projection_container_var(b, inner);
-      r = if c != null { c! } else { read_root(b, inner) };
-      if r >= 0 && !scope_fn::is_compiler_generated(f, r) && !scope_fn::has(out, r) {
-        out += [r];
-      }
-    },
-    _ => {}
-  }
-  for x in scope_fn::children(n) {
-    view_containers(b, x, f, out);
-  }
-}
-
-// The variable a chain of reads (`OpGet*`, `OpVectorRef*`) is rooted at, -1 for none.
-fn read_root(b: ir::Bundle, n: ir::Node) -> integer {
-  match scope_fn::unspan(n) {
-    NdCall { def_nr, args } => {
-      nm = scope_args::def_name(b, def_nr);
-      if (nm.starts_with("OpGet") || nm.starts_with("OpVectorRef")) && len(args) > 0 {
-        match scope_fn::unspan(args[0]!) {
-          NdVar { n: x } => x,
-          _ => read_root(b, args[0]!)
-        }
-      } else {
-        -1
-      }
-    },
-    _ => -1
-  }
-}
-
-// Read-only operators: a projection, a scalar or text read, a length, a conversion, a format,
-// a comparison or arithmetic.
-fn read_op(nm: text) -> boolean {
-  nm.starts_with("OpGet") || nm.starts_with("OpLength") || nm.starts_with("OpSize") || nm.starts_with("OpConv")
-    || nm.starts_with("OpFormat") || nm.starts_with("OpEq") || nm.starts_with("OpNe") || nm.starts_with("OpLt")
-    || nm.starts_with("OpLe") || nm.starts_with("OpGt") || nm.starts_with("OpGe") || nm.starts_with("OpVectorRef")
-    || nm.starts_with("OpAdd") || nm.starts_with("OpMin") || nm.starts_with("OpMul") || nm.starts_with("OpDiv")
-    || nm.starts_with("OpRem") || nm.starts_with("OpNot") || nm.starts_with("OpAnd") || nm.starts_with("OpOr")
-    || nm.starts_with("OpRefIsNull") || nm.starts_with("OpCast") || nm == "OpDistinctStore"
-}
-
-// Is `c` mentioned anywhere other than under read-only operators (`under` a non-read call or a
-// `Set` of it)?
-fn disturbs(b: ir::Bundle, n: ir::Node, c: integer, under: boolean) -> boolean {
-  u = scope_fn::unspan(n);
-  match u {
-    NdVar { n: x } => { return under && x == c; },
-    NdSet { var, inner } => {
-      if var == c {
-        return true;
-      }
-      return disturbs(b, inner, c, false);
-    },
-    NdCall { def_nr, args } => {
-      nm = scope_args::def_name(b, def_nr);
-      w = under || !read_op(nm);
-      for a in args {
-        if disturbs(b, a, c, w) {
-          return true;
-        }
-      }
-      return false;
-    },
-    NdCallRef { args } => {
-      for a in args {
-        if disturbs(b, a, c, true) {
-          return true;
-        }
-      }
-      return false;
-    },
-    _ => {}
-  }
-  for x in scope_fn::children(u) {
-    if disturbs(b, x, c, false) {
       return true;
     }
   }

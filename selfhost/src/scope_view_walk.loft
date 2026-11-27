@@ -1,0 +1,1061 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/view_walk.rs` (`collect_views_to_materialise`) with the producers of
+// `src/scopes/disturbance.rs`, transcribed as the QUESTION the scan's materialise legs need
+// answered: is any view binding of this body used after a disturbance of its container
+// (`@FR-B-View`'s materialise clause, `@FR-B-Disturb`)?  The pass refuses a function where the
+// answer may be yes (its materialise legs are not transcribed) and carries it where the answer
+// is no, so this walk must never answer empty where Rust's does not.
+//
+// The walk is Rust's — the frames, the in-order statement walk, the value-branch `Set`, the `if`
+// arms from one state, the loop walked from its head shake and again from its back edge, the
+// provisional loop-head records, `record_target`, `note_uses` — with every SPARING left out, so
+// what it answers is a superset of Rust's answer:
+// - a place is matched on its variable and field, a field unknown anywhere is `ANY`; the literal
+//   key (loft#1460), the literal element index, the whole-container link (loft#1543) and the
+//   slot-handle restore of a payload clear spare nothing here;
+// - the open views, their places and depths are Rust's (`resolve_view_root`, `maybe_own`);
+// - a whole record written over a place this walk cannot size (`OpCopyRecord`, a tagged slot's
+//   clear) is the whole variable, and a tagged slot's clear ends the views at its own depth;
+// - a callee's disturbance (`disturbed_params_map`, `opt_vr_disturb::params_map`, which keeps
+//   no span) shakes the argument's variable, `ANY`;
+// - a loop body is always walked twice, and the state after it is the union of the state with
+//   and without the second walk; `callee_argument_uses` (loft#2349) is not discounted;
+// - a keyed binding is a candidate view (`keyed_views`, `amp_container_link` are not in the
+//   image; a function with a keyed local is refused by `scan_set` anyway).
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use opt_vr_disturb;
+use opt_vr_shape;
+use opt_names;
+use own;
+use cgen_types;
+
+const ANY = 4294967295;
+const MAXD = 255;
+
+struct Entry {
+  frame: integer,
+  view: integer,
+  c: integer,
+  f: integer
+}
+
+struct VW {
+  f: ir::Function,
+  nframes: integer,
+  open: vector<Entry>,
+  bound_at: vector<integer>,
+  // The deepest element-read count below each open view's root, -1 unknown.
+  view_depth: vector<integer>,
+  // Per variable: -1 not shaken, else the provisional loop level of its record (0 confirmed).
+  shaken: vector<integer>,
+  // The variables that are an open view on one path and not on another (`maybe_own`).
+  maybe_own: vector<boolean>,
+  out: vector<boolean>,
+  loop_level: integer,
+  loop_edge: integer,
+  dmap: vector<opt_vr_disturb::DPlace>,
+  dhas: vector<boolean>
+}
+
+// The state an `if` arm or a loop's second walk starts from and leaves.
+struct Snap {
+  open: vector<Entry>,
+  view_depth: vector<integer>,
+  shaken: vector<integer>,
+  maybe_own: vector<boolean>
+}
+
+// `resolve_view_root`'s answer: the root place, the element reads the followed views add, and
+// the places of the maybe-owned containers passed on the way (`owned_hops`, `[c, f, …]`).
+struct Root {
+  c: integer,
+  f: integer,
+  depth: integer,
+  hops: vector<integer>
+}
+
+// The callee half of `(B-Disturb)` for the whole program, built once before `check`'s loop
+// (`disturbed_params_map`): every loft function's parameter places it disturbs.
+pub fn disturbed_params(b: ir::Bundle) -> vector<opt_vr_disturb::DPlace> {
+  opt_vr_disturb::params_map(b)
+}
+
+// port: view_walk.rs fn collect_views_to_materialise — the views a disturbance of their container
+// may reach while they are used (a superset of Rust's answer, see the header).
+pub fn collect_views_to_materialise(b: ir::Bundle, code: ir::Node, f: ir::Function, dmap: vector<opt_vr_disturb::DPlace>) -> vector<integer> {
+  n = scope_fn::count(f);
+  dhas: vector<boolean> = [for _ in 0..len(b.data.definitions) { false }];
+  for e in dmap {
+    if e.d >= 0 && e.d < len(dhas) {
+      dhas[e.d] = true;
+    }
+  }
+  w = VW {
+    f: f,
+    nframes: 1,
+    open: [],
+    bound_at: [for _ in 0..n { -1 }],
+    view_depth: [for _ in 0..n { -1 }],
+    shaken: [for _ in 0..n { -1 }],
+    maybe_own: [for _ in 0..n { false }],
+    out: [for _ in 0..n { false }],
+    loop_level: 0,
+    loop_edge: 0,
+    dmap: dmap,
+    dhas: dhas
+  };
+  walk_block(w, b, [code]);
+  res: vector<integer> = [];
+  for o in w.out {
+    if o {
+      res += [o#index];
+    }
+  }
+  res
+}
+
+fn in_range(w: VW, v: integer) -> boolean {
+  v >= 0 && v < len(w.shaken)
+}
+
+fn snap(w: VW) -> Snap {
+  Snap {
+    open: [for e in w.open { Entry { frame: e.frame, view: e.view, c: e.c, f: e.f } }],
+    view_depth: [for x in w.view_depth { x }],
+    shaken: [for x in w.shaken { x }],
+    maybe_own: [for x in w.maybe_own { x }]
+  }
+}
+
+fn restore(w: VW, s: Snap) {
+  w.open = [for e in s.open { Entry { frame: e.frame, view: e.view, c: e.c, f: e.f } }];
+  w.view_depth = [for x in s.view_depth { x }];
+  w.shaken = [for x in s.shaken { x }];
+  w.maybe_own = [for x in s.maybe_own { x }];
+}
+
+fn has_entry(open: vector<Entry>, frame: integer, view: integer, c: integer, f: integer) -> boolean {
+  for e in open {
+    if e.frame == frame && e.view == view && e.c == c && e.f == f {
+      return true;
+    }
+  }
+  false
+}
+
+// port: view_walk.rs fn walk_if's join — the state either of two paths leaves: the open views of
+// both (the first path's order, then the second's extras), every record either made (the more
+// durable provisional level), the deeper reading of a view's depth, the views open on one path.
+fn merge(a: Snap, b: Snap) -> Snap {
+  open: vector<Entry> = [for e in a.open { Entry { frame: e.frame, view: e.view, c: e.c, f: e.f } }];
+  for e in b.open {
+    if !has_entry(open, e.frame, e.view, e.c, e.f) {
+      open += [Entry { frame: e.frame, view: e.view, c: e.c, f: e.f }];
+    }
+  }
+  depth: vector<integer> = [for x in a.view_depth { x }];
+  for x in b.view_depth {
+    i = x#index;
+    if x > depth[i]! {
+      depth[i] = x;
+    }
+  }
+  shaken: vector<integer> = [for x in a.shaken { x }];
+  for x in b.shaken {
+    i = x#index;
+    if x >= 0 && (shaken[i]! < 0 || x < shaken[i]!) {
+      shaken[i] = x;
+    }
+  }
+  // A view open at the end of one arm and not the other is a view on one path only.
+  own: vector<boolean> = [for x in a.maybe_own { x }];
+  for x in b.maybe_own {
+    if x {
+      own[x#index] = true;
+    }
+  }
+  for e in open {
+    in_a = false;
+    for x in a.open {
+      if x.view == e.view {
+        in_a = true;
+      }
+    }
+    in_b = false;
+    for x in b.open {
+      if x.view == e.view {
+        in_b = true;
+      }
+    }
+    if in_a != in_b && e.view < len(own) {
+      own[e.view] = true;
+    }
+  }
+  Snap { open: open, view_depth: depth, shaken: shaken, maybe_own: own }
+}
+
+fn walk_block(w: VW, b: ir::Bundle, stmts: vector<ir::Node>) {
+  for s in stmts {
+    walk_stmt(w, b, s);
+  }
+}
+
+// port: view_walk.rs fn scoped — a nested block in its own frame.
+fn scoped(w: VW, b: ir::Bundle, stmts: vector<ir::Node>) {
+  w.nframes += 1;
+  walk_block(w, b, stmts);
+  w.nframes -= 1;
+  top = w.nframes;
+  w.open = [for e in w.open if e.frame < top { Entry { frame: e.frame, view: e.view, c: e.c, f: e.f } }];
+}
+
+// port: view_walk.rs fn walk_stmt
+fn walk_stmt(w: VW, b: ir::Bundle, stmt: ir::Node) {
+  u = scope_fn::unspan(stmt);
+  match u {
+    NdInsert { items } => walk_block(w, b, items),
+    NdBlock { block } => scoped(w, b, block[0].operators),
+    NdLoop { block } => walk_loop(w, b, u, block[0].operators),
+    NdIf { cond, t, f } => walk_if(w, b, cond, t, f),
+    NdSet { inner } => {
+      ru = scope_fn::unspan(inner);
+      if (ru is NdIf) || (ru is NdBlock) || (ru is NdInsert) {
+        note_binding_depth(w, u);
+        // A `match` payload binding bound in an arm of this value belongs to the block that
+        // holds the statement (`LOFT_NO_PAYLOAD_VIEW_FRAME`).
+        payloads: vector<integer> = [];
+        payload_sets(w.f, ru, payloads);
+        for p in payloads {
+          if in_range(w, p) && w.bound_at[p]! < 0 {
+            w.bound_at[p] = len_open(w);
+          }
+        }
+        walk_stmt(w, b, ru);
+        disturb(w, b, u);
+        record_target(w, b, u);
+      } else {
+        leaf(w, b, u);
+      }
+    },
+    _ => leaf(w, b, u)
+  }
+}
+
+// `self.open.len()`: the frames open, the function's own included.
+fn len_open(w: VW) -> integer {
+  w.nframes
+}
+
+fn payload_sets(f: ir::Function, n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSet { var } => if scope_fn::name(f, var).starts_with("_mv_") { out += [var]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    payload_sets(f, c, out);
+  }
+}
+
+// port: view_walk.rs fn walk_loop — the body walked from the head shake, then again from the
+// back edge.  Rust walks it the second time when the back edge shook a new view or the first
+// turn ended a view owned outside the loop; the records here are a superset of Rust's, so that
+// test cannot be read off them, and the body is always walked again.  Where Rust would not have,
+// the second walk binds what the first did (its starting state differs only in records), so the
+// views it leaves open are the first walk's; the records after the loop are either walk's.
+fn walk_loop(w: VW, b: ir::Bundle, stmt: ir::Node, ops: vector<ir::Node>) {
+  w.loop_level += 1;
+  level = w.loop_level;
+  disturb_loop_edge(w, b, stmt, level);
+  scoped(w, b, ops);
+  disturb_loop_edge(w, b, stmt, level);
+  once = [for x in w.shaken { x }];
+  scoped(w, b, ops);
+  for x in once {
+    i = x#index;
+    if x >= 0 && (w.shaken[i]! < 0 || x < w.shaken[i]!) {
+      w.shaken[i] = x;
+    }
+  }
+  for i in 0..len(w.shaken) {
+    if w.shaken[i]! == level {
+      w.shaken[i] = -1;
+    }
+  }
+  w.loop_level -= 1;
+}
+
+fn disturb_loop_edge(w: VW, b: ir::Bundle, stmt: ir::Node, level: integer) {
+  outer = w.loop_edge;
+  w.loop_edge = level;
+  disturb(w, b, stmt);
+  w.loop_edge = outer;
+}
+
+// port: view_walk.rs fn arm_returns
+fn arm_returns(branch: ir::Node) -> boolean {
+  ops: vector<ir::Node> = match branch {
+    NdBlock { block } => block[0].operators,
+    NdInsert { items } => items,
+    _ => return scope_fn::unspan(branch) is NdReturn
+  };
+  k = len(ops) - 1;
+  while k >= 0 && (scope_fn::unspan(ops[k]!) is NdLine) {
+    k -= 1;
+  }
+  k >= 0 && (scope_fn::unspan(ops[k]!) is NdReturn)
+}
+
+// port: view_walk.rs fn walk_if — each arm from the state before the `if`.
+fn walk_if(w: VW, b: ir::Bundle, cond: ir::Node, t: ir::Node, e: ir::Node) {
+  leaf(w, b, cond);
+  before = snap(w);
+  ends: vector<Snap> = [];
+  returns: vector<boolean> = [];
+  for branch in [scope_fn::unspan(t), scope_fn::unspan(e)] {
+    restore(w, before);
+    returns += [arm_returns(branch)];
+    match branch {
+      NdBlock { block } => scoped(w, b, block[0].operators),
+      NdInsert { items } => scoped(w, b, items),
+      NdIf => walk_stmt(w, b, branch),
+      _ => leaf(w, b, branch)
+    }
+    ends += [snap(w)];
+  }
+  if returns[0]! && !returns[1]! {
+    restore(w, ends[1]!);
+  } else if returns[1]! && !returns[0]! {
+    restore(w, ends[0]!);
+  } else {
+    restore(w, merge(ends[0]!, ends[1]!));
+  }
+}
+
+// port: view_walk.rs fn leaf — the statement's disturbances, then its uses, then its binding.
+fn leaf(w: VW, b: ir::Bundle, stmt: ir::Node) {
+  note_binding_depth(w, stmt);
+  disturb(w, b, stmt);
+  note_uses(w, b, stmt);
+  record_target(w, b, stmt);
+}
+
+// port: view_walk.rs fn note_binding_depth
+fn note_binding_depth(w: VW, stmt: ir::Node) {
+  match scope_fn::unspan(stmt) {
+    NdSet { var, inner } => if !(scope_fn::unspan(inner) is NdNull) && in_range(w, var) && w.bound_at[var]! < 0 {
+      w.bound_at[var] = len_open(w);
+    },
+    _ => {}
+  }
+}
+
+fn vdepth(w: VW, v: integer) -> integer {
+  d = w.view_depth[v] ?? -1;
+  if d < 0 { MAXD } else { d }
+}
+
+// `shake_places_at` (`shake_places_keyed` at a minimum depth): every open view of `(c, f)` at
+// least `min` element reads below its root is shaken; a record made at the loop head is
+// provisional (`record_cause`).
+fn shake_at(w: VW, c: integer, f: integer, min: integer) {
+  for e in w.open {
+    if e.c == c && (e.f == f || e.f == ANY || f == ANY) && vdepth(w, e.view) >= min {
+      record(w.shaken, e.view, w.loop_edge);
+    }
+  }
+}
+
+// `record_cause`'s provisional order: a confirmed record (0) is never demoted, and an outer
+// loop's record outlives an inner one's.
+fn record(map: vector<integer>, v: integer, prov: integer) {
+  if v < 0 || v >= len(map) {
+    return;
+  }
+  cur = map[v]!;
+  if cur < 0 || prov < cur {
+    map[v] = prov;
+  }
+}
+
+// The first open entry of view `x`, in frame order (`open.iter().flatten().find`), -1 none.
+fn first_entry(w: VW, x: integer) -> integer {
+  for fr in 0..w.nframes {
+    for e in w.open {
+      if e.frame == fr && e.view == x {
+        return e#index;
+      }
+    }
+  }
+  -1
+}
+
+// port: view_walk.rs fn resolve_view_root — the container a view ultimately names, following
+// the views this walk has opened (bounded at 16 hops), with the field run composed through a
+// view that read no element.
+fn resolve(w: VW, container: integer, field: integer) -> Root {
+  c = container;
+  f = field;
+  depth = 0;
+  hops: vector<integer> = [];
+  for _ in 0..16 {
+    k = first_entry(w, c);
+    if k < 0 {
+      return Root { c: c, f: f, depth: depth, hops: hops };
+    }
+    outer = w.open[k]!.c;
+    outer_field = w.open[k]!.f;
+    if outer == c || scope_fn::is_compiler_generated(w.f, outer) {
+      return Root { c: c, f: f, depth: depth, hops: hops };
+    }
+    if w.maybe_own[c] ?? false {
+      hops += [c, f];
+    }
+    od = w.view_depth[c] ?? -1;
+    outer_depth = if od < 0 { 0 } else { od };
+    f = if outer_depth == 0 { opt_vr_disturb::add_offset(outer_field, f) } else { outer_field };
+    depth += outer_depth;
+    c = outer;
+  }
+  Root { c: c, f: f, depth: depth, hops: hops }
+}
+
+// `shake_deeper_through_views`: the views deeper than `depth` at `(c, f)`, and, where the place
+// lies inside an open view, at the place that view names (`through_views`).  `sure` false: the
+// field stands for a run of slots this walk cannot size, so the place it names through a view is
+// the whole root.
+fn shake_deeper(w: VW, c: integer, f: integer, depth: integer, sure: boolean) {
+  shake_at(w, c, f, depth + 1);
+  r = resolve(w, c, f);
+  if r.c != c {
+    shake_at(w, r.c, if sure { r.f } else { ANY }, r.depth + depth + 1);
+  }
+}
+
+// `overwritten_slots`: the slots a whole record `size` bytes long written at `(c, lo)` ends views
+// in — the place itself and every open view's slot of `c` inside the record; the whole variable
+// where the record cannot be sized (`size` < 0) or the place has no field.
+fn overwritten_slots(w: VW, c: integer, lo: integer, size: integer) -> vector<integer> {
+  if size < 0 || lo == ANY {
+    return [ANY];
+  }
+  out: vector<integer> = [lo];
+  for e in w.open {
+    if e.c == c && e.f != ANY && e.f >= lo && e.f < lo + size && !scope_fn::has(out, e.f) {
+      out += [e.f];
+    }
+  }
+  out
+}
+
+fn arg_place(b: ir::Bundle, args: vector<ir::Node>, i: integer) -> opt_vr_disturb::Place {
+  if i >= len(args) {
+    return opt_vr_disturb::Place { v: -1, f: ANY, depth: 0 };
+  }
+  opt_vr_disturb::named_place(b, args[i]!)
+}
+
+fn int_arg(args: vector<ir::Node>, i: integer) -> integer? {
+  if i >= len(args) {
+    return null;
+  }
+  match scope_fn::unspan(args[i]!) {
+    NdInt { n } => n,
+    _ => null
+  }
+}
+
+// port: view_walk.rs fn disturb / disturb_parts — every disturbance anywhere in `stmt`.
+fn disturb(w: VW, b: ir::Bundle, stmt: ir::Node) {
+  producers(w, b, stmt);
+  established(w, b, stmt);
+  callees(w, b, stmt);
+}
+
+// The inline producers of `disturbance.rs`: `reshaped_containers` (with `released_children`),
+// the `OpClearVector` rebuild, `overwritten_records`, `cleared_tagged_slots`,
+// `grown_containers`.
+fn producers(w: VW, b: ir::Bundle, n: ir::Node) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      p = opt_vr_disturb::Place { v: -1, f: ANY, depth: 0 };
+      if nm == "OpRemove" {
+        p = arg_place(b, args, 1);
+      } else if nm == "OpRemoveVector" || nm == "OpKeepVectorRange" || nm == "OpPrependVector" || nm == "OpHashRemove" || nm == "OpMoveChildRec" || nm == "OpClearVector" {
+        p = arg_place(b, args, 0);
+      } else if nm == "OpSetChildRec" && len(args) == 3 {
+        p = arg_place(b, args, 0);
+        vb = scope_fn::unspan(args[1]!);
+        if p.v >= 0 && ((vb is NdBlock) || (vb is NdInsert)) {
+          // An overwrite of the child slot (4 bytes), one level in.
+          for sl in overwritten_slots(w, p.v, p.f, 4) {
+            shake_deeper(w, p.v, sl, p.depth + 1, true);
+          }
+          p = opt_vr_disturb::Place { v: -1, f: ANY, depth: 0 };
+        }
+      } else if nm == "OpCopyRecord" && len(args) == 3 {
+        raw = int_arg(args, 2);
+        if raw != null && raw! >= 0 && raw! <= 65535 && (raw! & 16384) == 0 {
+          // The record's size is the store's (`COPY_TP_MASK`): not read here, the whole place.
+          q = arg_place(b, args, 1);
+          if q.v >= 0 {
+            for sl in overwritten_slots(w, q.v, q.f, -1) {
+              shake_deeper(w, q.v, sl, q.depth, false);
+            }
+          }
+        }
+      } else if nm == "OpChildRecInPlace" && len(args) == 2 {
+        q = arg_place(b, args, 0);
+        if q.v >= 0 {
+          for sl in overwritten_slots(w, q.v, q.f, 4) {
+            shake_deeper(w, q.v, sl, q.depth + 1, true);
+          }
+        }
+      } else if nm == "OpClearKeyed" && len(args) == 2 {
+        // A null written into a tagged slot ends the view of its payload too: at the slot's
+        // own depth (`shake_payload_views`), through the view it lies in as well.  The slot's
+        // size and whether a value write follows (`value_write_clears`, which shakes one level
+        // deeper) are not read: the whole place, at the slot's depth.
+        q = arg_place(b, args, 0);
+        if q.v >= 0 {
+          shake_at(w, q.v, ANY, q.depth);
+          r = resolve(w, q.v, ANY);
+          if r.c != q.v {
+            shake_at(w, r.c, ANY, r.depth + q.depth);
+          }
+        }
+      } else if nm.starts_with("OpPush") || nm == "OpPreAllocVector" || nm == "OpAppendVector" || nm == "OpInsertVector" || nm == "OpHashAdd" {
+        p = arg_place(b, args, 0);
+      } else if nm == "OpNewRecord" {
+        p = arg_place(b, args, 0);
+        fld = int_arg(args, 2);
+        if p.v >= 0 && fld != null && fld! != 65535 {
+          // The grown field's offset needs the record's type; unknown, the whole variable.
+          off = new_record_offset(b, w.f, args, fld!);
+          if off < 0 {
+            shake_deeper(w, p.v, ANY, p.depth, false);
+            p = opt_vr_disturb::Place { v: -1, f: ANY, depth: 0 };
+          } else {
+            p = opt_vr_disturb::Place { v: p.v, f: opt_vr_disturb::add_offset(p.f, off), depth: p.depth };
+          }
+        }
+      }
+      if p.v >= 0 {
+        shake_deeper(w, p.v, p.f, p.depth, true);
+      }
+    },
+    NdInsert { items } => {
+      // A slot tag's release (`released_children`): `{ t = OpSlotTag(field); OpCreateStack(t) }`.
+      if len(items) == 2 {
+        match scope_fn::unspan(items[0]!) {
+          NdSet { inner } => match scope_fn::unspan(inner) {
+            NdCall { def_nr, args } => if scope_args::def_name(b, def_nr) == "OpSlotTag" && len(args) > 0 {
+              is_stack = match scope_fn::unspan(items[1]!) { NdCall { def_nr: cs } => scope_args::def_name(b, cs) == "OpCreateStack", _ => false };
+              if is_stack {
+                q = opt_vr_disturb::named_place(b, args[0]!);
+                if q.v >= 0 {
+                  shake_deeper(w, q.v, q.f, q.depth, true);
+                }
+              }
+            },
+            _ => {}
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    producers(w, b, c);
+  }
+}
+
+// `grown_containers`' field offset of an `OpNewRecord(parent, tp, fld)`: -1 when the type or
+// the field cannot be read.
+fn new_record_offset(b: ir::Bundle, f: ir::Function, args: vector<ir::Node>, fld: integer) -> integer {
+  tp = -1;
+  match scope_fn::unspan(args[0]!) {
+    NdVar { n: c } => {
+      td = type_def_nr(scope_fn::tp(f, c));
+      tp = if td >= 0 { b.data.definitions[td]!.known_type } else { -1 };
+    },
+    _ => {
+      tp = int_arg(args, 1) ?? -1;
+    }
+  }
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp].parts) == 0 {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match b.types[tp].parts[0]! { PtStruct { fields } => fields, PtEnumValue { fields } => fields, _ => [] };
+  if fld < 0 || fld >= len(fields) { -1 } else { fields[fld]!.position }
+}
+
+fn type_def_nr(t: ir::TypeT) -> integer {
+  match scope_fn::base(t) {
+    TyReference { n } => n,
+    TyEnum { n } => n,
+    TySorted { n } => n,
+    TyIndex { n } => n,
+    TyHash { n } => n,
+    TyRadix { n } => n,
+    TyTrie { n } => n,
+    _ => -1
+  }
+}
+
+// port: view_walk.rs fn established_stores's `note`: a record or collection the author names.
+fn note_established(w: VW, v: integer) {
+  if !in_range(w, v) || scope_fn::is_compiler_generated(w.f, v) {
+    return;
+  }
+  t = opt_names::peel_link(scope_fn::tp(w.f, v));
+  rec = match t { TyReference => true, TyEnum { is_ref } => is_ref, _ => false };
+  coll = match t { TyVector => true, TyHash => true, TySorted => true, TyIndex => true, TyRadix => true, TyTrie => true, _ => false };
+  if rec || coll {
+    // `shake` — every open view of the variable, at any depth (`Reassigned`).
+    shake_at(w, v, ANY, 0);
+  }
+}
+
+fn record_typed(f: ir::Function, v: integer) -> boolean {
+  match scope_fn::base(scope_fn::tp(f, v)) {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+// port: view_walk.rs fn established_stores (`Establish::Inline`).
+fn established(w: VW, b: ir::Bundle, n: ir::Node) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      if nm == "OpDatabase" && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: t } => note_established(w, t),
+          _ => {}
+        }
+      } else if (nm == "OpReplaceKeyed" || nm == "OpReplaceVector") {
+        dest = if nm == "OpReplaceKeyed" { 1 } else { 0 };
+        if dest < len(args) {
+          match peel_stack_ref(b, args[dest]!) {
+            NdVar { n: t } => note_established(w, t),
+            _ => {}
+          }
+        }
+      }
+    },
+    NdSet { var, inner } => {
+      rhs = scope_fn::unspan(inner);
+      establishes = match rhs {
+        NdVar { n: src } => record_typed(w.f, src),
+        NdCall { def_nr } => {
+          d = b.data.definitions[def_nr];
+          d != null && (d!.name.starts_with("n_") || binds::is_loft_defined(d!))
+        },
+        NdBlock => match scope_fn::unspan(opt_vr_shape::tail(rhs)) { NdVar { n: src } => record_typed(w.f, src), _ => false },
+        NdInsert => match scope_fn::unspan(opt_vr_shape::tail(rhs)) { NdVar { n: src } => record_typed(w.f, src), _ => false },
+        _ => false
+      };
+      if establishes {
+        note_established(w, var);
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    established(w, b, c);
+  }
+}
+
+fn peel_stack_ref(b: ir::Bundle, arg: ir::Node) -> ir::Node {
+  u = scope_fn::unspan(arg);
+  match u {
+    NdCall { def_nr, args } => if scope_args::def_name(b, def_nr) == "OpCreateStack" && len(args) > 0 { scope_fn::unspan(args[0]!) } else { u },
+    _ => u
+  }
+}
+
+// port: view_walk.rs fn disturb_callees — the places a callee disturbs through its parameters
+// (`disturb_via_calls`), and a `&` argument it reassigns (`established_stores`'s
+// `Establish::Callees`).
+fn callees(w: VW, b: ir::Bundle, n: ir::Node) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(w.dhas) && w.dhas[def_nr]! {
+        for e in w.dmap {
+          if e.d == def_nr && e.slot < len(args) {
+            base = opt_vr_disturb::call_arg_place(b, args[e.slot]!);
+            if base.v >= 0 {
+              d = base.depth + e.depth;
+              shake_at(w, base.v, ANY, (if d > MAXD { MAXD } else { d }) + 1);
+            }
+          }
+        }
+      }
+      d = b.data.definitions[def_nr];
+      if d != null && binds::is_loft_defined(d!) {
+        for i in reassigned_ref_params(d!) {
+          if i < len(args) {
+            match peel_stack_ref(b, args[i]!) {
+              NdVar { n: t } => note_established(w, t),
+              _ => {}
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    callees(w, b, c);
+  }
+}
+
+// port: view_walk.rs fn reassigned_ref_params — the `&` parameters a body reassigns wholesale.
+fn reassigned_ref_params(d: ir::Definition) -> vector<integer> {
+  out: vector<integer> = [];
+  if len(d.code) == 0 {
+    return out;
+  }
+  ref_sets(d, d.code[0]!, out);
+  out
+}
+
+fn ref_sets(d: ir::Definition, n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSet { var, inner } => if !(scope_fn::unspan(inner) is NdNull) && var < len(d.attributes) && !scope_fn::has(out, var) {
+      a = d.attributes[var];
+      if a != null && ((a!.typedef[0] ?? ir::TyVoid) is TyRefVar) {
+        out += [var];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    ref_sets(d, c, out);
+  }
+}
+
+// port: view_walk.rs fn is_place_link
+fn is_place_link(f: ir::Function, v: integer) -> boolean {
+  !scope_fn::is_argument(f, v) && (scope_fn::base(scope_fn::tp(f, v)) is TyRefVar)
+}
+
+// port: view_walk.rs fn link_set_repoints
+fn link_set_repoints(b: ir::Bundle, f: ir::Function, var: integer, value: ir::Node) -> boolean {
+  inner = match scope_fn::base(scope_fn::tp(f, var)) {
+    TyRefVar { inner } => inner,
+    _ => return false
+  };
+  scalar_link = match scope_fn::base(inner) {
+    TyInteger => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  };
+  match scope_fn::unspan(value) {
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr];
+      if d == null {
+        return false;
+      }
+      nm = d!.name;
+      ret_ref = match scope_fn::base(d!.returned[0] ?? ir::TyVoid) { TyReference => true, _ => false };
+      store_text = f.variables[var] != null && f.variables[var]!.store_text_link;
+      nm == "OpCreateStack" || nm == "OpVarRef" || (scalar_link && ret_ref) || store_text
+    },
+    _ => false
+  }
+}
+
+fn vars_in(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdVar { n: x } => out += [x],
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    vars_in(c, out);
+  }
+}
+
+// port: view_walk.rs fn note_uses — a shaken view read or written by `stmt` is condemned; a
+// captured one at once.  The group-member element (loft#1664, `group_write_views`, not in the
+// image) is read as every vector its type names.
+fn note_uses(w: VW, b: ir::Bundle, stmt: ir::Node) {
+  any = false;
+  for x in w.shaken {
+    if x >= 0 {
+      any = true;
+      if scope_fn::is_captured(w.f, x#index) {
+        w.out[x#index] = true;
+      }
+    }
+  }
+  if !any {
+    return;
+  }
+  used: vector<integer> = [];
+  vars_in(stmt, used);
+  match scope_fn::unspan(stmt) {
+    NdSet { var, inner } => if is_place_link(w.f, var) && !link_set_repoints(b, w.f, var, inner) {
+      used += [var];
+    },
+    _ => {}
+  }
+  extra: vector<integer> = [];
+  for x in used {
+    for d in scope_fn::deps(w.f, x) {
+      if scope_fn::base(scope_fn::tp(w.f, d)) is TyVector {
+        extra += [d];
+      }
+    }
+  }
+  used += extra;
+  for v in used {
+    if in_range(w, v) && w.shaken[v]! >= 0 {
+      w.out[v] = true;
+    }
+  }
+}
+
+// port: view_walk.rs fn record_target — a `Set` ends the old binding's troubles and opens the
+// view it binds.
+fn record_target(w: VW, b: ir::Bundle, stmt: ir::Node) {
+  var = -1;
+  rhs = ir::NdNull;
+  match scope_fn::unspan(stmt) {
+    NdSet { var: v, inner } => {
+      var = v;
+      rhs = inner;
+    },
+    _ => return
+  }
+  if !in_range(w, var) {
+    return;
+  }
+  if is_place_link(w.f, var) && !link_set_repoints(b, w.f, var, rhs) {
+    return;
+  }
+  w.shaken[var] = -1;
+  w.maybe_own[var] = false;
+  w.open = [for e in w.open if e.view != var { Entry { frame: e.frame, view: e.view, c: e.c, f: e.f } }];
+  w.view_depth[var] = -1;
+  t = scope_fn::tp(w.f, var);
+  viewish = match scope_fn::base(t) {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    TyVector => true,
+    _ => false
+  };
+  if is_place_link(w.f, var) || scope_fn::is_keyed(t) {
+    viewish = true;
+  }
+  // A binding the loop ITERATES is not materialised (`Function::is_iteration_source`): the
+  // parser mints it as `_vector_N` at the three loop-source sites and nowhere else.
+  if !viewish || (scope_fn::is_compiler_generated(w.f, var) && scope_fn::name(w.f, var).starts_with("_vector_")) {
+    return;
+  }
+  ba = w.bound_at[var]!;
+  depth = if ba < 0 { len_open(w) } else { ba };
+  idx = (if depth < len_open(w) { depth } else { len_open(w) }) - 1;
+  if idx < 0 {
+    idx = 0;
+  }
+  deepest = -1;
+  for p in value_view_places_depth(b, rhs, w.f) {
+    r = resolve(w, p.v, p.f);
+    for h in r.hops {
+      if h#index % 2 == 0 && !has_entry(w.open, idx, var, h, r.hops[h#index + 1]!) {
+        w.open += [Entry { frame: idx, view: var, c: h, f: r.hops[h#index + 1]! }];
+      }
+    }
+    d = p.depth + r.depth;
+    if d > deepest {
+      deepest = d;
+    }
+    if !has_entry(w.open, idx, var, r.c, r.f) {
+      w.open += [Entry { frame: idx, view: var, c: r.c, f: r.f }];
+    }
+  }
+  if deepest >= 0 {
+    w.view_depth[var] = if deepest > MAXD { MAXD } else { deepest };
+  }
+}
+
+// A place a value views: the root variable, the field (`ANY` the whole variable), the depth.
+struct VPlace {
+  v: integer,
+  f: integer,
+  depth: integer,
+}
+
+// `use_analysis::view_source_place_depth`: `projection_walk` counting the two nullable element
+// reads as projections; null for no place.
+fn view_source_place_depth(b: ir::Bundle, value: ir::Node) -> VPlace? {
+  cur = value;
+  field = ANY;
+  elems = 0;
+  in_run = false;
+  for _ in 0..100000 {
+    u = scope_fn::unspan(cur);
+    match u {
+      NdIf { cond, t, f } => {
+        sv = own::variant_check_subject(b, t, f);
+        if sv != null {
+          return VPlace { v: sv!, f: field, depth: elems };
+        }
+        if binds::tag_read_payload(b, cond, t, f) {
+          cur = t;
+          continue;
+        }
+        return null;
+      },
+      NdCall { def_nr, args } => {
+        name = scope_args::def_name(b, def_nr);
+        if !(own::is_projection_op(b, def_nr) || name == "OpGetVectorNullable" || name == "OpVectorRefNullable") {
+          return null;
+        }
+        if name == "OpGetField" {
+          off = int_arg(args, 1);
+          if off != null {
+            field = if in_run && field != ANY { field + off! } else { off! };
+          }
+          in_run = true;
+        } else {
+          elems = if elems < 255 { elems + 1 } else { 255 };
+          in_run = false;
+        }
+        if len(args) == 0 {
+          return null;
+        }
+        first = args[0]!;
+        dv = discharged_variable(first);
+        next = if dv is NdNull { scope_fn::unspan(first) } else { dv };
+        match next {
+          NdVar { n } => return VPlace { v: n, f: field, depth: elems },
+          _ => { cur = next; },
+        }
+      },
+      _ => return null,
+    }
+  }
+  null
+}
+
+// `use_analysis::discharged_variable`: an `ncr` block `{ if … else null; v }` as `v`.
+fn discharged_variable(v: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "ncr" && len(bl.operators) == 2 {
+        ok_test = match scope_fn::unspan(bl.operators[0]!) { NdIf { f } => scope_fn::unspan(f) is NdNull, _ => false };
+        if ok_test && (scope_fn::unspan(bl.operators[1]!) is NdVar) {
+          return scope_fn::unspan(bl.operators[1]!);
+        }
+      }
+      ir::NdNull
+    },
+    _ => ir::NdNull,
+  }
+}
+
+// The bindings a surrounding value block made: variable and value, pairwise.
+struct Env {
+  vars: vector<integer>,
+  vals: vector<ir::Node>,
+}
+
+// port: places.rs fn value_view_places_depth — every place the value of a `Set` views (the twin
+// of `ir_elem_pairs`', whose place type is private there).
+pub fn value_view_places_depth(b: ir::Bundle, value: ir::Node, f: ir::Function) -> vector<VPlace> {
+  out: vector<VPlace> = [];
+  view_place_in(b, value, f, Env { vars: [], vals: [] }, 0, out);
+  out
+}
+
+fn view_place_in(b: ir::Bundle, value: ir::Node, f: ir::Function, env: Env, depth: integer, out: vector<VPlace>) {
+  if depth > 16 || len(out) >= 8 {
+    return;
+  }
+  u = scope_fn::unspan(value);
+  match u {
+    NdIf { t, f: e } => {
+      view_place_in(b, t, f, env, depth + 1, out);
+      view_place_in(b, e, f, env, depth + 1, out);
+      return;
+    },
+    NdBlock { block } => {
+      block_tail_place(b, block[0]!.operators, f, env, depth, out);
+      return;
+    },
+    NdInsert { items } => {
+      block_tail_place(b, items, f, env, depth, out);
+      return;
+    },
+    NdVar { n: x } => {
+      k = len(env.vars) - 1;
+      while k >= 0 {
+        if env.vars[k]! == x {
+          view_place_in(b, env.vals[k]!, f, env, depth + 1, out);
+          return;
+        }
+        k -= 1;
+      }
+      return;
+    },
+    _ => {}
+  }
+  p = view_source_place_depth(b, u);
+  if p == null {
+    return;
+  }
+  c = p!.v;
+  if scope_fn::is_compiler_generated(f, c) && !((cgen_types::base(scope_fn::tp(f, c)) is TyVector) && len(own::tp_depend(f, c)) > 0) {
+    return;
+  }
+  for o in out {
+    if o.v == c && o.f == p!.f {
+      if p!.depth > o.depth {
+        out[o#index].depth = p!.depth;
+      }
+      return;
+    }
+  }
+  out += [VPlace { v: c, f: p!.f, depth: p!.depth }];
+}
+
+fn block_tail_place(b: ir::Bundle, ops: vector<ir::Node>, f: ir::Function, env: Env, depth: integer, out: vector<VPlace>) {
+  k = len(ops) - 1;
+  while k >= 0 && (scope_fn::unspan(ops[k]!) is NdLine) {
+    k -= 1;
+  }
+  if k < 0 {
+    return;
+  }
+  inner = Env { vars: [for x in env.vars { x }], vals: [for x in env.vals { x }] };
+  for o in ops {
+    match scope_fn::unspan(o) {
+      NdSet { var, inner: val } => {
+        inner.vars += [var];
+        inner.vals += [val];
+      },
+      _ => {}
+    }
+  }
+  view_place_in(b, ops[k]!, f, inner, depth + 1, out);
+}

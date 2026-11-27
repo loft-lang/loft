@@ -23,6 +23,7 @@ use scope_args;
 use scope_free_vars;
 use scope_get_free_vars;
 use opt_names;
+use opt_vr_disturb;
 
 // The definitions the pass keys on, looked up once per image.
 pub struct Ops {
@@ -54,7 +55,10 @@ pub struct Ops {
   pub any_closure_drop: boolean,
   // The `vector<T>` definitions (`DefType::Vector`) with a drop cascade, the ones
   // `Data::collection_def_nr` can name for a release.
-  pub vec_cascades: vector<integer>
+  pub vec_cascades: vector<integer>,
+  // `disturbed_params_map` (@PLN164 C3): the places each loft function disturbs through its
+  // parameters, built by `check` before its loop.
+  pub disturbed: vector<opt_vr_disturb::DPlace>
 }
 
 pub fn ops_of(b: ir::Bundle) -> Ops {
@@ -84,7 +88,8 @@ pub fn ops_of(b: ir::Bundle) -> Ops {
     clear_vector: scope_fn::def_nr(b, "OpClearVector"),
     ref_is_null: scope_fn::def_nr(b, "OpRefIsNull"),
     any_closure_drop: any_closure_drop(b),
-    vec_cascades: vec_cascades(b)
+    vec_cascades: vec_cascades(b),
+    disturbed: []
   }
 }
 

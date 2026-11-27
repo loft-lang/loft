@@ -32,6 +32,7 @@ use scope_buffer_detach;
 use scope_take_local;
 use scope_byte_copy;
 use scope_loop_kernel;
+use scope_view_walk;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -65,6 +66,9 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       program[i] = vs[i]!;
     }
   }
+  // @PLN164 C3 — the callee half of `(B-Disturb)`, built once over the parser's bodies as the
+  // pre-loop rewrites left them.
+  ops.disturbed = scope_view_walk::disturbed_params(b);
   // `mark_borrowed_captures` (after the loop) decides a closure record's cascade from the
   // building frame's settled body where a capture holds a store: such a cascade, and one calling
   // it, is refused here by name.
