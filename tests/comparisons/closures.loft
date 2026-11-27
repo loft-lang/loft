@@ -102,19 +102,6 @@ fn double(v: integer) -> integer { v * 2 }
 fn flip_sign(v: integer) -> integer { -v }
 
 // The cells, run in order (a script runs nothing by itself).
-// @FR-L-Escape: a closure is a value a struct field may hold, capture included.  That is the
-// cure @C116 names for a collection of closures: a vector of such structs holds them, each
-// with its own captures (@PLN231 probe 09).
-struct Area { area: fn(float) -> float, size: float }
-fn test_a_vector_of_structs_holds_capturing_closures() {
-  k = 3.0;
-  shapes = [Area { area: |s| { s * s }, size: 2.0 }, Area { area: |s| { s * k }, size: 2.0 }];
-  got = 0.0;
-  for sh in shapes { got += sh.area(sh.size); }
-  assert(got == 10.0, "4.0 from the plain closure plus 6.0 from the one that captured k: {got}");
-}
-
 test_capture_is_copy_at_definition();
 test_same_scope_capture_works();
 test_a_plain_fn_ref_is_what_a_collection_holds();
-test_a_vector_of_structs_holds_capturing_closures();

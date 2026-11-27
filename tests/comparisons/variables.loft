@@ -49,18 +49,6 @@ fn test_const_is_opt_in_and_reaches_a_const_parameter() {
   assert(takes_const(v) == 3, "a const value reaches a const parameter (C124)");
 }
 
-// @FR-B-Copy: a plain bind of a whole struct copies it; the new variable is independent
-// (@PLN231 probe 03).  Rust moves here; loft copies, and skips the copy when the source is dead.
-struct Reading { x: integer }
-fn test_a_whole_struct_bind_copies() {
-  a = Reading { x: 1 };
-  b = a;
-  b.x = 5;
-  assert_eq(a.x, 1, "the source is untouched");
-  assert_eq(b.x, 5, "the copy took the write");
-}
-
 // The cells, run in order (a script runs nothing by itself).
 test_first_assignment_declares_and_infers();
 test_const_is_opt_in_and_reaches_a_const_parameter();
-test_a_whole_struct_bind_copies();

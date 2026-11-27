@@ -12,9 +12,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 | Stage | Status |
 |---|---|
 | A — Probe catalogue | ✅ 17 probes in [`probes/`](probes/), each with its expected answer, run on the interpreter and the C backend |
-| B — Cause and verdict per restriction | 🟡 a first reading for all nine below; R3 and R6 still owe the probes named in their rows |
-| C — The probes become tests | ✅ five new tests in `tests/comparisons/`, each failing when its expected value is flipped; the other probes are already guarded or owe a rule first (§ Stage C) |
-| D — Cures | ⏸️ each cure the owner approves becomes its own plan or fix; none is built here |
+| B — Cause and verdict per restriction | 🟡 a first reading for all nine below; R3 still owes the probe named in its row |
+| C — Cures | ⏸️ each cure the owner approves becomes its own plan or fix; none is built here |
 
 ## Goal
 
@@ -27,8 +26,9 @@ answers three questions:
 3. **What could we do** — the cure and what it costs, or why it stays.  A cure that reopens a
    decision is the owner's call: this plan states the trade and does not reopen anything.
 
-And it turns the probes into tests (stage C), so a row of `VS_RUST.md` or of
-`00-vs-rust.html` cannot go stale without a test going red.
+The plan adds no tests.  Its probes are evidence for the verdicts and live only in
+[`probes/`](probes/); where a cure removes a restriction, the cure also removes the refusal, its
+pinned message and the doc lines that describe it.
 
 ## In-plan vs spinoff
 
@@ -71,8 +71,7 @@ revisit trigger).
   loft has aliasing that Rust would refuse, and no formal rule in `formal/binding.md` states
   what it answers.
 - **What we could do.** (a) Refuse a call that passes one place to two heap parameters, at
-  least one of them written; or (b) keep it, state the answer as a rule and make probe 16 its
-  cell.  Either way the rule gets written.  There is also an upside to measure: where the
+  least one of them written; or (b) keep it and state the answer as a rule.  Either way the rule gets written.  There is also an upside to measure: where the
   compiler knows a parameter is unaliased, the C backend could mark it `restrict`, a speed
   lever for R7.  That is a hypothesis, not a promise.
 
@@ -171,28 +170,6 @@ revisit trigger).
   freeze records every break.  The 1.0 freeze is @PLN102's.
 - **Is it one?**  Yes, and it is a timing question, owned by @PLN102.  This plan only keeps the
   row true.
-
-## Stage C — the probes become tests
-
-Each new test sits in the `tests/comparisons/` file of the subject it proves, names the rule it
-guards (`@FR-…`) and the probe it came from, and runs on the interpreter
-(`wrap::comparisons`) and the C backend (`native::native_comparisons`).  Each one was checked
-to fail by flipping its expected value in a copy.
-
-| Probe | Where it went |
-|---|---|
-| 01 faults | `exceptions.loft` — overflow answers null (`@FR-E-Uncomp`), a parse is discharged at the cast (`@FR-N-Parse`); out-of-range and ÷0 were already there |
-| 02 assert | already guarded: `tests/issues.rs` T1-1 runs `assert` and `panic` with and without production mode |
-| 03 alias | `variables.loft` — a whole-struct bind copies (`@FR-B-Copy`); `parameters.loft` — a struct parameter is shared (`@FR-F-ParamHeap`) |
-| 04 constw, 05 dyn, 07 clvec | already guarded: the three refusals' messages are pinned in `tests/parse_errors.rs` |
-| 06 defmeth | not pinned: the refusal is a bare syntax error at the body.  A pin would freeze that message; the test comes with a message that names the restriction (R3) |
-| 08 clfield, 09 vtable | `closures.loft` — a vector of structs holds capturing closures (`@FR-L-Escape`, @C116's cure) |
-| 10, 11 lazy | `filtered-loops.loft` — a generator stage is lazy: three of a million elements made (`@FR-G-Yield`) |
-| 12 gen, 13 par | already guarded: `parallel.loft` and the coroutine tests |
-| 14 parcap | already guarded: `tests/scripts/947-feature-worked-examples.loft` |
-| 15 parprint | no test: `@FR-C-Impure` makes the answer undefined, so there is nothing to assert |
-| 16 twice | no test yet: no rule says what `both(a, a)` answers.  The rule comes first (R1), and probe 16 becomes its cell |
-| 17 constfn | no test: there is no `const fn` syntax to guard; R4's decision decides whether one is wanted |
 
 ## Documentation
 
