@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -12,6 +13,7 @@
 // `unscoped: <fn>: <the first refusal>`.
 
 use ir;
+use own;
 use scope_fn;
 use scope_scan_set;
 use scope_branches;
@@ -38,7 +40,9 @@ pub struct Ops {
   pub new_record: integer,
   pub get_field: integer,
   pub init_ref_sentinel: integer,
-  pub distinct_store: integer
+  pub distinct_store: integer,
+  pub conv_bool_from_ref: integer,
+  pub ref_alias: integer
 }
 
 pub fn ops_of(b: ir::Bundle) -> Ops {
@@ -59,7 +63,9 @@ pub fn ops_of(b: ir::Bundle) -> Ops {
     new_record: scope_fn::def_nr(b, "OpNewRecord"),
     get_field: scope_fn::def_nr(b, "OpGetField"),
     init_ref_sentinel: scope_fn::def_nr(b, "OpInitRefSentinel"),
-    distinct_store: scope_fn::def_nr(b, "OpDistinctStore")
+    distinct_store: scope_fn::def_nr(b, "OpDistinctStore"),
+    conv_bool_from_ref: scope_fn::def_nr(b, "OpConvBoolFromRef"),
+    ref_alias: scope_fn::def_nr(b, "OpRefAlias")
   }
 }
 
@@ -102,14 +108,147 @@ pub struct Scopes {
   pub mentions: vector<integer>,
   pub sunk: vector<integer>,
   pub assigned: vector<integer>,
-  // The facts of the passes this transcription refuses: always empty while it runs, and every
-  // reader asks them as Rust does.
+  // The ownership oracle's operators (`own::ops_of`) and the function's definitions, asked
+  // once (`Scopes::fn_defs`: empty until the first question).
+  pub own_ops: own::Ops,
+  pub fn_defs: vector<own::Defs>,
+  // @FR-O-Latest — per record local, the loop depth of the assignment that gave it an OWNED
+  // store (-1: none).
   pub owned_refs: vector<integer>,
+  // loft#1510 — the work-ref backing the record a construction delivered to a view binding.
+  pub construction_backing: vector<integer>,
+  // D-heap-3 — the base a view-bound local names a member of, with its path, as one number
+  // (`base << 32 | offset << 16 | depth`; -1: none).
+  pub view_backing: vector<integer>,
+  // A call's `__ref_N` buffer and the variable its result is bound to (`paired_witness`), the
+  // literal buffers likewise (`literal_buffer`), and the inner-scoped witnesses of outer
+  // buffers (`witness_buffer`, per witness).
+  pub paired_witness: vector<integer>,
+  pub literal_buffer: vector<integer>,
+  pub witness_buffer: vector<VarList>,
+  pub minted_pairs: vector<integer>,
+  // loft#1257 — the witness a lifted join's free compares against, and the loop depth a lift
+  // temp was declared at.
+  pub lift_join_witness: vector<integer>,
+  pub lift_decl_depth: vector<integer>,
+  // `@FR-H-FreeTwice` — the lift temps whose store a local may name.
+  pub lift_viewers: vector<VarList>,
+  // `@FR-H-FreeTwice` — per local, the frame temporaries its assignments view
+  // (`phase::view_temps_in`).
+  pub view_temps: vector<VarList>,
+  // loft#2594 — the record locals a literal's store moves into (`phase::literal_moves_in`), and
+  // the move the last bind made (`moved_local` -1: none).
+  pub literal_moves: vector<integer>,
+  pub moved_local: integer,
+  pub moved_av: integer,
+  // The records a statement prefix releases, and the `_place` operand flag (`args.rs`).
+  pub prefix_released: vector<integer>,
+  pub place_operand: boolean,
+  // The facts of the passes this transcription refuses before the scan (the owner witness,
+  // the per-path hand-off flags, the handle views, the materialised views, the drop-bearing
+  // records' hand-offs, the runtime witnesses): always empty while it runs, and every reader
+  // asks them as Rust does.
+  // loft#1128 — the return buffer's runtime ownership witness (`rbuf_buf`, `rbuf_flag`), and
+  // @PLN164 B1b's entry witness of a promoted buffer (`entry_buf`, `entry_w`); -1 for none.
+  pub rbuf_buf: integer,
+  pub rbuf_flag: integer,
+  pub entry_buf: integer,
+  pub entry_w: integer,
+  pub owner_witness: vector<integer>,
+  pub handed_off: vector<integer>,
+  pub per_path_pairs: vector<integer>,
+  pub handle_views: vector<integer>,
+  pub views_to_materialise: vector<integer>,
+  pub drop_transferred: vector<integer>,
+  pub arm_lift_temps: vector<integer>,
+  pub free_transferred: vector<integer>,
+  pub local_owns: vector<integer>,
   // The first refusal met, "" while the scan is in its domain.
   pub why: text,
   // Every refusal met, in order (`LOFT_SCOPE_ALL_REASONS=1` reports them all: what ranks the
   // modules to transcribe next).
   pub whys: vector<text>
+}
+
+// A map from a variable to a list of variables (`HashMap<u16, Vec<u16>>`).
+pub struct VarList {
+  pub v: integer,
+  pub items: vector<integer>
+}
+
+// `map.get(&v)` as a list, empty for none.
+pub fn list_of(m: vector<VarList>, v: integer) -> vector<integer> {
+  for e in m {
+    if e.v == v {
+      return e.items;
+    }
+  }
+  []
+}
+
+// `map.entry(v).or_default()` followed by a push of `x` unless present.
+pub fn list_add(m: vector<VarList>, v: integer, x: integer) {
+  for e in m {
+    if e.v == v {
+      if !scope_fn::has(e.items, x) {
+        e.items += [x];
+      }
+      return;
+    }
+  }
+  m += [VarList { v: v, items: [x] }];
+}
+
+// `map.contains_key(&v)` for a list map.
+pub fn list_has_key(m: vector<VarList>, v: integer) -> boolean {
+  for e in m {
+    if e.v == v {
+      return true;
+    }
+  }
+  false
+}
+
+// `set.insert(v)` over a vector of variable numbers.
+pub fn set_add(m: vector<integer>, v: integer) {
+  if !scope_fn::has(m, v) {
+    m += [v];
+  }
+}
+
+// `set.remove(&v)`.
+pub fn set_remove(m: vector<integer>, v: integer) {
+  at = position(m, v);
+  if at >= 0 {
+    remove_at(m, at);
+  }
+}
+
+// `map.remove(&v)` for a variable-indexed map.
+pub fn unput(m: vector<integer>, v: integer) {
+  if v >= 0 && v < len(m) {
+    m[v] = -1;
+  }
+}
+
+// `map.entry(k).or_insert(x)` for a variable-indexed map.
+pub fn put_if_absent(m: vector<integer>, k: integer, x: integer) {
+  if get(m, k) < 0 {
+    put(m, k, x);
+  }
+}
+
+// The function's definitions for the oracle, built on the first question (`fn_defs`).
+pub fn defs(s: Scopes, b: ir::Bundle) -> own::Defs {
+  if len(s.fn_defs) == 0 {
+    s.fn_defs += [own::function_defs(b, s.d_nr, s.own_ops)];
+  }
+  s.fn_defs[0]
+}
+
+// port: use_analysis.rs fn ownership_of_with, memoised per function as `scan_set` asks it.
+pub fn ownership(s: Scopes, b: ir::Bundle, value: ir::Node) -> own::Own {
+  own::ownership_of_with(b, s.own_ops, s.d_nr, value, defs(s, b))
 }
 
 // Refuse the function: `module::function` and the shape it was asked about.
@@ -151,6 +290,44 @@ pub fn mapped(s: Scopes, v: integer) -> integer {
 
 pub fn set_scope_of(s: Scopes, v: integer, sc: integer) {
   put(s.var_scope, v, sc);
+}
+
+// `ops.remove(at)`
+pub fn remove_node(ops: vector<ir::Node>, at: integer) {
+  out: vector<ir::Node> = [for o in ops if o#index != at { o }];
+  ops.clear();
+  ops += out;
+}
+
+// `ops.insert(at, n)`
+pub fn insert_node(ops: vector<ir::Node>, at: integer, n: ir::Node) {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    if o#index == at {
+      out += [n];
+    }
+    out += [o];
+  }
+  if at >= len(ops) {
+    out += [n];
+  }
+  ops.clear();
+  ops += out;
+}
+
+// A copy of a variable-indexed map.
+pub fn copy_ints(m: vector<integer>) -> vector<integer> {
+  [for x in m { x }]
+}
+
+// `map.retain(|k, x| before.get(k) == Some(x))` for a variable-indexed map.
+pub fn retain_same(m: vector<integer>, before: vector<integer>) {
+  for i in 0..len(m) {
+    x = m[i]!;
+    if x >= 0 && get(before, i) != x {
+      m[i] = -1;
+    }
+  }
 }
 
 // port: scan.rs fn enter_scope
@@ -344,16 +521,38 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
         },
         _ => {}
       }
-      // `moved_buffer` (loft#2594) is set only for a record local, which `scan_set` refuses.
+      // loft#2594 — the bind took the buffer's store (`literal_moves`): the buffer's slot is
+      // reset to the null sentinel behind it, freeing nothing.
+      if s.moved_local >= 0 && s.moved_local == ov {
+        av = s.moved_av;
+        s.moved_local = -1;
+        s.moved_av = -1;
+        return ir::NdInsert { items: [set, ir::NdCall { def_nr: s.ops.init_ref_sentinel, args: [ir::NdVar { n: av }] }] };
+      }
       set
     },
     NdLoop { block } => {
       lp = block[0];
       scope = enter_scope(s);
       s.loops += [scope];
+      // #316 — a loop body executes repeatedly: any ownership entry the body touches is
+      // unreliable afterwards.  Keep only the entries the body left unchanged.
+      owned_before = copy_ints(s.owned_refs);
+      views_before = copy_ints(s.view_backing);
+      backing_before = copy_ints(s.construction_backing);
       // `collect_drop_transferred` on each statement: a hand-off of a drop-bearing record, which
-      // `scan_set` and `scan_args` refuse before it could be armed.
+      // the phase refuses (`any_droppable`) before it could be armed.
       ls = scope_convert::convert(s, b, lp, f, false);
+      owned_after_body = copy_ints(s.owned_refs);
+      s.owned_refs.clear();
+      s.owned_refs += owned_before;
+      for i in 0..len(s.owned_refs) {
+        if s.owned_refs[i]! >= 0 && get(owned_after_body, i) < 0 {
+          s.owned_refs[i] = -1;
+        }
+      }
+      retain_same(s.view_backing, views_before);
+      retain_same(s.construction_backing, backing_before);
       k = len(s.loops);
       s.loops = s.loops[0..k - 1];
       exit_scope(s);
@@ -414,8 +613,15 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
     },
     NdIter { var: idx, create, next, init } => {
       sc = scan(s, b, create, f);
+      // #316 — `next`/`extra` execute once per iteration: drop any ownership entry they touch.
+      owned_before = copy_ints(s.owned_refs);
+      views_before = copy_ints(s.view_backing);
+      backing_before = copy_ints(s.construction_backing);
       sn = scan(s, b, next, f);
       se = scan(s, b, init, f);
+      retain_same(s.owned_refs, owned_before);
+      retain_same(s.view_backing, views_before);
+      retain_same(s.construction_backing, backing_before);
       ir::NdIter { var: idx, create: sc, next: sn, init: se }
     },
     NdTuple { items } => ir::NdTuple { items: [for x in items { scan(s, b, x, f) }] },

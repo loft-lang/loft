@@ -258,6 +258,15 @@ pub fn make_independent(f: ir::Function, v: integer, remove: integer) {
   f.variables[v].type_def = [without_dep(tp(f, v), remove)];
 }
 
+// port: data.rs fn without_deps — the type with every dep list emptied.
+pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
+  out = t;
+  for d in own::depend_of(t) {
+    out = without_dep(out, d);
+  }
+  out
+}
+
 fn strip(dep: vector<integer>, remove: integer) -> vector<integer> {
   [for d in dep if d != remove { d }]
 }

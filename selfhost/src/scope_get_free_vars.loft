@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -5,13 +6,18 @@
 // how.  A text local is released with `OpFreeText` (unless it is never-free), the iteration
 // scratch with `OpFreeScratch`, a scalar with nothing; every release of a store — a record, a
 // collection, a tuple's members, a generator handle, a closure — asks the passes not transcribed
-// yet (the backings, the witnesses, the drop hooks, the closure stand-downs) and refuses the
-// function by name.
+// yet (the backings, the witnesses, the closure stand-downs) and refuses the function by name.
+// A RECORD local (scope-pass-port.md step 2) is released as Rust does: plain, through the lift
+// join's witness, paired with a call or literal buffer, or guarded against the outer buffers it
+// adopted, with its type's hook (none: the phase refuses a record type with a cascade) and the
+// literal buffers' frees moved ahead of their adopter (`pair_literal_buffers`).
 
 use ir;
 use scope_fn;
 use scope_scan;
 use scope_free_vars;
+use scope_drops;
+use binds;
 
 // port: get_free_vars.rs fn get_free_vars
 pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_scope: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered) -> vector<ir::Node> {
@@ -45,6 +51,10 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     if scope_fn::is_plain(t) || scope_fn::is_plain_link(t) {
       continue;
     }
+    if scope_fn::is_record(t) && !(scope_fn::base(t) is TyRefVar) {
+      record_release(s, b, f, v, ret_var, delivered, ls);
+      continue;
+    }
     // `outer_collection_backing`, `outer_tuple_backings`, the owner witness, the store
     // release with its `leaves_frame`, `OpFreeRefIfDistinct` pairings and drop hooks, a
     // generator handle's release, a fn-ref's closure: each asks a pass not transcribed.
@@ -65,8 +75,246 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       scope_scan::refuse(s, "get_free_vars: a generator returning function (its handle parameters)");
     }
   }
-  // `fnref_stand_down`, `captured_record_stand_down`, `captured_view_stand_down` and
-  // `pair_literal_buffers` act on the releases of fn-refs, closure records and literal buffers,
-  // none of which this transcription emits.
+  // `fnref_stand_down`, `captured_record_stand_down` and `captured_view_stand_down` act on the
+  // releases of fn-refs and closure records, which this transcription does not emit; the
+  // `view_rebind` snapshots are refused by the phase.
+  pair_literal_buffers(s, b, f, ls);
   ls
+}
+
+// port: get_free_vars.rs fn owns_text_copy
+fn owns_text_copy(f: ir::Function, v: integer) -> boolean {
+  scope_fn::base(scope_fn::tp(f, v)) is TyText && !scope_fn::is_skip_free(f, v)
+}
+
+// The heap leg of `get_free_vars` for one RECORD local.
+fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>) {
+  // `closure_keep`, `outer_collection_backing`, `outer_tuple_backings`: a closure record, a
+  // vector, a tuple's members — refused where they are made.
+  // loft#1336 — a witnessed local releases through its witness: the owner witness is empty.
+  if scope_scan::get(s.owner_witness, v) >= 0 {
+    scope_scan::refuse(s, "get_free_vars: a witnessed local (release_witness)");
+    return;
+  }
+  dep = scope_fn::deps(f, v);
+  def = b.data.definitions[s.d_nr]!;
+  // H2 step 5 — the declared return's def-space deps: attribute indices, and tagged callee-frame
+  // notes.  A tuple return has no dep list of its own (`deps_ref`).
+  ret_borrows_v = false;
+  rt = def.returned[0] ?? ir::TyVoid;
+  if !(scope_fn::base(rt) is TyTuple) {
+    for e in scope_fn::depend(rt) {
+      if e != scope_fn::NONE && (e / 32768) % 2 == 1 {
+        if e - 32768 == v {
+          ret_borrows_v = true;
+        }
+      } else if e < len(def.attributes) && binds::var_named(f, def.attributes[e]!.name) == v {
+        ret_borrows_v = true;
+      }
+    }
+  }
+  backs_return_source = false;
+  for src in delivered.sources {
+    if src != v && scope_fn::has(scope_fn::deps(f, src), v) {
+      backs_return_source = true;
+    }
+  }
+  // `link_written_closure_records` and `closure_record_leaves_frame` name closure records,
+  // which the phase refuses.
+  leaves_frame = ret_borrows_v || backs_return_source
+    || (ret_var != scope_fn::NONE && scope_fn::has(scope_fn::deps(f, ret_var), v) && !owns_text_copy(f, ret_var));
+  nm = scope_fn::name(f, v);
+  // A KEYED work-ref's null init mints a store of its own: a record work-ref is not one.
+  is_work_ref = (nm.starts_with("__ref_") || nm.starts_with("__rref_")) && (len(dep) == 0 || scope_fn::has(dep, v));
+  viewer_now = !scope_fn::proxy_says_owned(f, v) && len(dep) > 0 && scope_fn::is_dbref(scope_fn::base(scope_fn::tp(f, v)));
+  if viewer_now && !scope_fn::has(s.skipped_viewers, v) {
+    s.skipped_viewers += [v];
+  }
+  owns = scope_fn::proxy_says_owned(f, v) || scope_fn::has(s.late_owners, v) || scope_scan::get(s.lift_join_witness, v) >= 0;
+  // `capture_adoption_owns_free` — a captured local's store is its closure record's.
+  if scope_fn::is_captured(f, v) {
+    scope_scan::refuse(s, "capture_builds::capture_adoption_owns_free: a captured record local");
+  }
+  emit = (owns || is_work_ref) && !leaves_frame && !scope_fn::is_skip_free(f, v) && !scope_fn::has(s.free_transferred, v);
+  if !emit {
+    return;
+  }
+  // `rebound_capture_slots` — a closure record's slots: none.
+  is_buffer = is_work_ref && scope_scan::get(s.paired_witness, v) >= 0;
+  if !is_buffer {
+    for wb in s.witness_buffer {
+      if scope_fn::has(wb.items, v) && (scope_fn::proxy_says_owned(f, wb.v) || scope_fn::has(s.late_owners, wb.v) || scope_scan::get(s.lift_join_witness, wb.v) >= 0) {
+        is_buffer = true;
+      }
+    }
+  }
+  jw = scope_scan::get(s.lift_join_witness, v);
+  pw = scope_scan::get(s.paired_witness, v);
+  lw = scope_scan::get(s.literal_buffer, v);
+  if jw >= 0 {
+    hook = scope_drops::scope_end_hook(s, b, f, v, []);
+    if hook != null {
+      ls += [hook!];
+    }
+    free = ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: jw }] };
+    for t in scope_scan::list_of(s.view_temps, v) {
+      if t != v && t != jw && !scope_fn::is_skip_free(f, t) {
+        free = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: t }] }, t: free, f: ir::NdNull };
+      }
+    }
+    ls += [free];
+  } else if is_work_ref && pw >= 0 {
+    handed_out = pw == ret_var;
+    for src in delivered.sources {
+      if src == pw || scope_fn::has(scope_fn::deps(f, src), pw) {
+        handed_out = true;
+      }
+    }
+    if !scope_fn::is_skip_free(f, pw) || handed_out {
+      ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: pw }] }];
+    } else {
+      ls += [scope_drops::free_ref(s, v)];
+    }
+  } else if is_work_ref && lw >= 0 && (lw == ret_var || scope_fn::has(delivered.sources, lw)) {
+    // loft#1317 — the buffer an inline record literal minted, handed to the caller by its
+    // adopter.  (`escaping_record_holds_buffer` and the capture clause are a closure's.)
+    ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: lw }] }];
+  } else if scope_scan::list_has_key(s.witness_buffer, v) {
+    // @P378(a) — `v` is an inner-scoped witness whose store is an outer buffer.
+    buffers = scope_scan::list_of(s.witness_buffer, v);
+    hook = scope_drops::scope_end_hook(s, b, f, v, []);
+    if hook != null {
+      ls += [scope_drops::lift_viewer_guard(s, v, hook!)];
+    }
+    if len(buffers) == 1 {
+      ls += [scope_drops::lift_viewer_guard(s, v, ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: buffers[0]! }] })];
+    } else {
+      free = scope_drops::free_ref(s, v);
+      k = len(buffers) - 1;
+      while k >= 0 {
+        free = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: buffers[k]! }] }, t: free, f: ir::NdNull };
+        k -= 1;
+      }
+      ls += [scope_drops::lift_viewer_guard(s, v, free)];
+    }
+  } else {
+    // `join_capture_witness`, `reassigned_join_capture_slot`: a closure record's.  The type's
+    // scope-end hook, immediately before the free, unless `v` is a buffer whose witness ran it.
+    if !is_buffer {
+      hook = scope_drops::scope_end_hook(s, b, f, v, []);
+      if hook != null {
+        ls += [scope_drops::lift_viewer_guard(s, v, hook!)];
+      }
+    }
+    ls += [scope_drops::lift_viewer_guard(s, v, scope_drops::free_ref(s, v))];
+  }
+}
+
+// A free of `w`, plain or behind the lift-view guard.
+fn frees_var(s: scope_scan::Scopes, op: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => {
+      if def_nr != s.ops.free_ref && def_nr != s.ops.free_if_distinct || len(args) == 0 {
+        return false;
+      }
+      match scope_fn::unspan(args[0]!) { NdVar { n } => n == w, _ => false }
+    },
+    NdIf { t, f } => scope_fn::unspan(f) is NdNull && frees_var(s, t, w),
+    _ => false
+  }
+}
+
+fn mentions(op: ir::Node, w: integer) -> boolean {
+  match op {
+    NdVar { n } => if n == w { return true; },
+    NdSet { var } => if var == w { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(op) {
+    if mentions(c, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: get_free_vars.rs fn pair_literal_buffers — a literal buffer's free paired with the
+// local that adopted its store, moved ahead of the local's first mention.
+fn pair_literal_buffers(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, ls: vector<ir::Node>) {
+  any = false;
+  for x in s.literal_buffer {
+    if x >= 0 {
+      any = true;
+    }
+  }
+  if !any {
+    return;
+  }
+  // A rebound parameter (refused at a function exit) and a local renamed onto the return buffer
+  // (refused by the phase) release at exit through their entry witness.
+  rebound_params: vector<integer> = [];
+  for p in 0..scope_fn::count(f) {
+    if scope_fn::is_argument(f, p) && scope_fn::rebind_orig(f, p) >= 0 {
+      rebound_params += [p];
+    }
+  }
+  i = 0;
+  while i < len(ls) {
+    pb = -1;
+    pw = -1;
+    match scope_fn::unspan(ls[i]!) {
+      NdCall { def_nr, args } => if (def_nr == s.ops.free_ref || def_nr == s.ops.free_if_distinct) && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: bv } => {
+            guarded = def_nr == s.ops.free_if_distinct && len(args) > 1 && match scope_fn::unspan(args[1]!) { NdVar { n: x } => scope_scan::get(s.literal_buffer, bv) == x, _ => false };
+            if def_nr == s.ops.free_ref || guarded {
+              w = scope_scan::get(s.literal_buffer, bv);
+              if w >= 0 && w != bv {
+                hit = scope_fn::has(rebound_params, w);
+                for op in ls {
+                  if frees_var(s, op, w) {
+                    hit = true;
+                  }
+                }
+                if hit {
+                  pb = bv;
+                  pw = w;
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+    if pb < 0 {
+      i += 1;
+      continue;
+    }
+    scope_scan::remove_node(ls, i);
+    multi = scope_fn::has(s.multi_assigned, pw);
+    for o in s.var_mapping {
+      if o == pw && scope_fn::has(s.multi_assigned, o#index) {
+        multi = true;
+      }
+    }
+    owner = scope_fn::proxy_says_owned(f, pw) || (scope_fn::is_argument(f, pw) && scope_fn::has(rebound_params, pw)) || scope_fn::has(s.late_owners, pw);
+    if multi && owner {
+      // `adopter_released` — the buffer takes no free (a fact of the code generators, not in
+      // the image).
+      continue;
+    }
+    at = len(ls);
+    for op in ls {
+      if at == len(ls) && mentions(op, pw) {
+        at = op#index;
+      }
+    }
+    scope_scan::insert_node(ls, at, ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: pb }, ir::NdVar { n: pw }] });
+    if at > i {
+      continue;
+    }
+    i += 1;
+  }
 }

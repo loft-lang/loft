@@ -1,0 +1,53 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the part of `src/scopes/buffers.rs` a record binding asks: the calls at the value
+// positions of a branch, and the call a diverging `??` block delivers.  `reuse_record_buffers`
+// is refused by the phase where it has a candidate; `lazy_buffer_mints` acts on vector buffers,
+// whose bindings refuse.
+
+use ir;
+use scope_fn;
+
+// port: buffers.rs fn tail_calls — the calls at the VALUE positions of a branch.
+pub fn tail_calls(v: ir::Node) -> vector<ir::Node> {
+  u = scope_fn::unspan(v);
+  match u {
+    NdCall => [u],
+    NdIf { t, f } => {
+      out = tail_calls(t);
+      out += tail_calls(f);
+      out
+    },
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k == 0 { [] } else { tail_calls(block[0].operators[k - 1]!) }
+    },
+    _ => []
+  }
+}
+
+// port: buffers.rs fn coalesce_tail_calls — `{ t = call(…); if !t { return }; t }`.
+pub fn coalesce_tail_calls(v: ir::Node) -> vector<ir::Node> {
+  ops: vector<ir::Node> = [];
+  match scope_fn::unspan(v) {
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return []; }
+  }
+  k = len(ops);
+  if k == 0 {
+    return [];
+  }
+  t = match scope_fn::unspan(ops[k - 1]!) { NdVar { n } => n, _ => -1 };
+  if t < 0 {
+    return [];
+  }
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdSet { var, inner } => if var == t { return tail_calls(inner); },
+      _ => {}
+    }
+  }
+  []
+}

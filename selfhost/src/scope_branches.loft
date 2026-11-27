@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -10,6 +11,7 @@ use ir;
 use scope_fn;
 use scope_scan;
 use scope_phase;
+use binds;
 
 // port: branches.rs fn leaves_as_value
 fn leaves_as_value(val: ir::Node, v: integer) -> boolean {
@@ -94,16 +96,20 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
       small_both += [v];
     }
   }
-  // @PLN164 B1 behind a null-init: `adopts_minted_at_bind` answers for a record or vector bind
-  // of a loft call, which this transcription refuses.
+  // @PLN164 B1 behind a null-init (`@FR-O-Move`) — the pre-init below turns a local's bind in
+  // this `if` into a REBIND, and a rebind copies where a first bind adopts.  When that bind is
+  // the local's only assignment it follows the pre-init on every path that reaches it, so it is
+  // a first bind.
   for v in pre_inits {
-    adopt_check(s, f, v);
+    adopt_check(s, b, f, v, t_val, f_val);
   }
   for v in s.null_led {
-    adopt_check(s, f, v);
+    if !scope_fn::has(pre_inits, v) {
+      adopt_check(s, b, f, v, t_val, f_val);
+    }
   }
   for v in arm_scoped {
-    adopt_check(s, f, v);
+    adopt_check(s, b, f, v, t_val, f_val);
   }
   for v in pre_inits {
     scope_scan::register_binding(s, v, f);
@@ -113,8 +119,22 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
     s.var_order += [v];
   }
   scanned_test = scope_scan::scan(s, b, test, f);
+  // #316 — ownership state is path-sensitive: scan each branch from the same pre-If state, then
+  // keep only entries BOTH branches agree on (@FR-O-Complete).
+  owned_before = scope_scan::copy_ints(s.owned_refs);
+  backing_before = scope_scan::copy_ints(s.construction_backing);
+  views_before = scope_scan::copy_ints(s.view_backing);
   scanned_true = scope_scan::scan(s, b, t_val, f);
+  owned_after_true = scope_scan::copy_ints(s.owned_refs);
+  backing_after_true = scope_scan::copy_ints(s.construction_backing);
+  views_after_true = scope_scan::copy_ints(s.view_backing);
+  restore(s.owned_refs, owned_before);
+  restore(s.construction_backing, backing_before);
+  restore(s.view_backing, views_before);
   scanned_false = scope_scan::scan(s, b, f_val, f);
+  scope_scan::retain_same(s.owned_refs, owned_after_true);
+  scope_scan::retain_same(s.construction_backing, backing_after_true);
+  scope_scan::retain_same(s.view_backing, views_after_true);
   scanned_if = ir::NdIf { cond: scanned_test, t: scanned_true, f: scanned_false };
   if len(pre_inits) == 0 {
     return scanned_if;
@@ -131,10 +151,40 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
   ir::NdInsert { items: stmts }
 }
 
-fn adopt_check(s: scope_scan::Scopes, f: ir::Function, v: integer) {
-  t = scope_fn::base(scope_fn::tp(f, v));
-  if scope_fn::is_record(t) || t is TyVector {
-    scope_scan::refuse(s, "use_analysis::adopts_minted_at_bind: a record or vector bound in an `if` arm");
+// `std::mem::replace(&mut map, before)`.
+fn restore(m: vector<integer>, before: vector<integer>) {
+  m.clear();
+  m += before;
+}
+
+// The adoption half of `scan_if`'s pre-init loop for one local.
+fn adopt_check(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, t_val: ir::Node, f_val: ir::Node) {
+  if scope_fn::has(s.multi_assigned, v) && !scope_fn::has(s.null_led, v) {
+    return;
+  }
+  found: vector<ir::Node> = [];
+  only_bind_find(t_val, v, found);
+  only_bind_find(f_val, v, found);
+  if len(found) != 1 {
+    return;
+  }
+  if binds::adopts_minted_at_bind(b, s.own_ops, f, v, found[0]!) {
+    f.variables[v].deferred_first_bind = true;
+  }
+}
+
+// port: branches.rs fn only_bind_in_arms — the binds of `v`, a loop's not counted.
+fn only_bind_find(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if var == v {
+      out += [inner];
+      return;
+    },
+    NdLoop => { return; },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    only_bind_find(c, v, out);
   }
 }
 

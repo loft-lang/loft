@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -12,7 +13,11 @@ use ir;
 use scope_fn;
 use scope_scan;
 use binds;
+use own;
 use scope_args;
+use scope_witness;
+use scope_backings;
+use opt_names;
 
 pub struct Phase {
   pub code: ir::Node,
@@ -53,15 +58,77 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     mentions: var_mentions_in(orig_code),
     sunk: [],
     assigned: assigned_in(orig_code),
+    own_ops: own::ops_of(b),
+    fn_defs: [],
     owned_refs: [],
+    construction_backing: [],
+    view_backing: [],
+    paired_witness: [],
+    literal_buffer: [],
+    witness_buffer: [],
+    minted_pairs: [],
+    lift_join_witness: [],
+    lift_decl_depth: [],
+    lift_viewers: [],
+    view_temps: view_temps_in(orig_code, orig_vars, ops),
+    literal_moves: [],
+    moved_local: -1,
+    moved_av: -1,
+    prefix_released: [],
+    place_operand: false,
+    rbuf_buf: -1,
+    rbuf_flag: -1,
+    entry_buf: -1,
+    entry_w: -1,
+    owner_witness: [],
+    handed_off: [],
+    per_path_pairs: [],
+    handle_views: [],
+    views_to_materialise: [],
+    drop_transferred: [],
+    arm_lift_temps: [],
+    free_transferred: [],
+    local_owns: [],
     why: "",
     whys: []
   };
+  s.null_led_first = null_led_first_binds_in(b, orig_code);
+  s.literal_moves = literal_moves_in(b, orig_code, orig_vars, s.null_led_first);
   function = scope_fn::copy_function(orig_vars);
   pre_scan_refusals(s, b, d_nr, orig_code, function);
+  // A nullable heap local that holds a PROJECTION VIEW owns no store it must free: marked
+  // never-free (@FR-O-Override).  The displacing and witnessed locals it excludes are empty
+  // here (`nullable_locals_that_displace` answers none while `τ?` has a buffer; the owner
+  // witness is refused where it could fire), and so are the materialised views.
+  for v in scope_witness::nullable_view_locals(b, orig_code, function, own::projection_ops(b)) {
+    function.variables[v].skip_free = true;
+  }
   for v in function.variables {
     if v.argument {
       scope_scan::set_scope_of(s, v#index, 0);
+    }
+  }
+  // loft#1128 — the return buffer's runtime ownership witness, minted before the scan for a
+  // body that reaches a displacing site.
+  buf = hidden_return_buffer_var(b, d_nr, function);
+  if buf >= 0 && displaces_return_buffer(b, orig_code, buf) {
+    flag = scope_fn::add_temp_var(function, "__rbo_{scope_fn::name(function, buf)}", ir::TyBoolean);
+    scope_scan::set_scope_of(s, flag, 0);
+    s.var_order += [flag];
+    s.rbuf_buf = buf;
+    s.rbuf_flag = flag;
+  }
+  // @PLN164 B1b / `@FR-O-Buffer` — the promoted buffer's ENTRY WITNESS: a self-dep, so no site
+  // frees the snapshot on its own.
+  if buf >= 0 && scope_fn::name(function, buf) != "__retbuf" {
+    rec = own::heap_def_nr(scope_fn::tp(function, buf));
+    if rec != null {
+      w = scope_fn::add_temp_var(function, "__rbw_{scope_fn::name(function, buf)}", ir::TyReference { n: rec!, dep: [] });
+      function.variables[w].type_def = [ir::TyReference { n: rec!, dep: [w] }];
+      scope_scan::set_scope_of(s, w, 0);
+      s.var_order += [w];
+      s.entry_buf = buf;
+      s.entry_w = w;
     }
   }
   // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` parameter is re-pointed to lives for the whole
@@ -73,10 +140,28 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     s.var_order += [c];
   }
   code = scope_scan::scan(s, b, orig_code, function);
+  // `reuse_record_buffers` — a caller buffer an inner-scoped local adopts may be minted once
+  // per call site; refused where a candidate exists.
+  for wb in s.witness_buffer {
+    for av in wb.items {
+      x = function.variables[av];
+      if x != null && x!.caller_hidden_buf && len(scope_fn::deps(function, av)) == 0 && own::heap_def_nr(scope_fn::tp(function, av)) != null {
+        scope_scan::refuse(s, "buffers::reuse_record_buffers: a call buffer an inner-scoped local adopts");
+      }
+    }
+  }
   // Each insert below goes at the head of the body block, the last one inserted first.
   head: vector<ir::Node> = [];
   for c in slot_cells {
     head += [scope_fn::v_set(c, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  }
+  // The entry witness names what the buffer holds before any statement can rebind it; the
+  // ownership witness starts FALSE (the buffer holds the CALLER's store on entry).
+  if s.entry_w >= 0 {
+    head += [scope_fn::v_set(s.entry_w, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: s.entry_buf }] })];
+  }
+  if s.rbuf_flag >= 0 {
+    head += [scope_fn::v_set(s.rbuf_flag, ir::NdBoolean { b: false })];
   }
   // `scan_args`' lifts are assigned inside conditional branches but freed at function exit:
   // their null-inits reserve the slot on every path.
@@ -95,14 +180,45 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   if len(head) > 0 {
     code = prepend_body(code, head);
   }
-  // `reuse_record_buffers` and `lazy_buffer_mints` act on `__ref_N` record and vector buffers,
-  // whose bindings `scan_set` refuses.
+  // `lazy_buffer_mints` acts on `__ref_N` VECTOR buffers, whose bindings `scan_set` refuses;
+  // `reuse_record_buffers` is refused above where it has a candidate.
   for v in s.var_scope {
     if v >= 0 {
       function.variables[v#index].scope = v;
     }
   }
   Phase { code: code, function: function, why: s.why, whys: s.whys }
+}
+
+// port: phase.rs fn hidden_return_buffer_var — the variable of the hidden return buffer, -1.
+fn hidden_return_buffer_var(b: ir::Bundle, d_nr: integer, f: ir::Function) -> integer {
+  d = b.data.definitions[d_nr]!;
+  idx = binds::hidden_return_buffer_attr(d);
+  if idx == null {
+    return -1;
+  }
+  a = d.attributes[idx!];
+  if a == null {
+    return -1;
+  }
+  v = binds::var_named(f, a!.name);
+  if v == own::MAX { -1 } else { v }
+}
+
+// port: witness.rs fn displaces_return_buffer
+fn displaces_return_buffer(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if var == v && scope_witness::displaces_owned_through_fresh_callee(b, inner, v, v) {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    if displaces_return_buffer(b, c, v) {
+      return true;
+    }
+  }
+  false
 }
 
 // `body_block_mut`, with `ops` put in front of its operators.
@@ -123,13 +239,13 @@ fn prepend_body(code: ir::Node, ops: vector<ir::Node>) -> ir::Node {
 // each refuses where its Rust gate can fire.
 fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function) {
   d = b.data.definitions[d_nr]!;
-  // `hidden_return_buffer_var` — the return buffer's runtime witness (`__rbo_`, loft#1128) and
-  // its entry witness (`@FR-O-Buffer`).
+  // A VECTOR return buffer: its delivery (`OpClearVector`/`OpAppendVector` into it), the
+  // promoted vector refill and `lazy_buffer_mints` are a vector's, refused.
   h = binds::hidden_return_buffer_attr(d);
   if h != null {
     a = d.attributes[h!];
-    if a != null && scope_fn::is_dbref(scope_fn::base(a!.typedef[0] ?? ir::TyVoid)) {
-      scope_scan::refuse(s, "phase: a hidden return buffer (witness::displaces_return_buffer, Function::entry_witness)");
+    if a != null && scope_fn::base(a!.typedef[0] ?? ir::TyVoid) is TyVector {
+      scope_scan::refuse(s, "phase: a vector return buffer (drops::promoted_vector_refill, lazy_buffer_mints)");
     }
   }
   // `collect_views_to_materialise` — a `text` payload view a disturbance materialises
@@ -151,6 +267,384 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
   }
   if has_block(code, "fn_ref_with_closure") {
     scope_scan::refuse(s, "closure_keep::closure_keep_set: a closure built");
+  }
+  // A record type with a DROP cascade (a hook, or a droppable member): its hand-offs, per-path
+  // flags and displaced drops (`handoff.rs`, `drops::displaced_drop`, `drop_hook`) are not
+  // transcribed.  Without one, every one of them answers none.
+  // A PARAMETER of such a type is the caller's: no hand-off, displaced drop or scope-end hook of
+  // this frame reaches it.
+  // Only a local the body BINDS: one never bound (a lambda's capture read through its record)
+  // is no binding of this frame.
+  for v in f.variables {
+    rec = own::heap_def_nr(v.type_def[0] ?? ir::TyVoid);
+    if !v.argument && scope_fn::has(s.assigned, v#index) && rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
+      scope_scan::refuse(s, "drops::drop_hook: a record type with a drop cascade (handoff, displaced_drop)");
+    }
+  }
+  // `(H-Copy-Lease)` — `lease_calls` runs a type's `OpCopy` on every copy of it: a record local
+  // of a type with a copy hook.
+  for v in f.variables {
+    rec = own::heap_def_nr(v.type_def[0] ?? ir::TyVoid);
+    if !v.argument && scope_fn::has(s.assigned, v#index) && rec != null && has_copy_hook(b, rec!) {
+      scope_scan::refuse(s, "use_analysis::lease_calls: a record type with a copy hook");
+    }
+  }
+  // `owner_witness_locals` (loft#1336, @FR-O-Witness).
+  ow = scope_witness::owner_witness_may_fire(code, f);
+  if ow >= 0 {
+    scope_scan::refuse(s, "witness::owner_witness_locals: a record local bound twice or from a choice");
+  }
+  // `view_rebind_locals` (loft#2145) — a view local handed to a `&` heap parameter.
+  if amp_view_local(s, b, code, f) {
+    scope_scan::refuse(s, "phase::view_rebind_locals: a record view handed to a `&` parameter");
+  }
+  // `collect_views_to_materialise` — a record view of a container the body may disturb.
+  if view_of_disturbed_container(b, code, f) {
+    scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a record view of a container the body may disturb");
+  }
+}
+
+// A `t_<n><Type>_OpCopy` hook (or its cascade) for record type `d`.
+fn has_copy_hook(b: ir::Bundle, d: integer) -> boolean {
+  nm = b.data.definitions[d]!.name;
+  pre = "t_{nm.size()}{nm}_OpCopy";
+  for x in b.data.definitions {
+    if x.name == pre || x.name == "{pre}All" {
+      return true;
+    }
+  }
+  false
+}
+
+// A record local with a dep on another variable handed as `OpCreateStack(Var(x))` to a call:
+// the superset of `view_rebind_locals`' candidates (`amp_rebound_locals` then asks whether the
+// callee reassigns the parameter).
+fn amp_view_local(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { args } => {
+      for a in args {
+        match scope_fn::unspan(a) {
+          NdCall { def_nr: cs, args: ca } => if cs == s.ops.create_stack && len(ca) == 1 {
+            match scope_fn::unspan(ca[0]!) {
+              NdVar { n: x } => {
+                if scope_fn::is_record(scope_fn::tp(f, x)) && !scope_fn::is_argument(f, x) {
+                  for d in scope_fn::deps(f, x) {
+                    if d != x {
+                      return true;
+                    }
+                  }
+                }
+              },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if amp_view_local(s, b, c, f) {
+      return true;
+    }
+  }
+  false
+}
+
+// The superset of `collect_views_to_materialise`'s answers: a record (or record-enum) local
+// bound to a projection of a container (`projection_container_var`) where the container is
+// reassigned, rebuilt, or handed to any call that is not a read.
+fn view_of_disturbed_container(b: ir::Bundle, code: ir::Node, f: ir::Function) -> boolean {
+  containers: vector<integer> = [];
+  view_containers(b, code, f, containers);
+  for c in containers {
+    if disturbs(b, code, c, false) {
+      return true;
+    }
+  }
+  false
+}
+
+fn view_containers(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if scope_fn::is_record(scope_fn::tp(f, var)) {
+      c = binds::projection_container_var(b, inner);
+      if c != null && !scope_fn::has(out, c!) {
+        out += [c!];
+      }
+    },
+    _ => {}
+  }
+  for x in scope_fn::children(n) {
+    view_containers(b, x, f, out);
+  }
+}
+
+// Read-only operators: a projection, a scalar or text read, a length, a conversion, a format,
+// a comparison or arithmetic.
+fn read_op(nm: text) -> boolean {
+  nm.starts_with("OpGet") || nm.starts_with("OpLength") || nm.starts_with("OpSize") || nm.starts_with("OpConv")
+    || nm.starts_with("OpFormat") || nm.starts_with("OpEq") || nm.starts_with("OpNe") || nm.starts_with("OpLt")
+    || nm.starts_with("OpLe") || nm.starts_with("OpGt") || nm.starts_with("OpGe") || nm.starts_with("OpVectorRef")
+    || nm.starts_with("OpAdd") || nm.starts_with("OpMin") || nm.starts_with("OpMul") || nm.starts_with("OpDiv")
+    || nm.starts_with("OpRem") || nm.starts_with("OpNot") || nm.starts_with("OpAnd") || nm.starts_with("OpOr")
+    || nm.starts_with("OpRefIsNull") || nm.starts_with("OpCast") || nm == "OpDistinctStore"
+}
+
+// Is `c` mentioned anywhere other than under read-only operators (`under` a non-read call or a
+// `Set` of it)?
+fn disturbs(b: ir::Bundle, n: ir::Node, c: integer, under: boolean) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdVar { n: x } => { return under && x == c; },
+    NdSet { var, inner } => {
+      if var == c {
+        return true;
+      }
+      return disturbs(b, inner, c, false);
+    },
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      w = under || !read_op(nm);
+      for a in args {
+        if disturbs(b, a, c, w) {
+          return true;
+        }
+      }
+      return false;
+    },
+    NdCallRef { args } => {
+      for a in args {
+        if disturbs(b, a, c, true) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {}
+  }
+  for x in scope_fn::children(u) {
+    if disturbs(b, x, c, false) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: phase.rs fn null_led_first_binds_in — the locals whose one real bind follows a null of
+// theirs on every pass (a null in an enclosing region, no loop between).
+pub fn null_led_first_binds_in(b: ir::Bundle, n: ir::Node) -> vector<integer> {
+  w = NullLed { regions: [], next: 0, vars: [], nulls: [], reals: [], led: [], after: [] };
+  null_led_node(b, w, n);
+  out: vector<integer> = [];
+  for v in w.vars {
+    i = v#index;
+    if w.reals[i]! == 1 && w.led[i]! && !w.after[i]! {
+      out += [v];
+    }
+  }
+  out
+}
+
+struct NullLed {
+  // The open regions, each `id * 2 + is_loop`.
+  regions: vector<integer>,
+  next: integer,
+  // Per variable met (in order): its nulls' region paths, flattened as `count, ids…`.
+  vars: vector<integer>,
+  nulls: vector<vector<integer>>,
+  reals: vector<integer>,
+  led: vector<boolean>,
+  after: vector<boolean>
+}
+
+fn null_led_region(b: ir::Bundle, w: NullLed, n: ir::Node, is_loop: boolean) {
+  w.next += 1;
+  w.regions += [w.next * 2 + if is_loop { 1 } else { 0 }];
+  null_led_node(b, w, n);
+  w.regions = w.regions[0..len(w.regions) - 1];
+}
+
+fn null_led_node(b: ir::Bundle, w: NullLed, n: ir::Node) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { cond, t, f } => {
+      null_led_node(b, w, cond);
+      null_led_region(b, w, t, false);
+      null_led_region(b, w, f, false);
+      return;
+    },
+    NdLoop => {
+      w.next += 1;
+      w.regions += [w.next * 2 + 1];
+      for c in scope_fn::children(u) {
+        null_led_node(b, w, c);
+      }
+      w.regions = w.regions[0..len(w.regions) - 1];
+      return;
+    },
+    NdBlock => {
+      w.next += 1;
+      w.regions += [w.next * 2];
+      for c in scope_fn::children(u) {
+        null_led_node(b, w, c);
+      }
+      w.regions = w.regions[0..len(w.regions) - 1];
+      return;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    null_led_node(b, w, c);
+  }
+  match u {
+    NdSet { var, inner } => {
+      i = scope_scan::position(w.vars, var);
+      if i < 0 {
+        i = len(w.vars);
+        w.vars += [var];
+        w.nulls += [[]];
+        w.reals += [0];
+        w.led += [false];
+        w.after += [false];
+      }
+      is_null = match scope_fn::unspan(inner) {
+        NdNull => true,
+        NdCall { def_nr, args } => len(args) == 0 && scope_args::def_name(b, def_nr) == "OpNullRefSentinel",
+        _ => false
+      };
+      if is_null {
+        if w.reals[i]! == 0 {
+          // One null's region path: its length, then the regions.
+          path = [len(w.regions)];
+          path += w.regions;
+          w.nulls[i] += path;
+        } else {
+          w.after[i] = true;
+        }
+      } else {
+        w.reals[i] = w.reals[i]! + 1;
+        w.led[i] = led_by(w.nulls[i]!, w.regions);
+      }
+    },
+    _ => {}
+  }
+}
+
+// `nulls.iter().any(|n| here.starts_with(n) && here[n.len()..].iter().all(|(_, lp)| !lp))`
+fn led_by(nulls: vector<integer>, here: vector<integer>) -> boolean {
+  at = 0;
+  while at < len(nulls) {
+    k = nulls[at]!;
+    ok = k <= len(here);
+    if ok {
+      for j in 0..k {
+        if nulls[at + 1 + j]! != here[j]! {
+          ok = false;
+        }
+      }
+    }
+    if ok {
+      for j in k..len(here) {
+        if here[j]! % 2 == 1 {
+          ok = false;
+        }
+      }
+    }
+    if ok {
+      return true;
+    }
+    at += k + 1;
+  }
+  false
+}
+
+// port: phase.rs fn literal_moves_in — the record locals a scope moves a literal's store into.
+pub fn literal_moves_in(b: ir::Bundle, code: ir::Node, f: ir::Function, null_led_first: vector<integer>) -> vector<integer> {
+  any = false;
+  for v in 0..scope_fn::count(f) {
+    if literal_candidate(f, v) {
+      any = true;
+    }
+  }
+  if !any {
+    return [];
+  }
+  counts: vector<integer> = [];
+  owning: vector<boolean> = [];
+  literal_walk(b, code, f, counts, owning);
+  out: vector<integer> = [];
+  for c in counts {
+    v = c#index;
+    if c >= 2 && owning[v]! && !scope_fn::has(null_led_first, v) {
+      out += [v];
+    }
+  }
+  out
+}
+
+fn literal_candidate(f: ir::Function, v: integer) -> boolean {
+  v < scope_fn::count(f) && !scope_fn::is_argument(f, v) && !scope_fn::is_compiler_generated(f, v) && scope_fn::is_record(scope_fn::tp(f, v))
+}
+
+fn literal_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, counts: vector<integer>, owning: vector<boolean>) {
+  match scope_fn::unspan(n) {
+    NdSet { var: v, inner } => if literal_candidate(f, v) {
+      while len(counts) <= v {
+        counts += [0];
+        owning += [true];
+      }
+      counts[v] = counts[v]! + 1;
+      if !literal_owning_bind(b, inner, v, f) {
+        owning[v] = false;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    literal_walk(b, c, f, counts, owning);
+  }
+}
+
+fn literal_owning_bind(b: ir::Bundle, rhs: ir::Node, v: integer, f: ir::Function) -> boolean {
+  u = scope_fn::unspan(rhs);
+  match u {
+    NdNull => true,
+    NdVar { n: x } => x == v,
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr];
+      d != null && (d!.name == "OpNullRefSentinel" || (d!.name.starts_with("n_") && len(d!.code) > 0 && !(d!.code[0]! is NdNull)))
+    },
+    NdBlock => scope_backings::construction_work_ref(u, f) >= 0,
+    NdInsert => scope_backings::construction_work_ref(u, f) >= 0,
+    _ => false
+  }
+}
+
+// port: phase.rs fn view_temps_in — per local, the frame temporaries its binds view: a vector
+// literal's `__vdb_N` backing or a vector call buffer.
+pub fn view_temps_in(code: ir::Node, f: ir::Function, ops: scope_scan::Ops) -> vector<scope_scan::VarList> {
+  out: vector<scope_scan::VarList> = [];
+  view_temps_walk(code, f, ops, out);
+  out
+}
+
+fn view_temps_walk(n: ir::Node, f: ir::Function, ops: scope_scan::Ops, out: vector<scope_scan::VarList>) {
+  match scope_fn::unspan(n) {
+    NdSet { var: v, inner } => {
+      t = scope_backings::literal_backing_of(inner, f, ops.get_field);
+      if t < 0 {
+        t = scope_backings::call_buffer_of(inner, f);
+      }
+      if t >= 0 && t != v {
+        scope_scan::list_add(out, v, t);
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    view_temps_walk(c, f, ops, out);
   }
 }
 

@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -18,22 +19,30 @@ use scope_args;
 use scope_wrapper;
 use scope;
 use scope_pure;
+use binds;
 
-// port: scopes.rs fn check — the program's own functions (source 1), each laid out or refused
-// by name.
+// port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
+// (every source but the standard library's, which arrives scoped), each laid out or refused by
+// name.
 pub fn check(b: ir::Bundle) -> vector<text> {
   refused: vector<text> = [];
   all_reasons = (env_variable("LOFT_SCOPE_ALL_REASONS") ?? "0") != "0";
   ops = scope_scan::ops_of(b);
   iops = scope::ops_of(b);
   free = scope_pure::effect_free(b);
+  // The whole-program rewrites run on the PARSER's bodies before the loop: their triggers are
+  // read before any body is laid out (a callee laid out earlier would otherwise answer).
+  program: vector<text> = [];
   for d in b.data.definitions {
-    if d.def_type != 1 || len(d.code) == 0 || d.source != 1 {
+    program += [if d.def_type != 1 || len(d.code) == 0 || d.source == 0 { "" } else { program_rewrites(b, free, d.code[0]!, d.variables) }];
+  }
+  for d in b.data.definitions {
+    if d.def_type != 1 || len(d.code) == 0 || d.source == 0 {
       continue;
     }
     d_nr = d#index;
     orig_code = d.code[0]!;
-    why = program_rewrites(b, free, orig_code, d.variables);
+    why = program[d_nr] ?? "";
     if why == "" {
       why = join_rewrites(b, orig_code, d.variables);
     }
@@ -47,7 +56,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why != "" {
       if all_reasons {
         all: vector<text> = [];
-        for r in [program_rewrites(b, free, orig_code, d.variables), join_rewrites(b, orig_code, d.variables)] {
+        for r in [program[d_nr] ?? "", join_rewrites(b, orig_code, d.variables)] {
           if r != "" {
             all += [r];
           }
@@ -177,6 +186,27 @@ fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
 // `slice_text`, `slice_into`.
 fn settled_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
+  // `lastuse_reclaim` — a store built in the body scope that is dead before another one is
+  // built there (`reclaim_free_intent`) is freed early: it needs two such stores.
+  body_scope = match scope_fn::unspan(code) { NdBlock { block } => block[0].scope, _ => -1 };
+  built: vector<integer> = [];
+  database_targets(b, code, built);
+  in_body = 0;
+  for x in built {
+    v = f.variables[x];
+    if v != null && v!.scope == body_scope {
+      in_body += 1;
+    }
+  }
+  if in_body >= 2 {
+    note(w, "last_use::lastuse_reclaim: two stores built in the body scope");
+  }
+  for x in f.variables {
+    if x.name.starts_with("__place") && scope_fn::is_record(x.type_def[0] ?? ir::TyVoid) {
+      note(w, "stored_refs::keep_placed_results: a call result placed in a holder's store");
+    }
+  }
+  record_triggers(b, code, f, w);
   settled_triggers(b, code, false, w);
   w.why
 }
@@ -234,6 +264,90 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
   }
   for c in scope_fn::children(n) {
     settled_triggers(b, c, lp, w);
+  }
+}
+
+// The settled-IR record rewrites, each refused where its trigger is in the body:
+// `insert_evacuations` (a stored reference), `place_result` (an element appended to a
+// parameter's collection), `literal_append` (a bound literal copied into an element),
+// `rebind_place` (`x = f(x, …)` through a hidden record buffer), `copy_view` (a record copied
+// from a variable or a join of variables).
+fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, w: Trigger) {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      // A reference to a record of a LOCAL stored somewhere: the local's frees may need the
+      // record copied out first (`ref_evacuations`, the parser's fact, not in the image).
+      if nm == "OpSetDbRef" && len(args) == 3 {
+        r = root_var(b, args[2]!);
+        if r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_record(scope_fn::tp(f, r)) {
+          note(w, "stored_refs::insert_evacuations: a reference to a local's record stored");
+        }
+      }
+      if nm == "OpNewRecord" && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: x } => if scope_fn::is_argument(f, x) {
+            note(w, "place_result::rewrite: an element appended to a parameter's collection");
+          },
+          _ => {}
+        }
+      }
+      if nm == "OpCopyRecord" && len(args) > 1 {
+        match scope_fn::unspan(args[1]!) {
+          NdVar { n: x } => if scope_fn::name(f, x).starts_with("_elm_") {
+            note(w, "literal_append::rewrite: a bound literal copied into an element");
+          },
+          _ => {}
+        }
+      }
+    },
+    NdSet { var: t, inner } => if scope_fn::is_record(scope_fn::tp(f, t)) && !scope_fn::is_argument(f, t) {
+      match scope_fn::unspan(inner) {
+        NdVar => note(w, "copy_view::rewrite: a record copied from a variable"),
+        NdIf => note(w, "copy_view::rewrite: a record copied from a join"),
+        NdCall { def_nr, args } => {
+          d = b.data.definitions[def_nr];
+          if d != null && binds::hidden_return_buffer_attr(d!) != null {
+            for a in args {
+              match scope_fn::unspan(a) {
+                NdVar { n: x } => if x == t { note(w, "rebind_place::rewrite: a record rebound from a call it is handed to"); },
+                _ => {}
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    record_triggers(b, c, f, w);
+  }
+}
+
+// The variable a place read is rooted at (through `OpGet*` projections), -1 for none.
+fn root_var(b: ir::Bundle, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x,
+    NdCall { def_nr, args } => if scope_args::def_name(b, def_nr).starts_with("OpGet") && len(args) > 0 { root_var(b, args[0]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// The variables `OpDatabase(Var(v), …)` builds anywhere in `n`.
+fn database_targets(b: ir::Bundle, n: ir::Node, out: vector<integer>) {
+  match n {
+    NdCall { def_nr, args } => if scope_args::def_name(b, def_nr) == "OpDatabase" && len(args) > 0 {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    database_targets(b, c, out);
   }
 }
 

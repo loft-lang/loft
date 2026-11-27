@@ -1,3 +1,4 @@
+#package
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
@@ -11,6 +12,7 @@ use scope_fn;
 use scope_scan;
 use scope_branches;
 use scope_free_vars;
+use scope_drops;
 
 // port: convert.rs fn convert
 pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function, is_return: boolean) -> vector<ir::Node> {
@@ -31,14 +33,22 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     locals_read_after(s, v, ops[i + 1..], f, hoist);
     for h in hoist {
       scope_scan::register_binding(s, h, f);
+      // The pre-init holds nothing, and every later pass reaches the binding holding what the
+      // pass before bound: that binding displaces a record this frame owns (@FR-O-Latest).
       if scope_fn::is_record(scope_fn::tp(f, h)) {
-        scope_scan::refuse(s, "convert::locals_read_after: a record hoisted out of a loop (owned_refs)");
+        scope_scan::put(s.owned_refs, h, len(s.loops));
       }
       if scope_fn::tp(f, h) is TyText {
         ls += [scope_fn::v_set(h, ir::NdText { s: "" })];
       } else {
         ls += [scope_fn::v_set(h, ir::NdNull)];
       }
+    }
+    // `s = S {…}` on a live record local is a REBUILD (`drops::in_place_rebuild`): its release
+    // pair is empty without a drop cascade (refused by the phase) and a hand-off flag (empty).
+    rebuilt = scope_drops::in_place_rebuild(s, b, v, f);
+    if rebuilt.some {
+      scope_scan::refuse(s, "drops::in_place_rebuild: a droppable record rebuilt in place");
     }
     statement_rewrites(s, b, v, f);
     sv = scope_scan::scan(s, b, v, f);
@@ -155,27 +165,9 @@ fn respan(stmt: ir::Node, n: ir::Node) -> ir::Node {
 }
 
 // The statement rewrites `convert` asks before it scans a statement, each refusing where its
-// Rust gate could fire: `in_place_rebuild`, `vector_rebind_release`, `vector_call_rebind`,
+// Rust gate could fire (`in_place_rebuild` is carried in `convert`): `vector_rebind_release`, `vector_call_rebind`,
 // `closure_keep_rebind`, `fnref_call_rebind`, `promoted_vector_refill`.
 fn statement_rewrites(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::Function) {
-  st = scope_fn::unspan(v);
-  match st {
-    NdIf { t, f: rebuilt } => if scope_fn::unspan(t) is NdNull { st = scope_fn::unspan(rebuilt); },
-    _ => {}
-  }
-  match st {
-    NdCall { def_nr, args } => {
-      if def_nr == s.ops.database {
-        match scope_fn::unspan(args[0] ?? ir::NdNull) {
-          NdVar { n: ov } => if scope_scan::in_scope(s, scope_scan::mapped(s, ov)) {
-            scope_scan::refuse(s, "drops::in_place_rebuild: a record rebuilt in place");
-          },
-          _ => {}
-        }
-      }
-    },
-    _ => {}
-  }
   match scope_fn::unspan(v) {
     NdSet { var: ov } => {
       t = scope_fn::base(scope_fn::tp(f, scope_scan::mapped(s, ov)));

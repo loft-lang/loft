@@ -1,0 +1,187 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/backings.rs` transcribed: the hidden backings a value lives in — the
+// work-ref a construction builds into, the one a call hands back whole, a vector literal's
+// `__vdb_N` and a vector call's `__ref_N` buffer.  Read by `scan_set`, the phase and the sweep.
+
+use ir;
+use scope_fn;
+
+// port: backings.rs fn block_tail_var
+pub fn block_tail_var(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k == 0 { -1 } else { block_tail_var(block[0].operators[k - 1]!) }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 { -1 } else { block_tail_var(items[k - 1]!) }
+    },
+    _ => -1
+  }
+}
+
+fn work_ref_name(f: ir::Function, v: integer) -> boolean {
+  n = scope_fn::name(f, v);
+  n.starts_with("__ref_") || n.starts_with("__rref_")
+}
+
+// port: backings.rs fn construction_work_ref — -1 for none.
+pub fn construction_work_ref(rhs: ir::Node, f: ir::Function) -> integer {
+  u = scope_fn::unspan(rhs);
+  if !(u is NdBlock) && !(u is NdInsert) {
+    return -1;
+  }
+  v = block_tail_var(rhs);
+  if v >= 0 && work_ref_name(f, v) { v } else { -1 }
+}
+
+// port: backings.rs fn delivered_work_ref — -1 for none.
+pub fn delivered_work_ref(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> integer {
+  c = construction_work_ref(rhs, f);
+  if c >= 0 {
+    return c;
+  }
+  tail = scope_fn::unspan(rhs);
+  while true {
+    match tail {
+      NdBlock { block } => {
+        k = len(block[0].operators);
+        if k == 0 {
+          return -1;
+        }
+        tail = scope_fn::unspan(block[0].operators[k - 1]!);
+      },
+      NdInsert { items } => {
+        k = len(items);
+        if k == 0 {
+          return -1;
+        }
+        tail = scope_fn::unspan(items[k - 1]!);
+      },
+      _ => { break; }
+    }
+  }
+  d_nr = -1;
+  args: vector<ir::Node> = [];
+  match tail {
+    NdCall { def_nr, args: a } => {
+      d_nr = def_nr;
+      args = a;
+    },
+    _ => { return -1; }
+  }
+  def = b.data.definitions[d_nr];
+  if def == null || def!.def_type != 1 || def!.name.starts_with("Op") {
+    return -1;
+  }
+  body = scope_fn::unspan(def!.code[0] ?? ir::NdNull);
+  while true {
+    match body {
+      NdBlock { block } => {
+        k = len(block[0].operators);
+        if k == 0 {
+          return -1;
+        }
+        body = scope_fn::unspan(block[0].operators[k - 1]!);
+      },
+      NdInsert { items } => {
+        k = len(items);
+        if k == 0 {
+          return -1;
+        }
+        body = scope_fn::unspan(items[k - 1]!);
+      },
+      NdReturn { inner } => { body = scope_fn::unspan(inner); },
+      _ => { break; }
+    }
+  }
+  returned = match body { NdVar { n } => n, _ => -1 };
+  if returned < 0 {
+    return -1;
+  }
+  for k in scope_fn::depend(def!.returned[0] ?? ir::TyVoid) {
+    a = def!.attributes[k];
+    if k != returned || a == null || a!.hidden {
+      continue;
+    }
+    arg = args[k];
+    if arg == null {
+      continue;
+    }
+    match scope_fn::unspan(arg!) {
+      NdVar { n: wv } => if work_ref_name(f, wv) { return wv; },
+      _ => {
+        c2 = construction_work_ref(arg!, f);
+        if c2 >= 0 {
+          return c2;
+        }
+      }
+    }
+  }
+  -1
+}
+
+// port: backings.rs fn construction_work_refs — every arm's construction work-ref of a join,
+// else `delivered_work_ref`'s single answer.
+pub fn construction_work_refs(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> vector<integer> {
+  u = scope_fn::unspan(rhs);
+  match u {
+    NdIf { t, f: e } => {
+      out = construction_work_refs(b, t, f);
+      for w in construction_work_refs(b, e, f) {
+        if !scope_fn::has(out, w) {
+          out += [w];
+        }
+      }
+      return out;
+    },
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k > 0 && scope_fn::unspan(block[0].operators[k - 1]!) is NdIf {
+        return construction_work_refs(b, block[0].operators[k - 1]!, f);
+      }
+    },
+    _ => {}
+  }
+  w = delivered_work_ref(b, rhs, f);
+  if w >= 0 { [w] } else { [] }
+}
+
+// port: backings.rs fn literal_backing_of — `OpGetField(__vdb_N, …)`'s backing, -1 for none.
+pub fn literal_backing_of(rhs: ir::Node, f: ir::Function, get_field: integer) -> integer {
+  match scope_fn::unspan(rhs) {
+    NdCall { def_nr, args } => {
+      if def_nr != get_field || len(args) == 0 {
+        return -1;
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: bv } => if bv < scope_fn::count(f) && scope_fn::name(f, bv).starts_with("__vdb_") { bv } else { -1 },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// port: backings.rs fn call_buffer_of — the vector `__ref_N` a call is handed, -1 for none.
+pub fn call_buffer_of(rhs: ir::Node, f: ir::Function) -> integer {
+  match scope_fn::unspan(rhs) {
+    NdCall { args } => {
+      for a in args {
+        match scope_fn::unspan(a) {
+          NdVar { n: bv } => if bv < scope_fn::count(f) && scope_fn::name(f, bv).starts_with("__ref_") && scope_fn::base(scope_fn::tp(f, bv)) is TyVector {
+            return bv;
+          },
+          _ => {}
+        }
+      }
+      -1
+    },
+    _ => -1
+  }
+}

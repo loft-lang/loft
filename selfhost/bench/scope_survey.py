@@ -30,12 +30,13 @@ HEAD = re.compile(r"^#\d+ (.+?) type=\d+ .*\bsource=(\d+)\b")
 
 
 def own_definitions(lines):
-    """{name: lines} of the program's own definitions (source 1): the ones the pass lays out."""
+    """{name: lines} of the definitions the pass lays out: every source but the standard
+    library's (source 0, which arrives scoped) — the program's and its libraries'."""
     out, key = {}, None
     for l in lines:
         m = HEAD.match(l)
         if m:
-            key = m.group(1) if m.group(2) == "1" else None
+            key = m.group(1) if m.group(2) != "0" else None
             if key in out:
                 key = f"{key}#{sum(1 for k in out if k.split('#')[0] == key) + 1}"
         elif re.match(r"^\d+:", l):
@@ -116,6 +117,7 @@ def main():
     ap.add_argument("--show", type=int, default=10, help="differing definitions listed")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 when a definition that agreed no longer does")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write the `scope` blocks of BASELINE")
+    ap.add_argument("--verdicts", metavar="FILE", help="write every definition's verdict and reason, one per line")
     o = ap.parse_args()
     if (o.check or o.write_baseline) and (o.files or o.part):
         sys.exit("--check and --write-baseline read the whole corpus: drop the files and --part")
@@ -142,6 +144,7 @@ def main():
     scoped = os.environ.get("LOFT_SCOPE_BIN") or elab_gate.build(loft, os.path.join(sh, "compare", "scoped.loft"), os.path.join(tmp, "scoped"), env)
     progs = {}
     fn_results = {}
+    details = {}
     reasons = collections.Counter()
     shapes = collections.defaultdict(list)
     with cf.ThreadPoolExecutor(o.jobs) as ex:
@@ -155,6 +158,7 @@ def main():
             progs[name] = verdict
             for fname, (fv, detail) in fns.items():
                 fn_results[f"{name}::{fname}"] = fv
+                details[f"{name}::{fname}"] = detail if isinstance(detail, str) else " / ".join(detail)
                 if fv == "unscoped":
                     reasons[detail] += 1
                 elif fv == "differ":
@@ -174,6 +178,10 @@ def main():
         print("differ, by the shape of the first difference (Rust / loft):")
         for k, fs in sorted(shapes.items(), key=lambda kv: -len(kv[1]))[:o.show]:
             print(f"  {len(fs):6}  rust: {k[0]}\n          loft: {k[1]}\n          e.g. {fs[0]}")
+    if o.verdicts:
+        with open(o.verdicts, "w", encoding="utf-8") as fh:
+            for k in sorted(fn_results):
+                fh.write(f"{k}\t{fn_results[k]}\t{details[k]}\n")
     agree_fns = {k: "agree" for k, v in fn_results.items() if v == "agree"}
     if o.write_baseline:
         baseline.write(o.write_baseline, pin, "scope", pv["agree"], len(progs),

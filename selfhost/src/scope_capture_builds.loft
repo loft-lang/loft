@@ -1,0 +1,102 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the part of `src/scopes/capture_builds.rs` a record binding asks: which construction
+// work-refs a right-hand side delivers to the binding it is assigned to.  The closure-build
+// facts of the module are refused where a closure record is (`phase::pre_scan_refusals`).
+
+use ir;
+use scope_fn;
+use scope_backings;
+
+// port: capture_builds.rs fn inline_literal_work_ref — the `__ref_N` an inline record literal
+// built and answers, -1 for none.
+fn inline_literal_work_ref(rhs: ir::Node, f: ir::Function, database: integer) -> integer {
+  ops: vector<ir::Node> = [];
+  match scope_fn::unspan(rhs) {
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return -1; }
+  }
+  av = -1;
+  k = len(ops) - 1;
+  while k >= 0 {
+    o = scope_fn::unspan(ops[k]!);
+    if !(o is NdLine) {
+      match o {
+        NdVar { n } => { av = n; },
+        _ => { return -1; }
+      }
+      break;
+    }
+    k -= 1;
+  }
+  if av < 0 || av >= scope_fn::count(f) {
+    return -1;
+  }
+  nm = scope_fn::name(f, av);
+  if !nm.starts_with("__ref_") && !nm.starts_with("__rref_") {
+    return -1;
+  }
+  for o in ops {
+    match scope_fn::unspan(o) {
+      NdCall { def_nr, args } => if def_nr == database && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: t } => if t == av { return av; },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  -1
+}
+
+// The last operator that is not a line marker, or null.
+fn tail_op(ops: vector<ir::Node>) -> ir::Node? {
+  k = len(ops) - 1;
+  while k >= 0 {
+    if !(scope_fn::unspan(ops[k]!) is NdLine) {
+      return ops[k]!;
+    }
+    k -= 1;
+  }
+  null
+}
+
+// port: capture_builds.rs fn adopted_work_refs — every construction work-ref a right-hand side
+// delivers to its binding, through each `if` arm and each block's last operator, and the one a
+// call hands back whole (`delivered_work_ref`).
+pub fn adopted_work_refs(b: ir::Bundle, rhs: ir::Node, f: ir::Function, database: integer, out: vector<integer>) {
+  u = scope_fn::unspan(rhs);
+  match u {
+    NdIf { t, f: e } => {
+      adopted_work_refs(b, t, f, database, out);
+      adopted_work_refs(b, e, f, database, out);
+    },
+    NdBlock { block } => {
+      w = inline_literal_work_ref(u, f, database);
+      if w >= 0 {
+        out += [w];
+      } else {
+        last = tail_op(block[0].operators);
+        if last != null {
+          adopted_work_refs(b, last!, f, database, out);
+        }
+      }
+    },
+    NdInsert { items } => {
+      last = tail_op(items);
+      if last != null {
+        adopted_work_refs(b, last!, f, database, out);
+      }
+    },
+    NdCall => {
+      w = scope_backings::delivered_work_ref(b, u, f);
+      if w >= 0 {
+        out += [w];
+      }
+    },
+    _ => {}
+  }
+}

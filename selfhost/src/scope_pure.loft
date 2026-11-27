@@ -185,10 +185,36 @@ pub fn reuse_key(b: ir::Bundle, free: vector<boolean>, w: integer) -> integer {
       return s;
     }
   }
-  if significant(d!.code[0]!) <= 3 {
+  // `projection_of`: the whole body one projection, or its first significant statement the
+  // bind of the inner call (`d = f(…)`); a body leading with anything else is no wrapper.
+  sig = significant(d!.code[0]!);
+  if sig <= 3 && (sig == 1 || leads_with_call_bind(d!.code[0]!)) {
     return first_free_call(b, d!.code[0]!, free, false);
   }
   -1
+}
+
+// The body's first statement that is no line marker and no null init is `Set(_, Call(…))`.
+fn leads_with_call_bind(code: ir::Node) -> boolean {
+  match scope_fn::unspan(code) {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        match scope_fn::unspan(o) {
+          NdLine => {},
+          NdSet { inner } => {
+            u = scope_fn::unspan(inner);
+            if u is NdNull {
+              continue;
+            }
+            return u is NdCall;
+          },
+          _ => { return false; }
+        }
+      }
+      false
+    },
+    _ => false
+  }
 }
 
 // port: shared_call.rs fn vector_buffer — the hidden return buffer is a vector.
