@@ -133,6 +133,11 @@ fn synth_cascades(e: el::El, h: Hook) {
         if !refused_shapes(e, t, h) {
           unfilled += [t];
         }
+        // (…and so does a record holding one in a field — `main_vector<iterator<integer>>` — its
+        // body not filled.)
+        if !h.forward && generators && !unfilled.contains(t) && len([for ga in d.attributes if el_types::holds_generator(e, ga.typedef[0] ?? ir::TyVoid, []) { 1 }]) > 0 && len(cascade_fields(e, t, h)) == 0 && len(cascade_vectors(e, t, h)) == 0 {
+          unfilled += [t];
+        }
         wanted = unfilled.contains(t) || len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0 || (!h.forward && len(cascade_shared_vectors(e, t, h)) > 0) || (!h.forward && len(cascade_captures(e, t)) > 0) || (!h.forward && len(cascade_fn_fields(e, t)) > 0);
       }
     } else if d.def_type == el::DT_ENUM {
@@ -140,6 +145,12 @@ fn synth_cascades(e: el::El, h: Hook) {
       wanted = len(cascade_variants(e, t, h)) > 0;
     } else if d.def_type == el::DT_VECTOR {
       wanted = collection_element(e, t, h) >= 0;
+      // (A vector of generator handles releases each (`any_generator_member`): declared, its
+      // body not filled.)
+      if !wanted && generators && !h.forward && el_types::holds_generator(e, d.returned[0] ?? ir::TyVoid, []) {
+        wanted = true;
+        unfilled += [t];
+      }
     } else if d.def_type == el::DT_TYPE && generators && d.name == "iterator" {
       // The standard library's `type iterator`: its cascade frees the handle a slot holds.  Not
       // carried: declared, its body not filled.
