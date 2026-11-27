@@ -30,6 +30,7 @@ use scope_last_use;
 use scope_bound_append;
 use scope_buffer_detach;
 use scope_take_local;
+use scope_byte_copy;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -190,6 +191,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     }
     // `(R-MoveLast)`'s local clause, after `(R-Compact)` (refused above where it would fire).
     code = scope_take_local::rewrite(b, ph.code, ph.function);
+    // `@FR-R-ByteCopy`, after `loop_kernel_rewrite` (refused above where it would fire).
+    code = scope_byte_copy::rewrite(b, code);
     // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
     code = scope_wrapper::rewrite(b, code);
     b.data.definitions[d_nr].variables = ph.function;
@@ -451,6 +454,7 @@ fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Fun
   w.f = f;
   w.has_loop = has_loop(code);
   settled_triggers(b, code, false, w);
+  note(w, scope_byte_copy::refusal(b, code));
   w.why
 }
 
@@ -516,9 +520,6 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
           },
           _ => {}
         }
-      }
-      if nm == "OpPushByte" {
-        note(w, "byte_copy::rewrite: a byte pushed");
       }
       if nm == "n_text_from_bytes" {
         note(w, "slice_text::rewrite: text from bytes");
