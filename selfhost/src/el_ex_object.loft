@@ -3870,6 +3870,11 @@ pub fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
   }
   tv = el_types::type_var(e, el_types::base(p));
   if tv >= 0 {
+    // `resolve_type_var`: `null`, a call answering nothing and a value poisoned by its own
+    // report name no type — they bind nothing (`firstd(g, null)` against `d: T?`).
+    if a is TyNull || a is TyVoid || a is TyNever {
+      return;
+    }
     picked = if p is TyOptional { el_types::base(a) } else { a };
     // `resolve_type_var`: the argument's borrows are the caller's, not part of the shape — a
     // record, a vector, an enum and a text bind without them.
