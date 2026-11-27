@@ -349,9 +349,19 @@ pub fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir
     }
     ft = el::def(e, vd).attributes[a]!.typedef[0];
     is_text = el_types::base(ft) is TyText;
-    if !el_convert::plain_scalar(el_types::base(ft)) && !is_text {
+    // A HEAP payload — a record, a vector, a struct enum — binds a borrowed view into the
+    // subject's record (loft#1398): typed with the subject's source as its dep
+    // (`match_borrow_source`, `element_view_of`), freeing nothing.
+    heap = match el_types::base(ft) { TyReference { n: _ } => true, TyVector { inner: _ } => true, TyEnum { is_ref } => is_ref, _ => false };
+    if !el_convert::plain_scalar(el_types::base(ft)) && !is_text && !heap {
       refuse_known(e, ft, "an `is` capture of a field of this type: {type_kind(ft)}");
       return ex(ir::NdNull, ir::TyBoolean);
+    }
+    if heap {
+      hsrc = el_ex_match::match_borrow_source(e, vars, stable);
+      if hsrc >= 0 {
+        ft = el_types::with_deps(el_types::without_deps(ft), [hsrc]);
+      }
     }
     read = field_get(e, vd, a, stable);
     v = el_vars::create_unique(vars, "mv_{f}", ft);
