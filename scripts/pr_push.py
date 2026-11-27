@@ -162,7 +162,7 @@ def recheck_last_run(pr):
         if "(informational)" in c["name"]:
             listed.append(f"{c['name']} (mirrors main)")
             continue
-        job = c.get("link", "").rstrip("/").split("/")[-1]
+        job = c.get("link", "").rstrip("/").rsplit("/", 1)[-1]
         log = run("gh", "api", f"repos/loft-lang/loft/actions/jobs/{job}/logs").stdout
         found = failures_of(log)
         if not found:
