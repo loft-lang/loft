@@ -231,7 +231,7 @@ pub fn text_value_link(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Ty
 // `T` is linked (`OpCreateStack`), and a local that is itself a `&T` link is forwarded as it is
 // (a link to the link would point at this frame's slot).  A place — a field, an element, a tuple
 // member — a narrow or collection local and any other value are refused by name.
-pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT) -> ir::Node? {
+pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::TypeT, pt: ir::TypeT, reason: text = "convert_store_as") -> ir::Node? {
   inner = match pt {
     TyRefVar { inner } => inner,
     _ => pt
@@ -291,7 +291,7 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
     if same && is_place && (struct_ref(e, el_types::base(at)) >= 0 || el_types::struct_enum_def(el_types::base(at)) >= 0 || el_types::base(at) is TyVector || keyed_kind(el_types::base(at))) {
       wv = el_vars::work_ref(vars, at);
       if !e.first_pass {
-        el_vars::set_skip_free(vars, wv, "convert_store_as");
+        el_vars::set_skip_free(vars, wv, reason);
       }
       return ir::NdInsert { items: [el_ir::v_set(wv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])] };
     }
@@ -309,7 +309,7 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
       }
       troot = place_root(e, place);
       tw = el_vars::work_ref_p2(vars, ir::TyReference { n: tpd, dep: if troot >= 0 { [troot] } else { [] } });
-      el_vars::set_skip_free(vars, tw, "convert_store_as");
+      el_vars::set_skip_free(vars, tw, reason);
       return ir::NdInsert { items: [el_ir::v_set(tw, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tw }])] };
     }
     tv = text_value_link(e, vars, arg, at, pt);

@@ -1660,9 +1660,10 @@ fn call_ref_at(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     // A `&T` argument of the function type takes `convert`'s `RefVar` arm, as a direct call's
-    // `&` parameter does: a local is linked, a link is forwarded as it is.
+    // `&` parameter does: a local is linked, a link is forwarded as it is.  (A place's work ref
+    // is never freed; Rust's trace names `try_fn_ref_call`, the caller of that `convert`.)
     if pt is TyRefVar {
-      l = el_ex_link::link_argument(e, vars, x.code, x.tp, pt);
+      l = el_ex_link::link_argument(e, vars, x.code, x.tp, pt, reason: "try_fn_ref_call");
       if l == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
