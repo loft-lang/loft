@@ -1181,6 +1181,17 @@ impl Function {
         f
     }
 
+    /// @PLN233 phase 1 EXPERIMENT (`LOFT_NO_PASS1_DEPS=1`): drop the dependency lists pass 1 left
+    /// on every local of the table pass 2 starts from, so pass 2 derives each list itself.  A
+    /// measurement of which programs still LEAN on the pass-1 lists, not the cure.
+    pub fn strip_carried_deps(&mut self) {
+        for v in &mut self.variables {
+            if !v.argument {
+                v.type_def = v.type_def.without_deps();
+            }
+        }
+    }
+
     pub fn append(&mut self, other: &mut Function) {
         self.current_loop = u16::MAX;
         self.logging = other.logging;

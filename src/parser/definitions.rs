@@ -3547,6 +3547,9 @@ impl Parser {
         let returned_fact = std::mem::take(&mut self.type_fact);
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
+        if !self.first_pass && std::env::var_os("LOFT_NO_PASS1_DEPS").is_some() {
+            self.vars.strip_carried_deps();
+        }
         if self.first_pass {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
