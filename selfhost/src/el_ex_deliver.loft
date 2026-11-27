@@ -515,7 +515,9 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
   }
   lit = tail_syntax(e, vars.body);
   // A comprehension is built in its own store as a literal is, and delivered alike.
-  literal = (lit >= 0 && (e.p.nodes[lit] is SVecLit || e.p.nodes[lit] is SComprehension)) || trailing_literal_return(e, vars.body);
+  // (A concatenation, `a + [k]`, builds its own store as a literal does: the buffer takes it.)
+  concat_tail = lit >= 0 && match e.p.nodes[lit] { SBin { op: cop } => cop == "+", _ => false } && match code { NdBlock { block: ccb } => len(ccb[0].operators) > 0 && match el_ir::unspan(el_ir::last(ccb[0].operators)) { NdBlock { block: cab } => cab[0].name == "Append Vector", _ => false }, _ => false };
+  literal = (lit >= 0 && (e.p.nodes[lit] is SVecLit || e.p.nodes[lit] is SComprehension)) || trailing_literal_return(e, vars.body) || concat_tail;
   bl = match code { NdBlock { block } => block[0], _ => return code };
   tail = if len(bl.operators) > 0 { el_ir::unspan(bl.operators[-1]) } else { ir::NdNull };
   // An untyped `[]` at the tail of a vector-returning body is that vector's empty literal, built
@@ -688,7 +690,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     bl.result = [el_types::without_deps(el_types::base(result))];
   } else if literal {
     db = match tail {
-      NdBlock { block: tb } => if tb[0].name == "Vector" || tb[0].name == "Vector comprehension" { el_types::deps(tb[0].result[0] ?? ir::TyVoid) } else { [] },
+      NdBlock { block: tb } => if tb[0].name == "Vector" || tb[0].name == "Vector comprehension" || tb[0].name == "Append Vector" { el_types::deps(tb[0].result[0] ?? ir::TyVoid) } else { [] },
       _ => []
     };
     if len(db) != 1 || !starts_with(el_vars::name_of(vars, db[0]), "__vdb_") {
@@ -765,7 +767,13 @@ pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::Ty
   if len(bl.operators) == 0 {
     return code;
   }
-  lit = match el_ir::unspan(bl.operators[-1]) { NdBlock { block } => literal_backing_store(block[0]) >= 0, _ => false };
+  // (A concatenation is a fresh build too, copied in as a literal is.  A slice is not: Rust hands
+  // its `iter_vec` store back as the lambda's own, `adopts_fresh`.)
+  lit = match el_ir::unspan(bl.operators[-1]) { NdBlock { block } => literal_backing_store(block[0]) >= 0 || block[0].name == "Append Vector", _ => false };
+  if match el_ir::unspan(bl.operators[-1]) { NdBlock { block: svb } => svb[0].name == "iter_vec", _ => false } {
+    bl.result = [el_types::without_deps(el_types::base(result))];
+    return ir::NdBlock { block: [bl] };
+  }
   // A tail that reads a vector CAPTURE whole (`fn() -> vector<integer> { w }`, the closure's
   // pointer field) is copied into the buffer (`borrow_tail_copy`): the caller gets its own store.
   cap_tail = calls(e, el_ir::unspan(bl.operators[-1]), "OpGetDbRef") && match el_ir::unspan(bl.operators[-1]) { NdCall { args: cta } => len(cta) == 2 && el_ir::unspan(cta[0]!) == ir::NdVar { n: e.closure_var }, _ => false };
