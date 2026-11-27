@@ -2677,7 +2677,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   }
   if x.code is NdIter {
     vars.bind_starts = v;
-    sb = el_ex_vector::slice_bind(e, vars, v, x);
+    sb = el_ex_vector::slice_bind(e, vars, v, x, rhs ?? -1);
     vars.bind_starts = -1;
     return sb;
   }

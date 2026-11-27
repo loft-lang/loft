@@ -910,7 +910,9 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if nm == "" {
         return -1;
       }
-      c = content_type(e, inner);
+      // (A record element's borrow — `vector<ref(R)["rs"]>`, a slice bound to a local — is no
+      // pointer: the vector holds the records themselves.)
+      c = content_type(e, match inner { TyReference { n: cn, dep: cdp } => if cdp.contains(el_types::MARKER) { inner } else { ir::TyReference { n: cn, dep: [] } }, _ => inner });
       if c < 0 {
         return -1;
       }
