@@ -375,3 +375,21 @@ A loft trap met on the way: a `match` in statement position whose arm is a value
 diagnostic, and control falls through to the code after the `match` — `tail_self`'s
 `deliver_in` counted a jump it then discarded.  Loft drops the value of any expression statement
 silently (`N::B { v: 7 };` too).
+
+## The loft-in-loft list
+
+`selfhost/bench/loft_in_loft.list` names the programs the loft-written toolchain carries end to
+end, and `selfhost/bench/lil_check.py` holds them as a gate.  A listed program must pass both
+halves:
+
+- **interpreter** — the whole loft path (elaborator, scope pass, IR passes, bytecode writer,
+  runner: `run_front.loft`, the `front` layer of `run_image_survey.py`) prints what
+  `loft --interpret` prints and leaves no store the interpreter does not;
+- **compiler** — the C generator in loft writes the Rust writer's unit byte for byte, and it
+  builds and runs alike (`cgen_survey.py --run`).
+
+`lil_check.py` checks the list and fails naming the half a program lost;
+`lil_check.py --discover --write` re-pins it in the commit that moves it.  CI runs the check on
+every pull request that touches the compiler or the port (`.github/workflows/loft-in-loft.yml`,
+advisory).  The compiler half reads Rust's front-end image today: joining the loft front end to
+the loft C generator is the step that makes it loft from source to C.
