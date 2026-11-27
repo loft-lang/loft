@@ -2298,6 +2298,9 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
     },
     // (A generator handle, which `elem_name` does not spell: `iterator<…>`.)
     TyIterator { step: _ } => el_types::type_key_name(e, t),
+    // (A range with no rows of its own — four bytes, `integer limit(-99999, 99999)` — by its range,
+    // as `Type::name` spells it.)
+    TyInteger { spec: _ } => if el_types::elem_name(e, t) != "" { el_types::elem_name(e, t) } else { el_types::key_name(e, t) },
     _ => el_types::elem_name(e, t)
   }
 }
