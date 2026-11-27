@@ -2879,6 +2879,29 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     // (A literal of such literals — `[[Fyle { … }], …]` — has the library's `vector` for its
     // element on the first pass: `vector_def` names it `vector<vector>`, its wrapper beside it,
     // at the literal's `]`.)
+    // (Its first item a literal of a struct declared below — `o += [[Memo { … }]]` — that item's
+    // own wrapper comes first, at its `]`: the item is read here, not as a literal of its own.)
+    if e.first_pass && ut >= 0 && len(items) > 0 && el::def_nr(e, "main_vector<unknown>") < 0 && !appended_literal(e, n) {
+      match e.p.nodes[items[0]] {
+        SVecLit { at: iat, items: iit } => {
+          ibelow = len(iit) > 0 && match e.p.nodes[iit[0]] {
+            SStructLit { name: ibn } => {
+              ibd = el::def_nr(e, ibn);
+              ilp = el::pos_at(e, iat);
+              ibn != "" && (ibd < 0 || el::def(e, ibd).def_type == el::DT_UNKNOWN || el::def(e, ibd).position.line > ilp.line || (el::def(e, ibd).position.line == ilp.line && el::def(e, ibd).position.pos > ilp.pos))
+            },
+            _ => false
+          };
+          if ibelow {
+            ium = el::add_def(e, "main_vector<unknown>", el::pos_at(e, closing_bracket(e, iat)), el::DT_STRUCT);
+            el::make_global(e, ium);
+            e.b.data.definitions[ium].returned = [ir::TyReference { n: ium, dep: [] }];
+            e.b.data.definitions[ium].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
+          }
+        },
+        _ => {}
+      }
+    }
     nested_unknown = len(items) > 0 && match e.p.nodes[items[0]] { SVecLit { items: nvi } => len(nvi) > 0, _ => false } && el::def_nr(e, "main_vector<unknown>") >= 0;
     if e.first_pass && ut >= 0 && nested_unknown && el::def_nr(e, "vector<vector>") < 0 {
       vvat = el::pos_at(e, closing_bracket(e, ut));
