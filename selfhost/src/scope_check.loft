@@ -20,6 +20,7 @@ use scope_wrapper;
 use scope_join_rewrite;
 use scope;
 use scope_pure;
+use scope_pure_reuse;
 use binds;
 use own;
 use scope_value_struct;
@@ -45,13 +46,20 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   iops = scope::ops_of(b);
   free = scope_pure::effect_free(b);
   twins = const_twins(b);
-  // `@FR-R-BoundAppend` rewrites the parser's bodies first (after `pure_reuse`, refused below).
+  // `@FR-R-PureReuse` — on the parser's bodies, before any of this pass's own rewrites; the
+  // clauses not carried refuse their function.
+  reuse = scope_pure_reuse::rewrite_program(b, free);
+  // `@FR-R-BoundAppend` — a bound call result appended whole, appended where it is made.
   scope_bound_append::rewrite_program(b);
   // The whole-program rewrites run on the PARSER's bodies before the loop: their triggers are
   // read before any body is laid out (a callee laid out earlier would otherwise answer).
   program: vector<text> = [];
   for d in b.data.definitions {
-    program += [if d.def_type != 1 || len(d.code) == 0 || d.source == 0 { "" } else { program_rewrites(b, free, d.code[0]!, d.variables) }];
+    why = reuse[d#index] ?? "";
+    if why == "" && d.def_type == 1 && len(d.code) > 0 && d.source != 0 {
+      why = program_rewrites(b, free, d.code[0]!, d.variables);
+    }
+    program += [why];
   }
   // `value_struct_copy` (@PLN101) rewrites the parser's bodies after the refused pre-loop
   // rewrites: a summary it asks of a body one of those would change is refused.
@@ -393,13 +401,6 @@ fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, 
   match n {
     NdCall { def_nr, args } => {
       nm = scope_args::def_name(b, def_nr);
-      key = scope_pure::reuse_key(b, free, def_nr);
-      if key >= 0 {
-        if calls.contains(key) {
-          note(w, "pure_reuse::reuse_in_block: an effect-free call made twice");
-        }
-        calls += [key];
-      }
       // `move_elide` (default on): a record copied out of a local at that local's last use is
       // built in the copy's destination instead (`MovePlan`, the `a.field = base` rewrite).
       if nm == "OpCopyRecord" && len(args) > 1 {
