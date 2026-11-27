@@ -2318,6 +2318,18 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
         rat = rtok - 1;
       }
       el_schema::make_vector_def(e, t, rn, el::pos_at(e, rat), true, narrow_early: false);
+      // …and the element's own vector, which Rust's `parse_vector` of the first nested literal
+      // with items registers at its `]` (`[null, [1.5f]]` against `vector<single>?`: `vector<single>`).
+      it = match t { TyOptional { inner } => inner, _ => t };
+      ie = match it { TyVector { inner } => inner, _ => ir::TyVoid };
+      inm = el_types::elem_name(e, ie);
+      if inm != "" && el_schema::wants_vector_def(e, inm) {
+        nested = match e.p.nodes[lit] { SVecLit { items } => [for x in items if match e.p.nodes[x] { SVecLit { items: xi } => len(xi) > 0, _ => false } { x }], _ => [] };
+        if len(nested) > 0 {
+          ntok = match e.p.nodes[nested[0]!] { SVecLit { at } => at, _ => 0 };
+          el_schema::make_vector_def(e, ie, inm, el::pos_at(e, closing_bracket(e, ntok)), true, narrow_early: false);
+        }
+      }
     }
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
