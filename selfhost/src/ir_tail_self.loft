@@ -215,11 +215,9 @@ fn releases(b: ir::Bundle, ops: vector<ir::Node>, from: integer, to: integer, ep
   if frees_buffer() {
     return f;
   }
-  // A new local, not `f = [for op in f …]`: a returned local rebound from a comprehension over
-  // itself answers empty (scratchpad repro `self-comprehension-returned.loft`).
   vars = b.data.definitions[cx.dv]!.variables;
-  kept: vector<ir::Node> = [for op in f if !releases_return_buffer(b, vars, op) { op }];
-  kept
+  f = [for op in f if !releases_return_buffer(b, vars, op) { op }];
+  f
 }
 
 // One level of spans off a node: its position and its inner node.

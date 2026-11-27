@@ -2,12 +2,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @PLN91 — `src/same_read.rs` transcribed (`@FR-R-SameRead`): two equal discharged reads in one
-// statement are one read.  So far the questions other passes ask of it (`pure`, `discharge`,
-// `plain_read`, which `single_use` reads); the pass itself is not transcribed.
+// statement are one read, with the guard, get-or-insert, sequence and match clauses.  `pure`,
+// `discharge` and `plain_read` are also what `single_use` asks.
 
 use ir;
 use scope_fn;
 use ir_pass_tree;
+use lower;
+use own;
+use cgen_types;
 
 // The operator families that read or compute without writing anything.
 PURE = ["OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpLand", "OpLor", "OpEor", "OpSLeft", "OpSRight",
@@ -124,4 +127,1271 @@ pub fn pure(b: ir::Bundle, v: ir::Node) -> boolean {
     NdIf { cond, t, f } => pure(b, cond) && pure(b, t) && pure(b, f),
     _ => false
   }
+}
+
+// ---- the statement clause ------------------------------------------------------------------
+
+// port: same_read.rs fn collect — the discharge blocks of `v` a binding before the statement may
+// replace: not inside an `if` arm or another statement block.
+fn collect(v: ir::Node, out: vector<ir::Node>) {
+  match scope_fn::unspan(v) {
+    NdBlock { block: _ } => if discharge(v).t >= 0 { out += [v]; },
+    NdCall { args } => {
+      for a in args {
+        collect(a, out);
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: same_read.rs fn same_read — two plain reads, their source positions ignored.
+fn same_read(a: ir::Node, c: ir::Node) -> boolean {
+  ua = scope_fn::unspan(a);
+  uc = scope_fn::unspan(c);
+  match ua {
+    NdCall { def_nr: x, args: xa } => {
+      match uc {
+        NdCall { def_nr: y, args: ya } => {
+          if x != y || len(xa) != len(ya) {
+            return false;
+          }
+          for p in xa {
+            if !same_read(p, ya[p#index]!) {
+              return false;
+            }
+          }
+          return true;
+        },
+        _ => return false,
+      }
+    },
+    _ => {}
+  }
+  ua == uc
+}
+
+fn same(a: ir::Node, c: ir::Node) -> boolean {
+  da = discharge(a);
+  dc = discharge(c);
+  da.t >= 0 && dc.t >= 0 && same_read(da.read, dc.read) && da.conv == dc.conv && same_read(da.dflt, dc.dflt)
+}
+
+// One statement's binding: the statement as it now reads, the bindings before it, how many.
+struct Bound {
+  stmt: ir::Node,
+  before: vector<ir::Node>,
+  n: integer,
+}
+
+// port: same_read.rs fn bind_statement — the repeated reads of one statement's expression bound.
+fn bind_statement(b: ir::Bundle, f: ir::Function, scope: integer, stmt: ir::Node) -> Bound {
+  none = Bound { stmt: stmt, before: [], n: 0 };
+  match stmt {
+    // A source position is transparent: the wrapped statement is the statement.
+    NdSpan { pos, inner } => {
+      r = bind_statement(b, f, scope, inner);
+      if r.n > 0 {
+        r.stmt = ir::NdSpan { pos: pos, inner: r.stmt };
+      } else {
+        r.stmt = stmt;
+      }
+      return r;
+    },
+    NdSet { var, inner } => {
+      r = bind_expr(b, f, scope, inner);
+      if r.n > 0 {
+        r.stmt = ir::NdSet { var: var, inner: r.stmt };
+        return r;
+      }
+      return none;
+    },
+    NdReturn { inner } => {
+      r = bind_expr(b, f, scope, inner);
+      if r.n > 0 {
+        r.stmt = ir::NdReturn { inner: r.stmt };
+        return r;
+      }
+      return none;
+    },
+    NdCall { def_nr: _ } => {
+      r = bind_expr(b, f, scope, stmt);
+      if r.n > 0 {
+        return r;
+      }
+      return none;
+    },
+    _ => return none,
+  }
+}
+
+fn bind_expr(b: ir::Bundle, f: ir::Function, scope: integer, expr: ir::Node) -> Bound {
+  none = Bound { stmt: expr, before: [], n: 0 };
+  if !pure(b, expr) {
+    return none;
+  }
+  found: vector<ir::Node> = [];
+  collect(expr, found);
+  groups: vector<ir::Node> = [];
+  counts: vector<integer> = [];
+  for x in found {
+    at = -1;
+    for g in groups {
+      if at < 0 && same(g, x) {
+        at = g#index;
+      }
+    }
+    if at >= 0 {
+      counts[at] = counts[at]! + 1;
+    } else {
+      groups += [x];
+      counts += [1];
+    }
+  }
+  e = expr;
+  before: vector<ir::Node> = [];
+  bound = 0;
+  for blk in groups {
+    if counts[blk#index]! < 2 {
+      continue;
+    }
+    t_var = discharge(blk).t;
+    tp = f.variables[t_var]!.type_def[0] ?? ir::TyVoid;
+    t = ir_pass_tree::add_unique(f, "same_read", tp, scope);
+    e = replace(e, blk, t);
+    before += [ir::NdSet { var: t, inner: blk }];
+    bound += 1;
+  }
+  Bound { stmt: e, before: before, n: bound }
+}
+
+// port: same_read.rs fn replace.
+fn replace(v: ir::Node, blk: ir::Node, t: integer) -> ir::Node {
+  if same(v, blk) {
+    return ir::NdVar { n: t };
+  }
+  match v {
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { replace(a, blk, t) }] },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace(inner, blk, t) },
+    _ => v,
+  }
+}
+
+// ---- the guard clause ----------------------------------------------------------------------
+
+// port: same_read.rs fn leaves — a `return`, `break` or `continue`, or a block whose last
+// statement is one.
+fn leaves(v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdReturn { inner: _ } => true,
+    NdBreak { n: _ } => true,
+    NdContinue { n: _ } => true,
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      k = len(ops) - 1;
+      while k >= 0 && (ops[k]! is NdLine) {
+        k -= 1;
+      }
+      k >= 0 && leaves(ops[k]!)
+    },
+    _ => false,
+  }
+}
+
+// port: same_read.rs fn empty_arm — absent, or an empty block.
+fn empty_arm(v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdNull => true,
+    NdBlock { block } => {
+      for o in block[0]!.operators {
+        if !(o is NdLine) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false,
+  }
+}
+
+fn is_step(args: vector<ir::Node>) -> boolean {
+  if len(args) != 2 {
+    return false;
+  }
+  var = false;
+  lit = false;
+  for a in args {
+    u = scope_fn::unspan(a);
+    if u is NdVar {
+      var = true;
+    }
+    if u is NdInt || u is NdLong {
+      lit = true;
+    }
+  }
+  var && lit
+}
+
+// port: same_read.rs fn computed — the pure computations of `v` evaluated on every evaluation of
+// `v`, outermost first.
+fn computed(b: ir::Bundle, v: ir::Node, out: vector<ir::Node>) {
+  match scope_fn::unspan(v) {
+    NdCall { args } => {
+      not_lit = false;
+      for a in args {
+        if !(scope_fn::unspan(a) is NdInt) {
+          not_lit = true;
+        }
+      }
+      if pure(b, v) && !is_step(args) && not_lit {
+        out += [v];
+      }
+      for a in args {
+        computed(b, a, out);
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: same_read.rs fn evaluates — does `v` evaluate `e` on every evaluation?
+fn evaluates(v: ir::Node, e: ir::Node) -> boolean {
+  if same_read(v, e) {
+    return true;
+  }
+  match scope_fn::unspan(v) {
+    NdCall { args } => {
+      for a in args {
+        if evaluates(a, e) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false,
+  }
+}
+
+struct Count { n: integer }
+
+// port: same_read.rs fn replace_expr.
+fn replace_expr(v: ir::Node, e: ir::Node, t: integer, c: Count) -> ir::Node {
+  if same_read(v, e) {
+    c.n += 1;
+    return ir::NdVar { n: t };
+  }
+  match v {
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { replace_expr(a, e, t, c) }] },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_expr(inner, e, t, c) },
+    _ => v,
+  }
+}
+
+fn next_code(ops: vector<ir::Node>, at: integer) -> integer {
+  for n in at + 1..len(ops) {
+    if !(ops[n]! is NdLine) {
+      return n;
+    }
+  }
+  -1
+}
+
+fn scalar_type(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyFloat => true,
+    TySingle => true,
+    TyBoolean => true,
+    _ => false,
+  }
+}
+
+fn returned_of(b: ir::Bundle, op: integer) -> ir::TypeT {
+  b.data.definitions[op]!.returned[0] ?? ir::TyVoid
+}
+
+// One block's statements rewritten by a clause, and how many it bound.
+struct Rewritten {
+  ops: vector<ir::Node>,
+  n: integer,
+}
+
+// port: same_read.rs fn bind_guards — THE GUARD CLAUSE over one block's statements.
+fn bind_guards(b: ir::Bundle, f: ir::Function, scope: integer, ops: vector<ir::Node>) -> Rewritten {
+  out: vector<ir::Node> = [];
+  bound = 0;
+  at = 0;
+  while at < len(ops) {
+    nx = next_code(ops, at);
+    shared: vector<ir::Node> = [];
+    if nx >= 0 {
+      match scope_fn::unspan(ops[at]!) {
+        NdIf { cond, t: then_arm, f: else_arm } => {
+          match scope_fn::unspan(ops[nx]!) {
+            NdSet { inner: val } => {
+              if leaves(then_arm) && empty_arm(else_arm) {
+                cands: vector<ir::Node> = [];
+                computed(b, cond, cands);
+                // The largest the next statement repeats.
+                for cand in cands {
+                  held_it = false;
+                  for h in shared {
+                    if evaluates(h, cand) {
+                      held_it = true;
+                    }
+                  }
+                  if evaluates(val, cand) && !held_it {
+                    shared += [cand];
+                  }
+                }
+              }
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    }
+    if len(shared) == 0 {
+      out += [ops[at]!];
+      at += 1;
+      continue;
+    }
+    guard = ops[at]!;
+    after = ops[at + 1..nx + 1];
+    for e in shared {
+      op = match scope_fn::unspan(e) { NdCall { def_nr } => def_nr, _ => -1 };
+      if op < 0 {
+        continue;
+      }
+      tp = returned_of(b, op);
+      // The local takes the op's declared type whole; the scalar test reads through it.
+      if !scalar_type(tp) {
+        continue;
+      }
+      t = ir_pass_tree::add_unique(f, "same_read", tp, scope);
+      c = Count { n: 0 };
+      guard = replace_in_cond(guard, e, t, c);
+      last = len(after) - 1;
+      after[last] = replace_in_set(after[last]!, e, t, c);
+      out += [ir::NdSet { var: t, inner: e }];
+      bound += 1;
+    }
+    out += [guard];
+    out += after;
+    at = nx + 1;
+  }
+  Rewritten { ops: out, n: bound }
+}
+
+// The condition of an `if` (under one span) with `e` replaced.
+fn replace_in_cond(g: ir::Node, e: ir::Node, t: integer, c: Count) -> ir::Node {
+  match g {
+    NdIf { cond, t: th, f } => ir::NdIf { cond: replace_expr(cond, e, t, c), t: th, f: f },
+    NdSpan { pos, inner } => match inner {
+      NdIf { cond, t: th, f } => ir::NdSpan { pos: pos, inner: ir::NdIf { cond: replace_expr(cond, e, t, c), t: th, f: f } },
+      _ => g,
+    },
+    _ => g,
+  }
+}
+
+// The value of a `Set` (under one span) with `e` replaced.
+fn replace_in_set(s: ir::Node, e: ir::Node, t: integer, c: Count) -> ir::Node {
+  match s {
+    NdSet { var, inner } => ir::NdSet { var: var, inner: replace_expr(inner, e, t, c) },
+    NdSpan { pos, inner } => match inner {
+      NdSet { var, inner: v } => ir::NdSpan { pos: pos, inner: ir::NdSet { var: var, inner: replace_expr(v, e, t, c) } },
+      _ => s,
+    },
+    _ => s,
+  }
+}
+
+// ---- the get-or-insert clause --------------------------------------------------------------
+
+// port: same_read.rs fn absent_test — `if !L { … }` with no `else` and a block for its arm, `L` a
+// plain keyed read: answers `L` (`NdNull` none).
+fn absent_read(b: ir::Bundle, v: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdIf { cond, t: then_arm, f: else_arm } => {
+      if !empty_arm(else_arm) || !(scope_fn::unspan(then_arm) is NdBlock) {
+        return ir::NdNull;
+      }
+      match scope_fn::unspan(cond) {
+        NdCall { def_nr: not, args: nargs } => {
+          if len(nargs) != 1 {
+            return ir::NdNull;
+          }
+          match scope_fn::unspan(nargs[0]!) {
+            NdCall { def_nr: to_bool, args: cargs } => {
+              if len(cargs) != 1 {
+                return ir::NdNull;
+              }
+              read = cargs[0]!;
+              is_get = match scope_fn::unspan(read) { NdCall { def_nr: op } => ir_pass_tree::def_name(b, op) == "OpGetRecord", _ => false };
+              if ir_pass_tree::def_name(b, not) == "OpNot" && ir_pass_tree::def_name(b, to_bool) == "OpConvBoolFromRef" && is_get && plain_read(b, read) {
+                return read;
+              }
+              ir::NdNull
+            },
+            _ => ir::NdNull,
+          }
+        },
+        _ => ir::NdNull,
+      }
+    },
+    _ => ir::NdNull,
+  }
+}
+
+fn names_var(n: ir::Node, x: integer) -> boolean {
+  match n {
+    NdVar { n: y } => if y == x { return true; },
+    NdSet { var } => if var == x { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if names_var(k, x) {
+      return true;
+    }
+  }
+  false
+}
+
+// `v` (an arm block under its spans) with `stmt` appended to its statements.
+fn with_last(v: ir::Node, stmt: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_last(inner, stmt) },
+    NdBlock { block } => {
+      ops = [for o in block[0]!.operators { o }];
+      ops += [stmt];
+      ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ops)] }
+    },
+    _ => v,
+  }
+}
+
+// The guard `g` (an `if` under its spans) with `read` in its condition replaced by `b` and its
+// arm replaced by `arm`.
+fn with_guard(g: ir::Node, read: ir::Node, bv: integer, arm: ir::Node) -> ir::Node {
+  match g {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_guard(inner, read, bv, arm) },
+    NdIf { cond, f } => ir::NdIf { cond: replace_expr(cond, read, bv, Count { n: 0 }), t: arm, f: f },
+    _ => g,
+  }
+}
+
+// port: same_read.rs fn bind_get_or_insert — THE GET-OR-INSERT CLAUSE over one block's
+// statements.
+fn bind_get_or_insert(b: ir::Bundle, ops: vector<ir::Node>) -> Rewritten {
+  out: vector<ir::Node> = [];
+  bound = 0;
+  at = 0;
+  while at < len(ops) {
+    nx = next_code(ops, at);
+    read = absent_read(b, ops[at]!);
+    bv = -1;
+    if !(read is NdNull) && nx >= 0 {
+      match scope_fn::unspan(ops[nx]!) {
+        NdSet { var, inner: val } => if same_read(val, read) { bv = var; },
+        _ => {}
+      }
+    }
+    if bv < 0 {
+      out += [ops[at]!];
+      at += 1;
+      continue;
+    }
+    arm = match scope_fn::unspan(ops[at]!) { NdIf { t } => t, _ => ir::NdNull };
+    // The assigned variable itself is bound before the `if`, so it must not be read or written
+    // by the condition or the arm.
+    if !(scope_fn::unspan(arm) is NdBlock) || names_var(arm, bv) || names_var(ops[at]!, bv) {
+      out += [ops[at]!];
+      at += 1;
+      continue;
+    }
+    arm = with_last(arm, ir::NdSet { var: bv, inner: read });
+    // The `if` and the assignment are edited in place, so their source spans stay.
+    guard = with_guard(ops[at]!, read, bv, arm);
+    out += [ops[nx]!];
+    out += [guard];
+    for k in at + 1..nx {
+      out += [ops[k]!];
+    }
+    bound += 1;
+    at = nx + 1;
+  }
+  Rewritten { ops: out, n: bound }
+}
+
+// ---- the sequence clause -------------------------------------------------------------------
+
+// A text's two counts spelled as stdlib calls.
+fn text_count(b: ir::Bundle, op: integer) -> boolean {
+  n = ir_pass_tree::def_name(b, op);
+  n == "t_4text_len" || n == "t_4text_size"
+}
+
+// port: same_read.rs fn seq_pure — `pure`, with a text's count admitted.
+fn seq_pure(b: ir::Bundle, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => {
+      if text_count(b, def_nr) || named(b, def_nr, PURE) {
+        for a in args {
+          if !seq_pure(b, a) {
+            return false;
+          }
+        }
+        return true;
+      }
+    },
+    _ => {}
+  }
+  pure(b, v)
+}
+
+fn reads_store(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr } => if named(b, def_nr, READS) { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if reads_store(b, k) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: same_read.rs fn seq_computed — the pure computations of `v` that read a store.
+fn seq_computed(b: ir::Bundle, v: ir::Node, out: vector<ir::Node>) {
+  match scope_fn::unspan(v) {
+    NdCall { args } => {
+      if seq_pure(b, v) && !is_step(args) && reads_store(b, scope_fn::unspan(v)) {
+        out += [v];
+      }
+      for a in args {
+        seq_computed(b, a, out);
+      }
+    },
+    _ => {}
+  }
+}
+
+FIELD_SETS = ["OpSetEnum", "OpSetBoolean", "OpSetInt", "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort", "OpSetInt4", "OpSetInt4Raw", "OpSetShortRaw", "OpSetText"];
+
+// One statement of a sequence (`Step`): its kind (`STEP_*`), the variable or record, the
+// assigned value or the field write's operands after the record.
+STEP_NONE = 0;
+STEP_LINE = 1;
+STEP_ASSIGN = 2;
+STEP_FILL = 3;
+STEP_FINISH = 4;
+
+struct Step {
+  kind: integer,
+  v: integer,
+  vals: vector<ir::Node>,
+}
+
+// port: same_read.rs fn step.
+fn step(b: ir::Bundle, s: ir::Node) -> Step {
+  none = Step { kind: STEP_NONE, v: -1, vals: [] };
+  match scope_fn::unspan(s) {
+    NdLine { n: _ } => Step { kind: STEP_LINE, v: -1, vals: [] },
+    NdSet { var, inner } => if seq_pure(b, inner) { Step { kind: STEP_ASSIGN, v: var, vals: [inner] } } else { none },
+    NdCall { def_nr, args } => {
+      name = ir_pass_tree::def_name(b, def_nr);
+      if name == "OpFinishRecord" {
+        all = true;
+        for a in args {
+          if !seq_pure(b, a) {
+            all = false;
+          }
+        }
+        if all {
+          e = if len(args) > 1 { ir_pass_tree::var_of(args[1]!) ?? -1 } else { -1 };
+          return if e >= 0 { Step { kind: STEP_FINISH, v: e, vals: [] } } else { none };
+        }
+      }
+      is_set = false;
+      for fs in FIELD_SETS {
+        if fs == name {
+          is_set = true;
+        }
+      }
+      if is_set && len(args) > 1 && (scope_fn::unspan(args[1]!) is NdInt) {
+        rest = args[1..len(args)];
+        all = true;
+        for a in rest {
+          if !seq_pure(b, a) {
+            all = false;
+          }
+        }
+        if all {
+          e = ir_pass_tree::var_of(args[0]!) ?? -1;
+          return if e >= 0 { Step { kind: STEP_FILL, v: e, vals: rest } } else { none };
+        }
+      }
+      none
+    },
+    _ => none,
+  }
+}
+
+// port: same_read.rs fn record_of — the record type a local names, -1 none.
+fn record_of(t: ir::TypeT) -> integer {
+  match cgen_types::base(t) {
+    TyReference { n } => n,
+    _ => -1,
+  }
+}
+
+// port: same_read.rs fn plain_value — a scalar or a text.
+fn plain_value(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger { spec: _ } => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyText { dep: _ } => true,
+    _ => false,
+  }
+}
+
+// port: same_read.rs fn untouched.
+fn untouched(b: ir::Bundle, f: ir::Function, l: integer, minted: vector<integer>) -> boolean {
+  t = f.variables[l]!.type_def[0] ?? ir::TyVoid;
+  if plain_value(t) {
+    return true;
+  }
+  d = record_of(t);
+  if d < 0 {
+    return false;
+  }
+  for m in minted {
+    if m == d {
+      return false;
+    }
+  }
+  def = b.data.definitions[d]!;
+  if def.def_type != 5 {
+    return false;
+  }
+  for a in def.attributes {
+    if !plain_value(a.typedef[0] ?? ir::TyVoid) {
+      return false;
+    }
+  }
+  true
+}
+
+fn var_nodes(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdVar { n: l } => { out += [l]; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    var_nodes(k, out);
+  }
+}
+
+fn set_targets(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdSet { var } => { out += [var]; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    set_targets(k, out);
+  }
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// port: same_read.rs fn bind_sequences — THE SEQUENCE CLAUSE over one block's statements.
+fn bind_sequences(b: ir::Bundle, f: ir::Function, scope: integer, ops_in: vector<ir::Node>) -> Rewritten {
+  ops = [for o in ops_in { o }];
+  bind_at: vector<integer> = [];
+  bind_set: vector<ir::Node> = [];
+  // The records minted in this block before each statement, with their types.
+  fresh_v: vector<integer> = [];
+  fresh_d: vector<integer> = [];
+  for i in 0..len(ops) {
+    cands: vector<ir::Node> = [];
+    st = step(b, ops[i]!);
+    if st.kind == STEP_ASSIGN && !has(fresh_v, st.v) {
+      seq_computed(b, st.vals[0]!, cands);
+    } else if st.kind == STEP_FILL && has(fresh_v, st.v) {
+      for r in st.vals {
+        seq_computed(b, r, cands);
+      }
+    }
+    minted = [for x in fresh_d { x }];
+    kept: vector<ir::Node> = [];
+    for cand in cands {
+      skip = false;
+      for h in kept {
+        if evaluates(h, cand) {
+          skip = true;
+        }
+      }
+      if skip {
+        continue;
+      }
+      op = match scope_fn::unspan(cand) { NdCall { def_nr } => def_nr, _ => -1 };
+      if op < 0 {
+        continue;
+      }
+      tp = returned_of(b, op);
+      if !scalar_type(tp) {
+        continue;
+      }
+      reads: vector<integer> = [];
+      var_nodes(cand, reads);
+      ok = true;
+      for l in reads {
+        if !untouched(b, f, l, minted) {
+          ok = false;
+        }
+      }
+      if !ok {
+        continue;
+      }
+      // The first statement's own write: a local the computation reads ends the run.
+      s0 = step(b, ops[i]!);
+      if s0.kind == STEP_ASSIGN && has(reads, s0.v) {
+        continue;
+      }
+      users = run_users(b, ops, i + 1, cand, reads, [for x in fresh_v { x }]);
+      if len(users) == 0 {
+        continue;
+      }
+      t = ir_pass_tree::add_unique(f, "same_read", tp, scope);
+      c = Count { n: 0 };
+      ops[i] = replace_in_step(ops[i]!, cand, t, c);
+      for j in users {
+        ops[i + 1 + j] = replace_in_step(ops[i + 1 + j]!, cand, t, c);
+      }
+      bind_at += [i];
+      bind_set += [ir::NdSet { var: t, inner: cand }];
+      kept += [cand];
+    }
+    // What this statement leaves minted for the ones after it.
+    minted_here = false;
+    match scope_fn::unspan(ops[i]!) {
+      NdSet { var: e, inner: val } => {
+        is_new = match scope_fn::unspan(val) { NdCall { def_nr: op } => ir_pass_tree::def_name(b, op) == "OpNewRecord", _ => false };
+        d = record_of(f.variables[e]!.type_def[0] ?? ir::TyVoid);
+        if is_new && d >= 0 {
+          minted_here = true;
+          nv: vector<integer> = [];
+          nd: vector<integer> = [];
+          for x in fresh_v {
+            if x != e {
+              nv += [x];
+              nd += [fresh_d[x#index]!];
+            }
+          }
+          nv += [e];
+          nd += [d];
+          fresh_v = nv;
+          fresh_d = nd;
+        }
+      },
+      _ => {}
+    }
+    if !minted_here {
+      sets: vector<integer> = [];
+      set_targets(ops[i]!, sets);
+      nv: vector<integer> = [];
+      nd: vector<integer> = [];
+      for x in fresh_v {
+        if !has(sets, x) {
+          nv += [x];
+          nd += [fresh_d[x#index]!];
+        }
+      }
+      fresh_v = nv;
+      fresh_d = nd;
+    }
+  }
+  out: vector<ir::Node> = [];
+  k = 0;
+  for s in ops {
+    while k < len(bind_at) && bind_at[k]! == s#index {
+      out += [bind_set[k]!];
+      k += 1;
+    }
+    out += [s];
+  }
+  Rewritten { ops: out, n: len(bind_at) }
+}
+
+// port: same_read.rs fn run_users — the statements of `ops[from..]` that evaluate `cand` again
+// before anything can change it, as indexes from `from`.
+fn run_users(b: ir::Bundle, ops: vector<ir::Node>, from: integer, cand: ir::Node, reads: vector<integer>, live_in: vector<integer>) -> vector<integer> {
+  live = live_in;
+  users: vector<integer> = [];
+  for j in from..len(ops) {
+    s = step(b, ops[j]!);
+    if s.kind == STEP_LINE {
+      continue;
+    }
+    if s.kind == STEP_ASSIGN {
+      if evaluates(s.vals[0]!, cand) {
+        users += [j - from];
+      }
+      if has(reads, s.v) {
+        break;
+      }
+      live = [for x in live if x != s.v { x }];
+      continue;
+    }
+    if s.kind == STEP_FILL && has(live, s.v) {
+      for r in s.vals {
+        if evaluates(r, cand) {
+          users += [j - from];
+          break;
+        }
+      }
+      continue;
+    }
+    if s.kind == STEP_FINISH && has(live, s.v) {
+      continue;
+    }
+    break;
+  }
+  users
+}
+
+// port: same_read.rs fn replace_in_step — `e` replaced by local `t` in the values of statement
+// `s`.
+fn replace_in_step(s: ir::Node, e: ir::Node, t: integer, c: Count) -> ir::Node {
+  match s {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_in_step(inner, e, t, c) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: replace_expr(inner, e, t, c) },
+    NdCall { def_nr, args } => {
+      na: vector<ir::Node> = [];
+      for a in args {
+        if a#index == 0 {
+          na += [a];
+        } else {
+          r = replace_expr(a, e, t, c);
+          na += [r];
+        }
+      }
+      ir::NdCall { def_nr: def_nr, args: na }
+    },
+    _ => s,
+  }
+}
+
+// ---- the match clause ----------------------------------------------------------------------
+
+// A length a pattern test proves: `base + n <= len(subject)`, `base` -1 for a plain subject.
+struct Proved {
+  base: integer,
+  k: integer,
+}
+
+// port: same_read.rs fn elem_read — `OpGetVector(subject, size, index)` as its `(base, k)`.
+fn elem_read(b: ir::Bundle, v: ir::Node, subject: integer) -> Proved? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => {
+      if len(args) != 3 || !(args[1]! is NdInt) || ir_pass_tree::def_name(b, def_nr) != "OpGetVector" || (ir_pass_tree::var_of(args[0]!) ?? -1) != subject || !(scope_fn::unspan(args[0]!) is NdVar) {
+        return null;
+      }
+      index_of(b, args[2]!)
+    },
+    _ => null,
+  }
+}
+
+// port: same_read.rs fn index_of — `k` or `base + k` with `k >= 0`.
+fn index_of(b: ir::Bundle, idx: ir::Node) -> Proved? {
+  match scope_fn::unspan(idx) {
+    NdInt { n } => if n >= 0 { Proved { base: -1, k: n } } else { null },
+    NdCall { def_nr, args } => {
+      if ir_pass_tree::def_name(b, def_nr) != "OpAddInt" || len(args) != 2 {
+        return null;
+      }
+      bv = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => return null };
+      k = match scope_fn::unspan(args[1]!) { NdInt { n } => n, _ => return null };
+      if k >= 0 { Proved { base: bv, k: k } } else { null }
+    },
+    _ => null,
+  }
+}
+
+// port: same_read.rs fn is_len — is `v` `len(subject)`?
+fn is_len(b: ir::Bundle, v: ir::Node, subject: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => ir_pass_tree::def_name(b, def_nr) == "OpLengthVector" && len(args) == 1 && (scope_fn::unspan(args[0]!) is NdVar) && (ir_pass_tree::var_of(args[0]!) ?? -1) == subject,
+    _ => false,
+  }
+}
+
+// port: same_read.rs fn proves — the lengths a TRUE `c` proves.
+fn proves(b: ir::Bundle, c: ir::Node, subject: integer, out: vector<Proved>) {
+  match scope_fn::unspan(c) {
+    NdIf { cond, t, f } => {
+      if scope_fn::unspan(f) == ir::NdBoolean { b: false } {
+        proves(b, cond, subject, out);
+        proves(b, t, subject, out);
+      }
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 2 {
+        name = ir_pass_tree::def_name(b, def_nr);
+        if name == "OpLeInt" && is_len(b, args[1]!, subject) {
+          p = index_of(b, args[0]!);
+          if p != null {
+            out += [p!];
+          }
+        } else if name == "OpEqInt" {
+          for pair in 0..2 {
+            l = args[pair]!;
+            n = args[1 - pair]!;
+            if is_len(b, l, subject) {
+              match scope_fn::unspan(n) {
+                NdInt { n: m } => { out += [Proved { base: -1, k: m }]; },
+                _ => {}
+              }
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: same_read.rs fn one_elem — the one element `v` reads, when every element read inside it
+// is the same one.
+fn one_elem(b: ir::Bundle, v: ir::Node, subject: integer) -> Proved? {
+  seen: vector<Proved> = [];
+  if !one_walk(b, v, subject, seen) {
+    return null;
+  }
+  if len(seen) == 0 { null } else { seen[0] }
+}
+
+// False once a second, different element read is met.
+fn one_walk(b: ir::Bundle, n: ir::Node, subject: integer, seen: vector<Proved>) -> boolean {
+  u = scope_fn::unspan(n);
+  if u is NdCall {
+    e = elem_read(b, u, subject);
+    if e != null {
+      if len(seen) > 0 && (seen[0]!.base != e!.base || seen[0]!.k != e!.k) {
+        return false;
+      }
+      seen.clear();
+      seen += [e!];
+    }
+  }
+  for k in scope_fn::children(u) {
+    if !one_walk(b, k, subject, seen) {
+      return false;
+    }
+  }
+  true
+}
+
+// The match clause's groups: each repeated element computation, where it was proved, and how
+// often.
+struct Groups {
+  exprs: vector<ir::Node>,
+  at: vector<Proved>,
+  n: vector<integer>,
+  temps: vector<integer>,
+}
+
+// port: same_read.rs fn visit — the outermost integer computations of a single element in
+// `node`, each with whether the tests enclosing it prove the element in range.  With `replace`,
+// a computation a group holds is replaced by that group's local; without, it is counted.
+fn visit(b: ir::Bundle, node: ir::Node, subject: integer, facts: vector<Proved>, g: Groups, replace: boolean) -> ir::Node {
+  match node {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: visit(b, inner, subject, facts, g, replace) },
+    NdIf { cond, t, f } => {
+      nc = visit(b, cond, subject, facts, g, replace);
+      at = len(facts);
+      proves(b, cond, subject, facts);
+      nt = visit(b, t, subject, facts, g, replace);
+      while len(facts) > at {
+        facts.remove(len(facts) - 1);
+      }
+      nf = visit(b, f, subject, facts, g, replace);
+      return ir::NdIf { cond: nc, t: nt, f: nf };
+    },
+    NdCall { def_nr, args } => {
+      is_int = match cgen_types::base(returned_of(b, def_nr)) { TyInteger { spec: _ } => true, _ => false };
+      if is_int {
+        e = one_elem(b, node, subject);
+        if e != null {
+          inside = false;
+          for p in facts {
+            if p.base == e!.base && p.k > e!.k {
+              inside = true;
+            }
+          }
+          if inside {
+            gi = -1;
+            for x in g.exprs {
+              if gi < 0 && same_read(x, node) {
+                gi = x#index;
+              }
+            }
+            if replace {
+              if gi >= 0 {
+                return ir::NdVar { n: g.temps[gi]! };
+              }
+            } else if gi >= 0 {
+              g.n[gi] = g.n[gi]! + 1;
+            } else {
+              g.exprs += [node];
+              g.at += [e!];
+              g.n += [1];
+            }
+          }
+          return node;
+        }
+      }
+      return ir::NdCall { def_nr: def_nr, args: [for a in args { visit(b, a, subject, facts, g, replace) }] };
+    },
+    _ => return node,
+  }
+}
+
+// port: same_read.rs fn arm_tests — the condition of each `if` down a chain's else-spine.
+fn arm_tests(chain: ir::Node, out: vector<ir::Node>) {
+  match chain {
+    NdSpan { inner } => arm_tests(inner, out),
+    NdIf { cond, f } => {
+      out += [cond];
+      arm_tests(f, out);
+    },
+    _ => {}
+  }
+}
+
+// The chain with its arm tests replaced by `tests`, in order.
+fn with_tests(chain: ir::Node, tests: vector<ir::Node>, at: integer) -> ir::Node {
+  match chain {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_tests(inner, tests, at) },
+    NdIf { t, f } => ir::NdIf { cond: tests[at]!, t: t, f: with_tests(f, tests, at + 1) },
+    _ => chain,
+  }
+}
+
+fn count_len(b: ir::Bundle, n: ir::Node, subject: integer) -> integer {
+  c = if !(n is NdSpan) && is_len(b, n, subject) { 1 } else { 0 };
+  for k in scope_fn::children(n) {
+    c += count_len(b, k, subject);
+  }
+  c
+}
+
+// port: same_read.rs fn replace_len.
+fn replace_len(b: ir::Bundle, v: ir::Node, subject: integer, l: integer) -> ir::Node {
+  if is_len(b, v, subject) {
+    return ir::NdVar { n: l };
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for k in kids { replace_len(b, k, subject, l) }])
+}
+
+// port: same_read.rs fn bind_match_reads — THE MATCH CLAUSE; answers the block's new statements
+// and how many it bound.
+fn bind_match_reads(b: ir::Bundle, f: ir::Function, block: ir::Block) -> Rewritten {
+  ops = block.operators;
+  none = Rewritten { ops: ops, n: 0 };
+  if (env_variable("LOFT_NO_MATCH_READ") ?? "0") != "0" || block.name != "vector_match" {
+    return none;
+  }
+  first = -1;
+  last = -1;
+  for o in ops {
+    if !(o is NdLine) {
+      if first < 0 {
+        first = o#index;
+      }
+      if scope_fn::unspan(o) is NdIf {
+        last = o#index;
+      }
+    }
+  }
+  if first < 0 || last < 0 {
+    return none;
+  }
+  subject = match scope_fn::unspan(ops[first]!) { NdSet { var } => var, _ => return none };
+  if first == last {
+    return none;
+  }
+  tests: vector<ir::Node> = [];
+  arm_tests(ops[last]!, tests);
+  if len(tests) < 2 {
+    return none;
+  }
+  for t in tests {
+    if !pure(b, t) {
+      return none;
+    }
+  }
+  // Count each computation where its element is proved in range.
+  g = Groups { exprs: [], at: [], n: [], temps: [] };
+  for t in tests {
+    visit(b, t, subject, [], g, false);
+  }
+  kept = Groups { exprs: [], at: [], n: [], temps: [] };
+  for x in g.exprs {
+    if g.n[x#index]! >= 2 {
+      kept.exprs += [x];
+      kept.at += [g.at[x#index]!];
+      kept.n += [g.n[x#index]!];
+    }
+  }
+  lens = 0;
+  for t in tests {
+    lens += count_len(b, t, subject);
+  }
+  if len(kept.exprs) == 0 && lens < 2 {
+    return none;
+  }
+  // `match_bindings`.
+  len_op = lower::find(b, "OpLengthVector") ?? -1;
+  add_op = lower::find(b, "OpAddInt") ?? -1;
+  le_op = lower::find(b, "OpLeInt") ?? -1;
+  int_tp = returned_of(b, len_op);
+  len_call = ir::NdCall { def_nr: len_op, args: [ir::NdVar { n: subject }] };
+  before: vector<ir::Node> = [];
+  len_val = -1;
+  if lens >= 2 {
+    len_val = ir_pass_tree::add_unique(f, "match_len", int_tp, block.scope);
+    before += [ir::NdSet { var: len_val, inner: len_call }];
+  }
+  for e in kept.exprs {
+    p = kept.at[e#index]!;
+    need = if p.base >= 0 { ir::NdCall { def_nr: add_op, args: [ir::NdVar { n: p.base }, ir::NdInt { n: p.k + 1 }] } } else { ir::NdInt { n: p.k + 1 } };
+    ln = if len_val >= 0 { ir::NdVar { n: len_val } } else { len_call };
+    test = ir::NdCall { def_nr: le_op, args: [need, ln] };
+    tp = match e { NdCall { def_nr: op } => returned_of(b, op), _ => int_tp };
+    t = ir_pass_tree::add_unique(f, "match_read", tp, block.scope);
+    before += [ir::NdSet { var: t, inner: ir::NdIf { cond: test, t: e, f: ir::NdInt { n: 0 } } }];
+    kept.temps += [t];
+  }
+  new_tests: vector<ir::Node> = [];
+  for t in tests {
+    nt = visit(b, t, subject, [], kept, true);
+    if len_val >= 0 {
+      nt = replace_len(b, nt, subject, len_val);
+    }
+    new_tests += [nt];
+  }
+  out: vector<ir::Node> = [];
+  for o in ops {
+    if o#index == last {
+      out += before;
+      out += [with_tests(o, new_tests, 0)];
+    } else {
+      out += [o];
+    }
+  }
+  Rewritten { ops: out, n: len(before) }
+}
+
+// ---- the pass ------------------------------------------------------------------------------
+
+// port: same_read.rs fn rewrite_in — the repeated reads of every statement of every block in `v`
+// bound (children first); `c` counts them.
+fn rewrite_in(b: ir::Bundle, f: ir::Function, v: ir::Node, c: Count) -> ir::Node {
+  kids = scope_fn::children(v);
+  w = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for k in kids { rewrite_in(b, f, k, c) }]) };
+  bl = match w { NdBlock { block } => block[0]!, _ => return w };
+  out: vector<ir::Node> = [];
+  for stmt in bl.operators {
+    r = bind_statement(b, f, bl.scope, stmt);
+    c.n += r.n;
+    out += r.before;
+    out += [r.stmt];
+  }
+  g = bind_guards(b, f, bl.scope, out);
+  c.n += g.n;
+  gi = bind_get_or_insert(b, g.ops);
+  c.n += gi.n;
+  ops = gi.ops;
+  if (env_variable("LOFT_NO_SEQUENCE_READ") ?? "0") == "0" {
+    sq = bind_sequences(b, f, bl.scope, ops);
+    c.n += sq.n;
+    ops = sq.ops;
+  }
+  nb = ir_pass_tree::with_operators(bl, ops);
+  m = bind_match_reads(b, f, nb);
+  c.n += m.n;
+  ir::NdBlock { block: [ir_pass_tree::with_operators(bl, m.ops)] }
+}
+
+// The precheck: two discharged reads, an `if`, or two store reads.
+struct Pre {
+  found: integer,
+  reads: integer,
+  guard: boolean,
+}
+
+fn precheck(b: ir::Bundle, n: ir::Node, p: Pre) {
+  if p.found >= 2 || p.guard || p.reads >= 2 {
+    return;
+  }
+  if !(n is NdSpan) {
+    if discharge(n).t >= 0 {
+      p.found += 1;
+    }
+    match n {
+      NdCall { def_nr } => if named(b, def_nr, READS) { p.reads += 1; },
+      NdIf { cond: _ } => { p.guard = true; },
+      _ => {}
+    }
+  }
+  for k in scope_fn::children(n) {
+    precheck(b, k, p);
+  }
+}
+
+// port: same_read.rs fn rewrite_program — the repeated reads of every statement in the program
+// bound; answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_SAME_READ") ?? "0") != "0" {
+    return 0;
+  }
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) {
+      continue;
+    }
+    p = Pre { found: 0, reads: 0, guard: false };
+    precheck(b, d.code[0]!, p);
+    if p.found < 2 && !p.guard && p.reads < 2 {
+      continue;
+    }
+    f = b.data.definitions[d#index]!.variables;
+    c = Count { n: 0 };
+    code = rewrite_in(b, f, d.code[0]!, c);
+    if c.n > 0 {
+      b.data.definitions[d#index].code = [code];
+      ir_pass_tree::relayout(b, d#index);
+      total += c.n;
+    }
+  }
+  total
 }

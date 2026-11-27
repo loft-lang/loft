@@ -1,0 +1,1423 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `opt::hoist::element_first` transcribed (`@FR-R-ElemFirst`'s pairing, @PLN157 § V-z):
+// the temps a literal or a call builds and the ONE append that consumes each as a field of the
+// appended element, and the comprehension clause's whole rows (`comprehension_rows`).  With the
+// two scope-pass readers it asks: `Function::store_viewers` (`destination_views`) and
+// `scopes::value_view_places_depth` with `use_analysis::view_source_place_depth`.
+//
+// ⚠ `store_viewers` reads the deps every variable carries NOW: `Variable::viewed` (the deps of
+// every earlier bind on the parse's second pass) is not in the image.  The IR passes run with
+// `views: None`, so no admitted exit is skipped (`exits` is empty).
+
+use ir;
+use scope_fn;
+use cgen_types;
+use own;
+use binds;
+use opt_vr_layout;
+use opt_vr_disturb;
+use ir_pass_tree;
+
+pub const NONE = 65535;
+pub const ANY = 4294967295;
+
+// One paired temp (`ElemBind`): consumed once as the field at `field_off` of the element.
+pub struct ElemBind {
+  pub tmp: integer,
+  pub vdb: integer,
+  pub field_off: integer,
+  pub first: boolean,
+  pub from_call: boolean,
+}
+
+// One admitted element-first append (`ElemFirst`).
+pub struct ElemFirst {
+  pub out: integer,
+  pub out_tp: integer,
+  pub out_fld: integer,
+  pub elm: integer,
+  pub aliases: vector<integer>,
+  pub prealloc_size: integer,
+  pub binds: vector<ElemBind>,
+}
+
+// The pairings of one function (`ElemFirstMap`): `whole_copies` as `(comp, elm)` pairs.
+pub struct ElemFirstMap {
+  pub pairs: vector<ElemFirst>,
+  pub copy_comp: vector<integer>,
+  pub copy_elm: vector<integer>,
+}
+
+struct AppendGroup {
+  out: integer,
+  out_fld: integer,
+  out_tp: integer,
+  size: integer,
+  elm: integer,
+  app_tmp: vector<integer>,
+  app_off: vector<integer>,
+}
+
+// ---- the IR shape readers (`ir_shape`) -----------------------------------------------------
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  ir_pass_tree::def_name(b, d)
+}
+
+// `call_named`: the arguments of a call of `name` under any spans; null for any other node.
+fn call_named(b: ir::Bundle, v: ir::Node, name: text) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == name { args } else { null },
+    _ => null,
+  }
+}
+
+// `as_var(args.get(i))`, -1 for none.
+fn arg_var(args: vector<ir::Node>, i: integer) -> integer {
+  if i >= len(args) {
+    return -1;
+  }
+  ir_pass_tree::var_of(args[i]!) ?? -1
+}
+
+// `as_int(args.get(i))`, null for none.
+fn arg_int(args: vector<ir::Node>, i: integer) -> integer? {
+  if i >= len(args) {
+    return null;
+  }
+  ir_pass_tree::int_of(args[i]!)
+}
+
+// The variable THIS node names (`Value::var_named_here`), -1 for none.
+fn var_named_here(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: x } => x,
+    NdSet { var } => var,
+    NdTupleGet { var } => var,
+    NdTuplePut { var } => var,
+    NdFnRefDnr { n: x } => x,
+    NdCallRef { var } => var,
+    NdIter { var } => var,
+    NdFnRef { var } => var,
+    _ => -1,
+  }
+}
+
+// `Value::reads_var`: does any node of `n` name `v`?
+pub fn reads_var(n: ir::Node, v: integer) -> boolean {
+  if var_named_here(n) == v {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if reads_var(k, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// How many `Var(w)` nodes `n` holds.
+fn var_count(n: ir::Node, w: integer) -> integer {
+  c = match n { NdVar { n: x } => if x == w { 1 } else { 0 }, _ => 0 };
+  for k in scope_fn::children(n) {
+    c += var_count(k, w);
+  }
+  c
+}
+
+// `var_mentions`: every `Var(w)` or `Set(w, _)` in `n`.
+fn var_mentions(n: ir::Node, w: integer) -> integer {
+  c = match n { NdVar { n: x } => if x == w { 1 } else { 0 }, NdSet { var } => if var == w { 1 } else { 0 }, _ => 0 };
+  for k in scope_fn::children(n) {
+    c += var_mentions(k, w);
+  }
+  c
+}
+
+fn has_loop(n: ir::Node) -> boolean {
+  if n is NdLoop {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if has_loop(k) {
+      return true;
+    }
+  }
+  false
+}
+
+fn yields_or_parallel(n: ir::Node) -> boolean {
+  if n is NdYield || n is NdParallel {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if yields_or_parallel(k) {
+      return true;
+    }
+  }
+  false
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// The non-`Line` positions of `ops`.
+fn code_idx(ops: vector<ir::Node>) -> vector<integer> {
+  out: vector<integer> = [];
+  for o in ops {
+    if !(scope_fn::unspan(o) is NdLine) {
+      out += [o#index];
+    }
+  }
+  out
+}
+
+fn tp(f: ir::Function, v: integer) -> ir::TypeT {
+  x = f.variables[v];
+  if x == null { ir::TyVoid } else { x!.type_def[0] ?? ir::TyVoid }
+}
+
+fn is_argument(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  x != null && x!.argument
+}
+
+// ---- the schema (`Stores`) ------------------------------------------------------------------
+
+fn struct_fields(b: ir::Bundle, t: integer) -> vector<ir::DbField> {
+  if t < 0 || t >= len(b.types) {
+    return [];
+  }
+  match b.types[t]!.parts[0] ?? ir::PtBase {
+    PtStruct { fields } => fields,
+    PtEnumValue { fields } => fields,
+    _ => [],
+  }
+}
+
+fn field_position(b: ir::Bundle, t: integer, fld: integer) -> integer {
+  fs = struct_fields(b, t);
+  if fld < 0 || fld >= len(fs) { NONE } else { fs[fld]!.position }
+}
+
+fn field_type(b: ir::Bundle, t: integer, fld: integer) -> integer {
+  fs = struct_fields(b, t);
+  if fld < 0 || fld >= len(fs) { NONE } else { fs[fld]!.content }
+}
+
+fn is_vector_tp(b: ir::Bundle, t: integer) -> boolean {
+  t >= 0 && t < len(b.types) && ((b.types[t]!.parts[0] ?? ir::PtBase) is PtVector)
+}
+
+fn is_struct_tp(b: ir::Bundle, t: integer) -> boolean {
+  t >= 0 && t < len(b.types) && ((b.types[t]!.parts[0] ?? ir::PtBase) is PtStruct)
+}
+
+fn content(b: ir::Bundle, t: integer) -> integer {
+  if t < 0 || t >= len(b.types) {
+    return NONE;
+  }
+  match b.types[t]!.parts[0] ?? ir::PtBase {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content } => content,
+    PtSorted { content } => content,
+    PtIndex { content } => content,
+    PtHash { content } => content,
+    PtRadix { content } => content,
+    PtTrie { content } => content,
+    _ => NONE,
+  }
+}
+
+fn is_linked(b: ir::Bundle, t: integer) -> boolean {
+  t >= 0 && t < len(b.types) && b.types[t]!.linked
+}
+
+// ---- the scope pass's readers -----------------------------------------------------------------
+
+// `variables::Function::store_viewers` (its deps today; `viewed` is not in the image): the
+// variables that may VIEW a store `root` lives in.
+fn closure(f: ir::Function, start: integer) -> vector<boolean> {
+  n = len(f.variables);
+  seen: vector<boolean> = [for _ in 0..n { false }];
+  stack = [start];
+  while len(stack) > 0 {
+    v = stack[len(stack) - 1]!;
+    stack = stack[0..len(stack) - 1];
+    for d in own::tp_depend(f, v) {
+      if d >= 0 && d < n && !(seen[d] ?? true) {
+        seen[d] = true;
+        stack += [d];
+      }
+    }
+  }
+  seen
+}
+
+pub fn store_viewers(f: ir::Function, root: integer) -> vector<boolean> {
+  n = len(f.variables);
+  roots = closure(f, root);
+  if root >= 0 && root < n {
+    roots[root] = true;
+  }
+  from_caller = false;
+  for r in 0..n {
+    if (roots[r] ?? false) && is_argument(f, r) {
+      from_caller = true;
+    }
+  }
+  foreign: vector<boolean> = [for w in 0..n { from_caller && w != root && is_argument(f, w) && own::has_heap_dep(tp(f, w)) }];
+  out: vector<boolean> = [for _ in 0..n { false }];
+  for w in 0..n {
+    if w == root {
+      continue;
+    }
+    if foreign[w] ?? false {
+      out[w] = true;
+      continue;
+    }
+    c = closure(f, w);
+    for x in 0..n {
+      if (c[x] ?? false) && ((roots[x] ?? false) || (foreign[x] ?? false)) {
+        out[w] = true;
+        break;
+      }
+    }
+  }
+  out
+}
+
+// A place a value views: the root variable, the field (`ANY` the whole variable), the depth.
+struct VPlace {
+  v: integer,
+  f: integer,
+  depth: integer,
+}
+
+// `use_analysis::view_source_place_depth`: `projection_walk` counting the two nullable element
+// reads as projections; null for no place.
+fn view_source_place_depth(b: ir::Bundle, value: ir::Node) -> VPlace? {
+  cur = value;
+  field = ANY;
+  elems = 0;
+  in_run = false;
+  for _ in 0..100000 {
+    u = scope_fn::unspan(cur);
+    match u {
+      NdIf { cond, t, f } => {
+        sv = own::variant_check_subject(b, t, f);
+        if sv != null {
+          return VPlace { v: sv!, f: field, depth: elems };
+        }
+        if binds::tag_read_payload(b, cond, t, f) {
+          cur = t;
+          continue;
+        }
+        return null;
+      },
+      NdCall { def_nr, args } => {
+        name = def_name(b, def_nr);
+        if !(own::is_projection_op(b, def_nr) || name == "OpGetVectorNullable" || name == "OpVectorRefNullable") {
+          return null;
+        }
+        if name == "OpGetField" {
+          off = arg_int(args, 1);
+          if off != null {
+            field = if in_run && field != ANY { field + off! } else { off! };
+          }
+          in_run = true;
+        } else {
+          elems = if elems < 255 { elems + 1 } else { 255 };
+          in_run = false;
+        }
+        if len(args) == 0 {
+          return null;
+        }
+        first = args[0]!;
+        dv = discharged_variable(first);
+        next = if dv is NdNull { scope_fn::unspan(first) } else { dv };
+        match next {
+          NdVar { n } => return VPlace { v: n, f: field, depth: elems },
+          _ => { cur = next; },
+        }
+      },
+      _ => return null,
+    }
+  }
+  null
+}
+
+// `use_analysis::discharged_variable`: an `ncr` block `{ if … else null; v }` as `v`.
+fn discharged_variable(v: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "ncr" && len(bl.operators) == 2 {
+        ok_test = match scope_fn::unspan(bl.operators[0]!) { NdIf { f } => scope_fn::unspan(f) is NdNull, _ => false };
+        if ok_test && (scope_fn::unspan(bl.operators[1]!) is NdVar) {
+          return scope_fn::unspan(bl.operators[1]!);
+        }
+      }
+      ir::NdNull
+    },
+    _ => ir::NdNull,
+  }
+}
+
+// The bindings a surrounding value block made: variable and value, pairwise.
+struct Env {
+  vars: vector<integer>,
+  vals: vector<ir::Node>,
+}
+
+// `scopes::value_view_places_depth`: every place the value of a `Set` views.
+pub fn value_view_places_depth(b: ir::Bundle, value: ir::Node, f: ir::Function) -> vector<VPlace> {
+  out: vector<VPlace> = [];
+  view_place_in(b, value, f, Env { vars: [], vals: [] }, 0, out);
+  out
+}
+
+fn view_place_in(b: ir::Bundle, value: ir::Node, f: ir::Function, env: Env, depth: integer, out: vector<VPlace>) {
+  if depth > 16 || len(out) >= 8 {
+    return;
+  }
+  u = scope_fn::unspan(value);
+  match u {
+    NdIf { t, f: e } => {
+      view_place_in(b, t, f, env, depth + 1, out);
+      view_place_in(b, e, f, env, depth + 1, out);
+      return;
+    },
+    NdBlock { block } => {
+      block_tail_place(b, block[0]!.operators, f, env, depth, out);
+      return;
+    },
+    NdInsert { items } => {
+      block_tail_place(b, items, f, env, depth, out);
+      return;
+    },
+    NdVar { n: x } => {
+      k = len(env.vars) - 1;
+      while k >= 0 {
+        if env.vars[k]! == x {
+          view_place_in(b, env.vals[k]!, f, env, depth + 1, out);
+          return;
+        }
+        k -= 1;
+      }
+      return;
+    },
+    _ => {}
+  }
+  p = view_source_place_depth(b, u);
+  if p == null {
+    return;
+  }
+  c = p!.v;
+  if scope_fn::is_compiler_generated(f, c) && !((cgen_types::base(tp(f, c)) is TyVector) && len(own::tp_depend(f, c)) > 0) {
+    return;
+  }
+  for o in out {
+    if o.v == c && o.f == p!.f {
+      if p!.depth > o.depth {
+        out[o#index].depth = p!.depth;
+      }
+      return;
+    }
+  }
+  out += [VPlace { v: c, f: p!.f, depth: p!.depth }];
+}
+
+fn block_tail_place(b: ir::Bundle, ops: vector<ir::Node>, f: ir::Function, env: Env, depth: integer, out: vector<VPlace>) {
+  k = len(ops) - 1;
+  while k >= 0 && (scope_fn::unspan(ops[k]!) is NdLine) {
+    k -= 1;
+  }
+  if k < 0 {
+    return;
+  }
+  inner = Env { vars: [for x in env.vars { x }], vals: [for x in env.vals { x }] };
+  for o in ops {
+    match scope_fn::unspan(o) {
+      NdSet { var, inner: val } => {
+        inner.vars += [var];
+        inner.vals += [val];
+      },
+      _ => {}
+    }
+  }
+  view_place_in(b, ops[k]!, f, inner, depth + 1, out);
+}
+
+// port: hoist.rs fn destination_views — the variables that may VIEW an element of `out`'s
+// collection (`@FR-B-Disturb`, loft#1553), less the locals that view only another field of a
+// destination field `dest` (-1: `out` is the vector itself).
+fn destination_views(b: ir::Bundle, body: ir::Node, f: ir::Function, out: integer, dest: integer) -> vector<boolean> {
+  sv = store_viewers(f, out);
+  for w in 0..len(sv) {
+    if (sv[w] ?? false) && sibling(b, body, f, out, dest, w) {
+      sv[w] = false;
+    }
+  }
+  sv
+}
+
+fn sibling(b: ir::Bundle, body: ir::Node, f: ir::Function, out: integer, dest: integer, w: integer) -> boolean {
+  if dest < 0 {
+    return false;
+  }
+  deps = own::tp_depend(f, w);
+  if is_argument(f, w) || len(deps) != 1 || deps[0]! != out {
+    return false;
+  }
+  st = [false, true];
+  sibling_walk(b, body, f, out, dest, w, st);
+  st[0]! && st[1]!
+}
+
+fn sibling_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, out: integer, dest: integer, w: integer, st: vector<boolean>) {
+  match n {
+    NdSet { var, inner } => {
+      if var == w && !(scope_fn::unspan(inner) is NdNull) {
+        st[0] = true;
+        places = value_view_places_depth(b, scope_fn::unspan(inner), f);
+        all = len(places) > 0;
+        for p in places {
+          if !(p.v == out && p.f != ANY && p.f != dest) {
+            all = false;
+          }
+        }
+        if !all {
+          st[1] = false;
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    sibling_walk(b, k, f, out, dest, w, st);
+  }
+}
+
+// ---- the pairing --------------------------------------------------------------------------
+
+// port: hoist.rs fn lazy_buffer_guard — `if OpRefIsNull(buf) { buf = null }`, answered as `buf`
+// (-1 none).
+fn lazy_buffer_guard(b: ir::Bundle, stmt: ir::Node) -> integer {
+  match scope_fn::unspan(stmt) {
+    NdIf { cond, t, f } => {
+      if !(scope_fn::unspan(f) is NdNull) {
+        return -1;
+      }
+      ca = call_named(b, cond, "OpRefIsNull") ?? return -1;
+      buf = arg_var(ca, 0);
+      if buf < 0 {
+        return -1;
+      }
+      ok = match scope_fn::unspan(t) {
+        NdInsert { items } => only_null_set(items, buf),
+        NdBlock { block } => only_null_set(block[0]!.operators, buf),
+        NdSet { var, inner } => var == buf && (scope_fn::unspan(inner) is NdNull),
+        _ => false,
+      };
+      if ok { buf } else { -1 }
+    },
+    _ => -1,
+  }
+}
+
+fn only_null_set(ops: vector<ir::Node>, buf: integer) -> boolean {
+  if len(ops) != 1 {
+    return false;
+  }
+  match scope_fn::unspan(ops[0]!) {
+    NdSet { var, inner } => var == buf && (scope_fn::unspan(inner) is NdNull),
+    _ => false,
+  }
+}
+
+// port: hoist.rs fn fills_its_buffer — a loft-defined body with no `OpDatabase` into any
+// argument slot.
+fn fills_its_buffer(b: ir::Bundle, g: integer) -> boolean {
+  if g < 0 || g >= len(b.data.definitions) {
+    return false;
+  }
+  def = b.data.definitions[g]!;
+  if !binds::is_loft_defined(def) || !ir_pass_tree::has_body(def) {
+    return false;
+  }
+  !mints_into_argument(b, def.code[0]!, def.variables)
+}
+
+fn mints_into_argument(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  a = call_named(b, n, "OpDatabase") ?? call_named(b, n, "OpDatabaseNP") ?? [];
+  if len(a) > 0 {
+    w = arg_var(a, 0);
+    if w >= 0 && is_argument(f, w) {
+      return true;
+    }
+  }
+  for k in scope_fn::children(n) {
+    if mints_into_argument(b, k, f) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: hoist.rs fn jumps_out — a `return`, or a `break`/`continue` aimed past the loops `v`
+// itself holds.
+pub fn jumps_out(v: ir::Node) -> boolean {
+  jump_walk(v, 0)
+}
+
+fn jump_walk(v: ir::Node, depth: integer) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdReturn { inner: _ } => return true,
+    NdBreak { n } => return n >= depth,
+    NdContinue { n } => return n >= depth,
+    NdLoop { block } => {
+      for o in block[0]!.operators {
+        if jump_walk(o, depth + 1) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if jump_walk(c, depth) {
+      return true;
+    }
+  }
+  false
+}
+
+// The per-function facts every block of the walk asks.
+struct Cx {
+  d: integer,
+  f: ir::Function,
+  body: ir::Node,
+  place_on: boolean,
+  set_counts: vector<integer>,
+}
+
+// port: hoist.rs fn element_first — pair the temps with their one consuming append.
+pub fn element_first(b: ir::Bundle, d: integer) -> ElemFirstMap {
+  def = b.data.definitions[d]!;
+  f = def.variables;
+  body = def.code[0]!;
+  out_map = ElemFirstMap { pairs: [], copy_comp: [], copy_elm: [] };
+  if yields_or_parallel(body) {
+    return out_map;
+  }
+  place_on = (env_variable("LOFT_NO_ELEMENT_PLACE") ?? "0") == "0";
+  // Rebind counts, decl-style Sets excluded (the move-append convention).
+  counts: vector<integer> = [for _ in f.variables { 0 }];
+  count_sets(b, body, f, counts);
+  cx = Cx { d: d, f: f, body: body, place_on: place_on, set_counts: counts };
+  walk_blocks(b, cx, body, out_map);
+  comprehension_rows(b, cx, body, out_map);
+  // A temp or an element serving TWO admitted pairs is beyond this keying.
+  seen: vector<integer> = [];
+  for p in out_map.pairs {
+    for bd in p.binds {
+      if has(seen, bd.vdb) {
+        return ElemFirstMap { pairs: [], copy_comp: [], copy_elm: [] };
+      }
+      seen += [bd.vdb];
+    }
+  }
+  out_map
+}
+
+fn count_sets(b: ir::Bundle, n: ir::Node, f: ir::Function, counts: vector<integer>) {
+  match n {
+    NdSet { var, inner } => {
+      init = match scope_fn::unspan(inner) {
+        NdNull => true,
+        NdCall { def_nr, args } => {
+          w = arg_var(args, 0);
+          def_name(b, def_nr) == "OpGetField" && w >= 0 && w < len(f.variables) && f.variables[w]!.name.starts_with("__vdb")
+        },
+        _ => false,
+      };
+      if !init && var >= 0 && var < len(counts) {
+        counts[var] = counts[var]! + 1;
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    count_sets(b, k, f, counts);
+  }
+}
+
+// A call-filled temp's buffer serves the call alone: every other mention of it is a free or an
+// identity test.
+fn buffer_serves_one_call(b: ir::Bundle, body: ir::Node, buf: integer) -> boolean {
+  st = [0, 0, 0];
+  serve_walk(b, body, buf, st);
+  st[2]! == 1 && st[0]! == st[1]! + st[2]!
+}
+
+fn serve_walk(b: ir::Bundle, n: ir::Node, buf: integer, st: vector<integer>) {
+  match n {
+    NdVar { n: w } => if w == buf { st[0] = st[0]! + 1; },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        callee = b.data.definitions[def_nr]!;
+        nm = callee.name;
+        is_release = nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpDistinctStore" || nm == "OpRefIsNull";
+        for a in args {
+          if (ir_pass_tree::var_of(a) ?? -1) == buf && (scope_fn::unspan(a) is NdVar) {
+            if is_release {
+              st[1] = st[1]! + 1;
+            } else if binds::is_loft_defined(callee) {
+              st[2] = st[2]! + 1;
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    serve_walk(b, k, buf, st);
+  }
+}
+
+// `any_node` over the body: each `Block` (pre-order) searched for pairs.
+fn walk_blocks(b: ir::Bundle, cx: Cx, n: ir::Node, out_map: ElemFirstMap) {
+  match n {
+    NdBlock { block } => pairs_in(b, cx, block[0]!.operators, out_map),
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    walk_blocks(b, cx, k, out_map);
+  }
+}
+
+// One temp declaration of a list: its key variable, first and last code position, and the
+// call's arguments when a call fills it.
+struct Decl {
+  tmp: integer,
+  key: integer,
+  k: integer,
+  kend: integer,
+  call: boolean,
+  cargs: vector<ir::Node>,
+}
+
+fn decl_of(decls: vector<Decl>, tmp: integer) -> integer {
+  // A later insert replaces an earlier one (`HashMap::insert`).
+  at = -1;
+  for x in decls {
+    if x.tmp == tmp {
+      at = x#index;
+    }
+  }
+  at
+}
+
+// `names_out`: does `v` name the destination in a way that could reach its collection?
+fn names_out(b: ir::Bundle, cx: Cx, v: ir::Node, out: integer, out_fld: integer, out_tp: integer) -> boolean {
+  if !reads_var(v, out) {
+    return false;
+  }
+  if out_fld == 65535 {
+    return true;
+  }
+  if out_tp < 0 || out_tp > 65535 || out_fld < 0 || out_fld > 65535 {
+    return true;
+  }
+  pos = field_position(b, out_tp, out_fld);
+  pos == NONE || !opt_vr_disturb::namings_avoid_place(b, [], cx.d, v, out, pos)
+}
+
+// `dest_pos`: the destination field's byte offset, -1 none.
+fn dest_pos(b: ir::Bundle, out_fld: integer, out_tp: integer) -> integer {
+  if out_tp < 0 || out_tp > 65535 || out_fld < 0 || out_fld > 65535 || out_fld == 65535 {
+    return -1;
+  }
+  pos = field_position(b, out_tp, out_fld);
+  if pos == NONE { -1 } else { pos }
+}
+
+fn moved_by(b: ir::Bundle, cx: Cx, g: AppendGroup) -> vector<boolean> {
+  destination_views(b, cx.body, cx.f, g.out, dest_pos(b, g.out_fld, g.out_tp))
+}
+
+fn reads_view(v: ir::Node, moved: vector<boolean>, elms: vector<integer>) -> boolean {
+  for w in 0..len(moved) {
+    if (moved[w] ?? false) && !has(elms, w) && reads_var(v, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// `group_at`: one append group — (reservation +) mint + field writes + finish — starting at `k`
+// of `list`; null for none.
+fn group_at(b: ir::Bundle, cx: Cx, list: vector<ir::Node>, idx: vector<integer>, k: integer) -> AppendGroup? {
+  j = idx[k]!;
+  mint_k = 0;
+  out = -1;
+  out_fld = 65535;
+  size = 0;
+  pa = call_named(b, list[j]!, "OpPreAllocVector");
+  if pa != null {
+    out = arg_var(pa!, 0);
+    sz = arg_int(pa!, 2);
+    if out < 0 || sz == null {
+      return null;
+    }
+    if (arg_int(pa!, 1) ?? -1) != 1 || k + 1 >= len(idx) {
+      return null;
+    }
+    mint_k = k + 1;
+    size = sz!;
+  } else {
+    found = false;
+    if cx.place_on {
+      match scope_fn::unspan(list[j]!) {
+        NdSet { inner } => {
+          ma = call_named(b, inner, "OpNewRecord");
+          if ma != null {
+            o = arg_var(ma!, 0);
+            fl = arg_int(ma!, 2);
+            if o >= 0 && fl != null && fl! != 65535 {
+              mint_k = k;
+              out = o;
+              out_fld = fl!;
+              found = true;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+    if !found {
+      return null;
+    }
+  }
+  elm = -1;
+  margs: vector<ir::Node> = [];
+  match scope_fn::unspan(list[idx[mint_k]!]!) {
+    NdSet { var, inner } => {
+      elm = var;
+      margs = call_named(b, inner, "OpNewRecord") ?? return null;
+    },
+    _ => return null,
+  }
+  if arg_var(margs, 0) != out || (arg_int(margs, 2) ?? -1) != out_fld {
+    return null;
+  }
+  out_tp = arg_int(margs, 1) ?? return null;
+  if (cx.set_counts[out] ?? 0) > 0 {
+    return null;
+  }
+  if out_fld == 65535 {
+    // `out`: a plain vector whose element is a plain struct.
+    ok = match opt_vr_layout::peel_link(tp(cx.f, out)) {
+      TyVector { inner } => opt_vr_layout::plain_record_type(b, inner) >= 0,
+      _ => false,
+    };
+    if !ok {
+      return null;
+    }
+  } else {
+    // `out`: a record variable whose collection field stores plain structs INLINE.
+    if out_tp < 0 || out_tp > 65535 || out_fld < 0 {
+      return null;
+    }
+    if opt_vr_layout::plain_record_type(b, tp(cx.f, out)) < 0 || out_tp >= len(b.types) {
+      return null;
+    }
+    coll = field_type(b, out_tp, out_fld);
+    if coll == NONE || !is_vector_tp(b, coll) {
+      return null;
+    }
+    ct = content(b, coll);
+    if ct == NONE || is_linked(b, ct) || !is_struct_tp(b, ct) {
+      return null;
+    }
+  }
+  // Scan the group: paired appends, and the finish that closes it.
+  app_tmp: vector<integer> = [];
+  app_off: vector<integer> = [];
+  others: vector<integer> = [];
+  fin = false;
+  for x in mint_k + 1..len(idx) {
+    j2 = idx[x]!;
+    stmt = list[j2]!;
+    a = call_named(b, stmt, "OpSetInt4");
+    if a != null && arg_var(a!, 0) == elm {
+      continue;
+    }
+    a = call_named(b, stmt, "OpAppendVector");
+    if a != null && len(a!) > 0 {
+      ga = call_named(b, a![0]!, "OpGetField");
+      if ga != null && arg_var(ga!, 0) == elm {
+        off = arg_int(ga!, 1);
+        tmp = arg_var(a!, 1);
+        if off != null && tmp >= 0 {
+          app_tmp += [tmp];
+          app_off += [off!];
+          continue;
+        }
+      }
+    }
+    // A scalar field set on the element stays untouched.
+    match scope_fn::unspan(stmt) {
+      NdCall { def_nr, args } => {
+        if def_name(b, def_nr).starts_with("OpSet") && arg_var(args, 0) == elm {
+          continue;
+        }
+      },
+      _ => {}
+    }
+    a = call_named(b, stmt, "OpFinishRecord");
+    if a != null && arg_var(a!, 0) == out && arg_var(a!, 1) == elm {
+      fin = true;
+      break;
+    }
+    if cx.place_on && !names_out(b, cx, stmt, out, out_fld, out_tp) && !jumps_out(stmt) {
+      others += [j2];
+      continue;
+    }
+    break;
+  }
+  if !fin || len(app_tmp) == 0 {
+    return null;
+  }
+  // Nothing else in the group reaches a paired field.
+  for j2 in others {
+    if reaches_field(b, list[j2]!, elm, app_off) {
+      return null;
+    }
+  }
+  AppendGroup { out: out, out_fld: out_fld, out_tp: out_tp, size: size, elm: elm, app_tmp: app_tmp, app_off: app_off }
+}
+
+fn reaches_field(b: ir::Bundle, n: ir::Node, elm: integer, offs: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_name(b, def_nr) == "OpGetField" && arg_var(args, 0) == elm && has(offs, arg_int(args, 1) ?? -1) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if reaches_field(b, k, elm, offs) {
+      return true;
+    }
+  }
+  false
+}
+
+// `arm_group`: the group of one arm of an `if` (`out_of` its destination, -1 any): its list holds
+// a group, and nothing before it names the destination or jumps out.
+fn arm_group(b: ir::Bundle, cx: Cx, arm: ir::Node, out_of: integer) -> AppendGroup? {
+  list: vector<ir::Node> = match scope_fn::unspan(arm) {
+    NdBlock { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    _ => return null,
+  };
+  idx = code_idx(list);
+  for ak in 0..len(idx) {
+    g = group_at(b, cx, list, idx, ak);
+    if g != null {
+      if out_of >= 0 && out_of != g!.out {
+        return null;
+      }
+      moved = moved_by(b, cx, g!);
+      for x in 0..ak {
+        s = list[idx[x]!]!;
+        if names_out(b, cx, s, g!.out, g!.out_fld, g!.out_tp) || jumps_out(s) || reads_view(s, moved, [g!.elm]) {
+          return null;
+        }
+      }
+      return g;
+    }
+  }
+  null
+}
+
+// `(tmp, off)` pairs of `g` sorted.
+fn sorted_appends(g: AppendGroup) -> vector<text> {
+  keys = [for t in g.app_tmp { "{t:>8}:{g.app_off[t#index]!:>8}" }];
+  for i in 1..len(keys) {
+    j = i;
+    while j > 0 && keys[j - 1]! > keys[j]! {
+      t = keys[j - 1]!;
+      keys[j - 1] = keys[j]!;
+      keys[j] = t;
+      j -= 1;
+    }
+  }
+  keys
+}
+
+// The pairs of one statement list (the body of `element_first`'s block walk).
+fn pairs_in(b: ir::Bundle, cx: Cx, ops: vector<ir::Node>, out_map: ElemFirstMap) {
+  f = cx.f;
+  ci = code_idx(ops);
+  decls: vector<Decl> = [];
+  for k in 0..len(ci) {
+    j = ci[k]!;
+    found = false;
+    da = call_named(b, ops[j]!, "OpDatabase");
+    if da != null {
+      vdb = arg_var(da!, 0);
+      if vdb >= 0 && f.variables[vdb]!.name.starts_with("__vdb") && k + 2 < len(ci) {
+        match scope_fn::unspan(ops[ci[k + 1]!]!) {
+          NdSet { var, inner } => {
+            ga = call_named(b, inner, "OpGetField");
+            sa = call_named(b, ops[ci[k + 2]!]!, "OpSetInt4");
+            if ga != null && arg_var(ga!, 0) == vdb && sa != null && arg_var(sa!, 0) == vdb {
+              decls += [Decl { tmp: var, key: vdb, k: k, kend: k + 2, call: false, cargs: [] }];
+              found = true;
+            }
+          },
+          _ => {}
+        }
+      }
+    }
+    if found || !cx.place_on {
+      continue;
+    }
+    buf = lazy_buffer_guard(b, ops[j]!);
+    if buf < 0 || k + 1 >= len(ci) {
+      continue;
+    }
+    match scope_fn::unspan(ops[ci[k + 1]!]!) {
+      NdSet { var, inner } => {
+        match scope_fn::unspan(inner) {
+          NdCall { def_nr, args } => {
+            hi = if def_nr >= 0 && def_nr < len(b.data.definitions) { binds::hidden_return_buffer_attr(b.data.definitions[def_nr]!) } else { null };
+            deps = own::tp_depend(f, var);
+            if fills_its_buffer(b, def_nr) && hi != null && arg_var(args, hi!) == buf && len(deps) == 1 && deps[0]! == buf && buffer_serves_one_call(b, cx.body, buf) {
+              decls += [Decl { tmp: var, key: buf, k: k, kend: k + 1, call: true, cargs: args }];
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  if len(decls) == 0 {
+    return;
+  }
+  for k in 0..len(ci) {
+    j = ci[k]!;
+    groups: vector<AppendGroup> = [];
+    g0 = group_at(b, cx, ops, ci, k);
+    if g0 != null {
+      groups += [g0!];
+    } else if cx.place_on {
+      match scope_fn::unspan(ops[j]!) {
+        NdIf { cond, t, f: e } => {
+          gt = arm_group(b, cx, t, -1);
+          if gt != null {
+            ge = arm_group(b, cx, e, gt!.out);
+            if ge != null && !names_out(b, cx, cond, gt!.out, gt!.out_fld, gt!.out_tp) && !jumps_out(cond) && !reads_view(cond, moved_by(b, cx, gt!), [gt!.elm, ge!.elm]) && gt!.elm != ge!.elm && gt!.out_fld == ge!.out_fld && gt!.out_tp == ge!.out_tp && gt!.size == ge!.size && sorted_appends(gt!) == sorted_appends(ge!) {
+              groups += [gt!, ge!];
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+    if len(groups) == 0 {
+      continue;
+    }
+    g = groups[0]!;
+    out = g.out;
+    arms = len(groups);
+    pair_binds: vector<ElemBind> = [];
+    bind_k: vector<integer> = [];
+    first_decl = 1000000000;
+    sound = true;
+    for tmp in g.app_tmp {
+      off = g.app_off[tmp#index]!;
+      di = decl_of(decls, tmp);
+      if di < 0 {
+        // Under E-2 a value this list does not declare keeps its copy at the append.
+        n_same = 0;
+        for t2 in g.app_tmp {
+          if t2 == tmp {
+            n_same += 1;
+          }
+        }
+        if cx.place_on && n_same == 1 {
+          continue;
+        }
+        sound = false;
+        break;
+      }
+      dc = decls[di]!;
+      if dc.kend >= k {
+        sound = false;
+        break;
+      }
+      if dc.call {
+        bad = false;
+        for a in dc.cargs {
+          if names_out(b, cx, a, out, g.out_fld, g.out_tp) {
+            bad = true;
+          }
+        }
+        if bad {
+          sound = false;
+          break;
+        }
+      }
+      if dc.k < first_decl {
+        first_decl = dc.k;
+      }
+      pair_binds += [ElemBind { tmp: tmp, vdb: dc.key, field_off: off, first: false, from_call: dc.call }];
+      bind_k += [dc.k];
+    }
+    if !sound || len(pair_binds) == 0 {
+      continue;
+    }
+    // `out`'s own declaration must PRECEDE the first temp's.
+    od = decl_of(decls, out);
+    if od >= 0 && decls[od]!.k >= first_decl {
+      continue;
+    }
+    own_elms = [for x in groups { x.elm }];
+    moved = moved_by(b, cx, g);
+    viewed = false;
+    for x in first_decl..k {
+      if reads_view(ops[ci[x]!]!, moved, own_elms) {
+        viewed = true;
+        break;
+      }
+    }
+    if viewed {
+      continue;
+    }
+    for x in first_decl..k {
+      j2 = ci[x]!;
+      is_call_decl = false;
+      for bd in pair_binds {
+        if bd.from_call {
+          dd = decls[decl_of(decls, bd.tmp)]!;
+          if ci[dd.k]! == j2 || ci[dd.kend]! == j2 {
+            is_call_decl = true;
+          }
+        }
+      }
+      if (!is_call_decl && names_out(b, cx, ops[j2]!, out, g.out_fld, g.out_tp)) || jumps_out(ops[j2]!) {
+        sound = false;
+      }
+    }
+    if !sound {
+      continue;
+    }
+    // Whole-function reconciliation per temp.
+    for bd in pair_binds {
+      rebinds = cx.set_counts[bd.tmp] ?? 0;
+      if rebinds != (if bd.from_call { 1 } else { 0 }) {
+        sound = false;
+        continue;
+      }
+      total = var_count(cx.body, bd.tmp);
+      allowed = arms;
+      dk = decls[decl_of(decls, bd.tmp)]!.k;
+      for x in dk + 1..k {
+        allowed += var_count(ops[ci[x]!]!, bd.tmp);
+      }
+      if total != allowed {
+        sound = false;
+      }
+    }
+    if !sound {
+      continue;
+    }
+    // The FIRST temp in declaration order carries the mint (a stable sort by position).
+    order = [for x in bind_k { x#index }];
+    for i in 1..len(order) {
+      y = i;
+      while y > 0 && bind_k[order[y - 1]!]! > bind_k[order[y]!]! {
+        t = order[y - 1]!;
+        order[y - 1] = order[y]!;
+        order[y] = t;
+        y -= 1;
+      }
+    }
+    sorted: vector<ElemBind> = [];
+    for o in order {
+      bd = pair_binds[o]!;
+      sorted += [ElemBind { tmp: bd.tmp, vdb: bd.vdb, field_off: bd.field_off, first: len(sorted) == 0, from_call: bd.from_call }];
+    }
+    aliases: vector<integer> = [];
+    for x in groups {
+      if x#index > 0 {
+        aliases += [x.elm];
+      }
+    }
+    out_map.pairs += [ElemFirst { out: out, out_tp: g.out_tp, out_fld: g.out_fld, elm: g.elm, aliases: aliases, prealloc_size: g.size, binds: sorted }];
+  }
+}
+
+// ---- the comprehension clause --------------------------------------------------------------
+
+struct RowBlock {
+  inner: ir::Node,
+  vec: integer,
+  vdb: integer,
+  vtp: integer,
+}
+
+struct RowGroup {
+  out: integer,
+  elm: integer,
+  etp: integer,
+  size: integer,
+  has_size: boolean,
+}
+
+// port: hoist.rs fn comprehension_rows — a vector built by a block and appended as a WHOLE
+// element of a local vector of vectors is built in that element.
+fn comprehension_rows(b: ir::Bundle, cx: Cx, body: ir::Node, out_map: ElemFirstMap) {
+  found: vector<ElemFirst> = [];
+  comps: vector<integer> = [];
+  rows_walk(b, cx, body, found, comps);
+  for p in found {
+    clash = false;
+    for q in out_map.pairs {
+      for bd in q.binds {
+        if bd.vdb == p.binds[0]!.vdb {
+          clash = true;
+        }
+      }
+      if q.elm == p.elm || has(q.aliases, p.elm) {
+        clash = true;
+      }
+    }
+    if clash {
+      continue;
+    }
+    out_map.copy_comp += [comps[p#index]!];
+    out_map.copy_elm += [p.elm];
+    out_map.pairs += [p];
+  }
+}
+
+fn rows_walk(b: ir::Bundle, cx: Cx, n: ir::Node, found: vector<ElemFirst>, comps: vector<integer>) {
+  ops: vector<ir::Node> = match n {
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    _ => [],
+  };
+  if n is NdBlock || n is NdLoop {
+    idx = code_idx(ops);
+    for ki in 0..len(idx) {
+      match scope_fn::unspan(ops[idx[ki]!]!) {
+        NdSet { var, inner } => {
+          row = comprehension_block(b, cx.f, inner);
+          if row == null {
+            continue;
+          }
+          group = row_append_group(b, ops, idx, ki, var, row!.vtp);
+          if group == null {
+            continue;
+          }
+          if !admit_row(b, cx, ops[idx[ki]!]!, row!, group!, var) {
+            continue;
+          }
+          size = if group!.has_size { group!.size } else if group!.etp >= 0 && group!.etp < len(b.types) { b.types[group!.etp]!.size } else { 0 };
+          found += [ElemFirst { out: group!.out, out_tp: group!.etp, out_fld: 65535, elm: group!.elm, aliases: [], prealloc_size: size, binds: [ElemBind { tmp: row!.vec, vdb: row!.vdb, field_off: 0, first: true, from_call: false }] }];
+          comps += [var];
+        },
+        _ => {}
+      }
+    }
+  }
+  for k in scope_fn::children(n) {
+    rows_walk(b, cx, k, found, comps);
+  }
+}
+
+// port: hoist.rs fn comprehension_block — the block a bind's value descends to, when its value
+// is a vector declared through a `__vdb` buffer.
+fn comprehension_block(b: ir::Bundle, f: ir::Function, value: ir::Node) -> RowBlock? {
+  inner = scope_fn::unspan(value);
+  for _ in 0..100000 {
+    nxt = match inner {
+      NdBlock { block } => {
+        ops = block[0]!.operators;
+        if len(ops) > 0 && (scope_fn::unspan(ops[len(ops) - 1]!) is NdBlock) { scope_fn::unspan(ops[len(ops) - 1]!) } else { ir::NdNull }
+      },
+      _ => ir::NdNull,
+    };
+    if nxt is NdNull {
+      break;
+    }
+    inner = nxt;
+  }
+  vops: vector<ir::Node> = match inner {
+    NdBlock { block } => block[0]!.operators,
+    _ => return null,
+  };
+  if len(vops) == 0 {
+    return null;
+  }
+  vec = ir_pass_tree::var_of(vops[len(vops) - 1]!) ?? return null;
+  code: vector<ir::Node> = [];
+  for o in vops {
+    if !(scope_fn::unspan(o) is NdLine) {
+      code += [o];
+    }
+  }
+  di = -1;
+  for o in code {
+    if call_named(b, o, "OpDatabase") != null || call_named(b, o, "OpDatabaseNP") != null {
+      di = o#index;
+      break;
+    }
+  }
+  if di < 0 {
+    return null;
+  }
+  dargs = call_named(b, code[di]!, "OpDatabase") ?? call_named(b, code[di]!, "OpDatabaseNP") ?? return null;
+  vdb = arg_var(dargs, 0);
+  if vdb < 0 || !f.variables[vdb]!.name.starts_with("__vdb") || di + 1 >= len(code) {
+    return null;
+  }
+  vtp = -1;
+  match scope_fn::unspan(code[di + 1]!) {
+    NdSet { var, inner: x } => {
+      ga = call_named(b, x, "OpGetField") ?? return null;
+      if var != vec || arg_var(ga, 0) != vdb || (arg_int(ga, 1) ?? -1) != 0 || !(scope_fn::unspan(ga[1] ?? ir::NdNull) is NdInt) {
+        return null;
+      }
+      vtp = arg_int(ga, 2) ?? return null;
+    },
+    _ => return null,
+  }
+  RowBlock { inner: inner, vec: vec, vdb: vdb, vtp: vtp }
+}
+
+// port: hoist.rs fn row_append_group — the append group that consumes the row bound to `comp`.
+fn row_append_group(b: ir::Bundle, ops: vector<ir::Node>, idx: vector<integer>, ki: integer, comp: integer, vtp: integer) -> RowGroup? {
+  gi = ki + 1;
+  size = 0;
+  has_size = false;
+  if gi < len(idx) {
+    pa = call_named(b, ops[idx[gi]!]!, "OpPreAllocVector");
+    if pa != null {
+      sz = arg_int(pa!, 2);
+      if sz != null {
+        size = sz!;
+        has_size = true;
+      }
+      gi += 1;
+    }
+  }
+  if gi >= len(idx) {
+    return null;
+  }
+  elm = -1;
+  out = -1;
+  etp = -1;
+  match scope_fn::unspan(ops[idx[gi]!]!) {
+    NdSet { var, inner } => {
+      margs = call_named(b, inner, "OpNewRecord") ?? return null;
+      out = arg_var(margs, 0);
+      t = arg_int(margs, 1);
+      fl = arg_int(margs, 2);
+      if out < 0 || t == null || fl == null || fl! != 65535 {
+        return null;
+      }
+      etp = t!;
+      elm = var;
+    },
+    _ => return null,
+  }
+  gi += 1;
+  if gi < len(idx) {
+    a = call_named(b, ops[idx[gi]!]!, "OpSetInt4");
+    if a != null && arg_var(a!, 0) == elm && (arg_int(a!, 1) ?? -1) == 0 {
+      gi += 1;
+    }
+  }
+  copies = false;
+  if gi < len(idx) {
+    a = call_named(b, ops[idx[gi]!]!, "OpCopyRecord");
+    copies = a != null && arg_var(a!, 0) == comp && arg_var(a!, 1) == elm && (arg_int(a!, 2) ?? -1) == vtp;
+  }
+  finishes = false;
+  if gi + 1 < len(idx) {
+    a = call_named(b, ops[idx[gi + 1]!]!, "OpFinishRecord");
+    finishes = a != null && arg_var(a!, 0) == out && arg_var(a!, 1) == elm;
+  }
+  if !(copies && finishes) {
+    return null;
+  }
+  RowGroup { out: out, elm: elm, etp: etp, size: size, has_size: has_size }
+}
+
+// `decl_and_free_mentions`: `w`'s null declarations and frees.
+fn decl_and_free_mentions(b: ir::Bundle, n: ir::Node, w: integer) -> integer {
+  c = match n {
+    NdSet { var, inner } => if var == w && (scope_fn::unspan(inner) is NdNull) { 1 } else { 0 },
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if (nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpClear") && arg_var(args, 0) == w { 1 } else { 0 }
+    },
+    _ => 0,
+  };
+  for k in scope_fn::children(n) {
+    c += decl_and_free_mentions(b, k, w);
+  }
+  c
+}
+
+// port: hoist.rs fn admit_row — the comprehension clause's admission.
+fn admit_row(b: ir::Bundle, cx: Cx, bind: ir::Node, row: RowBlock, group: RowGroup, comp: integer) -> boolean {
+  if !(cgen_types::base(tp(cx.f, group.out)) is TyVector) || is_argument(cx.f, group.out) {
+    return false;
+  }
+  if group.etp < 0 || group.etp > 65535 {
+    return false;
+  }
+  if var_mentions(cx.body, comp) != 2 {
+    return false;
+  }
+  if var_mentions(cx.body, row.vec) != var_mentions(row.inner, row.vec) {
+    return false;
+  }
+  if var_mentions(cx.body, row.vdb) != var_mentions(row.inner, row.vdb) + decl_and_free_mentions(b, cx.body, row.vdb) {
+    return false;
+  }
+  if !has_loop(row.inner) {
+    return false;
+  }
+  if reads_var(row.inner, group.out) || jumps_out(bind) {
+    return false;
+  }
+  moved = destination_views(b, cx.body, cx.f, group.out, -1);
+  for w in 0..len(moved) {
+    if (moved[w] ?? false) && w != group.elm && reads_var(row.inner, w) {
+      return false;
+    }
+  }
+  true
+}

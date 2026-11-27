@@ -13,6 +13,7 @@ use opt_apart_vector;
 use opt_apart_records;
 use opt_adopt;
 use ir_hoist;
+use ir_elem_pairs;
 
 // `Owner::why` of each owner.
 pub const APART = "an inline buffer's companion";
@@ -66,10 +67,6 @@ fn var_reads(n: ir::Node, out: vector<integer>) {
 
 // port: buffer_owner.rs fn owners — every owned buffer and record local of function `d`, with
 // its one owner; `apr` is the program's apart-record plan.
-//
-// NOT carried yet: `@FR-R-ElemFirst`'s claim (`hoist::element_first(…).by_vdb`).  It runs after
-// the IR's own `elem_first` pass, which leaves no pair it applied, so it claims only a pair that
-// pass declined.
 pub fn owners(b: ir::Bundle, d: integer, apr: opt_apart_records::Plan) -> Owners {
   out = Owners { vars: [], why: [] };
   def = b.data.definitions[d]!;
@@ -102,6 +99,13 @@ pub fn owners(b: ir::Bundle, d: integer, apr: opt_apart_records::Plan) -> Owners
     wrapped_reads(def.code[0] ?? ir::NdNull, lits.wrapped, in_hoisted);
     for v in in_hoisted {
       claim(out, v, LIT_HOIST);
+    }
+  }
+  // `@FR-R-ElemFirst` — a temp built inside its appended element (after the IR's own pass, a
+  // pair it declined).
+  for p in ir_elem_pairs::element_first(b, d).pairs {
+    for bd in p.binds {
+      claim(out, bd.vdb, ELEM_FIRST);
     }
   }
   a = opt_adopt::ret_adopt(b, d);

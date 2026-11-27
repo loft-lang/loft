@@ -35,7 +35,7 @@ struct Ops {
 
 // port: loop_buffer.rs fn calls_a_generator — does `n` call a function that answers a
 // generator, or yield itself?
-fn calls_a_generator(b: ir::Bundle, n: ir::Node) -> boolean {
+pub fn calls_a_generator(b: ir::Bundle, n: ir::Node) -> boolean {
   match n {
     NdYield => return true,
     NdCall { def_nr } => {

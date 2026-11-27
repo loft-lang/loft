@@ -14,15 +14,18 @@ use ir_tail_self;
 use ir_zero_count;
 use ir_exp_pow;
 use ir_forward_walk;
+use ir_same_read;
 use ir_self_replace;
 use ir_in_range;
 use ir_single_use;
 use ir_discharge_into;
 use ir_fill_loop;
 use ir_keyed_entry;
+use ir_elem_first;
 use ir_text_len;
 use ir_loop_buffer;
 use ir_complete_write;
+use ir_loop_record;
 use ir_lift_reuse;
 
 // `close_program`'s passes over `b`, in order.  Answers the functions a pass refuses by name.
@@ -50,6 +53,8 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   ir_exp_pow::rewrite_program(b);
   // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
   ir_forward_walk::rewrite_program(b);
+  // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
+  ir_same_read::rewrite_program(b);
   // `@FR-R-SelfReplace` — a vector delivered into the buffer it already is, dropped.
   ir_self_replace::rewrite_program(b);
   // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
@@ -63,6 +68,9 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   ir_fill_loop::rewrite_program(b);
   // `@FR-R-KeyedEntry` — a keyed insert written into the entry its key names.
   ir_keyed_entry::rewrite_program(b);
+  // `@FR-R-ElemFirst` — a literal-built vector appended once as a record field is built in the
+  // appended element.
+  refused += ir_elem_first::rewrite_program(b);
   // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written.
   ir_text_len::rewrite_program(b);
   // `@FR-R-LoopBuffer` — a vector local declared `[]` inside a loop keeps its store and its
@@ -71,6 +79,9 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   // `@FR-R-CompleteWrite` — a copy into a field of an element its literal just minted is flagged
   // fresh.
   ir_complete_write::rewrite_program(b);
+  // `@FR-R-LoopRecord` — a record local minted by a literal inside a loop keeps its store
+  // across the passes.
+  ir_loop_record::rewrite_program(b);
   // `@FR-R-LiftReuse` — the scalar lifts of different top-level statements share their
   // variables.  Last: it renumbers variables the passes above name.
   ir_lift_reuse::rewrite_program(b);

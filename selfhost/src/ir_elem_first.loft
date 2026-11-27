@@ -1,0 +1,498 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/elem_first.rs` transcribed (`@FR-R-ElemFirst`): a local vector built by a
+// literal and consumed once as a field of an appended record is built INSIDE the appended
+// element.  The pairing is `ir_elem_pairs::element_first`'s (`opt::hoist::element_first`); this
+// writes its answer into the IR: the append's reservation and mint at the first temp's
+// declaration, each temp bound to its element's field, and at the append the reservation, the
+// mint, the paired zeros and the paired copies gone.  Also a temp a CALL fills, an append in
+// EACH arm of an `if`, and a comprehension's row appended as a whole element.
+
+use ir;
+use scope_fn;
+use lower;
+use el;
+use el_types;
+use ir_pass_tree;
+use ir_elem_pairs;
+
+struct Ops {
+  database: integer,
+  database_np: integer,
+  copy_record: integer,
+  get_field: integer,
+  set_int4: integer,
+  pre_alloc: integer,
+  new_record: integer,
+  append_vector: integer,
+  ref_is_null: integer,
+}
+
+// What one function's rewrite does, keyed by variable (`Plan`): the literal-built temps' `__vdb`
+// witnesses, the call-filled temps' buffers with the field type their copy names, the element
+// variables (an alias included) with their pair, and the comprehension clause's whole-row
+// copies.
+struct Plan {
+  decl_var: vector<integer>,
+  decl_pi: vector<integer>,
+  decl_bi: vector<integer>,
+  buf_var: vector<integer>,
+  buf_pi: vector<integer>,
+  buf_bi: vector<integer>,
+  buf_ftp: vector<ir::Node>,
+  elm_var: vector<integer>,
+  elm_pi: vector<integer>,
+  copy_comp: vector<integer>,
+  copy_elm: vector<integer>,
+}
+
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_ELEMENT_FIRST") ?? "0") == "0" && (env_variable("LOFT_NO_IR_ELEM_FIRST") ?? "0") == "0"
+}
+
+// The last entry of `keys` equal to `k` (`HashMap::insert` keeps the last), -1 none.
+fn find(keys: vector<integer>, k: integer) -> integer {
+  at = -1;
+  for x in keys {
+    if x == k {
+      at = x#index;
+    }
+  }
+  at
+}
+
+fn elm_pair(plan: Plan, v: integer) -> integer {
+  i = find(plan.elm_var, v);
+  if i < 0 { -1 } else { plan.elm_pi[i]! }
+}
+
+fn var_of(args: vector<ir::Node>, i: integer) -> integer {
+  if i >= len(args) {
+    return -1;
+  }
+  ir_pass_tree::var_of(args[i]!) ?? -1
+}
+
+fn int_of(args: vector<ir::Node>, i: integer) -> integer? {
+  if i >= len(args) {
+    return null;
+  }
+  ir_pass_tree::int_of(args[i]!)
+}
+
+fn has_call(n: ir::Node, op: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == op { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if has_call(k, op) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: elem_first.rs fn rewrite_program — every admitted pair of the program rewritten; answers
+// how many, and the functions whose pairing names a declaration the IR form does not find (an
+// internal compiler error in Rust).
+pub fn rewrite_program(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  if !enabled() {
+    return refused;
+  }
+  ops = Ops {
+    database: lower::find(b, "OpDatabase") ?? -1,
+    database_np: lower::find(b, "OpDatabaseNP") ?? -1,
+    copy_record: lower::find(b, "OpCopyRecord") ?? -1,
+    get_field: lower::find(b, "OpGetField") ?? -1,
+    set_int4: lower::find(b, "OpSetInt4") ?? -1,
+    pre_alloc: lower::find(b, "OpPreAllocVector") ?? -1,
+    new_record: lower::find(b, "OpNewRecord") ?? -1,
+    append_vector: lower::find(b, "OpAppendVector") ?? -1,
+    ref_is_null: lower::find(b, "OpRefIsNull") ?? -1,
+  };
+  if ops.ref_is_null < 0 || ops.database < 0 || ops.get_field < 0 || ops.set_int4 < 0 || ops.pre_alloc < 0 || ops.new_record < 0 || ops.append_vector < 0 {
+    return refused;
+  }
+  for d in b.data.definitions {
+    // A native NAME is no reason to skip: a library export or a compiled stdlib function keeps
+    // the loft body a native build emits.
+    if !ir_pass_tree::has_body(d) || el::is_operator(d) || d.rust != "" {
+      continue;
+    }
+    // Every pair's element is a mint the append files.
+    if !has_call(d.code[0]!, ops.new_record) {
+      continue;
+    }
+    map = ir_elem_pairs::element_first(b, d#index);
+    if len(map.pairs) == 0 {
+      continue;
+    }
+    code = d.code[0]!;
+    plan = plan_of(code, map.pairs, ops) ?? continue;
+    plan.copy_comp = map.copy_comp;
+    plan.copy_elm = map.copy_elm;
+    code = merge_arms(code, map.pairs);
+    minted: vector<boolean> = [for _ in map.pairs { false }];
+    code = rewrite(code, map.pairs, plan, ops, minted);
+    n = 0;
+    for m in minted {
+      if m {
+        n += 1;
+      }
+    }
+    if n != len(map.pairs) {
+      refused += ["{d.name}: (R-ElemFirst) paired an append whose temp's declaration the IR form did not find"];
+      continue;
+    }
+    b.data.definitions[d#index].code = [code];
+    // Each paired temp now IS its element's field: it depends on the element.
+    f = b.data.definitions[d#index]!.variables;
+    for p in map.pairs {
+      for bd in p.binds {
+        f.variables[bd.tmp].type_def = [el_types::with_deps(f.variables[bd.tmp]!.type_def[0] ?? ir::TyVoid, [p.elm])];
+      }
+    }
+    ir_pass_tree::relayout(b, d#index);
+  }
+  refused
+}
+
+// port: elem_first.rs fn plan_of — what the rewrite does with `pairs`; null when a call-filled
+// temp's copy names no field type.
+fn plan_of(code: ir::Node, pairs: vector<ir_elem_pairs::ElemFirst>, ops: Ops) -> Plan? {
+  plan = Plan { decl_var: [], decl_pi: [], decl_bi: [], buf_var: [], buf_pi: [], buf_bi: [], buf_ftp: [], elm_var: [], elm_pi: [], copy_comp: [], copy_elm: [] };
+  for p in pairs {
+    pi = p#index;
+    plan.elm_var += [p.elm];
+    plan.elm_pi += [pi];
+    for a in p.aliases {
+      plan.elm_var += [a];
+      plan.elm_pi += [pi];
+    }
+    for bd in p.binds {
+      if bd.from_call {
+        ftp = copy_field_type(code, ops, plan, pi, bd) ?? continue;
+        plan.buf_var += [bd.vdb];
+        plan.buf_pi += [pi];
+        plan.buf_bi += [bd#index];
+        plan.buf_ftp += [ftp];
+      } else {
+        plan.decl_var += [bd.vdb];
+        plan.decl_pi += [pi];
+        plan.decl_bi += [bd#index];
+      }
+    }
+  }
+  for p in pairs {
+    for bd in p.binds {
+      if bd.from_call && find(plan.buf_var, bd.vdb) < 0 {
+        return null;
+      }
+    }
+  }
+  plan
+}
+
+// port: elem_first.rs fn copy_field_type — the field type a call-filled temp's paired copy names.
+fn copy_field_type(code: ir::Node, ops: Ops, plan: Plan, pi: integer, bd: ir_elem_pairs::ElemBind) -> ir::Node? {
+  found: vector<ir::Node> = [];
+  ftp_walk(code, ops, plan, pi, bd, found);
+  if len(found) == 0 { null } else { found[len(found) - 1] }
+}
+
+fn ftp_walk(n: ir::Node, ops: Ops, plan: Plan, pi: integer, bd: ir_elem_pairs::ElemBind, found: vector<ir::Node>) {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == ops.append_vector && var_of(args, 1) == bd.tmp && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdCall { def_nr: gf, args: ga } => {
+            if gf == ops.get_field && elm_pair(plan, var_of(ga, 0)) == pi && (int_of(ga, 1) ?? -1) == bd.field_off && len(ga) > 2 {
+              found += [ga[2]!];
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    ftp_walk(k, ops, plan, pi, bd, found);
+  }
+}
+
+// port: elem_first.rs fn merge_arms — a joined append's other arms name the minted element.
+fn merge_arms(code: ir::Node, pairs: vector<ir_elem_pairs::ElemFirst>) -> ir::Node {
+  c = code;
+  for p in pairs {
+    for a in p.aliases {
+      c = replace_var(c, a, ir::NdVar { n: p.elm });
+    }
+  }
+  c
+}
+
+// port: elem_first.rs fn replace_var — every `Var(buf)` (its spans with it) replaced by `place`.
+fn replace_var(v: ir::Node, buf: integer, place: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdVar { n } => if n == buf { return place; },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for k in kids { replace_var(k, buf, place) }])
+}
+
+// port: elem_first.rs fn rewrite — the statements of every block under `v` (a block under its
+// spans, and again as the span's child, as `unspan_mut` and `for_each_child_mut` reach it).
+fn rewrite(v: ir::Node, pairs: vector<ir_elem_pairs::ElemFirst>, plan: Plan, ops: Ops, minted: vector<boolean>) -> ir::Node {
+  w = with_statements(v, pairs, plan, ops, minted);
+  kids = scope_fn::children(w);
+  if len(kids) == 0 {
+    return w;
+  }
+  ir_pass_tree::with_children(w, [for k in kids { rewrite(k, pairs, plan, ops, minted) }])
+}
+
+fn with_statements(v: ir::Node, pairs: vector<ir_elem_pairs::ElemFirst>, plan: Plan, ops: Ops, minted: vector<boolean>) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_statements(inner, pairs, plan, ops, minted) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, statements(block[0]!.operators, pairs, plan, ops, minted))] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, statements(block[0]!.operators, pairs, plan, ops, minted))] },
+    _ => v,
+  }
+}
+
+fn statements(old: vector<ir::Node>, pairs: vector<ir_elem_pairs::ElemFirst>, plan: Plan, ops: Ops, minted: vector<boolean>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  i = 0;
+  while i < len(old) {
+    i += statement(old, i, pairs, plan, ops, minted, out);
+  }
+  out
+}
+
+fn has_off(p: ir_elem_pairs::ElemFirst, off: integer?) -> boolean {
+  if off == null {
+    return false;
+  }
+  for bd in p.binds {
+    if bd.field_off == off! {
+      return true;
+    }
+  }
+  false
+}
+
+// port: elem_first.rs fn statement — `stmts[at]` (or what replaces it) into `out`; answers how
+// many statements it consumed.
+fn statement(stmts: vector<ir::Node>, at: integer, pairs: vector<ir_elem_pairs::ElemFirst>, plan: Plan, ops: Ops, minted: vector<boolean>, out: vector<ir::Node>) -> integer {
+  stmt = stmts[at]!;
+  match scope_fn::unspan(stmt) {
+    NdCall { def_nr, args } => {
+      // A temp's declaration.
+      if def_nr == ops.database || def_nr == ops.database_np {
+        return declaration(stmts, at, args, pairs, plan, ops, minted, out);
+      }
+      // The append's reservation, when the next statement is a paired mint.
+      if def_nr == ops.pre_alloc && (int_of(args, 1) ?? -1) == 1 {
+        paired = false;
+        for x in at + 1..len(stmts) {
+          nx = scope_fn::unspan(stmts[x]!);
+          if nx is NdLine {
+            continue;
+          }
+          match nx {
+            NdSet { var, inner } => {
+              if elm_pair(plan, var) >= 0 {
+                match scope_fn::unspan(inner) {
+                  NdCall { def_nr: md, args: ma } => paired = md == ops.new_record && var_of(ma, 0) == var_of(args, 0),
+                  _ => {}
+                }
+              }
+            },
+            _ => {}
+          }
+          break;
+        }
+        if !paired {
+          out += [stmt];
+        }
+        return 1;
+      }
+      // The paired zeros on the element.
+      if def_nr == ops.set_int4 {
+        pi = elm_pair(plan, var_of(args, 0));
+        if pi >= 0 && has_off(pairs[pi]!, int_of(args, 1)) {
+          return 1;
+        }
+      }
+      // The comprehension clause's whole-row copy: the row was built in the element.
+      if def_nr == ops.copy_record {
+        c = var_of(args, 0);
+        e = var_of(args, 1);
+        if c >= 0 && e >= 0 {
+          for cc in plan.copy_comp {
+            if cc == c && plan.copy_elm[cc#index]! == e {
+              return 1;
+            }
+          }
+        }
+      }
+      // The paired copies into the element's field.
+      if def_nr == ops.append_vector && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdCall { def_nr: gd, args: ga } => {
+            if gd == ops.get_field {
+              pi = elm_pair(plan, var_of(ga, 0));
+              if pi >= 0 && has_off(pairs[pi]!, int_of(ga, 1)) {
+                return 1;
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    // A call-filled temp's lazy buffer guard: the buffer is never minted, and the element is,
+    // when this temp carries the mint.
+    NdIf { cond } => {
+      match scope_fn::unspan(cond) {
+        NdCall { def_nr, args: ca } => {
+          if def_nr == ops.ref_is_null {
+            bi_at = find(plan.buf_var, var_of(ca, 0));
+            if bi_at >= 0 {
+              pi = plan.buf_pi[bi_at]!;
+              if pairs[pi]!.binds[plan.buf_bi[bi_at]!]!.first {
+                mint(pairs[pi]!, ops, out);
+                minted[pi] = true;
+              }
+              return 1;
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    NdSet { var: tmp, inner: val } => {
+      // The call that fills the temp: handed the element's field in place of its buffer.
+      fills = false;
+      for bv in plan.buf_var {
+        k = bv#index;
+        if pairs[plan.buf_pi[k]!]!.binds[plan.buf_bi[k]!]!.tmp == tmp && ir_elem_pairs::reads_var(stmt, bv) {
+          fills = true;
+        }
+      }
+      if fills {
+        nv = val;
+        for bv in plan.buf_var {
+          k = bv#index;
+          p = pairs[plan.buf_pi[k]!]!;
+          bd = p.binds[plan.buf_bi[k]!]!;
+          if bd.tmp == tmp {
+            place = ir::NdCall { def_nr: ops.get_field, args: [ir::NdVar { n: p.elm }, ir::NdInt { n: bd.field_off }, plan.buf_ftp[k]!] };
+            nv = replace_var(nv, bv, place);
+          }
+        }
+        out += [set_value(stmt, nv)];
+        return 1;
+      }
+      // The append's mint and the element's null pre-init — and another arm's element's.
+      if elm_pair(plan, tmp) >= 0 {
+        drop = match scope_fn::unspan(val) {
+          NdNull => true,
+          NdCall { def_nr } => def_nr == ops.new_record,
+          _ => false,
+        };
+        if drop {
+          return 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  out += [stmt];
+  1
+}
+
+// `stmt` (a `Set` under its spans) with its value replaced by `val`.
+fn set_value(stmt: ir::Node, val: ir::Node) -> ir::Node {
+  match stmt {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: set_value(inner, val) },
+    NdSet { var } => ir::NdSet { var: var, inner: val },
+    _ => stmt,
+  }
+}
+
+// port: elem_first.rs fn mint — the append's reservation and mint at the first temp's
+// declaration, and a zero for every paired field's vector handle.
+fn mint(p: ir_elem_pairs::ElemFirst, ops: Ops, out: vector<ir::Node>) {
+  if p.out_fld == 65535 {
+    out += [ir::NdCall { def_nr: ops.pre_alloc, args: [ir::NdVar { n: p.out }, ir::NdInt { n: 1 }, ir::NdInt { n: p.prealloc_size }] }];
+  }
+  out += [ir::NdSet { var: p.elm, inner: ir::NdCall { def_nr: ops.new_record, args: [ir::NdVar { n: p.out }, ir::NdInt { n: p.out_tp }, ir::NdInt { n: p.out_fld }] } }];
+  for bd in p.binds {
+    out += [ir::NdCall { def_nr: ops.set_int4, args: [ir::NdVar { n: p.elm }, ir::NdInt { n: bd.field_off }, ir::NdInt { n: 0 }] }];
+  }
+}
+
+// port: elem_first.rs fn declaration — a temp's declaration `OpDatabase(vdb, …) · t =
+// OpGetField(vdb, 0, ftp) · OpSetInt4(vdb, 0, 0)`: the element's mint (the first temp), then
+// the field-slot bind.  Answers how many statements it consumed.
+fn declaration(stmts: vector<ir::Node>, at: integer, args: vector<ir::Node>, pairs: vector<ir_elem_pairs::ElemFirst>, plan: Plan, ops: Ops, minted: vector<boolean>, out: vector<ir::Node>) -> integer {
+  stmt = stmts[at]!;
+  k = find(plan.decl_var, var_of(args, 0));
+  if k < 0 {
+    out += [stmt];
+    return 1;
+  }
+  pi = plan.decl_pi[k]!;
+  p = pairs[pi]!;
+  bd = p.binds[plan.decl_bi[k]!]!;
+  vdb = bd.vdb;
+  if at + 1 >= len(stmts) {
+    out += [stmt];
+    return 1;
+  }
+  ftp: ir::Node = ir::NdInt { n: 0 };
+  ok = false;
+  match scope_fn::unspan(stmts[at + 1]!) {
+    NdSet { var: tmp, inner: bind } => {
+      match scope_fn::unspan(bind) {
+        NdCall { def_nr: gf, args: gargs } => {
+          if gf == ops.get_field && var_of(gargs, 0) == vdb && tmp == bd.tmp {
+            ok = true;
+            if len(gargs) > 2 {
+              ftp = gargs[2]!;
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  if !ok {
+    out += [stmt];
+    return 1;
+  }
+  if bd.first {
+    mint(p, ops, out);
+    minted[pi] = true;
+  }
+  out += [ir::NdSet { var: bd.tmp, inner: ir::NdCall { def_nr: ops.get_field, args: [ir::NdVar { n: p.elm }, ir::NdInt { n: bd.field_off }, ftp] } }];
+  // The declaration's length reset on the witness goes with it.
+  reset = false;
+  if at + 2 < len(stmts) {
+    match scope_fn::unspan(stmts[at + 2]!) {
+      NdCall { def_nr, args: ra } => reset = def_nr == ops.set_int4 && var_of(ra, 0) == vdb,
+      _ => {}
+    }
+  }
+  if reset { 3 } else { 2 }
+}
