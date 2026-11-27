@@ -29,6 +29,13 @@ Per restriction:
 3. **Can we lift it** — what the lift costs, and what it would break.  A lift that reopens a
    decision is the owner's call.
 
+**Evidence comes from the implementation corpus, not the specs** — the same footing as the
+speed tests, which are built from the routines real libraries and programs contain
+(PERF_PORTAL.md, PERFORMANCE.md: a rule is *"never built for the bench alone, only for a shape
+real programs use"*).  Whether a restriction bites, and whether a cost is owed, is read from
+what the consumers and the libraries actually write: a form nobody writes is not natural, and
+a gap in it is deferred (goal F), however large the probe measures it.
+
 The probes in [`probes/`](probes/) are the evidence for the verdicts, not tests; tests are
 written where a lift needs them.  A lift that removes a restriction also removes its refusal and
 the doc lines that describe it.
