@@ -50,7 +50,8 @@ this order: `DERIVED` (it touches only derived artefacts), `DUP` (an earlier sou
 subject), `HERE` (its diff applies in reverse to this tree, file by file), `SUBJECT` (this
 branch has a commit of that subject — a sibling's pick of our own work, resolved against its
 tree), `SQUASHED` (a squash on the base lists it as a `* <subject>` line), `WIP` (a `wip` /
-`fixup!` / `squash!` checkpoint, which ends what the join takes from that source), `UNDONE-PAIR`
+`fixup!` / `squash!` checkpoint, left out while the rest of the source is taken; a commit
+that builds on it stops `apply` at its conflict, where it is resolved or dropped), `UNDONE-PAIR`
 (a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
 whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 
@@ -59,12 +60,11 @@ newest of its commits that a squash on the base lists, read from every squash si
 left the base.  A squash of the branch itself carries its tree, so a commit up to that point is
 in — `SQUASHED` when a squash lists it, `CARRIED` when it does not (a commit the squash's body
 left out) — and the ladder classifies the commits after it.  A JOIN's squash carries only what
-the join picked: one that stopped at the source's WIP checkpoint left that checkpoint and the
-run after it out, below a squash point a later pick moved past them.  So a commit below the
-point whose diff applies forward and not in reverse, or one that changes a file such a commit
-changes, goes through the ladder as well, and its WIP rule stops the join there in plain view.
-Without the cut, a long branch stopped at its oldest WIP checkpoint and skipped everything after
-it.
+the join picked: it left the source's WIP checkpoints out (an older join left the run after one
+out too), below a squash point a later pick moved past them.  So a commit below the point
+whose diff applies forward and not in reverse, or one that changes a file such a commit
+changes, goes through the ladder as well, and its WIP checkpoints are left out there in plain
+view.
 
 The suite-backed checks of `verify` and `after.py` read the suite the tree PINS:
 `scripts/suite_pin.py` keeps an explicit `LOFT_SUITE_DIR`, else takes `../loft-suite` when it is
