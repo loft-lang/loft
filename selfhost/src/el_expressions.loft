@@ -2308,9 +2308,12 @@ pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: i
     return null;
   }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-  // (A `τ?` branch is copied arm by arm, each view where present — the sentinel where absent —
-  // as a `τ?` join is: `copy_arms`.)
-  arms: ir::Node? = if result is TyOptional { el_ex_copy::copy_arms(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, td, owned) } else { null };
+  // (A struct enum's `τ?` branch is copied arm by arm, each view where present — the sentinel
+  // where absent — as its `τ?` join is: `copy_arms`.  A record's with no null arm keeps the road
+  // below: 1990's `if i == 99 { S { a: 5 } } else { e }` under `-> S?`.)
+  // (A record's the same where an arm yields null; one with no null arm keeps the road below.)
+  if_arms = el_ir::unspan(el_ir::last(bl.operators));
+  arms: ir::Node? = if result is TyOptional && (el_convert::struct_enum(el_types::base(result)) || branch_yields_null(e, if_arms)) { el_ex_copy::copy_arms(e, vars, if_arms, rb, td, owned) } else { null };
   if arms == null {
     arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
   }
