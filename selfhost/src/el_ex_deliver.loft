@@ -2681,6 +2681,42 @@ fn returns_through_chain(x: ir::Node, v: integer) -> boolean {
   }
 }
 
+// `build_exit_arms` over a branch whose leaves are fresh literals: each leaf built into `rb`
+// (`object_into_buffer`), the `if` and its arm blocks kept as they stand.  Null where a leaf
+// cannot be built so.
+fn branch_literals_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node? {
+  if fresh_literal_ref(x) >= 0 {
+    return object_into_buffer(e, vars, x, rb, result, stage: false);
+  }
+  match x {
+    NdSpan { pos, inner } => {
+      bi = branch_literals_into_buffer(e, vars, inner, rb, result);
+      if bi == null { null } else { ir::NdSpan { pos: pos, inner: bi! } }
+    },
+    NdIf { cond, t, f } => {
+      bt = branch_literals_into_buffer(e, vars, t, rb, result);
+      if bt == null {
+        return null;
+      }
+      bf = branch_literals_into_buffer(e, vars, f, rb, result);
+      if bf == null { null } else { ir::NdIf { cond: cond, t: bt!, f: bf! } }
+    },
+    NdBlock { block } => {
+      b = block[0];
+      if len(b.operators) == 0 {
+        return null;
+      }
+      bl = branch_literals_into_buffer(e, vars, b.operators[-1]!, rb, result);
+      if bl == null {
+        return null;
+      }
+      b.operators[-1] = bl!;
+      ir::NdBlock { block: [b] }
+    },
+    _ => null
+  }
+}
+
 // Every `return` value of `n`, in source order.
 fn returns_of(n: ir::Node, out: vector<ir::Node>) {
   match n {
@@ -2706,6 +2742,12 @@ fn build_literal_exits(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer,
           return ir::NdReturn { inner: built! };
         }
       } else if exit_literal_refs(inner, []) {
+        // (A branch of literals — the tail `if` Rust turned into a `return` — has each literal leaf
+        // built into the buffer, its arm blocks keeping their own type.)
+        bb = branch_literals_into_buffer(e, vars, inner, rb, result);
+        if bb != null {
+          return ir::NdReturn { inner: bb! };
+        }
         el::refuse(e, "a mid-body `return` of a branch of literals built into the return buffer");
       }
       n

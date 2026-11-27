@@ -530,6 +530,20 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         vars.proven += cap_proof;
         b = el_ex_pattern::arm_body(e, vars, body, expected);
         forget_facts(vars, facts);
+        // (An arm read against its siblings' struct enum answers in the enum — `block_result`
+        // converts a variant tail to the expectation: `Mul { … }` after a `Num` and an `Add` arm
+        // is typed `Expr`, the arm's block too.)
+        enum_arm = false;
+        match expected {
+          TyEnum { n: xen, is_ref: xref } => {
+            if xref && !(b.tp is TyOptional) && el_ex_deliver::variant_parent(e, b.tp) == xen {
+              enum_arm = true;
+              ent = el_types::with_deps(el_types::without_deps(expected), el_types::deps(b.tp));
+              b = ex(match b.code { NdBlock { block: ebk } => if ebk[0].name == "Object" || ebk[0].name == "EnumUnitLit" { b.code } else { el_ex_null::block_typed(b.code, ent) }, _ => b.code }, ent);
+            }
+          },
+          _ => {}
+        }
         if el_types::base(b.tp) is TyVoid {
           void_arm = true;
         }
@@ -559,12 +573,15 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         }
         if len(binds) > 0 && (guard == null || binding_arm) && !(fcond != null && guard == null) {
           // The body block is typed without the store its own literal mints, as the arm is.
-          if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+          if !e.first_pass && (el_types::base(b.tp) is TyReference || enum_arm) && !(b.tp is TyOptional) {
             b.code = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(e, b.code, el_types::deps(b.tp))) }, _ => b.code };
           }
           // (An arm answering a vector literal is typed by the literal's own block, the store it
           // mints — not the match's expected type, which may name a renamed buffer.)
           atp = arm_own_tp(e, b);
+          if enum_arm {
+            atp = el_types::with_deps(el_types::without_deps(b.tp), outside_deps(e, b.code, el_types::deps(b.tp)));
+          }
           b.code = el_ir::v_block(binds + [b.code], atp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
