@@ -1559,10 +1559,14 @@ pub fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer
   if ca < 0 || attr_nr(el::def(e, e.closure_rec), "{cname}__clos") < 0 {
     return call_ref_at(e, vars, v, args);
   }
-  // (A captured function answering a record or a vector passes on what its result borrows
-  // (`fnref_result_type` through the capture): not carried yet.)
+  // (A captured function answering a record or a vector that borrows none of its parameters —
+  // a record or a vector it builds — is called the same way.  One whose result names a parameter
+  // passes on what that argument borrows (`fnref_result_type` through the capture), which a
+  // parameter or a null-bound local handed on does not resolve alike here (1323's forwarding
+  // closure): refused.  `LOFT_ELAB_REFUSE_CAPTURED_HEAP_CALL` refuses every one.)
   crt = match el_types::base(el_vars::tp(vars, v)) { TyFunction { result: cr } => el_types::base(cr), _ => ir::TyVoid };
-  if crt is TyVector || crt is TyReference {
+  crt_borrows = len(el_types::deps(crt)) > 0;
+  if (crt is TyVector || crt is TyReference) && (crt_borrows || (env_variable("LOFT_ELAB_REFUSE_CAPTURED_HEAP_CALL") ?? "") != "") {
     el::refuse(e, "a call through a captured function value answering a record or a vector");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
