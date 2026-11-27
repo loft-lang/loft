@@ -3217,15 +3217,21 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   if !e.first_pass && unrenamed && el_ex_deliver::fresh_literal_ref(x) >= 0 {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
+  // (A call through a function value answers a record of no buffer this frame knows: `ref_return`
+  // takes no decision at a `return` of one — `return f(4)` is handed up as it is.)
+  if el_ir::unspan(x) is NdCallRef {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
   // (`ref_return`'s `ls` for a literal is empty: no promotion on the first pass, and none on the
   // second where the tail renamed the buffer onto a local of its own (`r = mk(n); r`) — the
   // literal is handed up from its work ref.)
-  if el_ex_deliver::fresh_literal_ref(x) >= 0 && (e.first_pass || (!unrenamed && !starts_with(el_vars::name_of(vars, return_buffer(e, vars)), "__ref_"))) {
+  if el_ex_deliver::fresh_literal_ref(x) >= 0 && (e.first_pass || (!unrenamed && (!starts_with(el_vars::name_of(vars, return_buffer(e, vars)), "__ref_") || e.view_renamed.contains(e.context)))) {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
   // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
   // caller's: a literal is built into it as into `__retbuf`.
-  if !e.first_pass && !unrenamed && !el_ex_assign::returns_projection(e, vars.body) {
+  // (Not a buffer the tail's `MaterializeView` work ref took: there the literal keeps its own.)
+  if !e.first_pass && !unrenamed && !el_ex_assign::returns_projection(e, vars.body) && !e.view_renamed.contains(e.context) {
     cb = return_buffer(e, vars);
     if cb >= 0 && starts_with(el_vars::name_of(vars, cb), "__ref_") && !starts_with(el_vars::name_of(vars, cb), "__ref_p2_") {
       built = el_ex_deliver::object_into_buffer(e, vars, x, cb, result);
