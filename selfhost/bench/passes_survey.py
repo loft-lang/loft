@@ -40,7 +40,9 @@ def one(loft, defs, passed, std, path, tmp, env, i):
                            capture_output=True, timeout=180)
         if r.returncode != 0 or q.returncode != 0 or not os.path.exists(pre) or not os.path.exists(post):
             return "noimage", {}
-        m = subprocess.run([passed, pre, std], env=env, capture_output=True, text=True,
+        # The closed image hands `passed` the host's `Definition::native` marks (set after the
+        # scope pass, before `close_program`): see `selfhost/compare/passed.loft`.
+        m = subprocess.run([passed, pre, std, post], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)
         o = subprocess.run([defs, post, "program", std], env=env, capture_output=True, text=True,
                            errors="replace", timeout=300)

@@ -1,0 +1,829 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/value_record.rs` transcribed, its REWRITE half: a function's carriers become
+// tuples (`rewrite_function`, `Rewrite`), an admitted callee returns its tuple
+// (`rewrite_callee`, `Exits`, `literals_to_tuples`).  Rust rewrites in place under a node's
+// spans; here each node is rebuilt, a span kept around what replaced its inner node.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use opt_names;
+use ir_pass_tree;
+use ir_vr_shape;
+use ir_vr_plan;
+
+// `Function::add_unique` on definition `d`'s variables — asked through the bundle each time:
+// a `Function` kept in a struct field is a copy, and a local added to it is lost.
+fn add_unique(b: ir::Bundle, d: integer, prefix: text, t: ir::TypeT, scope: integer) -> integer {
+  ir_pass_tree::add_unique(b.data.definitions[d]!.variables, prefix, t, scope)
+}
+
+fn rec_type(key: integer) -> ir::TypeT {
+  ir::TyReference { n: ir_vr_shape::rec_of(key), dep: [] }
+}
+
+fn int(n: integer) -> ir::Node {
+  ir::NdInt { n: n }
+}
+
+fn call(op: integer, a: vector<ir::Node>) -> ir::Node {
+  ir::NdCall { def_nr: op, args: a }
+}
+
+fn var(v: integer) -> ir::Node {
+  ir::NdVar { n: v }
+}
+
+fn tget(v: integer, i: integer) -> ir::Node {
+  ir::NdTupleGet { var: v, idx: i }
+}
+
+fn vblock(ops: vector<ir::Node>, t: ir::TypeT, name: text) -> ir::Node {
+  ir::NdBlock { block: [ir_pass_tree::block(name, ops, t, 65535)] }
+}
+
+// `bind_ref`: `t` names the record `place` answers, without copying it.
+fn bind_ref(t: integer, place: ir::Node, ops: ir_vr_shape::Ops) -> vector<ir::Node> {
+  [ir::NdSet { var: t, inner: ir::NdNull }, call(ops.put_ref, [var(t), place])]
+}
+
+// `write_fields`: tuple `t` written into the record at `place`.
+fn write_fields(l: ir_vr_shape::Layout, place: ir::Node, t: integer, ops: ir_vr_shape::Ops) -> vector<ir::Node> {
+  [for o in l.offs { call(ir_vr_shape::set_op(ops, l.kinds[o#index]!), [place, int(o), tget(t, o#index)]) }]
+}
+
+// `null_tuple`: the tuple a null record reads as.
+pub fn null_tuple(l: ir_vr_shape::Layout, ops: ir_vr_shape::Ops) -> ir::Node {
+  elems: vector<ir::Node> = [];
+  for k in l.kinds {
+    if k == ir_vr_shape::K_INT {
+      elems += [ir::NdLong { n: null }];
+    } else if k == ir_vr_shape::K_FLOAT {
+      elems += [ir::NdFloat { f: null }];
+    } else if k == ir_vr_shape::K_SINGLE {
+      elems += [ir::NdSingle { f: null }];
+    } else if k == ir_vr_shape::K_BOOL {
+      elems += [ir::NdBoolean { b: false }];
+    } else {
+      elems += [call(ops.null_ref, [])];
+    }
+  }
+  if l.presence {
+    elems += [ir::NdBoolean { b: false }];
+  }
+  ir::NdTuple { items: elems }
+}
+
+// `read_place_into_tuple`: the tuple of a pure place's fields.
+fn read_place_into_tuple(place: ir::Node, l: ir_vr_shape::Layout, ops: ir_vr_shape::Ops) -> ir::Node {
+  elems: vector<ir::Node> = [for o in l.offs { call(ir_vr_shape::get_op(ops, l.kinds[o#index]!), [place, int(o)]) }];
+  if l.presence {
+    elems += [call(ops.bool_from_ref, [place])];
+  }
+  ir::NdTuple { items: elems }
+}
+
+fn read_into_tuple(x: integer, l: ir_vr_shape::Layout, ops: ir_vr_shape::Ops) -> ir::Node {
+  read_place_into_tuple(var(x), l, ops)
+}
+
+// `n` with its node under the spans replaced by `new`.
+fn respan(n: ir::Node, new: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: respan(inner, new) },
+    _ => new
+  }
+}
+
+// `body_block_mut`: the body's own block — also inside the `Insert([Set(w, null), Block])` a
+// hoisted result reference wraps it in.  The scope, -1 for none.
+fn body_scope(code: ir::Node) -> integer {
+  match code {
+    NdSpan { inner } => body_scope(inner),
+    NdBlock { block } => block[0]!.scope,
+    NdInsert { items } => {
+      if len(items) == 2 {
+        ok = match items[0]! { NdSet { inner } => inner is NdNull, _ => false };
+        if ok {
+          match items[1]! { NdBlock { block } => return block[0]!.scope, _ => {} }
+        }
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// The body block with `decls` put in front of its statements.
+fn body_prepend(code: ir::Node, decls: vector<ir::Node>) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: body_prepend(inner, decls) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, decls + block[0]!.operators)] },
+    NdInsert { items } => {
+      if len(items) == 2 && items[1]! is NdBlock {
+        ir::NdInsert { items: [items[0]!, body_prepend(items[1]!, decls)] }
+      } else {
+        code
+      }
+    },
+    _ => code
+  }
+}
+
+// One function's rewrite (`Rewrite`): `lends` as `[carrier, record local, …]`.
+struct Rw {
+  w: ir_vr_plan::World,
+  plan: ir_vr_plan::Plan,
+  twins: vector<integer>,
+  d: integer,
+  scope: integer,
+  lends: vector<integer>,
+}
+
+fn pair_get(v: vector<integer>, k: integer) -> integer {
+  i = 0;
+  while i + 1 < len(v) {
+    if v[i]! == k {
+      return v[i + 1]!;
+    }
+    i += 2;
+  }
+  -1
+}
+
+// The twin of `d`, -1 none (`twins` as `[d, twin, …]`).
+pub fn twin_of(twins: vector<integer>, d: integer) -> integer {
+  pair_get(twins, d)
+}
+
+fn carried(p: ir_vr_plan::Plan, v: integer) -> boolean {
+  ir_vr_plan::carrier(p, v) >= 0 || scope_fn::has(p.buffers, v)
+}
+
+// `dropped`: is statement `n` one the tuple form no longer needs?
+fn dropped(n: ir::Node, ops: ir_vr_shape::Ops, p: ir_vr_plan::Plan) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: r, inner } => {
+      iu = scope_fn::unspan(inner);
+      if iu is NdNull {
+        return scope_fn::has(p.buffers, r);
+      }
+      if ir_vr_shape::call_of(iu, ops.ref_alias) {
+        a = ir_vr_shape::args(iu);
+        return len(a) == 1 && scope_fn::has(p.buffers, ir_vr_shape::var_of(a[0]!)) && scope_fn::unspan(a[0]!) is NdVar;
+      }
+      false
+    },
+    NdCall { def_nr: op, args: a } => {
+      if op == ops.free_ref || op == ops.free_if_distinct {
+        return len(a) > 0 && scope_fn::unspan(a[0]!) is NdVar && carried(p, ir_vr_shape::var_of(a[0]!));
+      }
+      false
+    },
+    NdIf { cond } => {
+      c = scope_fn::unspan(cond);
+      a = ir_vr_shape::args(c);
+      if ir_vr_shape::call_of(c, ops.ref_is_null) {
+        if len(a) == 1 {
+          r = match a[0]! { NdVar { n: x } => x, _ => -1 };
+          return r >= 0 && scope_fn::has(p.buffers, r) && ir_vr_shape::is_header(u, r, ops);
+        }
+        return false;
+      }
+      if c is NdCall && len(a) > 0 {
+        bv = match scope_fn::unspan(a[0]!) { NdVar { n: x } => x, _ => -1 };
+        return bv >= 0 && scope_fn::has(p.buffers, bv) && ir_vr_shape::is_buffer_guard(u, bv, ops);
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// `Rewrite::uses`
+fn uses(b: ir::Bundle, r: Rw, n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: uses(b, r, inner) },
+    _ => {}
+  }
+  ops = r.w.ops;
+  match n {
+    NdSet { var: v, inner } => {
+      key = ir_vr_plan::carrier(r.plan, v);
+      if key >= 0 {
+        if scope_fn::unspan(inner) is NdNull {
+          return ir::NdSet { var: v, inner: null_tuple(ir_vr_plan::layout(r.w, key), ops) };
+        }
+        match scope_fn::unspan(inner) {
+          NdCall { def_nr: d, args: a } => {
+            at = ir_vr_shape::buf_at(ops, d, len(a));
+            na: vector<ir::Node> = [for x in a if x#index != at || at >= len(a) { x }];
+            t = twin_of(r.twins, d);
+            nd = if t >= 0 { t } else { d };
+            return ir::NdSet { var: v, inner: respan(inner, call(nd, call_args(b, r, nd, na))) };
+          },
+          _ => return n
+        }
+      }
+    },
+    NdCall { def_nr: op, args: a } => {
+      if (op == ops.bool_from_ref || op == ops.ref_is_null) && len(a) == 1 && scope_fn::unspan(a[0]!) is NdVar {
+        v = ir_vr_shape::var_of(a[0]!);
+        key = ir_vr_plan::carrier(r.plan, v);
+        if key >= 0 {
+          pi = ir_vr_shape::presence_at(ir_vr_plan::layout(r.w, key));
+          present = if pi >= 0 { tget(v, pi) } else { ir::NdBoolean { b: true } };
+          return if op == ops.ref_is_null { call(ops.not, [present]) } else { present };
+        }
+      }
+      if op == ops.get_field {
+        p = ir_vr_shape::place_of(n, ops);
+        if len(p) == 2 {
+          key = ir_vr_plan::carrier(r.plan, p[0]!);
+          if key >= 0 {
+            l = ir_vr_plan::layout(r.w, key);
+            i = ir_vr_shape::index_of(l, p[1]!);
+            if ir_vr_shape::kind_at(l, p[1]!) == ir_vr_shape::K_VIEW && i >= 0 {
+              return tget(p[0]!, i);
+            }
+          }
+        }
+      }
+      if ir_vr_shape::get_kind(ops, op) >= 0 && len(a) == 2 && ir_vr_shape::raw_int(a[1]!) != null {
+        p = ir_vr_shape::place_of(a[0]!, ops);
+        if len(p) == 2 {
+          key = ir_vr_plan::carrier(r.plan, p[0]!);
+          if key >= 0 {
+            i = ir_vr_shape::index_of(ir_vr_plan::layout(r.w, key), p[1]! + ir_vr_shape::raw_int(a[1]!)!);
+            if i >= 0 {
+              return tget(p[0]!, i);
+            }
+          }
+        }
+      }
+      if ir_vr_shape::set_kind(ops, op) >= 0 && len(a) == 3 && ir_vr_shape::raw_int(a[1]!) != null {
+        p = ir_vr_shape::place_of(a[0]!, ops);
+        if len(p) == 2 {
+          key = ir_vr_plan::carrier(r.plan, p[0]!);
+          if key >= 0 {
+            l = ir_vr_plan::layout(r.w, key);
+            f_at = p[1]! + ir_vr_shape::raw_int(a[1]!)!;
+            i = ir_vr_shape::index_of(l, f_at);
+            if i >= 0 {
+              value = uses(b, r, a[2]!);
+              pi = ir_vr_shape::presence_at(l);
+              if pi >= 0 {
+                return ir::NdIf {
+                  cond: tget(p[0]!, pi),
+                  t: ir::NdTuplePut { var: p[0]!, idx: i, inner: value },
+                  f: call(op, [call(ops.null_ref, []), int(f_at), value])
+                };
+              }
+              return ir::NdTuplePut { var: p[0]!, idx: i, inner: value };
+            }
+          }
+        }
+      }
+      return call(op, call_args(b, r, op, a));
+    },
+    NdBlock { block } => return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, statements(b, r, block[0]!.operators))] },
+    NdLoop { block } => return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, statements(b, r, block[0]!.operators))] },
+    NdInsert { items } => return ir::NdInsert { items: statements(b, r, items) },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for c in kids { uses(b, r, c) }])
+}
+
+// `Rewrite::statements`
+fn statements(b: ir::Bundle, r: Rw, list: vector<ir::Node>) -> vector<ir::Node> {
+  ops = r.w.ops;
+  out: vector<ir::Node> = [];
+  for o in list {
+    u = scope_fn::unspan(o);
+    if dropped(o, ops, r.plan) {
+      a = ir_vr_shape::args(u);
+      if (ir_vr_shape::call_of(u, ops.free_ref) || ir_vr_shape::call_of(u, ops.free_if_distinct)) && len(a) > 0 && scope_fn::unspan(a[0]!) is NdVar {
+        t = pair_get(r.lends, ir_vr_shape::var_of(a[0]!));
+        if t >= 0 {
+          out += [call(ops.free_ref, [var(t)])];
+        }
+      }
+      continue;
+    }
+    pc = ir_vr_shape::place_copy(u, ops);
+    if len(pc) == 2 {
+      key = ir_vr_plan::carrier(r.plan, pc[0]!);
+      if key >= 0 {
+        l = ir_vr_plan::layout(r.w, key);
+        writes = write_fields(l, var(pc[1]!), pc[0]!, ops);
+        pi = ir_vr_shape::presence_at(l);
+        if pi >= 0 {
+          out += [ir::NdIf { cond: tget(pc[0]!, pi), t: vblock(writes, ir::TyVoid, "vr_copy"), f: call(ops.copy_record, [call(ops.null_ref, []), var(pc[1]!), int(l.tp)]) }];
+        } else {
+          out += writes;
+        }
+        continue;
+      }
+    }
+    a = ir_vr_shape::args(u);
+    if ir_vr_shape::call_of(u, ops.copy_record) && len(a) == 3 && scope_fn::unspan(a[0]!) is NdVar {
+      v = ir_vr_shape::var_of(a[0]!);
+      key = ir_vr_plan::carrier(r.plan, v);
+      if key >= 0 {
+        place = uses(b, r, a[1]!);
+        l = ir_vr_plan::layout(r.w, key);
+        if !ir_vr_shape::pure_place(place, ops) {
+          t = add_unique(b, r.d, "vr_dst", rec_type(key), r.scope);
+          out += bind_ref(t, place, ops);
+          place = var(t);
+        }
+        writes = write_fields(l, place, v, ops);
+        pi = ir_vr_shape::presence_at(l);
+        if pi >= 0 {
+          out += [ir::NdIf { cond: tget(v, pi), t: vblock(writes, ir::TyVoid, "vr_copy"), f: call(ops.copy_record, [call(ops.null_ref, []), place, a[2]!]) }];
+        } else {
+          out += writes;
+        }
+        continue;
+      }
+    }
+    out += [uses(b, r, o)];
+  }
+  out
+}
+
+// `Rewrite::lend`: carrier `x` as the record `t`.
+fn lend(b: ir::Bundle, r: Rw, x: integer, t: integer) -> ir::Node {
+  ops = r.w.ops;
+  key = ir_vr_plan::carrier(r.plan, x);
+  l = ir_vr_plan::layout(r.w, key);
+  stmts: vector<ir::Node> = [ir::NdIf { cond: call(ops.ref_is_null, [var(t)]), t: call(ops.database, [var(t), int(l.tp)]), f: ir::NdNull }];
+  stmts += write_fields(l, var(t), x, ops);
+  stmts += [var(t)];
+  made = vblock(stmts, rec_type(key), "vr_lend");
+  pi = ir_vr_shape::presence_at(l);
+  if pi >= 0 {
+    return ir::NdIf { cond: tget(x, pi), t: made, f: call(ops.null_ref, []) };
+  }
+  made
+}
+
+// `Rewrite::args`: the arguments of a call of `d`.
+fn call_args(b: ir::Bundle, r: Rw, d: integer, a: vector<ir::Node>) -> vector<ir::Node> {
+  ops = r.w.ops;
+  out: vector<ir::Node> = [];
+  for x in a {
+    i = x#index;
+    k = ir_vr_plan::param_key(r.w, d, i);
+    xv = match scope_fn::unspan(x) { NdVar { n: v } => v, _ => -1 };
+    if k >= 0 && xv >= 0 && ir_vr_plan::carrier(r.plan, xv) < 0 {
+      out += [read_into_tuple(xv, ir_vr_plan::layout(r.w, k), ops)];
+      continue;
+    }
+    if k >= 0 && xv < 0 {
+      p = ir_vr_shape::place_of(x, ops);
+      if len(p) == 2 && ir_vr_plan::carrier(r.plan, p[0]!) < 0 {
+        out += [read_place_into_tuple(x, ir_vr_plan::layout(r.w, k), ops)];
+        continue;
+      }
+    }
+    if k < 0 && ir_vr_plan::triple_get(r.w.lendable, d, i) >= 0 && xv >= 0 {
+      t = pair_get(r.lends, xv);
+      if t >= 0 {
+        out += [lend(b, r, xv, t)];
+        continue;
+      }
+    }
+    if k >= 0 && xv >= 0 {
+      c = ir_vr_plan::carrier(r.plan, xv);
+      if c >= 0 && c != k && ir_vr_plan::layout(r.w, k).presence {
+        elems: vector<ir::Node> = [for o in ir_vr_plan::layout(r.w, c).offs { tget(xv, o#index) }];
+        elems += [ir::NdBoolean { b: true }];
+        out += [ir::NdTuple { items: elems }];
+        continue;
+      }
+    }
+    out += [uses(b, r, x)];
+  }
+  out
+}
+
+// port: value_record.rs fn rewrite_function — the body of `f` by `plan`.
+pub fn rewrite_function(b: ir::Bundle, w: ir_vr_plan::World, twins: vector<integer>, f: integer, plan: ir_vr_plan::Plan) {
+  def = b.data.definitions[f]!;
+  vars = b.data.definitions[f]!.variables;
+  code = def.code[0] ?? ir::NdNull;
+  sc = body_scope(code);
+  scope = if sc < 0 { 0 } else { sc };
+  lent = [for x in plan.lent { x }];
+  lent.sort();
+  lends: vector<integer> = [];
+  decls: vector<ir::Node> = [];
+  for x in lent {
+    t = add_unique(b, f, "vr_lend", rec_type(ir_vr_plan::carrier(plan, x)), scope);
+    lends += [x, t];
+    decls += [ir::NdSet { var: t, inner: ir::NdNull }];
+  }
+  r = Rw { w: w, plan: plan, twins: twins, d: f, scope: scope, lends: lends };
+  code = uses(b, r, code);
+  if len(decls) > 0 {
+    code = body_prepend(code, decls);
+  }
+  b.data.definitions[f].code = [code];
+  i = 0;
+  while i + 1 < len(plan.carriers) {
+    vars.variables[plan.carriers[i]!].type_def = [ir_vr_shape::tuple_type(ir_vr_plan::layout(w, plan.carriers[i + 1]!))];
+    i += 2;
+  }
+  i = 0;
+  while i + 2 < len(w.params) {
+    if w.params[i]! == f {
+      b.data.definitions[f].attributes[w.params[i + 1]!].typedef = [ir_vr_shape::tuple_type(ir_vr_plan::layout(w, w.params[i + 2]!))];
+    }
+    i += 3;
+  }
+}
+
+// ---- The callee --------------------------------------------------------------------------
+
+// `literals_to_tuples`: every literal built into `buf` becomes its tuple, in SCHEMA order.
+fn literals_to_tuples(b: ir::Bundle, n: ir::Node, buf: integer, l: ir_vr_shape::Layout, ops: ir_vr_shape::Ops, f: integer, leaves: vector<ir::Node>, at: Counter) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: literals_to_tuples(b, inner, buf, l, ops, f, leaves, at) },
+    _ => {}
+  }
+  lit = ir_vr_shape::literal(b, n, buf, l, ops);
+  if lit == null {
+    kids = scope_fn::children(n);
+    if len(kids) == 0 {
+      return n;
+    }
+    return ir_pass_tree::with_children(n, [for c in kids { literals_to_tuples(b, c, buf, l, ops, f, leaves, at) }]);
+  }
+  lt = lit!;
+  nv = len(l.view_off);
+  base_leaf = -1;
+  if nv > 0 && at.n * nv < len(leaves) {
+    base_leaf = at.n * nv;
+  }
+  if nv > 0 {
+    at.n += 1;
+  }
+  first_fill = -1;
+  for p in lt.parts {
+    if first_fill < 0 && p is PFill {
+      first_fill = p#index;
+    }
+  }
+  after_fill = false;
+  if first_fill >= 0 {
+    for p in lt.parts {
+      if p#index >= first_fill && (p is PFree || p is POther) {
+        after_fill = true;
+      }
+    }
+  }
+  order = ir_vr_shape::fill_order(lt);
+  staged = after_fill || order != l.offs;
+  stmts: vector<ir::Node> = [];
+  v_offs: vector<integer> = [];
+  v_vals: vector<ir::Node> = [];
+  for p in lt.parts {
+    match p {
+      PFill { offs, vals } => {
+        for o in offs {
+          v = vals[o#index]!;
+          vi = -1;
+          for x in l.view_off {
+            if x == o {
+              vi = x#index;
+            }
+          }
+          if base_leaf >= 0 && vi >= 0 {
+            v_offs += [o];
+            v_vals += [leaves[base_leaf + vi]!];
+            continue;
+          }
+          value = v;
+          if staged {
+            t = add_unique(b, f, "vf", ir_vr_shape::elem_type(l, o), lt.scope);
+            stmts += [ir::NdSet { var: t, inner: v }];
+            value = var(t);
+          }
+          v_offs += [o];
+          v_vals += [value];
+        }
+      },
+      PFree { n: x } => { stmts += [call(ops.free_ref, [x])]; },
+      POther { n: x } => { stmts += [x]; },
+      _ => {}
+    }
+  }
+  elems: vector<ir::Node> = [];
+  for o in l.offs {
+    for x in v_offs {
+      if x == o {
+        elems += [v_vals[x#index]!];
+      }
+    }
+  }
+  if l.presence {
+    elems += [ir::NdBoolean { b: true }];
+  }
+  tuple = ir::NdTuple { items: elems };
+  result = if lt.returns { ir::NdReturn { inner: tuple } } else { tuple };
+  if len(stmts) == 0 {
+    return result;
+  }
+  stmts += [result];
+  ir::NdBlock { block: [ir_pass_tree::block("Tuple", stmts, ir_vr_shape::tuple_type(l), lt.scope)] }
+}
+
+struct Counter { n: integer }
+
+// The exits of an admitted function, each delivered as its tuple (`Exits`).
+struct Ex {
+  w: ir_vr_plan::World,
+  c: ir_vr_plan::Callee,
+  l: ir_vr_shape::Layout,
+  tuple: ir::TypeT,
+  twins: vector<integer>,
+  scope: integer,
+  d: integer,
+}
+
+fn ex_body(b: ir::Bundle, e: Ex, code: ir::Node) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: ex_body(b, e, inner) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ex_stmts(b, e, block[0]!.operators, true))] },
+    _ => ex_value(b, e, code)
+  }
+}
+
+// `Exits::stmts`: a statement list; `tail` says its last value is an exit.
+fn ex_stmts(b: ir::Bundle, e: Ex, list: vector<ir::Node>, tail: boolean) -> vector<ir::Node> {
+  ops = e.w.ops;
+  buf = e.c.buf;
+  final_at = -1;
+  for o in list {
+    if !(scope_fn::unspan(o) is NdLine) {
+      final_at = o#index;
+    }
+  }
+  out: vector<ir::Node> = [];
+  for o in list {
+    u = scope_fn::unspan(o);
+    alias = match u {
+      NdSet { inner } => {
+        iu = scope_fn::unspan(inner);
+        a = ir_vr_shape::args(iu);
+        ir_vr_shape::call_of(iu, ops.ref_alias) && len(a) == 1 && ir_vr_shape::is_var(a[0]!, buf)
+      },
+      _ => false
+    };
+    guard = u is NdIf && ir_vr_shape::is_buffer_guard(u, buf, ops);
+    ua = ir_vr_shape::args(u);
+    delivered_free = ir_vr_shape::call_of(u, ops.free_ref) && len(ua) == 1 && scope_fn::unspan(ua[0]!) is NdVar && scope_fn::has(e.c.delivered, ir_vr_shape::var_of(ua[0]!));
+    if alias || guard || delivered_free {
+      continue;
+    }
+    if tail && o#index == final_at && !(u is NdReturn) {
+      out += [ex_value(b, e, o)];
+    } else {
+      out += [ex_walk(b, e, o)];
+    }
+  }
+  out
+}
+
+// `Exits::walk`: a statement — its `return`s, the sets of delivery locals and the frees they
+// witness.
+fn ex_walk(b: ir::Bundle, e: Ex, n: ir::Node) -> ir::Node {
+  ops = e.w.ops;
+  u = scope_fn::unspan(n);
+  if ir_vr_shape::mv_returns(u) {
+    r = ir_vr_shape::mv_parts(u, ops);
+    if r >= 0 {
+      return respan(n, ex_mv(b, e, u, r));
+    }
+  }
+  lb = ir_vr_shape::literal_buffer(u, ops);
+  if lb >= 0 && lb != e.c.buf {
+    lit = ir_vr_shape::literal(b, u, lb, e.l, ops);
+    if lit != null && lit!.returns {
+      return respan(n, literals_to_tuples(b, u, lb, e.l, ops, e.d, [], Counter { n: 0 }));
+    }
+  }
+  match u {
+    NdReturn { inner } => return respan(n, ir::NdReturn { inner: ex_value(b, e, inner) }),
+    NdSet { var: lv, inner } => {
+      if scope_fn::has(e.c.delivered, lv) {
+        return respan(n, ir::NdSet { var: lv, inner: ex_value(b, e, inner) });
+      }
+    },
+    NdCall { def_nr, args: a } => {
+      if def_nr == ops.free_if_distinct && len(a) == 2 {
+        wv = match scope_fn::unspan(a[1]!) { NdVar { n: x } => x, _ => -1 };
+        if wv >= 0 && (wv == e.c.buf || scope_fn::has(e.c.delivered, wv) || scope_fn::has(e.c.forwards, wv)) {
+          // `*n = …` on the statement itself: its span goes with it.
+          return call(ops.free_ref, [a[0]!]);
+        }
+      }
+    },
+    NdBlock { block } => return respan(n, ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ex_stmts(b, e, block[0]!.operators, false))] }),
+    NdLoop { block } => return respan(n, ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, ex_stmts(b, e, block[0]!.operators, false))] }),
+    NdInsert { items } => return respan(n, ir::NdInsert { items: ex_stmts(b, e, items, false) }),
+    _ => {}
+  }
+  kids = scope_fn::children(u);
+  if len(kids) == 0 {
+    return n;
+  }
+  respan(n, ir_pass_tree::with_children(u, [for c in kids { ex_walk(b, e, c) }]))
+}
+
+fn dep_empty(t: ir::TypeT) -> boolean {
+  len(ir_vr_plan::depend(t)) == 0
+}
+
+// `Exits::value`: exit value `n` as the tuple.
+fn ex_value(b: ir::Bundle, e: Ex, n: ir::Node) -> ir::Node {
+  ops = e.w.ops;
+  buf = e.c.buf;
+  u = scope_fn::unspan(n);
+  r = ir_vr_shape::mv_parts(u, ops);
+  if r >= 0 {
+    return respan(n, ex_mv(b, e, u, r));
+  }
+  lb = ir_vr_shape::literal_buffer(u, ops);
+  if lb >= 0 && lb != buf && ir_vr_shape::literal(b, u, lb, e.l, ops) != null {
+    return respan(n, literals_to_tuples(b, u, lb, e.l, ops, e.d, [], Counter { n: 0 }));
+  }
+  match u {
+    NdTuple => return n,
+    NdNull => return respan(n, null_tuple(e.l, ops)),
+    NdReturn { inner } => return respan(n, ir::NdReturn { inner: ex_value(b, e, inner) }),
+    NdIf { cond, t, f } => return respan(n, ir::NdIf { cond: cond, t: ex_value(b, e, t), f: ex_value(b, e, f) }),
+    NdVar { n: v } => {
+      if v != buf && !scope_fn::has(e.c.delivered, v) && !scope_fn::has(e.c.forwards, v) {
+        x = b.data.definitions[e.d]!.variables.variables[v]!;
+        tp = x.type_def[0] ?? ir::TyVoid;
+        if !x.argument && dep_empty(tp) && !x.skip_free && cgen_types::base(tp) is TyReference {
+          tv = add_unique(b, e.d, "vr_t", e.tuple, e.scope);
+          return respan(n, vblock([ir::NdSet { var: tv, inner: read_into_tuple(v, e.l, ops) }, call(ops.free_ref, [var(v)]), var(tv)], e.tuple, "vr_owned_view"));
+        }
+        return respan(n, read_into_tuple(v, e.l, ops));
+      }
+      return n;
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Tuple" {
+        return n;
+      }
+      nb = ir::Block { name: bl.name, operators: ex_stmts(b, e, bl.operators, true), result: [e.tuple], scope: bl.scope, var_size: bl.var_size };
+      return respan(n, ir::NdBlock { block: [nb] });
+    },
+    NdCall { def_nr: d, args: a } => {
+      if d == ops.null_ref && len(a) == 0 {
+        return respan(n, null_tuple(e.l, ops));
+      }
+      at = ir_vr_shape::buf_at(ops, d, len(a));
+      if at < len(a) && scope_fn::unspan(a[at]!) is NdVar {
+        na: vector<ir::Node> = [for x in a if x#index != at { x }];
+        ci = ir_vr_plan::cand(e.w, d);
+        callee = if ci >= 0 { e.w.cands[ci]!.record } else { -1 };
+        t = twin_of(e.twins, d);
+        nd = if t >= 0 { t } else { d };
+        c2 = call(nd, na);
+        if callee >= 0 && e.l.presence && !ir_vr_plan::layout(e.w, callee).presence {
+          dl = ir_vr_plan::layout(e.w, callee);
+          dense = ir_vr_shape::tuple_type(dl);
+          tv = add_unique(b, e.d, "vr_w", dense, e.scope);
+          elems: vector<ir::Node> = [for o in dl.offs { tget(tv, o#index) }];
+          elems += [ir::NdBoolean { b: true }];
+          return respan(n, vblock([ir::NdSet { var: tv, inner: c2 }, ir::NdTuple { items: elems }], e.tuple, "vr_widen"));
+        }
+        return respan(n, c2);
+      }
+    },
+    _ => {}
+  }
+  n
+}
+
+// `Exits::mv`: a materialised view's return, its source read field-wise.
+fn ex_mv(b: ir::Bundle, e: Ex, n: ir::Node, r: integer) -> ir::Node {
+  ops = e.w.ops;
+  bl = match n { NdBlock { block } => block[0]!, _ => return n };
+  body: vector<ir::Node> = [for o in bl.operators if !(scope_fn::unspan(o) is NdLine) { o }];
+  returns = len(body) > 0 && scope_fn::unspan(body[len(body) - 1]!) is NdReturn;
+  ca = ir_vr_shape::args(scope_fn::unspan(body[1]!));
+  src = ca[0]!;
+  rv = add_unique(b, e.d, "vr_src", rec_type(e.c.record), e.scope);
+  tv = add_unique(b, e.d, "vr_t", e.tuple, e.scope);
+  out = bind_ref(rv, src, ops);
+  out += [ir::NdSet { var: tv, inner: read_into_tuple(rv, e.l, ops) }];
+  for k in 2..len(body) - 1 {
+    o = body[k]!;
+    u = scope_fn::unspan(o);
+    a = ir_vr_shape::args(u);
+    if ir_vr_shape::call_of(u, ops.free_if_distinct) && len(a) == 2 && ir_vr_shape::is_var(a[1]!, r) {
+      out += [call(ops.free_ref, [a[0]!])];
+    } else {
+      out += [o];
+    }
+  }
+  out += [if returns { ir::NdReturn { inner: var(tv) } } else { var(tv) }];
+  ir::NdBlock { block: [ir::Block { name: bl.name, operators: out, result: [e.tuple], scope: bl.scope, var_size: bl.var_size }] }
+}
+
+fn is_record(t: ir::TypeT, record: integer) -> boolean {
+  match cgen_types::base(opt_names::peel_link(t)) {
+    TyReference { n } => n == ir_vr_shape::rec_of(record),
+    _ => false
+  }
+}
+
+// `retype_results`: the blocks in RESULT positions answer the tuple.
+fn retype_results(n: ir::Node, record: integer, old: ir::TypeT, tuple: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: retype_results(inner, record, old, tuple) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      res = bl.result[0] ?? ir::TyVoid;
+      if res == old || is_record(res, record) {
+        res = tuple;
+      }
+      list = [for o in bl.operators { retype_returns(o, record, old, tuple) }];
+      if len(list) > 0 {
+        list[len(list) - 1] = retype_results(list[len(list) - 1]!, record, old, tuple);
+      }
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: list, result: [res], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdReturn { inner } => ir::NdReturn { inner: retype_results(inner, record, old, tuple) },
+    _ => n
+  }
+}
+
+// `retype_returns`: every `return` below `n` delivers the result.
+fn retype_returns(n: ir::Node, record: integer, old: ir::TypeT, tuple: ir::TypeT) -> ir::Node {
+  u = scope_fn::unspan(n);
+  match u {
+    NdReturn { inner } => return respan(n, ir::NdReturn { inner: retype_results(inner, record, old, tuple) }),
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for c in kids { retype_returns(c, record, old, tuple) }])
+}
+
+// The body block with `stmt` put first (`b.operators.insert(0, …)` on `code.unspan_mut()`).
+fn insert_first(code: ir::Node, stmt: ir::Node) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: insert_first(inner, stmt) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [stmt] + block[0]!.operators)] },
+    _ => code
+  }
+}
+
+// port: value_record.rs fn rewrite_callee — admitted function `d` returns its tuple.
+pub fn rewrite_callee(b: ir::Bundle, w: ir_vr_plan::World, twins: vector<integer>, d: integer, c: ir_vr_plan::Callee) {
+  l = ir_vr_plan::layout(w, c.record);
+  tuple = ir_vr_shape::tuple_type(l);
+  def = b.data.definitions[d]!;
+  vars = b.data.definitions[d]!.variables;
+  old = def.returned[0] ?? ir::TyVoid;
+  code = def.code[0] ?? ir::NdNull;
+  code = literals_to_tuples(b, code, c.buf, l, w.ops, d, c.leaves, Counter { n: 0 });
+  scope = match scope_fn::unspan(code) { NdBlock { block } => block[0]!.scope, _ => 0 };
+  e = Ex { w: w, c: c, l: l, tuple: tuple, twins: twins, scope: scope, d: d };
+  code = ex_body(b, e, code);
+  for lv in c.delivered {
+    vars.variables[lv].type_def = [tuple];
+  }
+  code = retype_results(code, c.record, old, tuple);
+  if scope_fn::has(c.forwards, c.buf) && scope_fn::unspan(code) is NdBlock {
+    code = insert_first(code, ir::NdSet { var: c.buf, inner: null_tuple(l, w.ops) });
+  }
+  b.data.definitions[d].code = [code];
+  b.data.definitions[d].returned = [tuple];
+  at = len(def.attributes) - 1;
+  for a in def.attributes {
+    if ir_vr_plan::var_named(vars, a.name) == c.buf {
+      at = a#index;
+      break;
+    }
+  }
+  b.data.definitions[d].attributes = [for a in b.data.definitions[d]!.attributes if a#index != at { a }];
+  vars.variables[c.buf].argument = false;
+}

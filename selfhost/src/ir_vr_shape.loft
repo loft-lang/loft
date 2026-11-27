@@ -1,0 +1,1047 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/value_record.rs` transcribed (`@FR-R-ValueRecord`, `@FR-R-ValueLocal`), its
+// SHAPE half: the operators the shape is spelled in (`Ops`), a small record's tuple (`Layout`,
+// `flat_layout`), an object literal built into a buffer (`literal`) and what a body does with
+// its return buffer (`body_shape`, `exit_value`).  The pass itself is `ir_value_record`.
+//
+// `Value` nodes Rust matches WITHOUT `unspan` are matched here without it too: a literal's
+// statements are read unspanned, its arguments as they stand.
+
+use ir;
+use scope_fn;
+use lower;
+use cgen_types;
+use opt_names;
+use ir_pass_tree;
+
+// The scalar a field is carried as (`Kind`).
+pub const K_INT = 0;
+pub const K_FLOAT = 1;
+pub const K_SINGLE = 2;
+pub const K_BOOL = 3;
+pub const K_VIEW = 4;
+
+// `NULLABLE_KEY`: a layout key's nullable bit over the record's definition number.
+pub const NULLABLE_KEY = 2147483648;
+
+// `keys::COPY_TP_MASK`
+pub const COPY_TP_MASK = 16383;
+
+// The operators the shape is spelled in, by definition number (`Ops`); `ret_arg` per
+// definition the argument its return buffer is passed at where hidden work buffers follow it
+// (-1 where the buffer is the last argument or there is none).
+pub struct Ops {
+  pub get: vector<integer>,
+  pub set: vector<integer>,
+  pub free_ref: integer,
+  pub free_if_distinct: integer,
+  pub database: integer,
+  pub ref_is_null: integer,
+  pub bool_from_ref: integer,
+  pub copy_record: integer,
+  pub get_field: integer,
+  pub ref_alias: integer,
+  pub distinct_store: integer,
+  pub clear: integer,
+  pub set_int4: integer,
+  pub append_vector: integer,
+  pub null_ref: integer,
+  pub get_vector: integer,
+  pub not: integer,
+  pub put_ref: integer,
+  pub ret_arg: vector<integer>,
+}
+
+fn find(b: ir::Bundle, name: text) -> integer {
+  lower::find(b, name) ?? -1
+}
+
+// `Definition::hidden_return_buffer_attr`: the first hidden attribute that is no work buffer
+// and is typed (exactly) a reference, a vector or a reference enum; -1 none.
+pub fn hidden_return_buffer_attr(d: ir::Definition) -> integer {
+  for a in d.attributes {
+    if a.hidden && !a.work_buffer {
+      ok = match a.typedef[0] ?? ir::TyVoid {
+        TyReference => true,
+        TyVector => true,
+        TyEnum { is_ref } => is_ref,
+        _ => false
+      };
+      if ok {
+        return a#index;
+      }
+    }
+  }
+  -1
+}
+
+// `Ops::new`
+pub fn new_ops(b: ir::Bundle) -> Ops {
+  ret: vector<integer> = [];
+  for d in b.data.definitions {
+    idx = hidden_return_buffer_attr(d);
+    r = -1;
+    if idx >= 0 && idx + 1 < len(d.attributes) {
+      all = true;
+      for a in d.attributes {
+        if a#index > idx && !(a.hidden && a.work_buffer) {
+          all = false;
+        }
+      }
+      if all {
+        r = idx;
+      }
+    }
+    ret += [r];
+  }
+  Ops {
+    get: [find(b, "OpGetInt"), find(b, "OpGetFloat"), find(b, "OpGetSingle"), find(b, "OpGetBoolean")],
+    set: [find(b, "OpSetInt"), find(b, "OpSetFloat"), find(b, "OpSetSingle"), find(b, "OpSetBoolean")],
+    free_ref: find(b, "OpFreeRef"),
+    free_if_distinct: find(b, "OpFreeRefIfDistinct"),
+    database: find(b, "OpDatabase"),
+    ref_is_null: find(b, "OpRefIsNull"),
+    bool_from_ref: find(b, "OpConvBoolFromRef"),
+    copy_record: find(b, "OpCopyRecord"),
+    get_field: find(b, "OpGetField"),
+    ref_alias: find(b, "OpRefAlias"),
+    distinct_store: find(b, "OpDistinctStore"),
+    clear: find(b, "OpClear"),
+    set_int4: find(b, "OpSetInt4"),
+    append_vector: find(b, "OpAppendVector"),
+    null_ref: find(b, "OpNullRefSentinel"),
+    get_vector: find(b, "OpGetVector"),
+    not: find(b, "OpNot"),
+    put_ref: find(b, "OpPutRef"),
+    ret_arg: ret
+  }
+}
+
+// `Ops::buf_at`: the index of the return buffer among a call's `n` arguments to `d`.
+pub fn buf_at(ops: Ops, d: integer, n: integer) -> integer {
+  i = ops.ret_arg[d] ?? -1;
+  if i >= 0 && i < n {
+    return i;
+  }
+  if n > 0 { n - 1 } else { 0 }
+}
+
+// The kind getter `op` reads, -1 none (`Ops::get_kind`).
+pub fn get_kind(ops: Ops, op: integer) -> integer {
+  for g in ops.get {
+    if g == op && op >= 0 {
+      return g#index;
+    }
+  }
+  -1
+}
+
+// The kind setter `op` writes, -1 none (`Ops::set_kind`).
+pub fn set_kind(ops: Ops, op: integer) -> integer {
+  for g in ops.set {
+    if g == op && op >= 0 {
+      return g#index;
+    }
+  }
+  -1
+}
+
+pub fn get_op(ops: Ops, kind: integer) -> integer {
+  ops.get[kind] ?? -1
+}
+
+pub fn set_op(ops: Ops, kind: integer) -> integer {
+  ops.set[kind] ?? -1
+}
+
+// ---- Layout ------------------------------------------------------------------------------
+
+// A small record's tuple: its scalars in SCHEMA order `(offs[i], kinds[i])`, an inline
+// sub-record's at their offset from the top record; each inline sub-record
+// `(sub_off, sub_tp, sub_end)`; each view field `(view_off, view_tp)`; and the presence word.
+pub struct Layout {
+  pub key: integer,
+  pub tp: integer,
+  pub offs: vector<integer>,
+  pub kinds: vector<integer>,
+  pub sub_off: vector<integer>,
+  pub sub_tp: vector<integer>,
+  pub sub_end: vector<integer>,
+  pub view_off: vector<integer>,
+  pub view_tp: vector<ir::TypeT>,
+  pub presence: boolean,
+}
+
+// `rec_of`: the record definition a layout key carries.
+pub fn rec_of(key: integer) -> integer {
+  key & (NULLABLE_KEY - 1)
+}
+
+// `Layout::index_of`, -1 none.
+pub fn index_of(l: Layout, off: integer) -> integer {
+  for o in l.offs {
+    if o == off {
+      return o#index;
+    }
+  }
+  -1
+}
+
+// `Layout::kind_at`, -1 none.
+pub fn kind_at(l: Layout, off: integer) -> integer {
+  i = index_of(l, off);
+  if i < 0 { -1 } else { l.kinds[i] ?? -1 }
+}
+
+fn kind_type(k: integer) -> ir::TypeT {
+  if k == K_FLOAT {
+    ir::TyFloat
+  } else if k == K_SINGLE {
+    ir::TySingle
+  } else if k == K_BOOL {
+    ir::TyBoolean
+  } else {
+    ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 4294967295, not_null: false, forced_size: 0 } }
+  }
+}
+
+// `Layout::elem_type`: the tuple element carrying the field at `off`.
+pub fn elem_type(l: Layout, off: integer) -> ir::TypeT {
+  k = kind_at(l, off);
+  if k == K_VIEW {
+    for o in l.view_off {
+      if o == off {
+        return l.view_tp[o#index] ?? ir::TyVoid;
+      }
+    }
+  }
+  kind_type(k)
+}
+
+pub fn has_layout_in(ls: vector<Layout>, key: integer) -> boolean {
+  for l in ls {
+    if l.key == key {
+      return true;
+    }
+  }
+  false
+}
+
+pub fn has_views(l: Layout) -> boolean {
+  len(l.view_off) > 0
+}
+
+// `Layout::tuple_type`
+pub fn tuple_type(l: Layout) -> ir::TypeT {
+  elems: vector<ir::TypeT> = [for o in l.offs { elem_type(l, o) }];
+  if l.presence {
+    elems += [ir::TyBoolean];
+  }
+  ir::TyTuple { elems: elems }
+}
+
+// `Layout::presence`: the presence word's tuple index, -1 for a dense layout.
+pub fn presence_at(l: Layout) -> integer {
+  if l.presence { len(l.offs) } else { -1 }
+}
+
+// `Layout::extent`: the fields a copy of runtime type `tp` into offset `base` fills, as
+// `[lo, hi]`; empty when it fills neither the whole record nor one inline sub-record.
+pub fn extent(l: Layout, base: integer, tp: integer) -> vector<integer> {
+  if base == 0 && tp == l.tp {
+    return [0, 2147483647];
+  }
+  for s in l.sub_off {
+    i = s#index;
+    if s == base && (l.sub_tp[i] ?? -1) == tp {
+      return [s, l.sub_end[i] ?? 0];
+    }
+  }
+  []
+}
+
+// `flatten`: one level of `flat_layout` — the fields of `tp` (declared by `record`), `base`
+// bytes into the top record.  False where a field has no tuple spelling.
+fn flatten(b: ir::Bundle, record: integer, tp: integer, base: integer, views: vector<integer>, with_views: boolean, l: Layout) -> boolean {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return false;
+  }
+  fields: vector<ir::DbField> = match b.types[tp]!.parts[0]! { PtStruct { fields } => fields, _ => return false };
+  rdef = b.data.definitions[record]!;
+  for f in fields {
+    a = -1;
+    for at in rdef.attributes {
+      if a < 0 && at.name == f.name {
+        a = at#index;
+      }
+    }
+    if a < 0 {
+      return false;
+    }
+    ftp = rdef.attributes[a]!.typedef[0] ?? ir::TyVoid;
+    off = base + f.position;
+    size = if f.content >= 0 && f.content < len(b.types) { b.types[f.content]!.size } else { 0 };
+    kind = -1;
+    match cgen_types::base(ftp) {
+      TyInteger => if size == 8 { kind = K_INT; },
+      TyFloat => { kind = K_FLOAT; },
+      TySingle => { kind = K_SINGLE; },
+      TyBoolean => { kind = K_BOOL; },
+      TyVector => {
+        if base == 0 && with_views && scope_fn::has(views, off) {
+          l.view_off += [off];
+          l.view_tp += [ftp];
+          kind = K_VIEW;
+        }
+      },
+      TyReference { n: sub } => {
+        sd = b.data.definitions[sub];
+        sub_parts = if f.content >= 0 && f.content < len(b.types) && len(b.types[f.content]!.parts) > 0 { b.types[f.content]!.parts[0]! is PtStruct } else { false };
+        if sd != null && sd.def_type == 5 && sd.known_type == f.content && sub_parts {
+          l.sub_off += [off];
+          l.sub_tp += [f.content];
+          l.sub_end += [off + size];
+          if !flatten(b, sub, f.content, off, [], false, l) {
+            return false;
+          }
+          continue;
+        }
+      },
+      _ => {}
+    }
+    if kind < 0 {
+      return false;
+    }
+    l.offs += [off];
+    l.kinds += [kind];
+  }
+  true
+}
+
+// `flat_layout`: the record's tuple, when it has two or more elements and every field is a
+// scalar a tuple carries, an inline sub-record of such fields, or (a result's) view leaf at
+// one of `views`' offsets.  `key` is the analysis key (the nullable bit 32768 over the type).
+pub fn flat_layout(b: ir::Bundle, record: integer, key: integer, views: vector<integer>, with_views: boolean) -> Layout? {
+  tp = key & 32767;
+  l = Layout { key: layout_key(record, key), tp: tp, offs: [], kinds: [], sub_off: [], sub_tp: [], sub_end: [], view_off: [], view_tp: [], presence: (key & 32768) != 0 };
+  if !flatten(b, record, tp, 0, views, with_views, l) {
+    return null;
+  }
+  // `sort_unstable_by_key(offset)`: the fields in schema order.
+  n = len(l.offs);
+  for i in 1..n {
+    j = i;
+    while j > 0 && l.offs[j - 1]! > l.offs[j]! {
+      o = l.offs[j]!;
+      k = l.kinds[j]!;
+      l.offs[j] = l.offs[j - 1]!;
+      l.kinds[j] = l.kinds[j - 1]!;
+      l.offs[j - 1] = o;
+      l.kinds[j - 1] = k;
+      j -= 1;
+    }
+  }
+  if len(l.offs) + (if l.presence { 1 } else { 0 }) < 2 {
+    return null;
+  }
+  l
+}
+
+// `key_of`: the key of `record`'s layout under analysis key `tp`.
+pub fn layout_key(record: integer, tp: integer) -> integer {
+  if (tp & 32768) != 0 { record | NULLABLE_KEY } else { record }
+}
+
+// ---- Tree questions ----------------------------------------------------------------------
+
+// `ir_shape::names_var`: does node `n` itself name variable `v`?
+pub fn names_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => x == v,
+    NdSet { var } => var == v,
+    NdCallRef { var } => var == v,
+    NdIter { var } => var == v,
+    NdTupleGet { var } => var == v,
+    NdTuplePut { var } => var == v,
+    NdFnRef { var } => var == v,
+    NdFnRefDnr { n: x } => x == v,
+    _ => false
+  }
+}
+
+// `mentions`: does `n` mention `v` anywhere, in any spelling?
+pub fn mentions(n: ir::Node, v: integer) -> boolean {
+  if !(n is NdSpan) && names_var(n, v) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if mentions(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+pub fn is_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == v,
+    _ => false
+  }
+}
+
+pub fn var_of(n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x,
+    _ => -1
+  }
+}
+
+pub fn call_of(n: ir::Node, op: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => def_nr == op && op >= 0,
+    _ => false
+  }
+}
+
+pub fn args(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdCall { args } => args,
+    _ => []
+  }
+}
+
+// An `Int` argument as it stands (no span), else null.
+pub fn raw_int(n: ir::Node) -> integer? {
+  match n {
+    NdInt { n: k } => k,
+    _ => null
+  }
+}
+
+// `place_of`: the variable and offset of a place — the variable, or an `OpGetField` path into
+// its inline sub-records.  `[v, off]`, empty for none.
+pub fn place_of(n: ir::Node, ops: Ops) -> vector<integer> {
+  u = scope_fn::unspan(n);
+  match u {
+    NdVar { n: v } => return [v, 0],
+    NdCall { def_nr, args } => {
+      if def_nr == ops.get_field && len(args) == 3 {
+        o = raw_int(args[1]!);
+        if o != null {
+          inner = place_of(args[0]!, ops);
+          if len(inner) == 2 {
+            return [inner[0]!, inner[1]! + o!];
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  []
+}
+
+// `pure_place`: may `place` be evaluated once per field — variables, constants and field
+// projections, nothing that calls or writes?
+pub fn pure_place(place: ir::Node, ops: Ops) -> boolean {
+  match place {
+    NdVar => {},
+    NdInt => {},
+    NdSpan => {},
+    NdCall { def_nr } => if def_nr != ops.get_field { return false; },
+    _ => return false
+  }
+  for c in scope_fn::children(place) {
+    if !pure_place(c, ops) {
+      return false;
+    }
+  }
+  true
+}
+
+// The operators of a block (spans kept), or none.
+pub fn block_ops(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdBlock { block } => block[0]!.operators,
+    _ => []
+  }
+}
+
+// A block's statements unspanned, its `Line` markers left out.
+pub fn code_ops(n: ir::Node) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in block_ops(n) {
+    u = scope_fn::unspan(o);
+    if !(u is NdLine) {
+      out += [u];
+    }
+  }
+  out
+}
+
+// ---- Literals ----------------------------------------------------------------------------
+
+// One statement of an object literal built into the return buffer (`Part`).
+pub enum Part {
+  PHeader,
+  PFill { pub offs: vector<integer>, pub vals: vector<ir::Node> },
+  PFree { pub n: ir::Node },
+  POther { pub n: ir::Node },
+  PViewCopy,
+}
+
+// An object literal built into `buf`: its statements, whether it ends in `return buf`, and its
+// block's scope.
+pub struct Literal {
+  pub parts: vector<Part>,
+  pub returns: boolean,
+  pub scope: integer,
+}
+
+// `Literal::fill_order`: the field offsets in the order the literal writes them.
+pub fn fill_order(lit: Literal) -> vector<integer> {
+  out: vector<integer> = [];
+  for p in lit.parts {
+    match p {
+      PFill { offs } => { out += offs; },
+      _ => {}
+    }
+  }
+  out
+}
+
+// `is_mint`: a bare `OpDatabase(buf, tp)`.
+pub fn is_mint(n: ir::Node, buf: integer, ops: Ops) -> boolean {
+  call_of(n, ops.database) && len(args(n)) > 0 && is_var(args(n)[0]!, buf)
+}
+
+struct Header {
+  mints: boolean,
+  clean: boolean,
+}
+
+fn header_walk(n: ir::Node, buf: integer, ops: Ops, h: Header) {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == ops.database {
+        if len(args) > 0 && is_var(args[0]!, buf) {
+          h.mints = true;
+        }
+      } else if def_nr != ops.ref_is_null && def_nr != ops.bool_from_ref && def_nr != ops.clear {
+        h.clean = false;
+      }
+    },
+    NdVar { n: v } => if v != buf { h.clean = false; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    header_walk(c, buf, ops, h);
+  }
+}
+
+// `is_header`: an `if` that mints a record into `buf` when it holds none, reading nothing but
+// `buf` and calling nothing but the operators it is built from.
+pub fn is_header(n: ir::Node, buf: integer, ops: Ops) -> boolean {
+  if !(n is NdIf) {
+    return false;
+  }
+  h = Header { mints: false, clean: true };
+  header_walk(n, buf, ops, h);
+  h.mints && h.clean
+}
+
+// The default value field `off` of a new record of type `tp` holds (`Ops::default_value`): what
+// the record copy writes into a fresh destination when its source is null — the interpreter's
+// default walk (`Stores::set_default_value`): a nullable scalar its null, a plain one zero.
+pub fn default_value(b: ir::Bundle, ops: Ops, tp: integer, off: integer, kind: integer) -> ir::Node {
+  if kind == K_VIEW {
+    return ir::NdCall { def_nr: ops.null_ref, args: [] };
+  }
+  nullable = field_nullable(b, tp, off);
+  if kind == K_INT {
+    ir::NdLong { n: if nullable { null } else { 0 } }
+  } else if kind == K_FLOAT {
+    ir::NdFloat { f: if nullable { null } else { 0.0 } }
+  } else if kind == K_SINGLE {
+    ir::NdSingle { f: if nullable { null } else { 0.0f } }
+  } else {
+    ir::NdBoolean { b: false }
+  }
+}
+
+// Is the scalar field at byte `off` of record type `tp` (or of an inline sub-record) nullable?
+fn field_nullable(b: ir::Bundle, tp: integer, off: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return true;
+  }
+  fields: vector<ir::DbField> = match b.types[tp]!.parts[0]! { PtStruct { fields } => fields, PtEnumValue { fields } => fields, _ => [] };
+  for f in fields {
+    size = if f.content >= 0 && f.content < len(b.types) { b.types[f.content]!.size } else { 0 };
+    if f.position == off && f.content <= 6 {
+      return f.nullable;
+    }
+    if f.content > 6 && off >= f.position && off < f.position + size {
+      return field_nullable(b, f.content, off - f.position);
+    }
+  }
+  true
+}
+
+// `literal`: `{ if … OpDatabase(buf, tp); …; buf }` — or ending in `return buf` — whose
+// statements fill every field of `l` exactly once.  `n` is read as it stands (callers unspan).
+pub fn literal(b: ir::Bundle, n: ir::Node, buf: integer, l: Layout, ops: Ops) -> Literal? {
+  bl = match n { NdBlock { block } => block[0]!, _ => return null };
+  body = code_ops(n);
+  at = -1;
+  for o in body {
+    if at < 0 && (is_header(o, buf, ops) || is_mint(o, buf, ops)) {
+      at = o#index;
+    }
+  }
+  if at < 0 {
+    return null;
+  }
+  for k in 0..at {
+    if mentions(body[k]!, buf) {
+      return null;
+    }
+  }
+  if at + 2 > len(body) {
+    return null;
+  }
+  last = body[len(body) - 1]!;
+  returns = false;
+  match last {
+    NdVar { n: v } => if v != buf { return null; },
+    NdReturn { inner } => {
+      if !is_var(inner, buf) {
+        return null;
+      }
+      returns = true;
+    },
+    _ => return null
+  }
+  parts: vector<Part> = [];
+  for k in 0..at {
+    parts += [POther { n: body[k]! }];
+  }
+  parts += [PHeader];
+  for k in at + 1..len(body) - 1 {
+    o = body[k]!;
+    a = args(o);
+    op = match o { NdCall { def_nr } => def_nr, _ => -1 };
+    // A view field's handle zeroed: its value is the exit's leaf.
+    if op >= 0 && op == ops.set_int4 && len(a) == 3 && raw_int(a[1]!) != null && raw_int(a[2]!) == 0 {
+      p = place_of(a[0]!, ops);
+      if len(p) == 2 && p[0]! == buf && kind_at(l, p[1]! + raw_int(a[1]!)!) == K_VIEW {
+        parts += [PFill { offs: [p[1]! + raw_int(a[1]!)!], vals: [ir::NdNull] }];
+        continue;
+      }
+    }
+    if op >= 0 && op == ops.append_vector && len(a) == 3 {
+      p = place_of(a[0]!, ops);
+      if len(p) == 2 && p[0]! == buf && kind_at(l, p[1]!) == K_VIEW && !mentions(a[1]!, buf) {
+        parts += [PViewCopy];
+        continue;
+      }
+    }
+    sk = set_kind(ops, op);
+    if sk >= 0 && len(a) == 3 && raw_int(a[1]!) != null {
+      p = place_of(a[0]!, ops);
+      if len(p) == 2 && p[0]! == buf {
+        f_at = p[1]! + raw_int(a[1]!)!;
+        if kind_at(l, f_at) != sk || mentions(a[2]!, buf) {
+          return null;
+        }
+        parts += [PFill { offs: [f_at], vals: [a[2]!] }];
+        continue;
+      }
+    }
+    if op >= 0 && op == ops.copy_record && len(a) == 3 && raw_int(a[2]!) != null {
+      p = place_of(a[1]!, ops);
+      if len(p) == 2 && p[0]! == buf {
+        base = p[1]!;
+        sub = raw_int(a[2]!)! & COPY_TP_MASK;
+        ext = extent(l, base, sub);
+        if len(ext) == 0 {
+          return null;
+        }
+        src = a[0]!;
+        if !pure_place(src, ops) || mentions(src, buf) {
+          return null;
+        }
+        f_offs: vector<integer> = [];
+        f_vals: vector<ir::Node> = [];
+        for fo in l.offs {
+          if fo >= ext[0]! && fo < ext[1]! {
+            k = l.kinds[fo#index]!;
+            f_offs += [fo];
+            f_vals += [ir::NdIf {
+              cond: ir::NdCall { def_nr: ops.bool_from_ref, args: [src] },
+              t: ir::NdCall { def_nr: get_op(ops, k), args: [src, ir::NdInt { n: fo - base }] },
+              f: default_value(b, ops, sub, fo - base, k)
+            }];
+          }
+        }
+        parts += [PFill { offs: f_offs, vals: f_vals }];
+        continue;
+      }
+    }
+    if op >= 0 && op == ops.free_if_distinct && len(a) == 2 && is_var(a[1]!, buf) && !mentions(a[0]!, buf) {
+      parts += [PFree { n: a[0]! }];
+      continue;
+    }
+    if !mentions(o, buf) {
+      parts += [POther { n: o }];
+      continue;
+    }
+    return null;
+  }
+  lit = Literal { parts: parts, returns: returns, scope: bl.scope };
+  filled = fill_order(lit);
+  if len(filled) != len(l.offs) {
+    return null;
+  }
+  sorted = [for f in filled { f }];
+  sorted.sort();
+  for o in l.offs {
+    if (sorted[o#index] ?? -1) != o {
+      return null;
+    }
+  }
+  lit
+}
+
+// ---- Body shape --------------------------------------------------------------------------
+
+// What a body does with its return buffer, beyond the object literals it fills (`BodyShape`).
+// `sets` as parallel lists: per `l = E` that binds no call handed `buf`, `l`, whether `E` is an
+// exit value, its tail calls, whether `E` names `buf`, and the locals `E` answers.
+pub struct BodyShape {
+  pub bound: vector<integer>,
+  pub returned: vector<integer>,
+  pub tail_calls: vector<integer>,
+  pub buf_reads: boolean,
+  pub set_l: vector<integer>,
+  pub set_ok: vector<boolean>,
+  pub set_calls: vector<vector<integer>>,
+  pub set_names: vector<boolean>,
+  pub set_answers: vector<vector<integer>>,
+}
+
+pub fn no_shape() -> BodyShape {
+  BodyShape { bound: [], returned: [], tail_calls: [], buf_reads: false, set_l: [], set_ok: [], set_calls: [], set_names: [], set_answers: [] }
+}
+
+pub fn add(v: vector<integer>, x: integer) {
+  if !scope_fn::has(v, x) {
+    v += [x];
+  }
+}
+
+// `mv_parts`: `{ OpDatabase(b, tp); OpCopyRecord(src, b, tp); …frees…; b }` — or ending in
+// `return b` — a materialised view's return.  Answers `b`, -1 for none.
+pub fn mv_parts(n: ir::Node, ops: Ops) -> integer {
+  bl = match n { NdBlock { block } => block[0]!, _ => return -1 };
+  if bl.name != "materialized_view_return" {
+    return -1;
+  }
+  body = code_ops(n);
+  if len(body) < 2 || !call_of(body[0]!, ops.database) || !call_of(body[1]!, ops.copy_record) {
+    return -1;
+  }
+  da = args(body[0]!);
+  ca = args(body[1]!);
+  if len(da) == 0 {
+    return -1;
+  }
+  r = match scope_fn::unspan(da[0]!) { NdVar { n: x } => x, _ => return -1 };
+  if len(ca) != 3 || !is_var(ca[1]!, r) || mentions(ca[0]!, r) {
+    return -1;
+  }
+  last = body[len(body) - 1]!;
+  ends = is_var(last, r) || match last { NdReturn { inner } => is_var(inner, r), _ => false };
+  for k in 2..len(body) - 1 {
+    o = body[k]!;
+    if mentions(o, r) {
+      oa = args(o);
+      if !(call_of(o, ops.free_if_distinct) && len(oa) == 2 && is_var(oa[1]!, r) && !mentions(oa[0]!, r)) {
+        return -1;
+      }
+    }
+  }
+  if ends { r } else { -1 }
+}
+
+// `mv_returns`: does block `n` end in its own `return`?
+pub fn mv_returns(n: ir::Node) -> boolean {
+  ops = block_ops(n);
+  if !(n is NdBlock) {
+    return false;
+  }
+  for k in rev(0..len(ops)) {
+    u = scope_fn::unspan(ops[k]!);
+    if !(u is NdLine) {
+      return u is NdReturn;
+    }
+  }
+  false
+}
+
+// `literal_buffer`: the buffer a literal block mints into, -1 for none.
+pub fn literal_buffer(n: ir::Node, ops: Ops) -> integer {
+  if !(n is NdBlock) {
+    return -1;
+  }
+  for o in block_ops(n) {
+    f = first_mint(o, ops);
+    if f >= 0 {
+      return f;
+    }
+  }
+  -1
+}
+
+fn first_mint(n: ir::Node, ops: Ops) -> integer {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == ops.database && len(args) > 0 {
+        v = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
+        if v >= 0 {
+          return v;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    f = first_mint(c, ops);
+    if f >= 0 {
+      return f;
+    }
+  }
+  -1
+}
+
+// `is_local_literal`: a literal built into a LOCAL buffer.
+pub fn is_local_literal(b: ir::Bundle, n: ir::Node, buf: integer, l: Layout, ops: Ops) -> boolean {
+  lb = literal_buffer(n, ops);
+  lb >= 0 && lb != buf && literal(b, n, lb, l, ops) != null
+}
+
+// `is_buffer_guard`: `if OpDistinctStore(buf, w) OpFreeRefIfDistinct(buf, …) else null`.
+pub fn is_buffer_guard(n: ir::Node, buf: integer, ops: Ops) -> boolean {
+  match n {
+    NdIf { cond, t, f } => {
+      c = scope_fn::unspan(cond);
+      th = scope_fn::unspan(t);
+      call_of(c, ops.distinct_store) && len(args(c)) > 0 && is_var(args(c)[0]!, buf) && call_of(th, ops.free_if_distinct) && len(args(th)) > 0 && is_var(args(th)[0]!, buf) && scope_fn::unspan(f) is NdNull
+    },
+    _ => false
+  }
+}
+
+// `place_copy`: `if OpDistinctStore(x, p) OpCopyRecord(x, p, tp) else null` — `[x, p]`, empty
+// for none.  `n` as it stands.
+pub fn place_copy(n: ir::Node, ops: Ops) -> vector<integer> {
+  match n {
+    NdIf { cond, t, f } => {
+      c = scope_fn::unspan(cond);
+      th = scope_fn::unspan(t);
+      if !call_of(c, ops.distinct_store) || !call_of(th, ops.copy_record) {
+        return [];
+      }
+      a = args(c);
+      ca = args(th);
+      if len(a) != 2 || len(ca) != 3 {
+        return [];
+      }
+      x = var_of(a[0]!);
+      p = var_of(a[1]!);
+      if x < 0 || p < 0 {
+        return [];
+      }
+      if scope_fn::unspan(f) is NdNull && var_of(ca[0]!) == x && var_of(ca[1]!) == p { [x, p] } else { [] }
+    },
+    _ => []
+  }
+}
+
+fn non_buf_ok(ops: Ops, d: integer, a: vector<ir::Node>, buf: integer) -> boolean {
+  at = buf_at(ops, d, len(a));
+  for x in a {
+    if x#index != at && mentions(x, buf) {
+      return false;
+    }
+  }
+  true
+}
+
+// `exit_value`: is `n` a value an exit can deliver as the tuple?
+pub fn exit_value(b: ir::Bundle, n: ir::Node, buf: integer, l: Layout, ops: Ops, sh: BodyShape) -> boolean {
+  u = scope_fn::unspan(n);
+  if literal(b, u, buf, l, ops) != null {
+    return body_shape(b, u, buf, l, ops, true, sh);
+  }
+  match u {
+    NdNull => l.presence,
+    NdCall { def_nr, args: a } => {
+      if def_nr == ops.null_ref && len(a) == 0 {
+        return l.presence;
+      }
+      at = buf_at(ops, def_nr, len(a));
+      if at < len(a) && scope_fn::unspan(a[at]!) is NdVar && non_buf_ok(ops, def_nr, a, buf) {
+        sh.tail_calls += [def_nr];
+        for x in a {
+          if x#index != at && !body_shape(b, x, buf, l, ops, false, sh) {
+            return false;
+          }
+        }
+        return true;
+      }
+      false
+    },
+    NdVar { n: v } => {
+      add(sh.returned, v);
+      true
+    },
+    NdReturn { inner } => exit_value(b, inner, buf, l, ops, sh),
+    NdIf { cond, t, f } => !mentions(cond, buf) && body_shape(b, cond, buf, l, ops, false, sh) && exit_value(b, t, buf, l, ops, sh) && exit_value(b, f, buf, l, ops, sh),
+    NdBlock { block } => {
+      if mv_parts(u, ops) >= 0 || is_local_literal(b, u, buf, l, ops) {
+        return !has_views(l);
+      }
+      ops_l = block[0]!.operators;
+      if len(ops_l) == 0 {
+        return false;
+      }
+      for k in 0..len(ops_l) - 1 {
+        if !body_shape(b, ops_l[k]!, buf, l, ops, false, sh) {
+          return false;
+        }
+      }
+      exit_value(b, ops_l[len(ops_l) - 1]!, buf, l, ops, sh)
+    },
+    _ => false
+  }
+}
+
+// `body_shape`: does `n` use the return buffer `buf` only the ways the tuple form can drop?
+pub fn body_shape(b: ir::Bundle, n: ir::Node, buf: integer, l: Layout, ops: Ops, tail: boolean, sh: BodyShape) -> boolean {
+  u = scope_fn::unspan(n);
+  lit = literal(b, u, buf, l, ops);
+  if lit != null {
+    if !tail && !lit!.returns {
+      return false;
+    }
+    for p in lit!.parts {
+      ok = match p {
+        PHeader => true,
+        PFill { vals } => {
+          all = true;
+          for v in vals {
+            if all && !body_shape(b, v, buf, l, ops, false, sh) {
+              all = false;
+            }
+          }
+          all
+        },
+        PFree { n: x } => body_shape(b, x, buf, l, ops, false, sh),
+        POther { n: x } => body_shape(b, x, buf, l, ops, false, sh),
+        PViewCopy => true
+      };
+      if !ok {
+        return false;
+      }
+    }
+    return true;
+  }
+  match u {
+    NdReturn { inner } => return body_shape(b, inner, buf, l, ops, true, sh),
+    NdBlock { block } => {
+      if (mv_parts(u, ops) >= 0 && (tail || mv_returns(u))) || (tail && is_local_literal(b, u, buf, l, ops)) {
+        return !has_views(l);
+      }
+      list = block[0]!.operators;
+      last = len(list) - 1;
+      for op in list {
+        if !body_shape(b, op, buf, l, ops, tail && op#index == last, sh) {
+          return false;
+        }
+      }
+      return true;
+    },
+    NdVar { n: v } => if tail {
+      add(sh.returned, v);
+      return true;
+    },
+    _ => {}
+  }
+  if tail {
+    return exit_value(b, u, buf, l, ops, sh);
+  }
+  match u {
+    NdSet { var: lv, inner } => {
+      iu = scope_fn::unspan(inner);
+      match iu {
+        NdCall { def_nr: g, args: a } => {
+          at = buf_at(ops, g, len(a));
+          bv = if at < len(a) { var_of(a[at]!) } else { -1 };
+          if bv >= 0 && scope_fn::unspan(a[at]!) is NdVar && (bv == buf || lv == buf) {
+            add(sh.bound, lv);
+            for x in a {
+              if x#index != at && (mentions(x, buf) || !body_shape(b, x, buf, l, ops, false, sh)) {
+                return false;
+              }
+            }
+            return true;
+          }
+          if g == ops.ref_alias && len(a) == 1 && is_var(a[0]!, buf) {
+            return true;
+          }
+        },
+        _ => {}
+      }
+      if lv != buf {
+        s2 = no_shape();
+        ok = !has_views(l) && exit_value(b, inner, buf, l, ops, s2);
+        names_buf = mentions(inner, buf);
+        sh.set_l += [lv];
+        sh.set_ok += [ok];
+        sh.set_calls += [s2.tail_calls];
+        sh.set_names += [names_buf];
+        sh.set_answers += [s2.returned];
+        for x in s2.set_l {
+          i = x#index;
+          sh.set_l += [x];
+          sh.set_ok += [s2.set_ok[i]!];
+          sh.set_calls += [s2.set_calls[i] ?? []];
+          sh.set_names += [s2.set_names[i]!];
+          sh.set_answers += [s2.set_answers[i] ?? []];
+        }
+        for x in s2.bound {
+          add(sh.bound, x);
+        }
+        return ok || (!names_buf && body_shape(b, inner, buf, l, ops, false, sh));
+      }
+    },
+    NdIf => if is_buffer_guard(u, buf, ops) { return true; },
+    NdCall { def_nr, args: a } => {
+      if def_nr == ops.free_if_distinct && len(a) == 2 && !mentions(a[0]!, buf) && is_var(a[1]!, buf) {
+        return true;
+      }
+      if get_kind(ops, def_nr) >= 0 && len(a) == 2 && is_var(a[0]!, buf) && raw_int(a[1]!) != null {
+        sh.buf_reads = true;
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if !body_shape(b, c, buf, l, ops, false, sh) {
+      return false;
+    }
+  }
+  !names_var(u, buf)
+}

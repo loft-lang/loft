@@ -1,0 +1,506 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/tail_self.rs` transcribed (`@FR-R-TailSelf`): a SELF-call in tail position
+// becomes a jump to the function's entry.  The body is wrapped in a loop; every self-call in
+// tail position binds its arguments to fresh temporaries, runs the frame's releases, binds the
+// parameters from the temporaries and continues the loop.  The predicate is `ir_tail_frame`'s.
+// A function whose lowered body shows no shape to jump from — an internal compiler error in
+// Rust — is refused by name.  `LOFT_NO_TAIL_SELF=1` keeps the calls.
+
+use ir;
+use scope_fn;
+use lower;
+use cgen_types;
+use el;
+use ir_pass_tree;
+use ir_tail_frame;
+
+// Positions (`Pos`).
+const P_RETURN = 0;
+const P_KEEP = 1;
+const P_VOID = 2;
+
+struct Cx {
+  d: integer,
+  dv: integer,
+  params: vector<integer>,
+  temps: vector<integer>,
+  put_ref: integer,
+  free_ref_if_distinct: integer,
+  null_ref: integer,
+  jumps: integer,
+}
+
+fn vtype(b: ir::Bundle, cx: Cx, v: integer) -> ir::TypeT {
+  x = b.data.definitions[cx.dv]!.variables.variables[v];
+  if x == null { ir::TyVoid } else { x.type_def[0] ?? ir::TyVoid }
+}
+
+fn frees_buffer() -> boolean {
+  (env_variable("LOFT_TAIL_JUMP_FREES_BUFFER") ?? "") != ""
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// `Function::entry_witness`: the `__rbw_<name>` variable of `v`, -1 none.
+fn entry_witness(f: ir::Function, v: integer) -> integer {
+  x = f.variables[v];
+  if x == null {
+    return -1;
+  }
+  var_named(f, "__rbw_{x.name}")
+}
+
+fn first_var(args: vector<ir::Node>) -> integer {
+  if len(args) == 0 { -1 } else { ir_pass_tree::var_of(args[0]!) ?? -1 }
+}
+
+fn is_entry(b: ir::Bundle, f: ir::Function, op: ir::Node) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet { var: w, inner } => {
+      match scope_fn::unspan(inner) {
+        NdCall { args } => {
+          bv = first_var(args);
+          bv >= 0 && entry_witness(f, bv) == w
+        },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+fn source_def(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.source == 0 && d.name == name {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `Data::type_def_nr` for the types a pointer slot holds; -1 for `u32::MAX`.
+fn type_def_nr(b: ir::Bundle, t: ir::TypeT) -> integer {
+  match t {
+    TyRewritten { inner } => type_def_nr(b, inner),
+    TyOptional { inner } => type_def_nr(b, inner),
+    TyEnum { n } => n,
+    TyReference { n } => n,
+    TyUnknown { n } => n,
+    TyRoutine { n } => n,
+    TyVector => source_def(b, "vector"),
+    TySorted => source_def(b, "sorted"),
+    TyIndex => source_def(b, "index"),
+    TyHash => source_def(b, "hash"),
+    TyRadix => source_def(b, "spatial"),
+    TyTrie => source_def(b, "trie"),
+    _ => -1
+  }
+}
+
+// `Type::without_deps`
+fn without_deps(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyText => ir::TyText { dep: [] },
+    TyReference { n } => ir::TyReference { n: n, dep: [] },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: [] },
+    TyIndex { n, keys } => ir::TyIndex { n: n, keys: keys, dep: [] },
+    TyRadix { n, names } => ir::TyRadix { n: n, names: names, dep: [] },
+    TyTrie { n, key } => ir::TyTrie { n: n, key: key, dep: [] },
+    TyHash { n, names } => ir::TyHash { n: n, names: names, dep: [] },
+    TySorted { n, keys } => ir::TySorted { n: n, keys: keys, dep: [] },
+    TyVector { inner } => ir::TyVector { inner: without_deps(inner), dep: [] },
+    TyFunction { args, result, consts } => ir::TyFunction { args: args, result: result, dep: [], consts: consts },
+    TyRefVar { inner } => ir::TyRefVar { inner: without_deps(inner) },
+    TyOptional { inner } => optional(without_deps(inner)),
+    TyTuple { elems } => ir::TyTuple { elems: [for e in elems { without_deps(e) }] },
+    _ => t
+  }
+}
+
+// `Type::optional`
+fn optional(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyOptional => t,
+    TyNever => t,
+    TyNull => t,
+    TyRewritten { inner } => ir::TyRewritten { inner: optional(inner) },
+    _ => ir::TyOptional { inner: t }
+  }
+}
+
+fn calls(n: ir::Node, d: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == d { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls(c, d) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_jump(v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => block[0]!.name == "tail_jump",
+    _ => false
+  }
+}
+
+fn keep_set(x: integer, v: ir::Node) -> ir::Node {
+  if is_jump(v) { v } else { ir::NdSet { var: x, inner: v } }
+}
+
+fn vblock(ops: vector<ir::Node>, t: ir::TypeT, name: text) -> ir::Node {
+  ir::NdBlock { block: [ir_pass_tree::block(name, ops, t, 65535)] }
+}
+
+// `releases_return_buffer`
+fn releases_return_buffer(b: ir::Bundle, f: ir::Function, op: ir::Node) -> boolean {
+  match scope_fn::unspan(op) {
+    NdIf { t, f: e } => {
+      eu = scope_fn::unspan(e);
+      nonempty = match eu { NdBlock { block } => len(block[0]!.operators) > 0, _ => false };
+      releases_return_buffer(b, f, t) && (eu is NdNull || eu is NdBlock) && !nonempty
+    },
+    NdCall { def_nr, args } => {
+      bv = first_var(args);
+      ir_pass_tree::def_name(b, def_nr).starts_with("OpFreeRef") && bv >= 0 && scope_fn::unspan(args[0]!) is NdVar && entry_witness(f, bv) >= 0
+    },
+    _ => false
+  }
+}
+
+// `for_jump`: a release as the jump runs it, where `x` is the delivery place no value has reached.
+fn for_jump(b: ir::Bundle, op: ir::Node, x: integer, cx: Cx) -> ir::Node {
+  match op {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: for_jump(b, inner, x, cx) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: for_jump(b, t, x, cx), f: for_jump(b, f, x, cx) },
+    NdCall { def_nr, args } => {
+      if len(args) >= 2 && (ir_pass_tree::var_of(args[1]!) ?? -1) == x && scope_fn::unspan(args[1]!) is NdVar {
+        name = ir_pass_tree::def_name(b, def_nr);
+        if name == "OpFreeRefIfDistinct" || name == "OpFreeRefOrHandUp" {
+          return ir::NdCall { def_nr: cx.free_ref_if_distinct, args: [args[0]!, ir::NdCall { def_nr: cx.null_ref, args: [] }] };
+        }
+        if name == "OpFreeRefUnlessEntry" && len(args) == 3 {
+          return ir::NdCall { def_nr: cx.free_ref_if_distinct, args: [args[0]!, args[2]!] };
+        }
+      }
+      op
+    },
+    _ => op
+  }
+}
+
+// `releases`: the releases among `ops[from..to]`, then `epi`.
+fn releases(b: ir::Bundle, ops: vector<ir::Node>, from: integer, to: integer, epi: vector<ir::Node>, place: integer, cx: Cx) -> vector<ir::Node> {
+  f: vector<ir::Node> = [];
+  for k in from..to {
+    op = ops[k]!;
+    if ir_tail_frame::is_release(b, op) {
+      f += [if place >= 0 { for_jump(b, op, place, cx) } else { op }];
+    }
+  }
+  f += epi;
+  if frees_buffer() {
+    return f;
+  }
+  // A new local, not `f = [for op in f …]`: a returned local rebound from a comprehension over
+  // itself answers empty (scratchpad repro `self-comprehension-returned.loft`).
+  vars = b.data.definitions[cx.dv]!.variables;
+  kept: vector<ir::Node> = [for op in f if !releases_return_buffer(b, vars, op) { op }];
+  kept
+}
+
+// One level of spans off a node: its position and its inner node.
+fn span_of(v: ir::Node) -> vector<ir::Position> {
+  match v {
+    NdSpan { pos } => [pos],
+    _ => []
+  }
+}
+
+fn inner_of(v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { inner } => inner,
+    _ => v
+  }
+}
+
+fn respan(span: vector<ir::Position>, v: ir::Node) -> ir::Node {
+  if len(span) == 0 { v } else { ir::NdSpan { pos: span[0]!, inner: v } }
+}
+
+// `block`: a block's operators.
+fn block(b: ir::Bundle, ops: vector<ir::Node>, pos: integer, epi: vector<ir::Node>, depth: integer, cx: Cx) -> vector<ir::Node> {
+  f = b.data.definitions[cx.dv]!.variables;
+  last = ir_tail_frame::last_value(ops);
+  deliver = ir_tail_frame::delivery(b, ops, f, pos >= 0);
+  pat: vector<integer> = if pos >= 0 && len(deliver) == 0 { ir_tail_frame::ret_pattern(b, ops, f) } else { [] };
+  frees: vector<ir::Node> = [];
+  if len(deliver) == 3 {
+    j = deliver[1]!;
+    te = if scope_fn::unspan(ops[j]!) is NdReturn { [] } else { epi };
+    frees = releases(b, ops, deliver[0]! + 1, j, te, deliver[2]!, cx);
+  } else if len(pat) == 2 {
+    k = pat[0]!;
+    j = pat[1]!;
+    r = match scope_fn::unspan(ops[k]!) { NdSet { var } => var, _ => -1 };
+    te = if scope_fn::unspan(ops[j]!) is NdReturn { [] } else { epi };
+    frees = releases(b, ops, k + 1, j, te, r, cx);
+  }
+  vtail = if pos == P_VOID { ir_tail_frame::void_tail(b, ops) } else { -1 };
+  trailing: vector<ir::Node> = if vtail >= 0 { releases(b, ops, vtail + 1, len(ops), epi, -1, cx) } else { [] };
+  out: vector<ir::Node> = [];
+  for op in ops {
+    i = op#index;
+    n = op;
+    if len(deliver) == 3 && i == deliver[0]! {
+      n = deliver_in(b, op, deliver[2]!, frees, depth, cx);
+    } else if len(deliver) == 3 && i == deliver[1]! {
+      if pos == P_RETURN && !(scope_fn::unspan(op) is NdReturn) {
+        n = ir::NdReturn { inner: op };
+      }
+    } else if len(pat) == 2 && i == pat[0]! {
+      set = inner_of(op);
+      n = match set {
+        NdSet { var: r, inner: e } => respan(span_of(op), keep_set(r, value(b, e, P_KEEP, frees, depth, cx))),
+        _ => op
+      };
+    } else if len(pat) == 2 && i == pat[1]! {
+      if pos == P_RETURN {
+        n = ir::NdReturn { inner: op };
+      }
+    } else if i == vtail {
+      n = value(b, op, P_VOID, trailing, depth, cx);
+    } else if pos >= 0 && i == last {
+      n = value(b, op, pos, epi, depth, cx);
+    } else {
+      n = statement(b, op, epi, depth, cx);
+    }
+    out += [n];
+    if is_jump(n) {
+      break;
+    }
+  }
+  out
+}
+
+// `deliver_in`: the statement that writes the delivery place `x`.
+fn deliver_in(b: ir::Bundle, v: ir::Node, x: integer, epi: vector<ir::Node>, depth: integer, cx: Cx) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: deliver_in(b, inner, x, epi, depth, cx) },
+    NdSet { var: y, inner: e } => if y == x { return keep_set(y, value(b, e, P_KEEP, epi, depth, cx)); },
+    NdIf { cond, t, f } => return ir::NdIf { cond: cond, t: deliver_in(b, t, x, epi, depth, cx), f: deliver_in(b, f, x, epi, depth, cx) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops = bl.operators;
+      fv = b.data.definitions[cx.dv]!.variables;
+      steps: vector<boolean> = [for k in 0..len(ops) { ir_tail_frame::two_step(ops, k, x, fv) >= 0 }];
+      out: vector<ir::Node> = [];
+      for op in ops {
+        n = op;
+        if steps[op#index]! {
+          set = inner_of(op);
+          n = match set {
+            NdSet { var: tmp, inner: e } => respan(span_of(op), keep_set(tmp, value(b, e, P_KEEP, epi, depth, cx))),
+            _ => op
+          };
+        } else if ir_tail_frame::writes_place(op, x) {
+          n = deliver_in(b, op, x, epi, depth, cx);
+        } else {
+          n = statement(b, op, epi, depth, cx);
+        }
+        out += [n];
+        if is_jump(n) {
+          break;
+        }
+      }
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(bl, out)] };
+    },
+    _ => {}
+  }
+  statement(b, v, epi, depth, cx)
+}
+
+// `value`: a value in a value position.
+fn value(b: ir::Bundle, v: ir::Node, pos: integer, epi: vector<ir::Node>, depth: integer, cx: Cx) -> ir::Node {
+  if pos == P_RETURN && !calls(v, cx.d) {
+    return if (scope_fn::unspan(v) is NdReturn) { v } else { ir::NdReturn { inner: v } };
+  }
+  match v {
+    NdSpan { pos: p, inner } => return ir::NdSpan { pos: p, inner: value(b, inner, pos, epi, depth, cx) },
+    NdCall { def_nr, args } => {
+      if def_nr == cx.d {
+        cx.jumps += 1;
+        return jump(b, args, epi, depth, cx);
+      }
+    },
+    NdIf { cond, t, f } => return ir::NdIf { cond: cond, t: value(b, t, pos, epi, depth, cx), f: value(b, f, pos, epi, depth, cx) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      res = if pos == P_RETURN { [ir::TyNever] } else { bl.result };
+      return ir::NdBlock { block: [ir::Block { name: bl.name, operators: block(b, bl.operators, pos, epi, depth, cx), result: res, scope: bl.scope, var_size: bl.var_size }] };
+    },
+    NdInsert { items } => return ir::NdInsert { items: block(b, items, pos, epi, depth, cx) },
+    NdReturn { inner } => return value(b, inner, P_RETURN, [], depth, cx),
+    _ => {}
+  }
+  other = statement(b, v, epi, depth, cx);
+  if pos == P_RETURN { ir::NdReturn { inner: other } } else { other }
+}
+
+// `statement`: a statement outside a value position.
+fn statement(b: ir::Bundle, v: ir::Node, epi: vector<ir::Node>, depth: integer, cx: Cx) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: statement(b, inner, epi, depth, cx) },
+    NdReturn { inner } => return value(b, inner, P_RETURN, [], depth, cx),
+    NdBlock { block } => return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, block(b, block[0]!.operators, -1, epi, depth, cx))] },
+    NdLoop { block } => return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators { statement(b, op, epi, depth + 1, cx) }])] },
+    NdIter => {
+      kids = scope_fn::children(v);
+      return ir_pass_tree::with_children(v, [for c in kids { statement(b, c, epi, depth + 1, cx) }]);
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { statement(b, c, epi, depth, cx) }])
+}
+
+// `jump`: every argument into its temporary, the frame's releases, every parameter from its
+// temporary, then the loop continues by the depth of the user loops between.
+fn jump(b: ir::Bundle, args: vector<ir::Node>, epi: vector<ir::Node>, depth: integer, cx: Cx) -> ir::Node {
+  ops: vector<ir::Node> = [];
+  bound: vector<integer> = [];
+  for p in cx.params {
+    i = p#index;
+    t = cx.temps[i] ?? -1;
+    a = args[i];
+    if t < 0 || a == null {
+      break;
+    }
+    if (ir_pass_tree::var_of(a!) ?? -1) == p && scope_fn::unspan(a!) is NdVar {
+      continue;
+    }
+    if ir_tail_frame::is_dbref_slot(cgen_types::base(vtype(b, cx, p))) {
+      ops += [ir::NdCall { def_nr: cx.put_ref, args: [ir::NdVar { n: t }, a!] }];
+    } else {
+      ops += [ir::NdSet { var: t, inner: a! }];
+    }
+    bound += [i];
+  }
+  ops += epi;
+  for i in bound {
+    p = cx.params[i]!;
+    t = cx.temps[i]!;
+    if ir_tail_frame::is_dbref_slot(cgen_types::base(vtype(b, cx, p))) {
+      ops += [ir::NdCall { def_nr: cx.put_ref, args: [ir::NdVar { n: p }, ir::NdVar { n: t }] }];
+    } else {
+      ops += [ir::NdSet { var: p, inner: ir::NdVar { n: t } }];
+    }
+  }
+  ops += [ir::NdContinue { n: depth }];
+  vblock(ops, ir::TyNever, "tail_jump")
+}
+
+// `rewrite_body`: wrap the body in the loop.
+fn rewrite_body(b: ir::Bundle, code: ir::Node, voids: boolean, cx: Cx) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: rewrite_body(b, inner, voids, cx) },
+    _ => {}
+  }
+  ops: vector<ir::Node> = match code {
+    NdBlock { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    _ => return code
+  };
+  f = b.data.definitions[cx.dv]!.variables;
+  entry: vector<ir::Node> = [];
+  if !frees_buffer() {
+    entry = [for op in ops if is_entry(b, f, op) { op }];
+    ops = [for op in ops if !is_entry(b, f, op) { op }];
+  }
+  pos = if voids { P_VOID } else { P_RETURN };
+  body = block(b, ops, pos, [], 0, cx);
+  if voids {
+    body += [ir::NdReturn { inner: ir::NdNull }];
+  }
+  out: vector<ir::Node> = [];
+  for p in cx.params {
+    if ir_tail_frame::is_dbref_slot(cgen_types::base(vtype(b, cx, p))) {
+      out += [ir::NdSet { var: cx.temps[p#index]!, inner: ir::NdNull }];
+    }
+  }
+  out += entry;
+  out += [ir::NdLoop { block: [ir_pass_tree::block("tail_self", body, ir::TyVoid, 65535)] }];
+  match code {
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, out)] },
+    NdInsert => ir::NdInsert { items: out },
+    _ => code
+  }
+}
+
+// port: tail_self.rs fn rewrite_program — every admitted function rewritten; answers the
+// functions refused by name.
+pub fn rewrite_program(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  if ir_tail_frame::off() {
+    return refused;
+  }
+  put_ref = lower::find(b, "OpPutRef") ?? -1;
+  fid = lower::find(b, "OpFreeRefIfDistinct") ?? -1;
+  null_ref = lower::find(b, "OpNullRefSentinel") ?? -1;
+  for def in b.data.definitions {
+    if !ir_pass_tree::has_body(def) || el::is_operator(def) || def.rust != "" || def.native != "" {
+      continue;
+    }
+    d = def#index;
+    code = def.code[0]!;
+    if len(ir_tail_frame::tail_calls(b, code, d, def.variables)) == 0 {
+      continue;
+    }
+    params = ir_tail_frame::declared_params(def);
+    result = def.returned[0] ?? ir::TyVoid;
+    if ir_tail_frame::admit_frame_clause(b, def.variables, result, code, params, d) != "" {
+      continue;
+    }
+    voids = cgen_types::base(result) is TyVoid || cgen_types::base(result) is TyNull;
+    scope = match code { NdBlock { block } => block[0]!.scope, _ => 0 };
+    temp_types: vector<ir::TypeT> = [];
+    for p in params {
+      tp = def.variables.variables[p]!.type_def[0] ?? ir::TyVoid;
+      if ir_tail_frame::is_dbref_slot(cgen_types::base(tp)) {
+        tn = type_def_nr(b, cgen_types::base(tp));
+        temp_types += [if tn < 0 { without_deps(tp) } else { ir::TyReference { n: tn, dep: [] } }];
+      } else {
+        temp_types += [without_deps(tp)];
+      }
+    }
+    temps: vector<integer> = [];
+    for t in temp_types {
+      temps += [ir_pass_tree::add_unique(b.data.definitions[d]!.variables, "tail", t, scope)];
+    }
+    cx = Cx { d: d, dv: d, params: params, temps: temps, put_ref: put_ref, free_ref_if_distinct: fid, null_ref: null_ref, jumps: 0 };
+    code = rewrite_body(b, code, voids, cx);
+    if cx.jumps == 0 {
+      refused += ["{def.name}: tail_self: a self-call in tail position the lowered body shows no shape for"];
+      continue;
+    }
+    b.data.definitions[d].code = [code];
+    ir_pass_tree::relayout(b, d);
+  }
+  refused
+}

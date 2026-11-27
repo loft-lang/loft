@@ -8,7 +8,9 @@
 // difference.
 use ir;
 use ir_arg_copy;
+use ir_value_record;
 use ir_leaf_inline;
+use ir_tail_self;
 use ir_zero_count;
 use ir_exp_pow;
 use ir_forward_walk;
@@ -32,9 +34,14 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   // `@FR-F-ParamText` — a store-viewing text argument keeps its copy only where the call can
   // write a store.
   ir_arg_copy::rewrite_program(b);
+  // `@FR-R-ValueRecord`, `@FR-R-ValueLocal` — a small record that only travels between loft
+  // functions is carried as a tuple.
+  refused += ir_value_record::rewrite_program(b);
   // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the inlined
   // bodies) — after the value records, so a leaf it inlines is final.
   ir_leaf_inline::rewrite_program(b);
+  // `@FR-R-TailSelf` — a self-call in tail position of a function is a jump to its entry.
+  refused += ir_tail_self::rewrite_program(b);
   // `@FR-R-ZeroCount` — a character count compared with zero reads the byte count.
   ir_zero_count::rewrite_program(b);
   // `@FR-R-ExpPow` — `pow(E, x)` is `exp(x)`.
@@ -60,4 +67,16 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   // fresh.
   ir_complete_write::rewrite_program(b);
   refused
+}
+
+// The host's `Definition::native` marks of `closed` carried into `b`: the bridge symbol a native
+// library build exports, set between the scope pass and `close_program` (`native_adopt`), so a
+// scoped image does not hold it.  The passes gate hands it over (`selfhost/compare/passed.loft`).
+pub fn carry_native(b: ir::Bundle, closed: ir::Bundle) {
+  for d in b.data.definitions {
+    p = closed.data.definitions[d#index];
+    if p != null && p.name == d.name && p.native != d.native {
+      b.data.definitions[d#index].native = p.native;
+    }
+  }
 }
