@@ -201,6 +201,50 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   demote = if e.first_pass { -1 } else { demote_field(e, vars, v, d, fields) };
   vars.demote_var = if demote < 0 { -1 } else { v };
   allocs_mark = len(vars.allocs);
+  // (`parse_object_field` stages a field value WHERE IT IS READ: a record field copied from a
+  // local that may view the record being rebuilt — below — takes its `__ref_N` before any later
+  // field mints one, so the numbers run in field order.  The work refs are minted here, ahead of
+  // the field loop, for the fields whose value is such a local by name.)
+  pre_vars: vector<integer> = [];
+  pre_refs: vector<integer> = [];
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
+    pviewers = el_ex_copy::store_viewers(vars, v) + [v];
+    // (Only the fields BEFORE the first one that may mint a work ref of its own — a call, a
+    // literal: a stage after it is minted after it anyway, the order already the fields'.)
+    pminting = false;
+    for pf in fields {
+      match e.p.nodes[pf] {
+        SFieldInit { e: pfe0 } => {
+          if pfe0 != null && !(e.p.nodes[pfe0!] is SName || e.p.nodes[pfe0!] is SInt || e.p.nodes[pfe0!] is SFloat || e.p.nodes[pfe0!] is SBool || e.p.nodes[pfe0!] is SText || e.p.nodes[pfe0!] is SNull) {
+            pminting = true;
+          }
+        },
+        _ => {}
+      }
+      if pminting {
+        break;
+      }
+      match e.p.nodes[pf] {
+        SFieldInit { name: pfn, e: pfe } => {
+          if pfe != null {
+            match e.p.nodes[pfe!] {
+              SName { name: pnm, member: pmb } => {
+                pv = if pmb == "" { el_vars::var(vars, pnm) } else { -1 };
+                pa = attr_nr(el::def(e, d), pfn);
+                prec = pa >= 0 && struct_ref(e, el_types::base(el::def(e, d).attributes[pa]!.typedef[0] ?? ir::TyVoid)) >= 0;
+                if pv >= 0 && pv != v && prec && pviewers.contains(pv) && !pre_vars.contains(pv) {
+                  pre_vars += [pv];
+                  pre_refs += [el_vars::work_ref(vars, el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, pv))), [pv]))];
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
   list = object_fields(e, vars, v, d, fields);
   vars.demote_var = -1;
   vars.rebuild_attempt = false;
@@ -342,7 +386,15 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
               // (No `skip_free`: `parse_object_field` marks a staged VIEW only where the staged
               // value is a projection call; a whole local staged is a copy that owns its store.)
-              cvtmp = el_vars::work_ref(vars, cvt);
+              cvtmp = -1;
+              for pvv in pre_vars {
+                if pvv == cvw && cvtmp < 0 {
+                  cvtmp = pre_refs[pvv#index]!;
+                }
+              }
+              if cvtmp < 0 {
+                cvtmp = el_vars::work_ref(vars, cvt);
+              }
               staged += [el_ir::v_set(cvtmp, args[0]!)];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: cvtmp }, args[1]!, args[2]!] };
             }
