@@ -208,10 +208,10 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
 
 **Rust-only types (open).**  52 at loft30-gate 12d1c0290 (vectors, tuple records, type
 instances; Rust-only definitions 283), one to four per program.  What each open group needs:
-- iterator element vectors (`vector<iterator>`, four programs): Rust names them through
-  `format_vector_row` → `check_vector`, from the monomorph's stale-row repair
-  (`monomorph.rs` near `format_vector_row(&cont)`) — no port twin; `vector_rows` is not reached
-  for an empty declared `[]`.
+- iterator element vectors (`vector<iterator>`, four programs): Rust's `check_vector` at the
+  wrapper's field fill (`typedef.rs` `fill_database`, the `main_vector<iterator<…>>` place) on
+  the SECOND pass; the port fills that wrapper on the first pass only, where an iterator field
+  has no content type (`c = -1`), so it refuses before its `check_vector` arm.
 - the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
