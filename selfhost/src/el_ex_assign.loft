@@ -2286,7 +2286,9 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     _ => false
   };
   // A `&text` parameter written whole writes the caller's text: a plain `Set` (`F-ParamRef`).
-  ref_text = match el_vars::tp(vars, v) { TyRefVar { inner } => inner is TyText, _ => false } && (e.p.nodes[rhs!] is SString || e.p.nodes[rhs!] is SName);
+  // (…so is one bound a call's answer, `out = tag(…)`; and `t = t + …` appends through the
+  // link, the self-append below.)
+  ref_text = match el_vars::tp(vars, v) { TyRefVar { inner } => inner is TyText, _ => false } && (e.p.nodes[rhs!] is SString || e.p.nodes[rhs!] is SName || e.p.nodes[rhs!] is SCall || len(el_ex_vector::self_concat_parts(e, rhs!, written)) > 0);
   if !link && !from_vector && !ref_text && vars.vars[v].argument && !el_ex_call::scalar(el_types::base(el_vars::tp(vars, v))) && !(el_types::base(el_vars::tp(vars, v)) is TyText) && !hidden_param(e, vars, v) {
     el::refuse(e, "a rebound parameter of a heap type: `{el_vars::name_of(vars, v)}` from {syn_kind(e, rhs!)}");
     return ex(ir::NdNull, ir::TyVoid);
