@@ -586,6 +586,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   e.b.data.definitions[d].code = [code];
   // `fill_monomorph_body`'s tail: the text-return promotion the template took none of.
   promote_monomorph_text_return(e, d);
+  // …and its vector twin (`@FR-F-Ret` / `@FR-B-Copy`): a `-> T` that hands a vector argument up
+  // returns a copy of it.
+  promote_monomorph_vector_return(e, d);
   // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
   // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
   rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
@@ -1250,6 +1253,146 @@ pub fn promote_monomorph_text_return(e: el::El, d: integer) {
   e.context = ctx;
   e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
   e.b.data.definitions[d].variables = el_vars::stored(vars);
+}
+
+// port: control.rs promote_monomorph_vector_return — the copy of each vector PARAMETER the
+// body hands back (`yields_var`) into one `___ret_copy_N` of the instance's own,
+// `OpReplaceVector(copy, p, <the append's element row>)` where it is answered, and of each other
+// vector local answered there; the tail blocks typed as the owned vector.  The borrowed-parameter
+// verdict (`return_ownership`) and the rebind of a `T`-typed local (`rewrite_generic_vector_binds`)
+// are not carried.
+pub fn promote_monomorph_vector_return(e: el::El, d: integer) {
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  bl = match code {
+    NdBlock { block } => block[0],
+    _ => {
+      return;
+    }
+  };
+  vars = el_vars::load(el::def(e, d).variables);
+  yielded: vector<integer> = [];
+  for a in el::def(e, d).attributes {
+    ai = a#index;
+    if !a.hidden && ai < len(vars.vars) && vars.vars[ai].argument && el_types::base(el_vars::tp(vars, ai)) is TyVector && yields_var(bl.operators, ai) {
+      yielded += [ai];
+    }
+  }
+  if len(yielded) == 0 {
+    return;
+  }
+  elm = match el_types::base(el_vars::tp(vars, yielded[0]!)) { TyVector { inner } => inner, _ => ir::TyVoid };
+  owned = ir::TyVector { inner: elm, dep: [] };
+  ctx = e.context;
+  e.context = d;
+  copy = el_vars::create_unique(vars, "__ret_copy", owned);
+  el_vars::set_defined(vars, copy);
+  rec = el_ex_vector::append_row(e, elm);
+  ops: vector<ir::Node> = [for o0 in bl.operators { o0 }];
+  for p in yielded {
+    ops = copy_pass(e, vars, ops, p, yielded, copy, rec, false, owned);
+  }
+  ops = copy_pass(e, vars, ops, -1, yielded, copy, rec, true, owned);
+  bl.operators = [el_ir::v_set(copy, ir::NdNull)] + ops;
+  bl.result = [owned];
+  e.context = ctx;
+  e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
+  e.b.data.definitions[d].variables = el_vars::stored(vars);
+}
+
+// One pass over the body's ops (each not at the tail), then the last op again as the tail.
+fn copy_pass(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, x: integer, params: vector<integer>, copy: integer, rec: integer, other: boolean, owned: ir::TypeT) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    out += [copy_returned_into(e, vars, o, x, params, copy, rec, false, other, owned)];
+  }
+  if len(out) > 0 {
+    last = copy_returned_into(e, vars, out[len(out) - 1]!, x, params, copy, rec, true, other, owned);
+    out = out[0..len(out) - 1] + [last];
+  }
+  out
+}
+
+// `yields_var`: is `x` answered at a tail position of `ops` (a `return x`, or `x` last)?
+pub fn yields_var(ops: vector<ir::Node>, x: integer) -> boolean {
+  for o in ops {
+    if yields_leaf(o, x, o#index == len(ops) - 1) {
+      return true;
+    }
+  }
+  false
+}
+
+fn yields_leaf(n: ir::Node, x: integer, tail: boolean) -> boolean {
+  match el_ir::unspan(n) {
+    NdReturn { inner } => yields_leaf(inner, x, true),
+    NdVar { n: y } => tail && y == x,
+    NdIf { cond: _, t, f } => yields_leaf(t, x, tail) || yields_leaf(f, x, tail),
+    NdBlock { block } => { for o in block[0].operators { if yields_leaf(o, x, tail && o#index == len(block[0].operators) - 1) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if yields_leaf(o, x, tail && o#index == len(block[0].operators) - 1) { return true; } } false },
+    NdInsert { items } => { for o in items { if yields_leaf(o, x, tail && o#index == len(items) - 1) { return true; } } false },
+    _ => false
+  }
+}
+
+// `copy_returned_var_into` (`other` false: the parameter `x`) and `copy_other_returned_locals`
+// (`other` true: any vector local but the copy, the yielded parameters and the arguments).
+fn copy_returned_into(e: el::El, vars: el_vars::Vars, n: ir::Node, x: integer, params: vector<integer>, copy: integer, rec: integer, tail: boolean, other: boolean, owned: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: copy_returned_into(e, vars, inner, x, params, copy, rec, tail, other, owned) },
+    NdReturn { inner } => {
+      y = match el_ir::unspan(inner) { NdVar { n: yv } => yv, _ => -1 };
+      if y >= 0 && returned_hit(vars, y, x, params, copy, other) {
+        return ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: copy }, ir::NdVar { n: y }, ir::NdInt { n: rec }]), ir::NdReturn { inner: ir::NdVar { n: copy } }] };
+      }
+      ir::NdReturn { inner: copy_returned_into(e, vars, inner, x, params, copy, rec, true, other, owned) }
+    },
+    NdVar { n: y } => {
+      if tail && returned_hit(vars, y, x, params, copy, other) {
+        return ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: copy }, ir::NdVar { n: y }, ir::NdInt { n: rec }]), ir::NdVar { n: copy }] };
+      }
+      n
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: copy_returned_into(e, vars, t, x, params, copy, rec, tail, other, owned), f: copy_returned_into(e, vars, f, x, params, copy, rec, tail, other, owned) },
+    NdBlock { block } => {
+      b = block[0]!;
+      bo: vector<ir::Node> = [];
+      for o in block[0].operators {
+        bo += [copy_returned_into(e, vars, o, x, params, copy, rec, tail && o#index == len(block[0].operators) - 1, other, owned)];
+      }
+      b.operators = bo;
+      if tail && !other {
+        b.result = [owned];
+      }
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0]!;
+      lo: vector<ir::Node> = [];
+      for o in block[0].operators {
+        lo += [copy_returned_into(e, vars, o, x, params, copy, rec, tail && o#index == len(block[0].operators) - 1, other, owned)];
+      }
+      b.operators = lo;
+      if tail && !other {
+        b.result = [owned];
+      }
+      ir::NdLoop { block: [b] }
+    },
+    NdInsert { items } => {
+      out: vector<ir::Node> = [];
+      for o in items {
+        out += [copy_returned_into(e, vars, o, x, params, copy, rec, tail && o#index == len(items) - 1, other, owned)];
+      }
+      ir::NdInsert { items: out }
+    },
+    _ => n
+  }
+}
+
+fn returned_hit(vars: el_vars::Vars, y: integer, x: integer, params: vector<integer>, copy: integer, other: boolean) -> boolean {
+  if !other {
+    return y == x;
+  }
+  y != copy && !params.contains(y) && y < len(vars.vars) && !vars.vars[y].argument && el_types::base(el_vars::tp(vars, y)) is TyVector
 }
 
 // port: control.rs early_text_return_orphans
