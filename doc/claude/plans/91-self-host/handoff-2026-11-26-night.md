@@ -174,6 +174,11 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   Mul { l, r } => { … }, _ => e }`); `arm_own_tp` may answer `b.tp` itself, the other arm a fresh
   call.  A 15-line reduction (an `Ex { code, tp: Ty }` record, the same `if`) does NOT reproduce
   on either backend — the reduction is open; start from the elaborator build with that one line.
+  Two more triggers of the same report met while porting `hole_spec`'s width reader (after
+  4f3da7159): a name read twice through `el_ex_name::name_expression` (once in the plain-name
+  branch, its answer dropped, then again in `width_atom`), and `width_atom` returning `nx.code`
+  — a field of the local `Ex` a call answered — from a function that takes a mutated
+  `WidthParse` record.  Both worked around (one read; a fresh `NdVar`); probe fw1.
 - `null` into a plain enum's `Col?` field (`H { c: null }` → `OpSetEnum(h, 8,
   OpConvEnumFromNull(<type>))`): ported, agreeing on probes cn1/cn2, held (patch
   held-null-enum-field.patch in the c035ae98 scratchpad): F-FaultSafe/a-hole-whose-value-faults-…
