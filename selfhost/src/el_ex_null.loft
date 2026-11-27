@@ -2103,8 +2103,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `(N-Join)` for a record: `S?` beside `S` joins to `S?`, borrowing what either arm does — a
   // literal arm's dep on the store it mints is no borrow (`arm_join_type`); each arm keeps its
-  // own type.
-  if (t.tp is TyOptional) != (f.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0 && struct_ref(e, el_types::base(t.tp)) == struct_ref(e, el_types::base(f.tp)) {
+  // own type.  (A struct enum the same: `E?` beside `E` is `E?`.)
+  same_enum = el_types::struct_enum_def(el_types::base(t.tp)) >= 0 && el_types::struct_enum_def(el_types::base(t.tp)) == el_types::struct_enum_def(el_types::base(f.tp)) && !is_nullable_wrapper(e, el_types::base(t.tp)) && !is_nullable_wrapper(e, el_types::base(f.tp)) && el_types::base(t.tp) is TyEnum && el_types::base(f.tp) is TyEnum;
+  if (t.tp is TyOptional) != (f.tp is TyOptional) && ((struct_ref(e, el_types::base(t.tp)) >= 0 && struct_ref(e, el_types::base(t.tp)) == struct_ref(e, el_types::base(f.tp))) || same_enum) {
     ds = outside_deps(e, t.code, el_types::deps(t.tp));
     fd = outside_deps(e, f.code, el_types::deps(f.tp));
     for x in fd {
@@ -2118,7 +2119,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     joined = el_ir::v_if(c.code, t.code, fc);
     // An arm whose call answers a fresh record beside a borrowing one gets a home in this frame
     // (`own_joined_call_arms`).
-    if !e.first_pass && len(ds) > 0 && el_types::base(t.tp) is TyReference {
+    if !e.first_pass && len(ds) > 0 && (el_types::base(t.tp) is TyReference || same_enum) {
       joined = own_join_arm(e, vars, joined, jt);
     }
     return ex(joined, jt);
