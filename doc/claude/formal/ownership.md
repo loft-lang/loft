@@ -837,6 +837,15 @@ analysis directly (the certifier sidesteps it).
   `c = g(pick(vs, 0))[1]` are CORRECT on the broken build, so the accumulate and bind
   spellings of the same read score nothing. Statement context is an axis here.
 
+- **A joined local answered on one arm of a join return releases its stores on the other
+  (`O-Complete`, `O-Buffer`, loft#2671)** — `node = if c { f(n) } else { n }` owns nothing:
+  its arms' temps own what it holds.  Where a return answers `node` OR another value
+  (`if r != null { r! } else { node }`), each of those temps, and each buffer whose free was
+  guarded against `node`, is released unless it holds the value returned
+  (`scopes/free_vars.rs`, the join leg), so neither the run answering `r` (a leak) nor the
+  run answering an always-fresh arm (a double free) breaks the per-path fact.  Guard
+  `loft-suite/rules/ownership/O-Complete/2671-…`, `@catches: LOFT_NO_JOIN_RETURN_BACKINGS`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN

@@ -283,6 +283,13 @@ impl Scopes<'_> {
         // `via_local`/`nested`, 25-nullable's `maybe_row`).  So the set is passed
         // down, not stamped onto the variable.
         let mut null_arm_record_sources: Vec<u16> = Vec::new();
+        // The members of `null_arm_record_sources` that are a source's backing rather than a
+        // source (loft#2671): released by the join leg only where the sweep left them alone.
+        let mut join_backings: Vec<u16> = Vec::new();
+        // The sources of a join return that own nothing (loft#2671): a buffer the sweep guards
+        // against one of them is guarded against a CANDIDATE, so the join leg re-keys it on the
+        // value returned.
+        let mut view_sources: Vec<u16> = Vec::new();
         let return_sources: HashSet<u16> = if is_return {
             let mut sources = Vec::new();
             collect_return_sources(expr, data, &mut sources);
@@ -425,6 +432,44 @@ impl Scopes<'_> {
                         && !null_arm_record_sources.contains(&v)
                     {
                         null_arm_record_sources.push(v);
+                    }
+                }
+                // loft#2671, `(O-Complete)` — a source that owns nothing but VIEWS stores this
+                // frame owns: a local bound from a join (`node = if c { f(n) } else { n }`)
+                // names the temps its arms were lifted into, and each of those owns the store
+                // the arm produced (the call's, or the copy the borrowed arm took).
+                // `get_free_vars` keeps a temp a return source depends on
+                // (`backs_return_source`), which is right only where that source is what the
+                // return hands out; with a second source (`if r != null { r! } else { node }`)
+                // the run that answers `r` left every such store owned by nobody.  The same
+                // clause loft#936 gives a collection's backing, for a record: released unless
+                // it is the store returned.  `LOFT_NO_JOIN_RETURN_BACKINGS=1` keeps them, and the
+                // guards the join leg re-keys below, as before.
+                let live_here = self.variables(to_scope);
+                for &v in sources.iter().filter(|_| crate::keys::join_return_backings()) {
+                    if !matches!(
+                        function.tp(v).base(),
+                        Type::Reference(_, _) | Type::Enum(_, true, _)
+                    ) || self.owns_freeable_store(function, data, v)
+                    {
+                        continue;
+                    }
+                    view_sources.push(v);
+                    for d in function.tp(v).depend() {
+                        if d != v
+                            && (d as usize) < function.count() as usize
+                            && !sources.contains(&d)
+                            && !null_arm_record_sources.contains(&d)
+                            && live_here.contains(&d)
+                            && matches!(
+                                function.tp(d).base(),
+                                Type::Reference(_, _) | Type::Enum(_, true, _)
+                            )
+                            && self.owns_freeable_store(function, data, d)
+                        {
+                            null_arm_record_sources.push(d);
+                            join_backings.push(d);
+                        }
                     }
                 }
             }
@@ -625,6 +670,22 @@ impl Scopes<'_> {
             },
         );
         self.arm_released_records.clear();
+        // loft#2671 — a backing the sweep already releases (its own free, or one guarded by a
+        // witness) is that free's; the join leg adds no second one.
+        if !join_backings.is_empty() {
+            let free_nr = data.def_nr("OpFreeRef");
+            let free_if = data.def_nr("OpFreeRefIfDistinct");
+            null_arm_record_sources.retain(|&d| {
+                !join_backings.contains(&d)
+                    || !ls.iter().any(|op| names_free_of(op, d, free_nr, free_if))
+            });
+        }
+        // loft#2671 — and a buffer guarded against a source that owns nothing (a literal's or
+        // a call's buffer the joined local adopted) needs the join leg's temp to be re-keyed on.
+        let view_guarded = !view_sources.is_empty()
+            && ls
+                .iter()
+                .any(|op| guard_against(op, &view_sources, data.def_nr("OpFreeRefIfDistinct")));
         // @PLN85 P4-records — at a RETURN site, a record work-ref's store may
         // BE the returned store: a named local adopts the arm's fresh Object
         // (`v: E = Pass{..}; if c { v = Fail{..} }; v` — two candidate stores,
@@ -684,7 +745,7 @@ impl Scopes<'_> {
         // eval-stack UAF.
         if is_return
             && !expr_is_terminal
-            && (!null_arm_record_sources.is_empty() || !rebound_sources.is_empty())
+            && (!null_arm_record_sources.is_empty() || !rebound_sources.is_empty() || view_guarded)
         {
             self.ret_temp_counter += 1;
             let name = format!("__ret_{}", self.ret_temp_counter);
@@ -733,6 +794,14 @@ impl Scopes<'_> {
                     {
                         *op = Value::Call(free_distinct, vec![Value::Var(*w), Value::Var(tmp)]);
                     }
+                }
+                // loft#2671, `(O-Buffer)` + `(O-Move)` — a buffer the sweep keeps where a
+                // source that owns nothing still names it declines for the CALLER, which is
+                // right only on the run that hands that source out.  Keyed on the value
+                // returned instead, it declines on exactly that run and is released on the
+                // others.
+                for op in &mut ls {
+                    rekey_guard(op, &view_sources, tmp, free_distinct);
                 }
                 hooks_follow_returned_frees(&mut ls, tmp, data);
             }
@@ -1365,6 +1434,51 @@ impl Scopes<'_> {
             }
         }
         ls
+    }
+}
+
+/// A free of `w` in a sweep op — plain, witness-guarded, or behind an `if` guard.
+fn names_free_of(op: &Value, w: u16, free: u32, free_if: u32) -> bool {
+    match op.unspan() {
+        Value::Call(d, args) => {
+            (*d == free || *d == free_if)
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == w)
+        }
+        Value::If(_, t, e) => {
+            names_free_of(t, w, free, free_if) || names_free_of(e, w, free, free_if)
+        }
+        _ => false,
+    }
+}
+
+/// An `OpFreeRefIfDistinct(_, s)` in a sweep op whose witness `s` is one of `witnesses`.
+fn guard_against(op: &Value, witnesses: &[u16], free_if: u32) -> bool {
+    match op.unspan() {
+        Value::Call(d, args) => {
+            *d == free_if
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Var(x)) if witnesses.contains(x))
+        }
+        Value::If(_, t, e) => {
+            guard_against(t, witnesses, free_if) || guard_against(e, witnesses, free_if)
+        }
+        _ => false,
+    }
+}
+
+/// Re-key every `OpFreeRefIfDistinct(_, s)` with `s` in `witnesses` on `ret` (loft#2671).
+fn rekey_guard(op: &mut Value, witnesses: &[u16], ret: u16, free_if: u32) {
+    match op.unspan_mut() {
+        Value::Call(d, args)
+            if *d == free_if
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Var(x)) if witnesses.contains(x)) =>
+        {
+            args[1] = Value::Var(ret);
+        }
+        Value::If(_, t, e) => {
+            rekey_guard(t, witnesses, ret, free_if);
+            rekey_guard(e, witnesses, ret, free_if);
+        }
+        _ => {}
     }
 }
 

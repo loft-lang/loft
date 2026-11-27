@@ -290,6 +290,11 @@ borrows that temp and the temp releases it (`@FR-O-Complete`, `Scopes::lift_join
 A literal built in a buffer the local adopts is freed only where the local moved off it
 (`OpFreeRefIfDistinct(buffer, local)`, ahead of the local's own free, `@FR-O-Buffer`);
 **`LOFT_NO_LITERAL_BUFFER_PAIR=1`** keeps both plain frees — a re-free per evaluation.
+Where such a local is one answer of a join return (`if r != null { r! } else { node }`), the
+temps it views and the buffers guarded against it are released unless they hold the value
+returned (`@FR-O-Complete`, loft#2671); **`LOFT_NO_JOIN_RETURN_BACKINGS=1`** keeps them, keyed
+on the local — a leak on the run answering the other arm, a double free where an always-fresh
+arm's buffer is the answer.  Guards `loft-suite/rules/ownership/O-Complete/`.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a

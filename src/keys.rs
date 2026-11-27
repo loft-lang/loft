@@ -3341,6 +3341,16 @@ pub fn arm_frees_param_deps() -> bool {
     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
 }
 
+/// `LOFT_NO_JOIN_RETURN_BACKINGS=1` — a join return keeps, as before loft#2671, the stores a
+/// source that owns nothing views (`node = if c { f(n) } else { n }`, answered on one arm of
+/// `if r != null { r! } else { node }`), and keys a buffer's free on that source rather than
+/// on the value returned: the run answering the other arm leaks them, or frees the answer.
+#[must_use]
+pub fn join_return_backings() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_RETURN_BACKINGS"))
+}
+
 /// `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1` — a joined local's scope-end free
 /// (`OpFreeRefIfDistinct(v, witness)`) runs while `v` still names the backing an earlier bind
 /// viewed, which the backing frees too.
