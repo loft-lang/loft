@@ -3186,7 +3186,7 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
       rt = el_ex_base::substitute(c.returned[0] ?? ir::TyVoid, self_nr, href);
       rb = el_types::base(rt);
       heap = rb is TyReference || rb is TyVector || match rb { TyEnum { is_ref } => is_ref, _ => false };
-      if rb is TyTuple || keyed(rb) || (heap && rt is TyOptional) {
+      if rb is TyTuple || keyed(rb) {
         el::refuse(e, "a bound method answering a tuple, a keyed collection or a nullable heap value");
         return false;
       }
@@ -3209,10 +3209,18 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
         rbuf = el::attribute("__retbuf", el_types::without_deps(rb));
         rbuf.hidden = true;
         e.b.data.definitions[sd].attributes += [rbuf];
-        rt = el_types::with_deps(el_types::without_deps(rb), [len(el::def(e, sd).attributes) - 1]);
+        // (A `-> Self?` answer borrows the buffer the same way, behind its `?`.)
+        rbd = el_types::with_deps(el_types::without_deps(rb), [len(el::def(e, sd).attributes) - 1]);
+        rt = if rt is TyOptional { ir::TyOptional { inner: rbd } } else { rbd };
       }
       e.b.data.definitions[sd].returned = [rt];
       e.b.data.definitions[sd].operator_form = c.operator_form;
+      // (A `-> Self?` heap answer is not carried past its stub: registered as Rust registers it,
+      // then refused by name.)
+      if heap && rt is TyOptional {
+        el::refuse(e, "a bound method answering a tuple, a keyed collection or a nullable heap value");
+        return false;
+      }
     }
   }
   true
