@@ -211,7 +211,13 @@ fn copy_unknown_fields(e: el::El, d: integer) {
           el::set_returned(e, d, el::def(e, n).returned[0] ?? ir::TyUnknown { n: n });
         }
       },
-      _ => {}
+      // (…and under a `?` or as a vector's element, as an attribute's: `-> X?`, `-> vector<X>`.)
+      _ => {
+        rr = resolved_stub(e, el::def(e, d).returned[0] ?? ir::TyVoid);
+        if rr != null {
+          el::set_returned(e, d, rr!);
+        }
+      }
     }
   }
 }

@@ -2857,12 +2857,16 @@ pub fn interface_method_name(name: text) -> text {
 }
 
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
-// `reserve_late_return_buffers` (between the passes): a lambda answering a record, a struct
-// enum or a vector takes its hidden `__retbuf` now, typed as its result came out of the first
+// `reserve_late_return_buffers` (between the passes): a function — a lambda above all —
+// answering a record, a struct enum or a vector that has no buffer yet takes its hidden
+// `__retbuf` now, typed as its result came out of the first
 // pass — borrows included — its variable after the first pass's.
 pub fn reserve_late_return_buffers(e: el::El) {
   for d in e.b.data.definitions {
-    if d.def_type != el::DT_FUNCTION || d.source != e.source || !starts_with(d.name, "n___lambda_") || el_ir::is_null(d.code[0] ?? ir::NdNull) {
+    // (Any function of the program, not a lambda only: one whose result named a record
+    // declared below it — `fn mk(n) -> X { … }` before `struct X` — was the stub's `Unknown` at
+    // its signature, so it gets its buffer here, once the stub resolved.)
+    if d.def_type != el::DT_FUNCTION || d.source != e.source || !(starts_with(d.name, "n_") || starts_with(d.name, "t_")) || el_ir::is_null(d.code[0] ?? ir::NdNull) {
       continue;
     }
     // A `τ?` result's buffer is `τ`'s, the borrows the first pass merged kept.

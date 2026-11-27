@@ -774,7 +774,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBin { at, op, l, r } => el_ex_call::binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => el_ex_vector::unary(e, vars, op, ue),
     SIf { cond, then, other } => el_ex_null::if_expr(e, vars, cond, then, other, if n == vars.expect_node { el_types::without_deps(vars.expect) } else { ir::TyVoid }),
-    SStructLit { name, member, fields, base } => el_ex_object::object_expr(e, vars, name, member, fields, base),
+    SStructLit { at: sla, name, member, fields, base } => if base == null && el_ex_object::forward_literal(e, vars, name, member, sla) { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { el_ex_object::object_expr(e, vars, name, member, fields, base) },
     SFor { at: _ } => el_ex_loop::for_expr(e, vars, n),
     SWhile { cond, body } => el_ex_pattern::while_expr(e, vars, cond, body),
     SMatch { subject, arms } => el_ex_match::match_expr(e, vars, subject, arms, node: n),

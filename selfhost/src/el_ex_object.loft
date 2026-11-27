@@ -480,6 +480,24 @@ pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vect
   el_types::instance_def(e, template, args)
 }
 
+// `parse_object`'s forward construction (loft#801): on the first pass a `Name { … }` whose
+// type is declared BELOW it has no definition yet — or only the stub a signature left — and is
+// not built: its `{ … }` is skipped unread, and a name no definition holds yet leaves a stub
+// (`DefType::Unknown`) the declaration adopts in place, keeping its number.  True when handled.
+pub fn forward_literal(e: el::El, vars: el_vars::Vars, name: text, member: text, at: integer) -> boolean {
+  if !e.first_pass || member != "" || el_vars::var(vars, name) >= 0 {
+    return false;
+  }
+  d = el::def_nr(e, name);
+  if d >= 0 && el::def(e, d).def_type != el::DT_UNKNOWN {
+    return false;
+  }
+  if d < 0 {
+    el::add_def(e, name, el::pos_at(e, at), el::DT_UNKNOWN);
+  }
+  true
+}
+
 pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_object");

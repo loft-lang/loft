@@ -97,6 +97,11 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     _ => {}
   }
   d = el::qualified_def(e, name, qual);
+  // (A struct declared below its literal: not built on the first pass, `forward_literal`.)
+  lat = match e.p.nodes[n] { SStructLit { at: sat } => sat, _ => -1 };
+  if lat >= 0 && el_ex_object::forward_literal(e, vars, name, qual, lat) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if !el_ex_object::literal_def(e, d) {
     _ = el_ex_object::literal_instance(e, vars, d, fields, expected: if v >= 0 { el_vars::tp(vars, v) } else { ir::TyUnknown { n: 0 } });
     el::refuse(e, "a literal of something other than a declared struct");
