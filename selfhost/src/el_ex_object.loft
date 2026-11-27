@@ -2288,7 +2288,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
   // Phase 3.5 elision (`math_arg_in_domain`): a domain-partial math function whose argument
   // is provably in its domain cannot answer null, so the `τ?` its declaration carries is peeled.
   // Bound once: `c.tp = inner` writes a field from a view into its own old value (loft#2391).
-  peel = c.tp is TyOptional && in_domain(e, name, match el_ir::unspan(c.code) { NdCall { args } => args, _ => [] });
+  peel = c.tp is TyOptional && in_domain(e, name, match el_ir::unspan(c.code) { NdCall { args } => args, _ => [] }, vars);
   ct = if peel { el_types::base(c.tp) } else { c.tp };
   // `wrap_null_transparent`: a nullable argument into one of the functions that propagate
   // null (`is_null_transparent`) with a non-null scalar result makes the call `τ?` — each such
@@ -2953,7 +2953,7 @@ pub fn routed_receiver(first: ir::TypeT, types: vector<ir::TypeT>) -> ir::TypeT 
   first
 }
 
-pub fn in_domain(e: el::El, name: text, args: vector<ir::Node>) -> boolean {
+pub fn in_domain(e: el::El, name: text, args: vector<ir::Node>, vars: el_vars::Vars? = null) -> boolean {
   a0 = if len(args) > 0 { const_float(e, args[0]) } else { null };
   a1 = if len(args) > 1 { const_float(e, args[1]) } else { null };
   const_ok = if name == "sqrt" {
@@ -2972,7 +2972,7 @@ pub fn in_domain(e: el::El, name: text, args: vector<ir::Node>) -> boolean {
   if const_ok {
     return true;
   }
-  sg = if len(args) > 0 { domain_sign(e, args[0]) } else { SIGN_UNKNOWN };
+  sg = if len(args) > 0 { domain_sign(e, args[0], vars) } else { SIGN_UNKNOWN };
   if name == "sqrt" || name == "pow" {
     return sg != SIGN_UNKNOWN;
   }

@@ -1270,9 +1270,24 @@ pub SIGN_UNKNOWN = 0;
 pub SIGN_NONNEG = 1;
 pub SIGN_POS = 2;
 
-// `domain_sign`: is a pure float expression provably > 0, >= 0, or unknown.  The flow-guard
-// licence (`math_sign_proven`) is not carried: a guarded variable reads unknown.
-pub fn domain_sign(e: el::El, n: ir::Node) -> integer {
+// `domain_sign`: is a pure float expression provably > 0, >= 0, or unknown.  A bare variable
+// reads what an enclosing guard proved of it (`math_sign_proven`, latest proof wins).
+pub fn domain_sign(e: el::El, n: ir::Node, vars: el_vars::Vars? = null) -> integer {
+  match el_ir::unspan(n) {
+    NdVar { n: sv } => {
+      if vars != null {
+        k = len(vars!.sign_vars) - 1;
+        while k >= 0 {
+          if vars!.sign_vars[k]! == sv {
+            return vars!.sign_vals[k]!;
+          }
+          k -= 1;
+        }
+      }
+      return SIGN_UNKNOWN;
+    },
+    _ => {}
+  }
   f = const_float(e, n);
   if f != null {
     return if f > 0.0 { SIGN_POS } else if f == 0.0 { SIGN_NONNEG } else { SIGN_UNKNOWN };
@@ -1284,26 +1299,26 @@ pub fn domain_sign(e: el::El, n: ir::Node) -> integer {
         if "{el_ir::unspan(args[0])}" == "{el_ir::unspan(args[1])}" {
           return SIGN_NONNEG;
         }
-        a = domain_sign(e, args[0]);
-        b = domain_sign(e, args[1]);
+        a = domain_sign(e, args[0], vars);
+        b = domain_sign(e, args[1], vars);
         return if a == SIGN_POS && b == SIGN_POS { SIGN_POS } else if a != SIGN_UNKNOWN && b != SIGN_UNKNOWN { SIGN_NONNEG } else { SIGN_UNKNOWN };
       }
       if len(args) == 2 && (nm == "OpAddFloat" || nm == "OpAddSingle") {
-        a = domain_sign(e, args[0]);
-        b = domain_sign(e, args[1]);
+        a = domain_sign(e, args[0], vars);
+        b = domain_sign(e, args[1], vars);
         return if (a == SIGN_POS && b != SIGN_UNKNOWN) || (a == SIGN_NONNEG && b == SIGN_POS) { SIGN_POS } else if a == SIGN_NONNEG && b == SIGN_NONNEG { SIGN_NONNEG } else { SIGN_UNKNOWN };
       }
       if nm == "t_5float_abs" || nm == "t_6single_abs" || nm == "t_5float_sqrt" || nm == "t_6single_sqrt" {
         return SIGN_NONNEG;
       }
       if len(args) == 2 && (nm == "t_5float_max" || nm == "t_6single_max") {
-        a = domain_sign(e, args[0]);
-        b = domain_sign(e, args[1]);
+        a = domain_sign(e, args[0], vars);
+        b = domain_sign(e, args[1], vars);
         return if a == SIGN_POS || b == SIGN_POS { SIGN_POS } else if a == SIGN_NONNEG || b == SIGN_NONNEG { SIGN_NONNEG } else { SIGN_UNKNOWN };
       }
       if len(args) == 2 && (nm == "t_5float_min" || nm == "t_6single_min") {
-        a = domain_sign(e, args[0]);
-        b = domain_sign(e, args[1]);
+        a = domain_sign(e, args[0], vars);
+        b = domain_sign(e, args[1], vars);
         return if a == SIGN_UNKNOWN || b == SIGN_UNKNOWN { SIGN_UNKNOWN } else if a == SIGN_NONNEG || b == SIGN_NONNEG { SIGN_NONNEG } else { SIGN_POS };
       }
       SIGN_UNKNOWN
@@ -1979,7 +1994,7 @@ pub fn truncate_nonzero(vars: el_vars::Vars, n: integer) {
 }
 
 // `Parser::fact_mark`: where each stack of proven facts stands, for `forget_facts` to return to.
-pub struct FactMark { pub nonzero: integer, pub present: integer, pub present_exprs: integer, pub proven: integer, pub bounded: integer }
+pub struct FactMark { pub nonzero: integer, pub present: integer, pub present_exprs: integer, pub proven: integer, pub bounded: integer, pub signs: integer = 0 }
 
 // `Parser::forget_facts`: every fact assumed since `m` taken back.
 pub fn forget_facts(vars: el_vars::Vars, m: FactMark) {
@@ -1988,6 +2003,8 @@ pub fn forget_facts(vars: el_vars::Vars, m: FactMark) {
   vars.present_exprs = vars.present_exprs[0..m.present_exprs];
   vars.proven = vars.proven[0..m.proven];
   vars.bounded = vars.bounded[0..m.bounded];
+  vars.sign_vars = vars.sign_vars[0..m.signs];
+  vars.sign_vals = vars.sign_vals[0..m.signs];
 }
 
 // `rewrite_outer_arith_to_nullable`: the fault-prone operation at the top of a `??` subject (or

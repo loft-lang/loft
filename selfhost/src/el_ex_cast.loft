@@ -313,6 +313,11 @@ pub fn cast_expr_to(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT) -> Ex 
     }
     return ex(ir::NdNull, to);
   }
+  // (The first pass takes a nullable scalar's cast as typed: whether a guard proved it present —
+  // `sqrt(x)` under `assert(x > 0.0)` — is the second pass's to decide, as Rust's cast is.)
+  if e.first_pass && x.tp is TyOptional && el_convert::plain_scalar(el_types::base(x.tp)) && el_convert::plain_scalar(to) {
+    return ex(ir::NdNull, to);
+  }
   if !el_convert::plain_scalar(x.tp) || !el_convert::plain_scalar(to) {
     el::refuse(e, "a cast between these types: {type_kind(x.tp)} to {type_kind(to)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
