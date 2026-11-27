@@ -50,11 +50,12 @@ writes with `&mut` … in its `&` spelling"*, which a `fn first(&mut self) -> &m
 | a scalar: `x = v[1]; x += 5` | copy (`[1,2,3]`) | — | copy; `&at(v, 1)` links |
 | a `const` parameter's place, written | refused at compile time | — | refused |
 | a temporary root: `e = &mk().enemies[0]` | refused at compile time | — | refused |
-| a temporary root, passed: `hurt(mk().enemies[0], 10)` | the write is lost, **no warning** | — | the same, with phase 0's warning |
+| a temporary root, passed: `hurt(mk().enemies[0], 10)` | the write goes into a fresh value: nothing the caller reaches is lost, and `lost-write` rightly stays silent | — | the same |
 | one of two places: `if c { &a.x } else { &b.y }` | refused (`&` only as the whole right side) | — | see Q4 |
 
-The three **no warning** rows are a defect on main today (phase 0), not part of the lift: a write
-into a call result's field, or into a projection rooted in a temporary, is lost silently.
+The two **no warning** rows were a defect on main (phase 0, fixed apart from the lift): a write
+into a call result's field was lost with no warning, and so was a METHOD accessor's result handed
+to a writing callee (the lint read only a free function's result).
 
 ## Impact analysis
 
@@ -143,7 +144,7 @@ emit byte-for-byte what it does now: the phase gates below prove it.
 
 | Item | What | Verify (goes red if done wrong) | Effort |
 |---|---|---|---|
-| **0** | The silent lost writes (a defect on main, fixed whatever the ruling): `first(s).hp = 3`, `s.first().hp -= 10` and `hurt(mk().enemies[0], 10)` get `lost-write` | a suite cell per shape with `@EXPECT_WARNING`, falsified against the build without it | S |
+| **0** | The silent lost writes (a defect on main, fixed whatever the ruling): `first(s).hp = 3`, `s.first().hp -= 10` and `hurt(s.first(), 10)` get `lost-write` | **Done** on `tuxedo-pr2657-next`: `loft-suite rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft`, which fails on the build without it (0 reports, 4 with it); every corpus program's warnings otherwise unchanged | S |
 | **A** | The spec as cells: the table above, one cell per row under `@FR-B-RefType` (or Q6's rule), each with its place-spelling twin as the control, written before any compiler edit and marked expected-to-fail | the twins pass today, and each `-> &T` cell fails for the reason named (refused) | XS |
 | **B1** | Parse a return `&`, and refuse a `-> &T` that names no parameter | B1 refusal cells (a local, a fresh value, a literal) fail without the callee check; every other program's IR byte-identical (`introspect_diff.sh`, both writers) | S |
 | **B2** | A `-> &T` call in place positions: an argument, a field write, a method chain | A's cells for those rows pass on both backends, leak- and strict-checked; byte-identical elsewhere | M |
@@ -167,7 +168,7 @@ Each comes with the recommendation, and with what was measured behind it.
    makes one call spelling mean two things depending on how the function was declared.
 3. **A temporary argument (`first(mk())`).**  Recommended: as its place.  `e = &first(mk())` is
    refused (as `&mk().enemies[0]` is), and the plain bind and the argument answer as
-   `mk().enemies[0]` does, with phase 0's warning on a lost write.  No new rule.
+   `mk().enemies[0]` does: a write into it loses nothing the caller can reach.  No new rule.
 4. **One of two places** (`fn pick(a: State, b: State, c: boolean) -> &Enemy { if c { a.e[0] }
    else { b.e[0] } }`).  Recommended: refused in B, since a local `&` cannot choose between two
    places either.  Lift it later, with dependencies on both arguments, when a program asks.
