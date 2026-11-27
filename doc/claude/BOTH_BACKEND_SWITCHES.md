@@ -295,6 +295,12 @@ temps it views and the buffers guarded against it are released unless they hold 
 returned (`@FR-O-Complete`, loft#2671); **`LOFT_NO_JOIN_RETURN_BACKINGS=1`** keeps them, keyed
 on the local — a leak on the run answering the other arm, a double free where an always-fresh
 arm's buffer is the answer.  Guards `loft-suite/rules/ownership/O-Complete/`.
+A `??` tail (`palt(p) ?? p`) whose temp pass 1 renamed onto the return buffer is copied into
+that buffer only where the joined value is a different store (`@FR-F-Ret`, loft#2673):
+**`LOFT_NO_SELF_COPY_GUARD=1`** copies it onto itself — the re-mint clears the record first,
+so the call's answer comes back zeroed.  That temp's rebind leaves the store the caller handed
+in to the rebind's entry-witnessed free (`@FR-O-Buffer`); **`LOFT_NO_NCC_ENTRY_GUARD=1`** frees
+it plainly, and the caller frees it a second time.  Guards `loft-suite/rules/calls/F-Ret/`.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a

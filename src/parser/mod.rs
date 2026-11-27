@@ -1231,6 +1231,10 @@ pub struct Parser {
     /// the present arm of a discharge (`if OpConvBoolFromRef(x) x else …`) copies `x` with
     /// no absence test of its own (`materialize_return_into`).
     ret_proven_present: Option<u16>,
+    /// loft#2673 — set while a return is copied into a buffer that pass 1 renamed onto a local
+    /// the body still assigns: the copy's source may be that very store
+    /// (`materialize_return_into`).
+    ret_copy_may_alias: bool,
     /// D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with
     /// save/restore around the iterable expression in `parse_in_range`).  A keyed range /
     /// partial-key subscript produces a `for`-only iterator (`Value::Iter`); `parse_key`
@@ -2327,6 +2331,7 @@ impl Parser {
             source_refused: false,
             unordered_iterator: false,
             ret_proven_present: None,
+            ret_copy_may_alias: false,
             iterable_context: false,
             last_range_from: None,
             literal_walk: None,

@@ -1,0 +1,182 @@
+diff --git b/src/keys.rs a/src/keys.rs
+index f507a24da..f0ab85e8c 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -3333,24 +3333,6 @@ pub fn arm_frees_param_deps() -> bool {
+     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+ }
+ 
+-/// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local
+-/// the body assigns copies even where the source IS that buffer, as before loft#2673: the
+-/// re-mint clears the record and the copy reads the cleared record back.
+-#[must_use]
+-pub fn self_copy_guard() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_SELF_COPY_GUARD"))
+-}
+-
+-/// `LOFT_NO_NCC_ENTRY_GUARD=1` — a `??` hoist promoted onto the return buffer takes the plain
+-/// transition free at its rebind again, as before loft#2673: it releases the store the caller
+-/// handed in, which the caller frees a second time.
+-#[must_use]
+-pub fn ncc_entry_guard() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_NCC_ENTRY_GUARD"))
+-}
+-
+ /// `LOFT_NO_JOIN_RETURN_BACKINGS=1` — a join return keeps, as before loft#2671, the stores a
+ /// source that owns nothing views (`node = if c { f(n) } else { n }`, answered on one arm of
+ /// `if r != null { r! } else { node }`), and keys a buffer's free on that source rather than
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 19b0a16f2..79333c894 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -10858,12 +10858,6 @@ impl Parser {
+             }
+             _ => None,
+         };
+-        let self_source = match orig.unspan() {
+-            Value::Var(src) if self.ret_copy_may_alias && crate::keys::self_copy_guard() => {
+-                Some(*src)
+-            }
+-            _ => None,
+-        };
+         let copy = crate::data::v_block(
+             vec![
+                 crate::data::v_set(w, Value::Null),
+@@ -10874,21 +10868,6 @@ impl Parser {
+             Type::Reference(td, Deps::frame1(w)),
+             "materialized_view_return",
+         );
+-        // loft#2673, `@FR-F-Ret` — a source that may BE the destination (a bound join one arm of
+-        // which is the local pass 1 renamed onto the buffer: `palt(p) ?? p`, the `??` temp) is
+-        // already where the copy would put it on that run.  Copied anyway, `OpDatabase(w)`
+-        // cleared the record and the copy read the cleared record back: a zeroed `P`, silently.
+-        // So the copy runs only where the two are distinct stores.  The join's deps are not
+-        // known yet here, so the fact read is the one `ref_return` has: the buffer is a local
+-        // the body assigns (`ret_copy_may_alias`).
+-        let copy = match self_source {
+-            Some(src) => crate::data::v_if(
+-                self.cl("OpDistinctStore", &[Value::Var(src), Value::Var(w)]),
+-                copy,
+-                Value::Var(w),
+-            ),
+-            None => copy,
+-        };
+         let tested = match absent_guard {
+             Some(v) => crate::data::v_if(
+                 self.cl("OpRefIsNull", &[v]),
+@@ -14199,10 +14178,6 @@ impl Parser {
+                         buf_var,
+                         substitute,
+                     } => {
+-                        // loft#2673 — pass 1 renamed the buffer onto a local the body still
+-                        // assigns (a `??` temp): a copy into it may read the buffer itself.
+-                        let assigned = self.vars.name(buf_var) != "__retbuf"
+-                            && body.iter().any(|op| assigns_var(op, buf_var));
+                         if substitute {
+                             for op in body.iter_mut() {
+                                 Self::substitute_work_ref(op, *v, buf_var);
+@@ -14233,10 +14208,7 @@ impl Parser {
+                             // forward); a conditional delivery is what would close it.
+                             match ret.clone() {
+                                 Type::Reference(td, _) | Type::Enum(td, true, _) => {
+-                                    let outer =
+-                                        std::mem::replace(&mut self.ret_copy_may_alias, assigned);
+                                     self.materialize_return_into(td, tail, buf_var);
+-                                    self.ret_copy_may_alias = outer;
+                                     tail_copied = true;
+                                 }
+                                 // The CONDITIONAL delivery the note above names as what
+@@ -14347,12 +14319,7 @@ impl Parser {
+                                         // otherwise (both loft#1337).  Left undelivered, the
+                                         // local's own store was answered while the buffer the
+                                         // rename gave another local was freed undropped.
+-                                        let outer = std::mem::replace(
+-                                            &mut self.ret_copy_may_alias,
+-                                            assigned,
+-                                        );
+                                         self.materialize_return_into(*td, tail, buf_var);
+-                                        self.ret_copy_may_alias = outer;
+                                         tail_copied = true;
+                                     }
+                                 }
+@@ -18491,14 +18458,3 @@ fn arm_frees_view_deps() -> bool {
+     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+     *ON.get_or_init(|| std::env::var("LOFT_ARM_FREES_VIEW_DEPS").is_ok_and(|v| v != "0"))
+ }
+-
+-/// Does `op` assign `v` anywhere inside it (loft#2673)?
+-fn assigns_var(op: &Value, v: u16) -> bool {
+-    let mut found = false;
+-    op.walk(&mut |n| {
+-        if matches!(n, Value::Set(x, _) if *x == v) {
+-            found = true;
+-        }
+-    });
+-    found
+-}
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 49e5bebd0..dd53604f1 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1227,10 +1227,6 @@ pub struct Parser {
+     /// the present arm of a discharge (`if OpConvBoolFromRef(x) x else …`) copies `x` with
+     /// no absence test of its own (`materialize_return_into`).
+     ret_proven_present: Option<u16>,
+-    /// loft#2673 — set while a return is copied into a buffer that pass 1 renamed onto a local
+-    /// the body still assigns: the copy's source may be that very store
+-    /// (`materialize_return_into`).
+-    ret_copy_may_alias: bool,
+     /// D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with
+     /// save/restore around the iterable expression in `parse_in_range`).  A keyed range /
+     /// partial-key subscript produces a `for`-only iterator (`Value::Iter`); `parse_key`
+@@ -2326,7 +2322,6 @@ impl Parser {
+             source_refused: false,
+             unordered_iterator: false,
+             ret_proven_present: None,
+-            ret_copy_may_alias: false,
+             iterable_context: false,
+             last_range_from: None,
+             literal_walk: None,
+diff --git b/src/scopes/scan_set.rs a/src/scopes/scan_set.rs
+index da00e2bd3..6e624c8a3 100644
+--- b/src/scopes/scan_set.rs
++++ a/src/scopes/scan_set.rs
+@@ -731,12 +731,6 @@ impl Scopes<'_> {
+             // @FR-O-Proxy asks free — the ownership-TRANSITION free of the store the hoist
+             // is about to stop naming, with its @FR-O-Override veto as one question.
+             && function.proxy_says_owned(v)
+-            // `@FR-O-Buffer`, loft#2673 — and not where the hoist was promoted onto the return
+-            // buffer (`palt(p) ?? p` as a tail): the store it holds on entry is the CALLER's, and
+-            // the rebind's own free, guarded by the entry witness, is the one home for the
+-            // displaced store, as for the transition frees above.  Unguarded here it released
+-            // the caller's buffer, which the caller freed again.
+-            && (function.entry_witness(v).is_none() || !crate::keys::ncc_entry_guard())
+         {
+             transition_free = Some(call("OpFreeRef", v, data));
+         }
+diff --git b/src/store_records/call.rs a/src/store_records/call.rs
+index fd5656f4f..3e2273c20 100644
+--- b/src/store_records/call.rs
++++ a/src/store_records/call.rs
+@@ -328,9 +328,6 @@ impl Run<'_> {
+     /// the next pass's `OpDatabase(w)` before the literal's initialisers read `c` — reads the
+     /// cleared record (loft#2667).  A name that may hold the store, where `x` holds nothing else;
+     /// the compiler's own witnesses (`__…`) name a store for its identity, never its content.
+-    /// A bound join (`___ret_join_N`) is no witness: it is the VALUE a return copies, and a
+-    /// re-mint of the buffer it may name, ahead of that copy, clears what the copy then reads
+-    /// (loft#2673: `palt(p) ?? p` copied a cleared record into the buffer it was).
+     /// `LOFT_RECORDS_NO_REMINT_ENDS_ALIASES=1` leaves such a name live.
+     pub(super) fn remint_ends_placed(&mut self, st: &mut State, x: u16, kept: &Pts) {
+         let placed: Vec<u16> = st
+@@ -368,8 +365,7 @@ impl Run<'_> {
+                         && !gone.contains(&r)
+                         && p.contains(&Pt::Store(k))
+                         && !is_link(r)
+-                        && (!self.var_name(r).starts_with("__")
+-                            || self.var_name(r).starts_with("___ret_join_"))
++                        && !self.var_name(r).starts_with("__")
+                     {
+                         gone.push(r);
+                     }

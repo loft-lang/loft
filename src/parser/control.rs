@@ -10886,6 +10886,12 @@ impl Parser {
             }
             _ => None,
         };
+        let self_source = match orig.unspan() {
+            Value::Var(src) if self.ret_copy_may_alias && crate::keys::self_copy_guard() => {
+                Some(*src)
+            }
+            _ => None,
+        };
         let copy = crate::data::v_block(
             vec![
                 crate::data::v_set(w, Value::Null),
@@ -10896,6 +10902,21 @@ impl Parser {
             Type::Reference(td, Deps::frame1(w)),
             "materialized_view_return",
         );
+        // loft#2673, `@FR-F-Ret` — a source that may BE the destination (a bound join one arm of
+        // which is the local pass 1 renamed onto the buffer: `palt(p) ?? p`, the `??` temp) is
+        // already where the copy would put it on that run.  Copied anyway, `OpDatabase(w)`
+        // cleared the record and the copy read the cleared record back: a zeroed `P`, silently.
+        // So the copy runs only where the two are distinct stores.  The join's deps are not
+        // known yet here, so the fact read is the one `ref_return` has: the buffer is a local
+        // the body assigns (`ret_copy_may_alias`).
+        let copy = match self_source {
+            Some(src) => crate::data::v_if(
+                self.cl("OpDistinctStore", &[Value::Var(src), Value::Var(w)]),
+                copy,
+                Value::Var(w),
+            ),
+            None => copy,
+        };
         let tested = match absent_guard {
             Some(v) => crate::data::v_if(
                 self.cl("OpRefIsNull", &[v]),
@@ -14206,6 +14227,10 @@ impl Parser {
                         buf_var,
                         substitute,
                     } => {
+                        // loft#2673 — pass 1 renamed the buffer onto a local the body still
+                        // assigns (a `??` temp): a copy into it may read the buffer itself.
+                        let assigned = self.vars.name(buf_var) != "__retbuf"
+                            && body.iter().any(|op| assigns_var(op, buf_var));
                         if substitute {
                             for op in body.iter_mut() {
                                 Self::substitute_work_ref(op, *v, buf_var);
@@ -14236,7 +14261,10 @@ impl Parser {
                             // forward); a conditional delivery is what would close it.
                             match ret.clone() {
                                 Type::Reference(td, _) | Type::Enum(td, true, _) => {
+                                    let outer =
+                                        std::mem::replace(&mut self.ret_copy_may_alias, assigned);
                                     self.materialize_return_into(td, tail, buf_var);
+                                    self.ret_copy_may_alias = outer;
                                     tail_copied = true;
                                 }
                                 // The CONDITIONAL delivery the note above names as what
@@ -14347,7 +14375,12 @@ impl Parser {
                                         // otherwise (both loft#1337).  Left undelivered, the
                                         // local's own store was answered while the buffer the
                                         // rename gave another local was freed undropped.
+                                        let outer = std::mem::replace(
+                                            &mut self.ret_copy_may_alias,
+                                            assigned,
+                                        );
                                         self.materialize_return_into(*td, tail, buf_var);
+                                        self.ret_copy_may_alias = outer;
                                         tail_copied = true;
                                     }
                                 }
@@ -18485,4 +18518,15 @@ pub(super) fn match_subject_borrows_off() -> bool {
 fn arm_frees_view_deps() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("LOFT_ARM_FREES_VIEW_DEPS").is_ok_and(|v| v != "0"))
+}
+
+/// Does `op` assign `v` anywhere inside it (loft#2673)?
+fn assigns_var(op: &Value, v: u16) -> bool {
+    let mut found = false;
+    op.walk(&mut |n| {
+        if matches!(n, Value::Set(x, _) if *x == v) {
+            found = true;
+        }
+    });
+    found
 }

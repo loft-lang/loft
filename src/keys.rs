@@ -3341,6 +3341,24 @@ pub fn arm_frees_param_deps() -> bool {
     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
 }
 
+/// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local
+/// the body assigns copies even where the source IS that buffer, as before loft#2673: the
+/// re-mint clears the record and the copy reads the cleared record back.
+#[must_use]
+pub fn self_copy_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SELF_COPY_GUARD"))
+}
+
+/// `LOFT_NO_NCC_ENTRY_GUARD=1` — a `??` hoist promoted onto the return buffer takes the plain
+/// transition free at its rebind again, as before loft#2673: it releases the store the caller
+/// handed in, which the caller frees a second time.
+#[must_use]
+pub fn ncc_entry_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NCC_ENTRY_GUARD"))
+}
+
 /// `LOFT_NO_JOIN_RETURN_BACKINGS=1` — a join return keeps, as before loft#2671, the stores a
 /// source that owns nothing views (`node = if c { f(n) } else { n }`, answered on one arm of
 /// `if r != null { r! } else { node }`), and keys a buffer's free on that source rather than

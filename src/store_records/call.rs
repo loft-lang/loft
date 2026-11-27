@@ -328,6 +328,9 @@ impl Run<'_> {
     /// the next pass's `OpDatabase(w)` before the literal's initialisers read `c` — reads the
     /// cleared record (loft#2667).  A name that may hold the store, where `x` holds nothing else;
     /// the compiler's own witnesses (`__…`) name a store for its identity, never its content.
+    /// A bound join (`___ret_join_N`) is no witness: it is the VALUE a return copies, and a
+    /// re-mint of the buffer it may name, ahead of that copy, clears what the copy then reads
+    /// (loft#2673: `palt(p) ?? p` copied a cleared record into the buffer it was).
     /// `LOFT_RECORDS_NO_REMINT_ENDS_ALIASES=1` leaves such a name live.
     pub(super) fn remint_ends_placed(&mut self, st: &mut State, x: u16, kept: &Pts) {
         let placed: Vec<u16> = st
@@ -365,7 +368,8 @@ impl Run<'_> {
                         && !gone.contains(&r)
                         && p.contains(&Pt::Store(k))
                         && !is_link(r)
-                        && !self.var_name(r).starts_with("__")
+                        && (!self.var_name(r).starts_with("__")
+                            || self.var_name(r).starts_with("___ret_join_"))
                     {
                         gone.push(r);
                     }

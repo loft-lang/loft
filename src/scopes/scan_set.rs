@@ -731,6 +731,12 @@ impl Scopes<'_> {
             // @FR-O-Proxy asks free — the ownership-TRANSITION free of the store the hoist
             // is about to stop naming, with its @FR-O-Override veto as one question.
             && function.proxy_says_owned(v)
+            // `@FR-O-Buffer`, loft#2673 — and not where the hoist was promoted onto the return
+            // buffer (`palt(p) ?? p` as a tail): the store it holds on entry is the CALLER's, and
+            // the rebind's own free, guarded by the entry witness, is the one home for the
+            // displaced store, as for the transition frees above.  Unguarded here it released
+            // the caller's buffer, which the caller freed again.
+            && (function.entry_witness(v).is_none() || !crate::keys::ncc_entry_guard())
         {
             transition_free = Some(call("OpFreeRef", v, data));
         }

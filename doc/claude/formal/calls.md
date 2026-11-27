@@ -604,6 +604,14 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   beside a `null` and beside a literal, the walk that ends at null, eight nullable controls
   and the two dense twins — each read after a filler allocation, both backends
   (`D-call-8`, loft#1337).
+- **A coalesce tail answers the record its call answered (`F-Ret`, `O-Buffer`, loft#2673)** —
+  `fn w(p: P) -> P { palt(p) ?? p }` hands back `palt`'s record where it answered and a copy of
+  `p` where it did not.  Its `??` temp IS the return buffer (pass 1 renamed it there), so the
+  copy into the buffer runs only where the joined value is another store, and the temp's rebind
+  leaves the store the caller handed in to the entry-witnessed free.  Guard
+  `loft-suite/rules/calls/F-Ret/2673-…`: struct, text-field struct and enum subjects, the
+  parameter, a local, a literal, a call and a second `??` as the default, dense and nullable
+  returns, a rebound local, loops and a vector, with the explicit-`return` and bound controls.
 
 D-op-1's falsifier applies: any program where the interpreter and `--native` disagree on argument
 order, a parameter's effect on the caller, or a return's independence is the definitional error
