@@ -297,7 +297,7 @@ fn block(b: ir::Bundle, ops: vector<ir::Node>, pos: integer, epi: vector<ir::Nod
 // `deliver_in`: the statement that writes the delivery place `x`.
 fn deliver_in(b: ir::Bundle, v: ir::Node, x: integer, epi: vector<ir::Node>, depth: integer, cx: Cx) -> ir::Node {
   match v {
-    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: deliver_in(b, inner, x, epi, depth, cx) },
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: deliver_in(b, inner, x, epi, depth, cx) },
     NdSet { var: y, inner: e } => if y == x { return keep_set(y, value(b, e, P_KEEP, epi, depth, cx)); },
     NdIf { cond, t, f } => return ir::NdIf { cond: cond, t: deliver_in(b, t, x, epi, depth, cx), f: deliver_in(b, f, x, epi, depth, cx) },
     NdBlock { block } => {
