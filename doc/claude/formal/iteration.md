@@ -210,8 +210,16 @@ case past it (QUALITY-history.md B8i).
 
 ## Deviations
 
-**OPEN: 0.**  The record of the others is in the companion
+**OPEN: 1.**  The record of the others is in the companion
 [iteration-history.md](iteration-history.md).
+
+* **D-iter-18** *(OPEN; loft#2658)* — `(I-Map)` / `(I-Filter)` / `(I-Reduce)`: the three are
+  parsed on their own and refuse every source but a vector — a hash, a sorted, a text and a
+  generator are refused with *"first argument must be a vector"*, behind *"Cannot infer type
+  for lambda parameter"* when the argument is a lambda — where each rule's right-hand side, the
+  comprehension or the loop, takes them all on both backends.  **Fix.**  Parse the three, and
+  their method forms, as exactly that rewrite.  Probes in
+  [plans/231-against-rust/probes/](../plans/231-against-rust/probes/) 31–41.
 
 ## Conformance
 
