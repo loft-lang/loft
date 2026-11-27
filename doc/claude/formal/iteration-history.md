@@ -341,3 +341,14 @@ Opened and closed in the same change; the chapter's `OPEN:` line never carried i
   reduced it once (loft#2573).  **Fix.**  One home, `hold_loop_source`, used by the `for`
   statement, the comprehension and the format loop.  Guard
   `loft-suite rules/iteration/I-For/2579-a-comprehension-and-a-format-loop-evaluate-their-source-once.loft`.
+* **D-iter-18** *(opened 2026-11-27, CLOSED 2026-11-27; loft#2658)* — `(I-Map)` / `(I-Filter)` /
+  `(I-Reduce)`: the three were parsed on their own and refused every source but a vector — a
+  `hash`, `sorted`, `index` or generator with *"first argument must be a vector"*, its method
+  spelling with *"Unknown field"*, a short lambda first with *"Cannot infer type for lambda
+  parameter"* — where each rule's loop takes them all.  **Fix.**  One predicate names the sources
+  (`combinator_source_elem`: every `for` source but a text, which the note above keeps a
+  comprehension source); the lambda hint, the three source checks and the method spelling read
+  it; a keyed source is walked through `keyed_snapshot`, as the `for` and the comprehension walk
+  it; `reduce` calls a function value itself where no declaration takes the source.  Guards
+  `loft-suite rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft` and
+  `2658b-a-text-is-not-a-combinator-source.loft`.

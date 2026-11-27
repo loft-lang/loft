@@ -6810,7 +6810,12 @@ use #count instead"
     /// so pass 2 would re-find pass 1's variables under the wrong roles (loft#662).
     /// `caller_text_buf` is the sequence for exactly this: a buffer the CALLER allocates
     /// for a callee's hidden `&text` out-param.
-    fn callback_call_ref(&mut self, fn_ref_var: u16, mut args: Vec<Value>, ret: &Type) -> Value {
+    pub(crate) fn callback_call_ref(
+        &mut self,
+        fn_ref_var: u16,
+        mut args: Vec<Value>,
+        ret: &Type,
+    ) -> Value {
         if !self.first_pass {
             // The COUNT is the one every text-returning `CallRef` site reads
             // (`Data::fnref_text_buffers`), because `fn_call_ref` trims the frame against
@@ -6841,8 +6846,94 @@ use #count instead"
         Value::Call(d_nr, args)
     }
 
-    /// Compiler special-case for `map(v: vector<T>, f: fn(T) -> U) -> vector<U>`.
-    /// Generates inline bytecode equivalent to `[for elm in v { f(elm) }]`.
+    /// `@FR-I-Map`, `@FR-I-Filter`, `@FR-I-Reduce` — the element a combinator's SOURCE hands its
+    /// callback, or `None` for a source the three do not take.  Each rule is its loop
+    /// (`[for x in src { f(x) }]`), so the source is what a `for` walks: a vector, a keyed
+    /// collection (`hash`, `sorted`, `index`, `radix`, `trie`: a reference to the record, as
+    /// `for_type` binds it) or a generator (its item).  Text is a `for` source and not a
+    /// combinator one (iteration.md § Combinators are vector methods): it maps through the
+    /// comprehension.  A nullable source is `None` too: neither `for` nor these unwrap it, and
+    /// `nullable_collection_refusal` names its discharge.
+    ///
+    /// A vector answers its element as written (`vector<T>` → `T`), which is what every caller
+    /// read before the other sources were taken (loft#2658); a keyed one the record with no
+    /// dependency, since the answer types a callback's parameter and a fresh result vector's
+    /// element — the loop variable's dependency on its source is `for_type`'s.
+    pub(crate) fn combinator_source_elem(&self, src: &Type) -> Option<Type> {
+        match src {
+            Type::Vector(elm, _) => Some(*elm.clone()),
+            Type::Sorted(dnr, _, _)
+            | Type::Index(dnr, _, _)
+            | Type::Hash(dnr, _, _)
+            | Type::Radix(dnr, _, _)
+            | Type::Trie(dnr, _, _) => {
+                Some(if self.data.def(*dnr).name.starts_with("__nullable<") {
+                    Type::Enum(*dnr, true, crate::data::Deps::none())
+                } else {
+                    Type::Reference(*dnr, crate::data::Deps::none())
+                })
+            }
+            Type::Iterator(item, _) if **item != Type::Null && !item.is_unknown() => {
+                Some(*item.clone())
+            }
+            // Opaque to `τ?` ON PURPOSE (`@FR-N-Shape`'s exception): a nullable source is not
+            // walked — no implicit unwrap, as `for` refuses it — and its caller names the
+            // discharge (`nullable_collection_refusal`).
+            Type::Optional(_) => None,
+            _ => None,
+        }
+    }
+
+    /// The source a combinator walks, held once before its loop: `(fill, walk, in_type, held)`.
+    /// A `hash`, `radix` or `trie` is walked through its ordered snapshot (`keyed_snapshot`,
+    /// which `for` and the comprehension share; the walk over the collection itself reads a
+    /// record number out of its table header) and `held` is `None`; every other source is
+    /// bound to a `<prefix>_vec` local the loop walks, which `held` names.  The caller hands
+    /// `fill` to the walk's setup; a snapshot is released when the loop ends
+    /// (`build_comprehension_code` finds it in the fill, `reduce` releases it itself).
+    pub(crate) fn combinator_source(
+        &mut self,
+        prefix: &str,
+        src: &Value,
+        src_tp: &Type,
+    ) -> (Value, Value, Type, Option<u16>) {
+        let mut walk = src.clone();
+        let mut in_type = src_tp.clone();
+        if let Some((_, snapshot)) = self.keyed_snapshot(&mut walk, &mut in_type, false) {
+            return (snapshot, walk, in_type, None);
+        }
+        let held = self.create_unique(&format!("{prefix}_vec"), src_tp);
+        (
+            v_set(held, src.clone()),
+            Value::Var(held),
+            src_tp.depending(held),
+            Some(held),
+        )
+    }
+
+    /// The refusal of a non-nullable combinator source `combinator_source_elem` does not take
+    /// (a nullable one is `nullable_collection_refusal`'s, loft#1453): a text is sent to the
+    /// comprehension, the rest are told the sources the rules take.
+    pub(crate) fn refuse_combinator_source(&mut self, name: &str, src: &Type) {
+        if matches!(src.base(), Type::Text(_)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "{name}: a text is not a {name} source — walk its characters with a \
+                 comprehension: `[for c in t {{ … }}]`"
+            );
+        } else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "{name}: first argument must be a vector, a keyed collection or a generator"
+            );
+        }
+    }
+
+    /// Compiler special-case for `map(src, f: fn(T) -> U) -> vector<U>` over any source
+    /// [`Self::combinator_source_elem`] takes.
+    /// Generates inline bytecode equivalent to `[for elm in src { f(elm) }]`.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F24 — higher-order functions (map / filter / reduce)
     pub(crate) fn parse_map(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
@@ -6870,6 +6961,9 @@ use #count instead"
             if let Type::Vector(elm, _) = &types[0] {
                 return Type::Vector(elm.clone(), crate::data::Deps::none());
             }
+            if let Some(elm) = self.combinator_source_elem(&types[0]) {
+                return Type::Vector(Box::new(elm.without_deps()), crate::data::Deps::none());
+            }
             return placeholder;
         }
         if list.len() != 2 {
@@ -6880,9 +6974,7 @@ use #count instead"
             );
             return placeholder;
         }
-        let _in_elem_type = if let Type::Vector(elm, _) = &types[0] {
-            *elm.clone()
-        } else {
+        if self.combinator_source_elem(&types[0]).is_none() {
             // A NULLABLE vector is not "not a vector" — the author picked the right kind and
             // only the `?` is in the way, so it earns the discharge message `for` gives rather
             // than a kind list (loft#1453).  `map` REFUSES it, exactly as `for` does: there is
@@ -6909,13 +7001,9 @@ use #count instead"
                 }
                 return placeholder;
             }
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "map: first argument must be a vector"
-            );
+            self.refuse_combinator_source("map", &types[0]);
             return placeholder;
-        };
+        }
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[1] {
             (params.clone(), *ret.clone())
         } else {
@@ -6995,9 +7083,8 @@ use #count instead"
             None
         };
 
-        let mut in_type = types[0].clone();
-        let vec_copy_var = self.create_unique("map_vec", &in_type);
-        in_type = in_type.depending(vec_copy_var);
+        let (mut fill, mut create_iter_code, in_type, held) =
+            self.combinator_source("map", &list[0], &types[0]);
 
         let iter_var = self.create_unique("map_idx", &self.count_type());
         self.vars.defined(iter_var);
@@ -7011,7 +7098,6 @@ use #count instead"
         let result_vec = self.create_unique("map_result", &result_type);
         let elm = self.unique_elm_var(&result_type, &out_elem, result_vec);
 
-        let mut create_iter_code = Value::Var(vec_copy_var);
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let loop_nr = self.vars.start_loop();
         let iter_next = self.iterator(&mut create_iter_code, &in_type, &it, iter_var, None);
@@ -7019,7 +7105,6 @@ use #count instead"
         self.vars.finish_loop(loop_nr);
         let for_next = v_set(for_var, iter_next);
 
-        let mut fill = v_set(vec_copy_var, list[0].clone());
         // for CallRef path, assign the fn-ref value before the loop.
         if let Some(fv) = fn_ref_var {
             fill = Value::Insert(vec![fill, v_set(fv, list[1].clone())]);
@@ -7050,10 +7135,9 @@ use #count instead"
             for_next,
             None,
             // The SOURCE, not `result_vec` — that is what this loop appends to.
-            if matches!(in_type, Type::Vector(_, _)) {
-                Some((Value::Var(vec_copy_var), iter_var))
-            } else {
-                None
+            match held {
+                Some(v) if matches!(in_type, Type::Vector(_, _)) => Some((Value::Var(v), iter_var)),
+                _ => None,
             },
             fill,
             create_iter_code,
@@ -7083,20 +7167,14 @@ use #count instead"
             );
             return Err(placeholder);
         }
-        let in_elem_type = if let Type::Vector(elm, _) = &types[0] {
-            *elm.clone()
-        } else {
+        let Some(in_elem_type) = self.combinator_source_elem(&types[0]) else {
             if !self.nullable_collection_refusal(
                 &types[0],
                 "filter",
                 "can be filtered",
                 "an empty result",
             ) {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "filter: first argument must be a vector"
-                );
+                self.refuse_combinator_source("filter", &types[0]);
             }
             return Err(placeholder);
         };
@@ -7164,6 +7242,9 @@ use #count instead"
             {
                 return Type::Vector(elm.clone(), crate::data::Deps::none());
             }
+            if let Some(elm) = types.first().and_then(|t| self.combinator_source_elem(t)) {
+                return Type::Vector(Box::new(elm.without_deps()), crate::data::Deps::none());
+            }
             return placeholder;
         }
         let (in_elem_type, fn_d_nr) = match self.parse_filter_validate(list, types) {
@@ -7179,9 +7260,8 @@ use #count instead"
             None
         };
 
-        let mut in_type = types[0].clone();
-        let vec_copy_var = self.create_unique("filter_vec", &in_type);
-        in_type = in_type.depending(vec_copy_var);
+        let (mut fill, mut create_iter_code, in_type, held) =
+            self.combinator_source("filter", &list[0], &types[0]);
 
         let iter_var = self.create_unique("filter_idx", &self.count_type());
         self.vars.defined(iter_var);
@@ -7195,7 +7275,6 @@ use #count instead"
         let result_vec = self.create_unique("filter_result", &result_type);
         let elm = self.unique_elm_var(&result_type, &out_elem, result_vec);
 
-        let mut create_iter_code = Value::Var(vec_copy_var);
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let loop_nr = self.vars.start_loop();
         let iter_next = self.iterator(&mut create_iter_code, &in_type, &it, iter_var, None);
@@ -7203,7 +7282,6 @@ use #count instead"
         self.vars.finish_loop(loop_nr);
         let for_next = v_set(for_var, iter_next);
 
-        let mut fill = v_set(vec_copy_var, list[0].clone());
         if let Some(fv) = fn_ref_var {
             fill = Value::Insert(vec![fill, v_set(fv, list[1].clone())]);
         }
@@ -7238,10 +7316,9 @@ use #count instead"
             for_next,
             None,
             // The SOURCE, not `result_vec` — that is what this loop appends to.
-            if matches!(in_type, Type::Vector(_, _)) {
-                Some((Value::Var(vec_copy_var), iter_var))
-            } else {
-                None
+            match held {
+                Some(v) if matches!(in_type, Type::Vector(_, _)) => Some((Value::Var(v), iter_var)),
+                _ => None,
             },
             fill,
             create_iter_code,

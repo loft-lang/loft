@@ -4773,8 +4773,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // A keyed source's snapshot (`keyed_snapshot`) is released as soon as the walk ends,
         // as a `for` statement's epilogue releases it: a comprehension evaluated once per
         // round of an enclosing loop builds one per round.
+        // A combinator's fill holds its callback beside the snapshot (`map`/`filter`, loft#2658).
         let snapshot = match fill.unspan() {
             Value::Set(s, _) if self.vars.name(*s).contains("hash_scratch") => Some(*s),
+            Value::Insert(ops) => ops.iter().find_map(|op| match op.unspan() {
+                Value::Set(s, _) if self.vars.name(*s).contains("hash_scratch") => Some(*s),
+                _ => None,
+            }),
             _ => None,
         };
         let mut for_steps: Vec<Value> = Vec::new();

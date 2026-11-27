@@ -448,6 +448,23 @@ impl Parser {
                 }
                 return crate::data::I64.clone();
             }
+            // loft#2658, `@FR-I-Map` / `@FR-I-Filter` / `@FR-I-Reduce` — `h.map(f)` on a keyed
+            // collection or a generator, which the stdlib's declarations (over `vector<T>`)
+            // cannot carry.  The vector's `#builtin` stub takes the call: it hints the callback
+            // and lowers through the special form, which reads the receiver's own type
+            // (`combinator_source_elem`), as the free spelling `map(h, f)` does.
+            if matches!(field.as_str(), "map" | "filter" | "reduce")
+                && !matches!(t, Type::Vector(_, _))
+                && let Some(elm) = self.combinator_source_elem(&t)
+                && self.lexer.peek_token("(")
+            {
+                let as_vector = Type::Vector(Box::new(elm), crate::data::Deps::none());
+                let stub = self.data.find_fn(u16::MAX, &field, &as_vector);
+                if stub != u32::MAX && self.data.def(stub).builtin() {
+                    self.lexer.token("(");
+                    return self.parse_method(code, stub, t.clone());
+                }
+            }
             // Plan-17 phase 01 (B) — bounded-T method dispatch must run
             // on BOTH passes so the call's return type propagates into
             // first-pass type inference of the enclosing variable.

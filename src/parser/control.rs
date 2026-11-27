@@ -16650,14 +16650,15 @@ impl Parser {
             );
             return Type::Unknown(0);
         }
-        let in_elem_type = if let Type::Vector(elm, _) = &types[0] {
-            *elm.clone()
-        } else {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "reduce: first argument must be a vector"
-            );
+        let Some(in_elem_type) = self.combinator_source_elem(&types[0]) else {
+            if !self.nullable_collection_refusal(
+                &types[0],
+                "reduce over",
+                "can be folded",
+                "the initial value",
+            ) {
+                self.refuse_combinator_source("reduce", &types[0]);
+            }
             return Type::Unknown(0);
         };
         let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[2] {
@@ -16735,6 +16736,29 @@ impl Parser {
         // answers what it accumulates.  The accumulator IS the fold's first parameter, so the
         // initial value is converted into it rather than the other way round; unchecked, a
         // float init folded through an integer function read the float's bits as an integer.
+        // A collection accumulator is folded by the declaration `reduce<T, U>`, which is declared
+        // over `vector<T>`; over any other source the fold below takes only a scalar or a
+        // `text` (loft#951's refusal further down), so say that first — the signature check
+        // compares the accumulator's dependencies, which no source here has given it yet.
+        let acc_named = if fn_param_types[0].is_unknown() {
+            acc_type.clone()
+        } else {
+            fn_param_types[0].without_deps()
+        };
+        if !matches!(types[0], Type::Vector(_, _))
+            && Self::is_heap_storage(&acc_named)
+            && !matches!(acc_named.base(), Type::Text(_))
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`reduce` over a {} folds into a scalar or a `text`, not a `{}` — write the loop: \
+                 `acc = <init>; for x in src {{ acc = f(acc, x); }}`",
+                types[0].source_name(&self.data),
+                acc_named.source_name(&self.data)
+            );
+            return acc_named;
+        }
         let mut init_code = list[1].clone();
         if !self.reduce_signature_fits(
             &mut init_code,
@@ -16778,7 +16802,22 @@ impl Parser {
         // A function VALUE reaches here only when the declaration `reduce<T, U>` did not take
         // it although its signature fits — an initial value that converts to the accumulator
         // without being it, which a type variable does not do.
-        let Value::Int(d) = list[2].unspan() else {
+        // A source that is not a vector has no declaration to take a function VALUE
+        // (`reduce<T, U>` is declared over `vector<T>`), so the fold calls it here, held in a
+        // local as `map` and `filter` hold theirs (loft#2658).
+        let source_is_vector = matches!(types[0], Type::Vector(_, _));
+        let fn_ref_var = if source_is_vector || matches!(list[2].unspan(), Value::Int(_)) {
+            None
+        } else {
+            let v = self.create_unique("reduce_fn", &types[2]);
+            self.vars.defined(v);
+            Some(v)
+        };
+        let fn_d_nr = if let Value::Int(d) = list[2].unspan() {
+            *d as u32
+        } else if fn_ref_var.is_some() {
+            u32::MAX
+        } else {
             diagnostic!(
                 self.lexer,
                 Level::Error,
@@ -16790,7 +16829,6 @@ impl Parser {
             );
             return Type::Unknown(0);
         };
-        let fn_d_nr = *d as u32;
 
         // loft#951 — a TEXT accumulator is minted as a WORK BUFFER, which puts it at
         // FUNCTION scope rather than inside the `reduce` block.  The block's tail is the
@@ -16812,9 +16850,13 @@ impl Parser {
         };
         self.vars.defined(acc_var);
 
-        let mut in_type = types[0].clone();
-        let vec_copy_var = self.create_unique("reduce_vec", &in_type);
-        in_type = in_type.depending(vec_copy_var);
+        let (source_fill, mut create_iter_code, in_type, held) =
+            self.combinator_source("reduce", &list[0], &types[0]);
+        // A keyed source's snapshot is released as the fold ends, as a `for` releases it.
+        let snapshot = match (held, source_fill.unspan()) {
+            (None, Value::Set(s, _)) => Some(*s),
+            _ => None,
+        };
 
         let iter_var = self.create_unique("reduce_idx", &self.count_type());
         self.vars.defined(iter_var);
@@ -16823,7 +16865,6 @@ impl Parser {
         let for_var = self.create_unique("reduce_elm", &var_tp);
         self.vars.defined(for_var);
 
-        let mut create_iter_code = Value::Var(vec_copy_var);
         let it = Type::Iterator(Box::new(var_tp.clone()), Box::new(Type::Null));
         let loop_nr = self.vars.start_loop();
         let iter_next = self.iterator(&mut create_iter_code, &in_type, &it, iter_var, None);
@@ -16835,8 +16876,10 @@ impl Parser {
         // vector really holds shares the out-of-bounds sentinel, and a `value struct`
         // element is deep-copied into a fresh record on bind (@PLN101), so the bound local
         // is never null and the test could never fire — `reduce` hung forever.
-        let break_if_null = if matches!(in_type, Type::Vector(_, _)) {
-            Value::Insert(self.vector_loop_break(&Value::Var(vec_copy_var), iter_var, false))
+        let break_if_null = if let Some(v) = held
+            && matches!(in_type, Type::Vector(_, _))
+        {
+            Value::Insert(self.vector_loop_break(&Value::Var(v), iter_var, false))
         } else {
             let mut test_for = Value::Var(for_var);
             self.convert(&mut test_for, &var_tp, &Type::Boolean);
@@ -16856,11 +16899,15 @@ impl Parser {
         // the fold read a packed DbRef as its element (loft#1074).  The accumulator is
         // untouched — it is a local of the init's own type, never an element reference.
         let (elem_arg, elem_arg_tp) = self.callback_element_arg(&in_type, for_var, &var_tp);
-        let fold_call = self.callback_call(
-            fn_d_nr,
-            vec![Value::Var(acc_var), elem_arg],
-            vec![acc_type.clone(), elem_arg_tp],
-        );
+        let fold_call = if let Some(fv) = fn_ref_var {
+            self.callback_call_ref(fv, vec![Value::Var(acc_var), elem_arg], &acc_type)
+        } else {
+            self.callback_call(
+                fn_d_nr,
+                vec![Value::Var(acc_var), elem_arg],
+                vec![acc_type.clone(), elem_arg_tp],
+            )
+        };
         // loft#951 — a TEXT accumulator cannot take the bare `acc = f(acc, x)`.  A callee
         // answering text writes into ONE caller-allocated buffer and CLEARS it on entry,
         // so binding `acc` straight to that buffer means the next turn erases the fold so
@@ -16890,17 +16937,20 @@ impl Parser {
 
         let loop_body = vec![for_next, break_if_null, fold_step];
 
-        *val = v_block(
-            vec![
-                v_set(acc_var, init_code),
-                v_set(vec_copy_var, list[0].clone()),
-                create_iter_code,
-                v_loop(loop_body, "reduce loop"),
-                Value::Var(acc_var),
-            ],
-            acc_type.clone(),
-            "reduce",
-        );
+        let mut ops = vec![v_set(acc_var, init_code)];
+        if let Some(fv) = fn_ref_var {
+            ops.push(v_set(fv, list[2].clone()));
+        }
+        ops.extend([
+            source_fill,
+            create_iter_code,
+            v_loop(loop_body, "reduce loop"),
+        ]);
+        if let Some(s) = snapshot {
+            ops.extend(self.release_scratch(s));
+        }
+        ops.push(Value::Var(acc_var));
+        *val = v_block(ops, acc_type.clone(), "reduce");
         acc_type
     }
 
@@ -17305,10 +17355,23 @@ impl Parser {
         types: &[Type],
         receiver: &Value,
     ) -> Option<Type> {
-        let Type::Vector(boxed, _) = types.first()?.peel_link().base() else {
+        // `map`, `filter` and `reduce` take every source their rule's loop walks
+        // (`combinator_source_elem`, loft#2658); the other callbacks here still take a vector.
+        let src = types.first()?.peel_link().base();
+        let elem = if let Type::Vector(boxed, _) = src {
+            (**boxed).clone()
+        } else if matches!(name, "map" | "filter" | "reduce") {
+            // A text is refused by the call (`refuse_combinator_source`); its lambda is still
+            // typed with the character a `for` would bind, so the refusal is the one message
+            // and not *"Cannot infer type for lambda parameter"* ahead of it.
+            match self.combinator_source_elem(src) {
+                Some(elem) => elem,
+                None if matches!(src, Type::Text(_)) => Type::Character,
+                None => return None,
+            }
+        } else {
             return None;
         };
-        let elem = (**boxed).clone();
         let elem_const = self.const_view_place(receiver, true).is_some();
         let elem_at =
             |i: usize| crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const));
