@@ -1314,13 +1314,15 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
 
 // A field declaration's one type, when it is nothing but a type and maybe a `= default`.
 // (A `const` item beside the type — `v: const vector<integer>` — is `parse_field`'s
-// `value_const`, read by `field_value_const`; any other item is not carried.)
+// `value_const`, read by `field_value_const`; any other item is not carried.  The type's
+// `group#right` capability links (`hp: integer stats#update`) are `parse_field_links`', kept on
+// the parser for the sandbox's admission walk (`member_access`), none of them in the image.)
 fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
   ty: integer? = null;
   for m in mods {
     match e.p.nodes[m] {
-      SFieldType { tp, caps } => {
-        if ty != null || len(caps) > 0 {
+      SFieldType { tp } => {
+        if ty != null {
           return null;
         }
         ty = tp;
