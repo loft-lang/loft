@@ -2434,12 +2434,17 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // element read inline (`OpEq…(<element>, <literal>)`); -1 for none.
   head_blit: vector<integer> = [];
   tail_blit: vector<integer> = [];
+  // A capture's alternation or range (`[x: true | false, ..]`, `[x: 1..5, ..]`): tested as a
+  // field's sub-pattern is (`sub_pattern_cond` over a `_fp_subj_N` read), -1 for none.
+  head_sub: vector<integer> = [];
+  tail_sub: vector<integer> = [];
   plus_rest = 0;
   for el0 in elems {
     nm = "";
     pat = -1;
     lit = -1;
     blit = -1;
+    sub = -1;
     match e.p.nodes[el0] {
       PLit { e: ble } => {
         if ble == null || sed >= 0 {
@@ -2448,6 +2453,25 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         }
         nm = "_";
         blit = ble!;
+      },
+      // `x: true | false` reads as an alternation whose first member is the capture: `x` names
+      // the element, every member (the capture's own pattern first) an alternative tested on it.
+      PAlt { alts: pal } => {
+        p0 = pal[0] ?? -1;
+        match e.p.nodes[p0] {
+          PCap { name: pcn, pat: pcp } => {
+            if pcp == null || sed >= 0 {
+              el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+              return null;
+            }
+            nm = pcn;
+            sub = el0;
+          },
+          _ => {
+            el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+            return null;
+          }
+        }
       },
       PRest { name } => {
         if has_rest {
@@ -2486,6 +2510,22 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
             }
             nm = cn;
             lit = cle!;
+          },
+          PAlt { alts: _ } => {
+            if sed >= 0 {
+              el::refuse(e, "a slice pattern capture of an alternation over this element");
+              return null;
+            }
+            nm = cn;
+            sub = cpn;
+          },
+          PRange { lo: _ } => {
+            if sed >= 0 {
+              el::refuse(e, "a slice pattern capture of a range over this element");
+              return null;
+            }
+            nm = cn;
+            sub = cpn;
           },
           // `p: Pt` (the element's struct named: the capture alone) and `p: Pt { … }` (the
           // capture, then the struct's pattern over the same element).
@@ -2531,11 +2571,13 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       tail_pat += [pat];
       tail_lit += [lit];
       tail_blit += [blit];
+      tail_sub += [sub];
     } else {
       head += [nm];
       head_pat += [pat];
       head_lit += [lit];
       head_blit += [blit];
+      head_sub += [sub];
     }
   }
   fixed = len(head) + len(tail);
@@ -2643,7 +2685,40 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // Each capture's literal is tested (`#field_sub` over a `_fp_subj_N` read of the element),
   // joined to the length test, the element bound with the rest.  (Its temp is minted after the
   // captures' variables, as Rust numbers them.)
+  all_sub = head_sub + tail_sub;
   for hl in head_lit + tail_lit {
+    hsub = all_sub[hl#index] ?? -1;
+    if hl < 0 && hsub >= 0 {
+      si = hl#index;
+      spos = if si < len(head_lit) { si } else { si - len(head_lit) - len(tail_lit) };
+      sat2 = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: spos }]);
+      sfp = el_vars::create_unique(vars, "fp_subj", elm);
+      el_vars::set_defined(vars, sfp);
+      sc: ir::Node? = null;
+      match e.p.nodes[hsub] {
+        PAlt { alts: sal } => {
+          // (Each member its test, the capture's own pattern for the first; folded from the
+          // left, `if (if a true else b) true else c`, as Rust's alternation chains.)
+          chain = ir::NdNull;
+          for mp0 in sal {
+            mp = match e.p.nodes[mp0] { PCap { pat: mcp } => mcp ?? mp0, _ => mp0 };
+            mc = el_ex_pattern::sub_pattern_cond(e, vars, mp, sfp, elm);
+            if mc == null {
+              return null;
+            }
+            chain = if chain is NdNull { mc! } else { el_ir::v_if(chain, ir::NdBoolean { b: true }, mc!) };
+          }
+          sc = chain;
+        },
+        _ => {
+          sc = el_ex_pattern::sub_pattern_cond(e, vars, hsub, sfp, elm);
+        }
+      }
+      if sc == null {
+        return null;
+      }
+      cond = el_ir::v_if(cond, el_ir::v_block([el_ir::v_set(sfp, slice_elem(e, elm, sat2)), sc!], ir::TyBoolean, "field_sub"), ir::NdBoolean { b: false });
+    }
     if hl >= 0 {
       li = hl#index;
       lpos = if li < len(head_lit) { li } else { li - len(head_lit) - len(tail_lit) };
