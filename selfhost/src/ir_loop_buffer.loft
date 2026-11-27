@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/loop_buffer.rs` transcribed (`@FR-R-LoopBuffer`): a vector local declared
+// `[]` inside a loop keeps its store and its vector across the passes.  The buffers are
+// `hoist::loop_buffers`' (`ir_hoist`), less the ones another rule owns (`ir_buffer_owner`).
+// Each declaration `OpDatabase(vdb, tp) · t = OpGetField(vdb, 0, ftp) · OpSetInt4(vdb, 0, 0)`
+// becomes
+//
+//   if OpRefIsNull(vdb) { OpDatabase(vdb, tp); OpSetInt4(vdb, 0, 0) }
+//   else { OpClearVector(OpGetField(vdb, 0, ftp)) }
+//   t = OpGetField(vdb, 0, ftp)
+//
+// A function that yields or calls a generator is declined.  `LOFT_NO_LOOP_BUFFER_REUSE=1` turns
+// the rule off.
+
+use ir;
+use scope_fn;
+use lower;
+use cgen_types;
+use opt_apart_records;
+use el;
+use ir_pass_tree;
+use ir_hoist;
+use ir_buffer_owner;
+
+struct Ops {
+  database: integer,
+  database_np: integer,
+  get_field: integer,
+  set_int4: integer,
+  ref_is_null: integer,
+  clear_vector: integer,
+}
+
+// port: loop_buffer.rs fn calls_a_generator — does `n` call a function that answers a
+// generator, or yield itself?
+fn calls_a_generator(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdYield => return true,
+    NdCall { def_nr } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && cgen_types::base(b.data.definitions[def_nr]!.returned[0] ?? ir::TyVoid) is TyIterator {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls_a_generator(b, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: loop_buffer.rs fn leave_owned — every buffer another rewrite owns is left.
+fn leave_owned(b: ir::Bundle, d: integer, apr: opt_apart_records::Plan, buffers: vector<integer>) -> vector<integer> {
+  owners = ir_buffer_owner::owners(b, d, apr);
+  [for v in buffers if ir_buffer_owner::owner_of(owners, v) == "" { v }]
+}
+
+struct Done {
+  vars: vector<integer>,
+}
+
+// port: loop_buffer.rs fn declaration — `stmts[at]`, or the kept form of the whole declaration
+// it opens, emitted into `out`; answers how many statements it consumed.
+fn declaration(stmts: vector<ir::Node>, at: integer, buffers: vector<integer>, ops: Ops, done: Done, out: vector<ir::Node>) -> integer {
+  stmt = stmts[at]!;
+  u = scope_fn::unspan(stmt);
+  db_op = ir_pass_tree::call_def(u);
+  db_args = ir_pass_tree::args_of(u);
+  if db_op < 0 || len(db_args) == 0 {
+    out += [stmt];
+    return 1;
+  }
+  vdb = ir_pass_tree::var_of(db_args[0]!) ?? -1;
+  if vdb < 0 || (db_op != ops.database && db_op != ops.database_np) || !scope_fn::has(buffers, vdb) {
+    out += [stmt];
+    return 1;
+  }
+  gf = ir::NdNull;
+  bound = false;
+  if at + 1 < len(stmts) {
+    match scope_fn::unspan(stmts[at + 1]!) {
+      NdSet { inner } => {
+        gf = inner;
+        bound = true;
+      },
+      _ => {}
+    }
+  }
+  if !bound {
+    out += [stmt];
+    return 1;
+  }
+  gu = scope_fn::unspan(gf);
+  gargs = ir_pass_tree::args_of(gu);
+  if !ir_pass_tree::is_call(gu, ops.get_field) || len(gargs) < 2 || (ir_pass_tree::var_of(gargs[0]!) ?? -1) != vdb || !(scope_fn::unspan(gargs[1]!) is NdInt) || (ir_pass_tree::int_of(gargs[1]!) ?? -1) != 0 {
+    out += [stmt];
+    return 1;
+  }
+  reset = false;
+  if at + 2 < len(stmts) {
+    r = scope_fn::unspan(stmts[at + 2]!);
+    ra = ir_pass_tree::args_of(r);
+    reset = ir_pass_tree::is_call(r, ops.set_int4) && len(ra) >= 3 && (ir_pass_tree::var_of(ra[0]!) ?? -1) == vdb && is_zero(ra[1]!) && is_zero(ra[2]!);
+  }
+  mint = [stmt, ir::NdCall { def_nr: ops.set_int4, args: [ir::NdVar { n: vdb }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }] }];
+  clear = [ir::NdCall { def_nr: ops.clear_vector, args: [gf] }];
+  out += [ir::NdIf {
+    cond: ir::NdCall { def_nr: ops.ref_is_null, args: [ir::NdVar { n: vdb }] },
+    t: ir::NdBlock { block: [ir_pass_tree::block("loop buffer mint", mint, ir::TyVoid, 65535)] },
+    f: ir::NdBlock { block: [ir_pass_tree::block("loop buffer reset", clear, ir::TyVoid, 65535)] }
+  }];
+  out += [stmts[at + 1]!];
+  if !scope_fn::has(done.vars, vdb) {
+    done.vars += [vdb];
+  }
+  if reset { 3 } else { 2 }
+}
+
+fn is_zero(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdInt { n: k } => k == 0,
+    _ => false
+  }
+}
+
+fn rewrite_ops(old: vector<ir::Node>, buffers: vector<integer>, ops: Ops, done: Done) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  i = 0;
+  while i < len(old) {
+    i += declaration(old, i, buffers, ops, done, out);
+  }
+  out
+}
+
+// port: loop_buffer.rs fn rewrite — the declarations of `buffers` in every block under `v`.
+fn rewrite_in(v: ir::Node, buffers: vector<integer>, ops: Ops, done: Done) -> ir::Node {
+  n = rewrite_top(v, buffers, ops, done);
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for c in kids { rewrite_in(c, buffers, ops, done) }])
+}
+
+// The statement list of a block or loop `v` (under any spans) rewritten.
+fn rewrite_top(v: ir::Node, buffers: vector<integer>, ops: Ops, done: Done) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rewrite_top(inner, buffers, ops, done) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, rewrite_ops(block[0]!.operators, buffers, ops, done))] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, rewrite_ops(block[0]!.operators, buffers, ops, done))] },
+    _ => v
+  }
+}
+
+// port: loop_buffer.rs fn rewrite_program — every admitted buffer of the program rewritten;
+// answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_LOOP_BUFFER_REUSE") ?? "") != "" {
+    return 0;
+  }
+  ops = Ops {
+    database: lower::find(b, "OpDatabase") ?? -1,
+    database_np: lower::find(b, "OpDatabaseNP") ?? -1,
+    get_field: lower::find(b, "OpGetField") ?? -1,
+    set_int4: lower::find(b, "OpSetInt4") ?? -1,
+    ref_is_null: lower::find(b, "OpRefIsNull") ?? -1,
+    clear_vector: lower::find(b, "OpClearVector") ?? -1
+  };
+  if ops.database < 0 || ops.get_field < 0 || ops.set_int4 < 0 || ops.ref_is_null < 0 || ops.clear_vector < 0 {
+    return 0;
+  }
+  apr = opt_apart_records::plan(b);
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || el::is_operator(d) || d.rust != "" {
+      continue;
+    }
+    d_nr = d#index;
+    code = d.code[0]!;
+    if calls_a_generator(b, code) {
+      continue;
+    }
+    buffers = ir_hoist::loop_buffers(b, d_nr);
+    if len(buffers) == 0 {
+      continue;
+    }
+    buffers = leave_owned(b, d_nr, apr, buffers);
+    if len(buffers) == 0 {
+      continue;
+    }
+    done = Done { vars: [] };
+    code = rewrite_in(code, buffers, ops, done);
+    b.data.definitions[d_nr].code = [code];
+    if len(done.vars) == 0 {
+      continue;
+    }
+    ir_pass_tree::relayout(b, d_nr);
+    total += len(done.vars);
+  }
+  total
+}

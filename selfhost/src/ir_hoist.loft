@@ -1,0 +1,708 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the analyses of `src/opt/hoist.rs` the transcribed IR passes ask, same names:
+// `loop_buffers` (`@FR-R-LoopBuffer`, the per-site vector buffers a loop may keep) and
+// `invariant_literals` (`@FR-R-LitHoist`, the loop-body vector literals that build once), with
+// their helpers.  A set of variables is a `vector<integer>` of variable numbers.
+
+use ir;
+use scope_fn;
+use types;
+use cgen_types;
+use opt_names;
+use ir_pass_tree;
+
+fn var_name(f: ir::Function, v: integer) -> text {
+  x = f.variables[v];
+  if x == null { "" } else { x.name }
+}
+
+fn var_type(f: ir::Function, v: integer) -> ir::TypeT {
+  x = f.variables[v];
+  if x == null { ir::TyVoid } else { x.type_def[0] ?? ir::TyVoid }
+}
+
+fn is_argument(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  x != null && x.argument
+}
+
+fn first_var(args: vector<ir::Node>) -> integer {
+  if len(args) == 0 { -1 } else { ir_pass_tree::var_of(args[0]!) ?? -1 }
+}
+
+fn int_at(args: vector<ir::Node>, i: integer, k: integer) -> boolean {
+  a = args[i];
+  if a == null {
+    return false;
+  }
+  match scope_fn::unspan(a!) {
+    NdInt { n } => n == k,
+    _ => false
+  }
+}
+
+// `Value::any_node(|n| matches!(n, Yield | Parallel))`.
+pub fn yields_or_par(n: ir::Node) -> boolean {
+  match n {
+    NdYield => return true,
+    NdParallel => return true,
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if yields_or_par(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: hoist.rs fn one_no_heap_vector — is `tp` the record `OpDatabase` mints to back a vector
+// local: exactly one field, a vector whose elements own no heap?
+fn one_no_heap_vector(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp > 65535 || tp >= len(b.types) {
+    return false;
+  }
+  t = b.types[tp]!;
+  if len(t.parts) == 0 {
+    return false;
+  }
+  fields: vector<ir::DbField> = match t.parts[0]! { PtStruct { fields } => fields, _ => [] };
+  if !(t.parts[0]! is PtStruct) || len(fields) != 1 {
+    return false;
+  }
+  vec_tp = fields[0]!.content;
+  if vec_tp < 0 || vec_tp >= 65535 || vec_tp >= len(b.types) || len(b.types[vec_tp]!.parts) == 0 {
+    return false;
+  }
+  elem = match b.types[vec_tp]!.parts[0]! { PtVector { content } => content, _ => return false };
+  elem != 65535 && !types::owns_heap(b.types, elem)
+}
+
+struct LbScan {
+  cand: vector<integer>,
+  null_in_loop: vector<integer>,
+}
+
+// port: hoist.rs fn walk_loops, with `loop_buffers`' visitor: the candidate mints under a loop
+// and the null declarations under one.
+fn lb_walk(b: ir::Bundle, f: ir::Function, n: ir::Node, in_loop: boolean, s: LbScan) {
+  u = scope_fn::unspan(n);
+  if in_loop {
+    match u {
+      NdCall { def_nr, args } => {
+        nm = ir_pass_tree::def_name(b, def_nr);
+        if (nm == "OpDatabase" || nm == "OpDatabaseNP") && len(args) == 2 {
+          v = ir_pass_tree::var_of(args[0]!);
+          tp = match scope_fn::unspan(args[1]!) { NdInt { n: k } => k, _ => -1 };
+          if v != null && scope_fn::unspan(args[1]!) is NdInt && var_name(f, v!).starts_with("__vdb") && one_no_heap_vector(b, tp) && !scope_fn::has(s.cand, v!) {
+            s.cand += [v!];
+          }
+        }
+      },
+      NdSet { var, inner } => {
+        if scope_fn::unspan(inner) is NdNull && !scope_fn::has(s.null_in_loop, var) {
+          s.null_in_loop += [var];
+        }
+      },
+      _ => {}
+    }
+  }
+  deeper = in_loop || u is NdLoop;
+  for c in scope_fn::children(u) {
+    lb_walk(b, f, c, deeper, s);
+  }
+}
+
+struct Mentions {
+  mentions: integer,
+  accounted: integer,
+}
+
+fn count_family(b: ir::Bundle, n: ir::Node, v: integer, m: Mentions) {
+  match n {
+    NdVar { n: w } => if w == v { m.mentions += 1; },
+    NdCall { def_nr, args } => {
+      if first_var(args) == v {
+        nm = ir_pass_tree::def_name(b, def_nr);
+        if nm == "OpDatabase" || nm == "OpDatabaseNP" {
+          m.accounted += 1;
+        } else if nm == "OpGetField" && int_at(args, 1, 0) {
+          m.accounted += 1;
+        } else if nm == "OpSetInt4" && int_at(args, 1, 0) && int_at(args, 2, 0) {
+          m.accounted += 1;
+        } else if nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRefTag" {
+          m.accounted += 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    count_family(b, c, v, m);
+  }
+}
+
+fn field_binders(b: ir::Bundle, n: ir::Node, v: integer, out: vector<integer>) {
+  match n {
+    NdSet { var, inner } => {
+      u = scope_fn::unspan(inner);
+      if var != v && ir_pass_tree::def_name(b, ir_pass_tree::call_def(u)) == "OpGetField" && first_var(ir_pass_tree::args_of(u)) == v && !scope_fn::has(out, var) {
+        out += [var];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    field_binders(b, c, v, out);
+  }
+}
+
+fn frees_one_of(b: ir::Bundle, n: ir::Node, binders: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = ir_pass_tree::def_name(b, def_nr);
+      if (nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct" || nm == "OpFreeRefTag") && scope_fn::has(binders, first_var(args)) {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if frees_one_of(b, c, binders) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: hoist.rs fn bound_to_a_releasing_local — is buffer `v`'s field bound to a local that
+// releases the store itself?
+fn bound_to_a_releasing_local(b: ir::Bundle, body: ir::Node, v: integer) -> boolean {
+  binders: vector<integer> = [];
+  field_binders(b, body, v, binders);
+  len(binders) > 0 && frees_one_of(b, body, binders)
+}
+
+// port: hoist.rs fn loop_buffers (@PLN157 § V-al, `@FR-R-LoopBuffer`) — the LOOP BUFFERS of
+// `d`: a `__vdb` buffer minted inside a loop, its record one vector field of no-heap elements,
+// every mention its own init family or a free, not declared inside the loop, and its field not
+// bound to a local that releases the store.  A body that yields or holds a `par` block binds none.
+pub fn loop_buffers(b: ir::Bundle, d: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  def = b.data.definitions[d]!;
+  body = def.code[0] ?? ir::NdNull;
+  if body is NdNull || yields_or_par(body) {
+    return out;
+  }
+  f = def.variables;
+  s = LbScan { cand: [], null_in_loop: [] };
+  lb_walk(b, f, body, false, s);
+  for v in s.cand {
+    if scope_fn::has(s.null_in_loop, v) {
+      continue;
+    }
+    m = Mentions { mentions: 0, accounted: 0 };
+    count_family(b, body, v, m);
+    if bound_to_a_releasing_local(b, body, v) {
+      continue;
+    }
+    if m.mentions == m.accounted {
+      out += [v];
+    }
+  }
+  out
+}
+
+// ---- `@FR-R-LitHoist` -----------------------------------------------------------------------
+
+// `LIT_HOIST_GETTERS`
+fn lit_hoist_getter(name: text) -> boolean {
+  name == "OpGetInt" || name == "OpGetFloat" || name == "OpGetSingle" || name == "OpGetBoolean" || name == "OpGetByte" || name == "OpGetShort" || name == "OpGetCharacter"
+}
+
+// What `invariant_literals` admitted: the WRAPPED locals, and the FLAT groups as parallel
+// (witness, local) lists.
+pub struct LitHoist {
+  pub wrapped: vector<integer>,
+  pub flat_vdb: vector<integer>,
+  pub flat_v: vector<integer>,
+}
+
+pub fn no_lit_hoist() -> LitHoist {
+  LitHoist { wrapped: [], flat_vdb: [], flat_v: [] }
+}
+
+fn type_kids(t: ir::TypeT) -> vector<ir::TypeT> {
+  out: vector<ir::TypeT> = [];
+  match t {
+    TyRefVar { inner } => { out += [inner]; },
+    TyVector { inner } => { out += [inner]; },
+    TyRewritten { inner } => { out += [inner]; },
+    TyOptional { inner } => { out += [inner]; },
+    TyIterator { step, inner } => { out += [step, inner]; },
+    TyFunction { args, result } => { out += args; out += [result]; },
+    TyTuple { elems } => { out += elems; },
+    _ => {}
+  }
+  out
+}
+
+// port: hoist.rs fn mentions_def — does `tp` mention record/enum definition `pd` anywhere?
+fn mentions_def(tp: ir::TypeT, pd: integer) -> boolean {
+  match cgen_types::base(tp) {
+    TyReference { n } => if n == pd { return true; },
+    TyEnum { n } => if n == pd { return true; },
+    _ => {}
+  }
+  for c in type_kids(tp) {
+    if mentions_def(c, pd) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Fresh {
+  all_null: boolean,
+  created: boolean,
+}
+
+fn fresh_walk(b: ir::Bundle, n: ir::Node, v: integer, s: Fresh) {
+  match n {
+    NdSet { var, inner } => if var == v && !(scope_fn::unspan(inner) is NdNull) { s.all_null = false; },
+    NdCall { def_nr, args } => if ir_pass_tree::def_name(b, def_nr) == "OpDatabase" && first_var(args) == v { s.created = true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    fresh_walk(b, c, v, s);
+  }
+}
+
+// port: hoist.rs fn fresh_store_local — every `Set` of `v` is the `= null` declaration and an
+// `OpDatabase(v, tp)` creates its store.
+fn fresh_store_local(b: ir::Bundle, f: ir::Function, v: integer, body: ir::Node) -> boolean {
+  if is_argument(f, v) {
+    return false;
+  }
+  s = Fresh { all_null: true, created: false };
+  fresh_walk(b, body, v, s);
+  s.all_null && s.created
+}
+
+// port: hoist.rs fn lit_part_invariant — an invariant SCALAR part; the value-const record
+// parameters read are added to `params`.
+fn lit_part_invariant(b: ir::Bundle, val: ir::Node, f: ir::Function, set_counts: vector<integer>, params: vector<integer>) -> boolean {
+  match scope_fn::unspan(val) {
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdEnum => true,
+    NdNull => true,
+    NdVar { n: p } => {
+      t = cgen_types::base(var_type(f, p));
+      is_argument(f, p) && (t is TyInteger || t is TyFloat || t is TySingle || t is TyBoolean || t is TyCharacter) && (set_counts[p] ?? 0) == 0
+    },
+    NdIf { cond, t, f: e } => lit_part_invariant(b, cond, f, set_counts, params) && lit_part_invariant(b, t, f, set_counts, params) && lit_part_invariant(b, e, f, set_counts, params),
+    NdBlock { block } => {
+      for op in block[0]!.operators {
+        if !lit_part_invariant(b, op, f, set_counts, params) {
+          return false;
+        }
+      }
+      true
+    },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      def = b.data.definitions[def_nr]!;
+      if lit_hoist_getter(def.name) && len(args) > 0 {
+        p = ir_pass_tree::var_of(args[0]!) ?? -1;
+        if p >= 0 && scope_fn::unspan(args[0]!) is NdVar && is_argument(f, p) && f.variables[p]!.value_const && opt_names::peel_link(var_type(f, p)) is TyReference {
+          all_int = true;
+          for a in args {
+            if a#index > 0 && !(scope_fn::unspan(a) is NdInt) {
+              all_int = false;
+            }
+          }
+          if all_int {
+            if !scope_fn::has(params, p) {
+              params += [p];
+            }
+            return true;
+          }
+        }
+      }
+      code = def.code[0] ?? ir::NdNull;
+      primitive = code is NdNull && def.rust != "";
+      if !primitive && def.purity != 1 {
+        return false;
+      }
+      for a in args {
+        if !lit_part_invariant(b, a, f, set_counts, params) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+fn first_named(f: ir::Function, args: vector<ir::Node>, prefix: text) -> boolean {
+  if len(args) == 0 {
+    return false;
+  }
+  u = scope_fn::unspan(args[0]!);
+  match u {
+    NdVar { n } => var_name(f, n).starts_with(prefix),
+    _ => false
+  }
+}
+
+// port: hoist.rs fn lit_init_invariant — an invariant vector-literal INITIALIZER: the parser's
+// build group, possibly under an `if` whose condition is invariant.
+fn lit_init_invariant(b: ir::Bundle, val: ir::Node, f: ir::Function, set_counts: vector<integer>, params: vector<integer>) -> boolean {
+  match scope_fn::unspan(val) {
+    NdIf { cond, t, f: e } => lit_part_invariant(b, cond, f, set_counts, params) && lit_init_invariant(b, t, f, set_counts, params) && lit_init_invariant(b, e, f, set_counts, params),
+    NdBlock { block } => {
+      for op in block[0]!.operators {
+        if !lit_init_invariant(b, op, f, set_counts, params) {
+          return false;
+        }
+      }
+      true
+    },
+    NdSet { var, inner } => {
+      x = scope_fn::unspan(inner);
+      var_name(f, var).starts_with("_vec") && ir_pass_tree::def_name(b, ir_pass_tree::call_def(x)) == "OpGetField" && first_named(f, ir_pass_tree::args_of(x), "__vdb")
+    },
+    NdVar { n } => var_name(f, n).starts_with("_vec"),
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      name = b.data.definitions[def_nr]!.name;
+      if name == "OpDatabase" || name == "OpSetInt4" {
+        return first_named(f, args, "__vdb");
+      }
+      if name == "OpPreAllocVector" {
+        return first_named(f, args, "_vec");
+      }
+      if name.starts_with("OpPush") {
+        if !first_named(f, args, "_vec") {
+          return false;
+        }
+        for a in args {
+          if a#index > 0 && !lit_part_invariant(b, a, f, set_counts, params) {
+            return false;
+          }
+        }
+        return true;
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: hoist.rs fn flat_lit_member — is `stmt` a member of the FLAT build group of local `v`
+// with witness `vdb`?
+pub fn flat_lit_member(b: ir::Bundle, stmt: ir::Node, v: integer, vdb: integer) -> boolean {
+  match scope_fn::unspan(stmt) {
+    NdLine => true,
+    NdSet { var, inner } => {
+      if var != v {
+        return false;
+      }
+      x = scope_fn::unspan(inner);
+      ir_pass_tree::def_name(b, ir_pass_tree::call_def(x)) == "OpGetField" && first_var(ir_pass_tree::args_of(x)) == vdb
+    },
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      name = b.data.definitions[def_nr]!.name;
+      if name == "OpSetInt4" {
+        first_var(args) == vdb
+      } else if name == "OpPreAllocVector" || name.starts_with("OpPush") {
+        first_var(args) == v
+      } else {
+        false
+      }
+    },
+    _ => false
+  }
+}
+
+// One candidate of `invariant_literals`: its local, the value-const parameters it reads, its
+// flat witness (-1 wrapped) and the flat group's own mentions of the local.
+struct LitCand {
+  v: integer,
+  params: vector<integer>,
+  vdb: integer,
+  mentions: integer,
+}
+
+struct LitScan {
+  cands: vector<LitCand>,
+  set_counts: vector<integer>,
+}
+
+fn lit_has(s: LitScan, v: integer) -> boolean {
+  for c in s.cands {
+    if c.v == v {
+      return true;
+    }
+  }
+  false
+}
+
+fn elem_ok(f: ir::Function, v: integer) -> boolean {
+  match opt_names::peel_link(var_type(f, v)) {
+    TyVector { inner } => {
+      e = cgen_types::base(inner);
+      e is TyInteger || e is TyFloat || e is TySingle || e is TyBoolean || e is TyCharacter
+    },
+    _ => false
+  }
+}
+
+fn count_var(n: ir::Node, v: integer, total: &integer) {
+  match n {
+    NdVar { n: x } => if x == v { total += 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    count_var(c, v, total);
+  }
+}
+
+fn next_code(ops: vector<ir::Node>, from: integer) -> integer {
+  for j in from..len(ops) {
+    if !(scope_fn::unspan(ops[j]!) is NdLine) {
+      return j;
+    }
+  }
+  -1
+}
+
+// The flat shape over one inner block's statement list.
+fn lit_flat(b: ir::Bundle, f: ir::Function, ops: vector<ir::Node>, s: LitScan) {
+  for i in 0..len(ops) {
+    u = scope_fn::unspan(ops[i]!);
+    if ir_pass_tree::def_name(b, ir_pass_tree::call_def(u)) != "OpDatabase" {
+      continue;
+    }
+    dargs = ir_pass_tree::args_of(u);
+    if len(dargs) == 0 || !(scope_fn::unspan(dargs[0]!) is NdVar) {
+      continue;
+    }
+    vdb = ir_pass_tree::var_of(dargs[0]!) ?? -1;
+    if !var_name(f, vdb).starts_with("__vdb") {
+      continue;
+    }
+    si = next_code(ops, i + 1);
+    if si < 0 {
+      continue;
+    }
+    v = match scope_fn::unspan(ops[si]!) { NdSet { var } => var, _ => continue };
+    if lit_has(s, v) || (s.set_counts[v] ?? 0) != 1 || !elem_ok(f, v) || !flat_lit_member(b, ops[si]!, v, vdb) {
+      continue;
+    }
+    params: vector<integer> = [];
+    sound = true;
+    mentions = 0;
+    for j in si + 1..len(ops) {
+      stmt = ops[j]!;
+      if !flat_lit_member(b, stmt, v, vdb) {
+        break;
+      }
+      count_var(stmt, v, mentions);
+      su = scope_fn::unspan(stmt);
+      if ir_pass_tree::def_name(b, ir_pass_tree::call_def(su)).starts_with("OpPush") {
+        ok = true;
+        for a in ir_pass_tree::args_of(su) {
+          if ok && a#index > 0 && !lit_part_invariant(b, a, f, s.set_counts, params) {
+            ok = false;
+          }
+        }
+        if !ok {
+          sound = false;
+          break;
+        }
+      }
+    }
+    if sound {
+      s.cands += [LitCand { v: v, params: params, vdb: vdb, mentions: mentions }];
+    }
+  }
+}
+
+// `op.any_node(|m| …)` over one statement of a `For block`: the wrapped and the flat shapes.
+fn lit_inner(b: ir::Bundle, f: ir::Function, m: ir::Node, s: LitScan) {
+  match m {
+    NdSet { var, inner } => {
+      if !lit_has(s, var) && (s.set_counts[var] ?? 0) == 1 && elem_ok(f, var) {
+        params: vector<integer> = [];
+        if lit_init_invariant(b, inner, f, s.set_counts, params) {
+          s.cands += [LitCand { v: var, params: params, vdb: -1, mentions: 0 }];
+        }
+      }
+    },
+    NdBlock { block } => lit_flat(b, f, block[0]!.operators, s),
+    _ => {}
+  }
+  for c in scope_fn::children(m) {
+    lit_inner(b, f, c, s);
+  }
+}
+
+fn lit_outer(b: ir::Bundle, f: ir::Function, n: ir::Node, s: LitScan) {
+  match n {
+    NdBlock { block } => {
+      if block[0]!.name == "For block" {
+        for op in block[0]!.operators {
+          lit_inner(b, f, op, s);
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    lit_outer(b, f, c, s);
+  }
+}
+
+fn count_sets(n: ir::Node, counts: vector<integer>) {
+  match n {
+    NdSet { var } => if var >= 0 && var < len(counts) { counts[var] = (counts[var] ?? 0) + 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    count_sets(c, counts);
+  }
+}
+
+struct LitUses {
+  var_mentions: vector<integer>,
+  allowed: vector<integer>,
+  getter_bases: vector<integer>,
+}
+
+fn lit_uses(b: ir::Bundle, n: ir::Node, s: LitScan, u: LitUses) {
+  match n {
+    NdVar { n: w } => if w >= 0 && w < len(u.var_mentions) { u.var_mentions[w] = (u.var_mentions[w] ?? 0) + 1; },
+    NdSet { inner } => {
+      x = scope_fn::unspan(inner);
+      match x {
+        NdVar { n: w } => if lit_has(s, w) { u.allowed[w] = (u.allowed[w] ?? 0) + 1; },
+        _ => {}
+      }
+    },
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && len(args) > 0 && scope_fn::unspan(args[0]!) is NdVar {
+        name = b.data.definitions[def_nr]!.name;
+        w = ir_pass_tree::var_of(args[0]!) ?? -1;
+        if (name == "OpLengthVector" || name == "OpFreeRef") && lit_has(s, w) {
+          u.allowed[w] = (u.allowed[w] ?? 0) + 1;
+        }
+        if lit_hoist_getter(name) && w >= 0 && w < len(u.getter_bases) {
+          u.getter_bases[w] = (u.getter_bases[w] ?? 0) + 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    lit_uses(b, c, s, u);
+  }
+}
+
+// port: hoist.rs fn invariant_literals (@PLN157 § V-x, `@FR-R-LitHoist`) — the loop-body
+// vector LITERALS that build once per activation: a `Set(v, init)` under a `For` with one `Set`
+// in the function, a plain no-heap-scalar vector, invariant parts, every other use a read, and
+// the alias gate over the value-const record parameters it reads.  Two admitted locals sharing a
+// sanitized name decline both.
+pub fn invariant_literals(b: ir::Bundle, d: integer) -> LitHoist {
+  def = b.data.definitions[d]!;
+  f = def.variables;
+  body = def.code[0] ?? ir::NdNull;
+  if yields_or_par(body) {
+    return no_lit_hoist();
+  }
+  nv = len(f.variables);
+  s = LitScan { cands: [], set_counts: [for _ in 0..nv { 0 }] };
+  count_sets(body, s.set_counts);
+  lit_outer(b, f, body, s);
+  if len(s.cands) == 0 {
+    return no_lit_hoist();
+  }
+  u = LitUses { var_mentions: [for _ in 0..nv { 0 }], allowed: [for _ in 0..nv { 0 }], getter_bases: [for _ in 0..nv { 0 }] };
+  lit_uses(b, body, s, u);
+  kept: vector<LitCand> = [];
+  for c in s.cands {
+    if (u.var_mentions[c.v] ?? 0) == (u.allowed[c.v] ?? 0) + c.mentions {
+      kept += [c];
+    }
+  }
+  // The alias gate.
+  pds: vector<integer> = [];
+  for c in kept {
+    for p in c.params {
+      match opt_names::peel_link(var_type(f, p)) {
+        TyReference { n } => if !scope_fn::has(pds, n) { pds += [n]; },
+        _ => {}
+      }
+    }
+  }
+  alias_clean = true;
+  for pd in pds {
+    if !alias_clean {
+      break;
+    }
+    for w in 0..nv {
+      if !mentions_def(var_type(f, w), pd) || (u.var_mentions[w] ?? 0) == 0 {
+        continue;
+      }
+      if is_argument(f, w) && f.variables[w]!.value_const {
+        if (u.getter_bases[w] ?? 0) != (u.var_mentions[w] ?? 0) {
+          alias_clean = false;
+          break;
+        }
+        continue;
+      }
+      if !fresh_store_local(b, f, w, body) {
+        alias_clean = false;
+        break;
+      }
+    }
+  }
+  out = no_lit_hoist();
+  for c in kept {
+    if !alias_clean && len(c.params) > 0 {
+      continue;
+    }
+    nm = var_name(f, c.v).replace("#", "__");
+    same = 0;
+    for o in kept {
+      if (alias_clean || len(o.params) == 0) && var_name(f, o.v).replace("#", "__") == nm {
+        same += 1;
+      }
+    }
+    if same != 1 {
+      continue;
+    }
+    if c.vdb >= 0 {
+      out.flat_vdb += [c.vdb];
+      out.flat_v += [c.v];
+    } else {
+      out.wrapped += [c.v];
+    }
+  }
+  out
+}

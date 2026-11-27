@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/buffer_owner.rs` transcribed: which rule OWNS a per-site buffer (`__vdb_N`)
+// or a record local, the front's one answer (`formal/rewrites.md` `(R-Phase)`).  By priority:
+// `@FR-R-Apart` (its inline buffers and companions, then its apart records), `@FR-R-LitHoist`,
+// `@FR-R-ElemFirst`, `@FR-R-RetAdopt`.  A buffer none of them owns is free for
+// `@FR-R-LoopBuffer` and `@FR-R-LoopRecord`.
+
+use ir;
+use scope_fn;
+use opt_apart_vector;
+use opt_apart_records;
+use opt_adopt;
+use ir_hoist;
+
+// `Owner::why` of each owner.
+pub const APART = "an inline buffer's companion";
+pub const APART_RECORD = "an apart record";
+pub const LIT_HOIST = "an invariant literal's";
+pub const ELEM_FIRST = "an element-first pair's";
+pub const RET_ADOPT = "the adopted result's witness";
+
+// The owned variables of one function, each with its one owner's `why`.
+pub struct Owners {
+  pub vars: vector<integer>,
+  pub why: vector<text>,
+}
+
+fn claim(o: Owners, v: integer, why: text) {
+  if !scope_fn::has(o.vars, v) {
+    o.vars += [v];
+    o.why += [why];
+  }
+}
+
+// The owner of `v`, "" for none.
+pub fn owner_of(o: Owners, v: integer) -> text {
+  for x in o.vars {
+    if x == v {
+      return o.why[x#index] ?? "";
+    }
+  }
+  ""
+}
+
+fn wrapped_reads(n: ir::Node, wrapped: vector<integer>, out: vector<integer>) {
+  match n {
+    NdSet { var, inner } => if scope_fn::has(wrapped, var) { var_reads(inner, out); },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    wrapped_reads(c, wrapped, out);
+  }
+}
+
+fn var_reads(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    var_reads(c, out);
+  }
+}
+
+// port: buffer_owner.rs fn owners — every owned buffer and record local of function `d`, with
+// its one owner; `apr` is the program's apart-record plan.
+//
+// NOT carried yet: `@FR-R-ElemFirst`'s claim (`hoist::element_first(…).by_vdb`).  It runs after
+// the IR's own `elem_first` pass, which leaves no pair it applied, so it claims only a pair that
+// pass declined.
+pub fn owners(b: ir::Bundle, d: integer, apr: opt_apart_records::Plan) -> Owners {
+  out = Owners { vars: [], why: [] };
+  def = b.data.definitions[d]!;
+  apart = opt_apart_vector::roles(b, d);
+  if apart.any {
+    for a in apart.apart {
+      if a {
+        claim(out, a#index, APART);
+      }
+    }
+    for c in apart.companions {
+      if c {
+        claim(out, c#index, APART);
+      }
+    }
+  }
+  i = 0;
+  while i + 2 < len(apr.owners) {
+    if apr.owners[i]! == d {
+      claim(out, apr.owners[i + 1]!, APART_RECORD);
+    }
+    i += 3;
+  }
+  lits = ir_hoist::invariant_literals(b, d);
+  for v in lits.flat_vdb {
+    claim(out, v, LIT_HOIST);
+  }
+  if len(lits.wrapped) > 0 {
+    in_hoisted: vector<integer> = [];
+    wrapped_reads(def.code[0] ?? ir::NdNull, lits.wrapped, in_hoisted);
+    for v in in_hoisted {
+      claim(out, v, LIT_HOIST);
+    }
+  }
+  a = opt_adopt::ret_adopt(b, d);
+  if a != null {
+    claim(out, a!.vdb, RET_ADOPT);
+  }
+  out
+}

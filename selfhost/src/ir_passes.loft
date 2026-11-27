@@ -18,6 +18,7 @@ use ir_single_use;
 use ir_discharge_into;
 use ir_keyed_entry;
 use ir_text_len;
+use ir_loop_buffer;
 use ir_complete_write;
 
 // `close_program`'s passes over `b`, in order.  Answers the functions a pass refuses by name.
@@ -52,6 +53,9 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   ir_keyed_entry::rewrite_program(b);
   // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written.
   ir_text_len::rewrite_program(b);
+  // `@FR-R-LoopBuffer` — a vector local declared `[]` inside a loop keeps its store and its
+  // vector across the passes.  LAST of the rewrites: it leaves every buffer another rule owns.
+  ir_loop_buffer::rewrite_program(b);
   // `@FR-R-CompleteWrite` — a copy into a field of an element its literal just minted is flagged
   // fresh.
   ir_complete_write::rewrite_program(b);
