@@ -1,0 +1,7 @@
+// @PLN231 R11 probe — a name a loop used, rebound after the loop at another type (loft#915)
+// Expect on both backends: after
+fn main() {
+  for i in 0..3 { }
+  i = "after";
+  println("{i}");
+}
