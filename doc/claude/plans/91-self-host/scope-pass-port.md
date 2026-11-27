@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 221 of 1188 programs agree; 674 stop at the scope pass, 286 at the elaborator, 6 leak, 1 faults | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 4): 518 of 2277 programs, 28 205 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 278 of 1188 programs agree; 624 stop at the scope pass, 286 at the elaborator; 0 differ, 0 fault, 0 leak | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 5): 635 of 2277 programs, 28 962 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -265,6 +265,51 @@ record local first bound to a vector ELEMENT, rebound in a loop to a literal tha
 old value, loses that value on the second pass — `cond = tests[2]!; while k >= 0 { cond = Pair
 { c: Leaf { n: k }, t: cond }; k -= 1; }` answers `(0 null)`, not `(0 (1 3))`; one pass, or a
 first bind from a literal, answers right.
+
+**Step 5 (2026-11-27) — the view walk's question, `vec_copy`.**  `scope_view_walk.loft` is
+`view_walk::collect_views_to_materialise` with `disturbance.rs`'s producers, asked as the
+question the scan's materialise legs need answered: is a view used after a disturbance of its
+container?  Where the answer is no the function is carried; where it may be yes it is refused
+by name ("a view used after a disturbance of its container (the materialise legs)") until those
+legs are transcribed.  The walk is Rust's — the frames, the value-branch `Set`, the `if` arms
+from one state, the loop's head shake and back edge with its provisional records,
+`record_target` with `resolve_view_root` and `maybe_own`, `note_uses` — and every SPARING is
+left out (the literal key and index, the whole-container link, the payload slot handles, the
+callee-argument discount), so its answer is a superset of Rust's.  The open views are kept
+exactly Rust's, because `resolve_view_root` follows the first open entry of a view and a
+superset of entries would resolve a place to another root.  Facts the image does not hold:
+`is_iteration_source` is read off the `_vector_N` name the three loop-source sites mint; a
+keyed binding is a candidate view (`keyed_views`, `amp_container_link`); a whole record written
+over a place the walk cannot size (`OpCopyRecord`, a tagged slot's clear) is the whole variable.
+The callee half (`disturbed_params_map`) is `opt_vr_disturb::params_map`, built once by `check`
+before its loop.  `scope_vec_copy.loft` is `vec_copy::rewrite`, run after `byte_copy`
+(`ir_fill_loop::vector_element_type` made `pub` for it).  `arm_lift::arm_bind`'s decision is
+transcribed in `scope_args.loft` (`call_arm_binds`, `var_arm_binds`): a heap branch arm refuses
+only where Rust gives it a binding of its own (a named call answering a borrowed or joined
+record, or an owned one with no binding named; a plain record or vector variable a bind copies),
+since `lift_join_arm_tails` and the lists it leaves are not transcribed; `whole_value_hoists` is
+read as every `??` hoist, a superset.
+
+| measured | programs agree | definitions agree | differ |
+|---|---|---|---|
+| step 4 | 518 / 2277 | 28 205 / 39 960 | 0 |
+| + the view walk's question | 564 | 28 598 | 0 |
+| + `vec_copy` | 591 | 28 783 | 0 |
+| + `arm_bind`'s decision | 635 / 2277 | 28 962 / 39 960 | 0 |
+
+The view walk still refuses 269 definitions (75 programs); in 64 of those programs Rust's own
+walk materialises a view (`LOFT_DEBUG_F8`), so the materialise legs are what is left of it (the
+superset's own excess is 10 programs).  Programs whose only refusal family it is: 11.  Sole
+families now, by programs: `inline_struct_return` 75, `pure_reuse` 42, `place_result` 17,
+`arm_lift` 15 (the lifts Rust makes), `copy_view` 14, the view walk 11.
+
+The whole path (`run_image_survey.py --front`, 1 188 programs, with the runner's @C171 null-text
+fixes and three tool-leak workarounds beneath it, which alone read 228): 262 agree with the view
+walk's question and `vec_copy`, 278 with `arm_bind`'s decision; 0 differ, 0 fault, 0 leak.  The
+view walk is now the first refusal of 9 programs (132 before).  By first refusal:
+`inline_struct_return` 82, `move_elide` 67, keyed bindings 63, `pure_reuse` 51, `drop_hook` 42,
+`arm_bind` (Rust's own lifts) 27, closure records 26, `copy_view` (join) 23, `elide_borrows` 22,
+`exit_vector` 20.
 
 ## Passes
 
