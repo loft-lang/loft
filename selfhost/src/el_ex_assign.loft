@@ -805,6 +805,13 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       }
       // (A tail literal is checked at the result's element, `@FR-T-Chk-Vec`.)
       tail_elem = if vars.expect_node == n { match el_types::base(vars.expect) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } } } else { ir::TyUnknown { n: 0 } };
+      // (…and the function's own tail, read against its declared result as Rust's `expected` is
+      // the result while the body's tail is parsed: `-> vector<(float, integer)> { [(1, 2)] }`.)
+      // (A tuple element only: a record tail keeps its element temp bare, as Rust's does —
+      // try f39279d66.)
+      if el_types::is_unknown(tail_elem) && el_ex_deliver::tail_syntax(e, vars.body) == n {
+        tail_elem = match el_types::base(kres) { TyVector { inner } => if (el_types::base(inner) is TyTuple) { inner } else { ir::TyUnknown { n: 0 } }, _ => ir::TyUnknown { n: 0 } };
+      }
       // `parse_vector`'s `vector_def`: an empty `[]` whose element the position expects registers
       // that element's `vector<…>` and `main_vector<…>` where it stands, on the first pass, as a
       // literal with items does (a match arm's `_ => []` under the function's `-> vector<E>`).
