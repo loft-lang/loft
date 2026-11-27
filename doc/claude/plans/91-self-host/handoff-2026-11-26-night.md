@@ -162,6 +162,10 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   on probes sv1/sv2, held: B-Disturb/a-view-is-copied-only-where-it-is-live-across-a-disturbance
   then meets the eb1 Rust defect, which is wider than format holes — `for x in [Node {…}, …]`'s
   element temp is `ref(boolean)` too (a vector literal not bound to a local).
+- A tail call through a function value with a `τ?` record result (`f: fn(integer) -> Pt?`,
+  probe fr7) or a struct-enum result through a LOCAL fn value (`g = mks; g(n)`, fr9): both
+  differ (older than the fn-value tail roads, unchanged by them) — the copy into the buffer
+  (`materialize_whole_tail`) is not Rust's shape; read `ref_return`'s classify for each.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 

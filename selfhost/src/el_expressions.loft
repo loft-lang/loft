@@ -678,7 +678,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     || (len(el_types::deps(b.tp)) == 0 && tail_is_join(raw_tail(code)) && projects_into_local(e, vars, raw_tail(code), true, true))
     || (len(el_types::deps(b.tp)) > 0 && tail_is_join(raw_tail(code)) && bind_leaves(e, vars, raw_tail(code)) > 0 && ls_views_local(e, vars, el_types::deps(b.tp)))
     || coalesce_view_tail(e, vars, code, b.tp, result)
-    || enum_view_local_tail(e, vars, code, result);
+    || enum_view_local_tail(e, vars, code, result)
+    // (A call through a function value answers a record of no buffer this frame knows: a work
+    // ref is minted and the buffer renamed onto it on the first pass — `fn_ref[0](4)` at the
+    // tail; a struct enum's takes `enum_exit_work_ref`.)
+    || (match code { NdBlock { block: frb } => len(frb[0].operators) > 0 && match el_ir::unspan(el_ir::last(frb[0].operators)) { NdCallRef { var: frv } => frv >= 0 && frv < len(vars.vars) && vars.vars[frv].argument, _ => false }, _ => false } && el_ex_copy::record_result(result) && el_types::struct_enum_def(result) < 0 && !(result is TyOptional));
   // (A body that ends in a `return` statement delivered its value there, `record_return`.)
   expr_tail = el_ex_deliver::tail_syntax(e, vars.body) >= 0 && !(e.p.nodes[el_ex_deliver::tail_syntax(e, vars.body)] is SJump);
   // (`state_route_delivery`: the selector's `MaterializeView` verdict at the tail, as Rust prints
@@ -917,8 +921,15 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // Last: an `if` tail whose arms are blocks (a literal, a nullable local) or the sentinel —
       // each arm copied into the buffer (`Bind`), a nullable local's only where present.
       if_copied = false;
-      // A call through a function value (`f(n)`, `fn_ref[…]`) answers a record of no known
-      // buffer: its answer copied into the buffer (`materialized_view_return`).
+      // A call through a function value a PARAMETER holds took `MaterializeView` above; one a
+      // local holds, or read off a field or an element (`fn_call_tmp`), is handed up as it stands:
+      // `ref_return` takes no promotion (`unpromoted`, `last=other` / `last=fn_call_tmp`).
+      // (A struct enum's or a `τ?` result's answer is copied into the buffer, as before.)
+      plain_rec = el_types::struct_enum_def(result) < 0 && !(result is TyOptional);
+      if built == null && plain_rec && (body_tail(code) is NdCallRef || match el_ir::unspan(el_ir::last(match code { NdBlock { block: fcb } => fcb[0].operators, _ => [] })) { NdBlock { block: fct } => fct[0].name == "fn_call_tmp", _ => false }) {
+        built = code;
+        arms_answer = true;
+      }
       if built == null && body_tail(code) is NdCallRef {
         built = materialize_whole_tail(e, vars, code, rb, result);
         if_copied = built != null;
@@ -1676,6 +1687,9 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   if e.first_pass {
     if unrenamed && !buffer_bound(e) && !enum_result {
       rename_onto(e, vars, rb, w);
+      if !e.view_renamed.contains(d) {
+        e.view_renamed += [d];
+      }
     } else {
       el_vars::unregister_work_ref(vars, w);
       ba = attr_nr(el::def(e, d), el_vars::name_of(vars, el_ex_null::return_buffer(e, vars)));
