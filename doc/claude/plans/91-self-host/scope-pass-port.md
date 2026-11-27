@@ -217,6 +217,54 @@ Two loft defects met, both backends, worked around in the transcription (not fil
 
 The walks rebuild each variant in place, as `scope_wrapper` does.
 
+**Step 4 (2026-11-27) — vectors and the settled rewrites the whole path stops at.**  Vector
+locals are carried (1bd9b9c66: bindings, rebind releases, lazy buffer mints, confinement,
+last-use reclaim, `bound_append`).  Then, each gated: `scope_join_rewrite.loft` gains
+`reassociate_coalesce_chains`; `scope_buffer_detach.loft` (`detach_owned_buffers`, after the
+loop); `scope_take_local.loft` (`(R-MoveLast)`'s local clause), `scope_loop_kernel.loft`
+(`loop_kernel_rewrite`) and `scope_byte_copy.loft` (`byte_copy`'s text clause, with
+`compact::match_loop`) run by `check` on the settled body in Rust's order; `scan_args` hoists the
+guarded slot mints of a `&` argument (`is_slot_hoisted`, @C118); a rebound parameter is released
+at the exit (`OpFreeRefIfDistinct` against its entry witness).  `Function::was_loop_var` is read
+off the body (`scope_phase::loopish_in`): only a variable set inside a loop or a `par` body, an
+iterator's, or the `#fields` walk's `StructField` binding may be one.
+
+The compact / slice_into trigger ("a vector appended to") had hidden two rewrites; each is now
+named on its own: `move_elide::elide_borrows` (refused by name, a superset of
+`use_analysis::elision_plans`: a local vector filled by one append from a variable or its field)
+and `take_local` (transcribed).  Still refused by name: `byte_copy`'s vector clause (it needs
+`vec_copy::shared_element_type` and `text_run`).
+
+| measured | programs agree | definitions agree | differ |
+|---|---|---|---|
+| step 3 | 256 / 2277 | 24 744 / 39 960 | 0 |
+| vector locals (1bd9b9c66) | 427 / 2277 | 27 130 / 39 960 | 0 |
+| + join rewrite, buffer detach, take_local, slot mints | 436 | 27 630 | 0 |
+| + byte_copy | 469 | 27 882 | 0 |
+| + was_loop_var read off the body | 477 | 27 923 | 0 |
+| + rebound parameters | 498 | 28 099 | 0 |
+| + loop kernels | 518 / 2277 | 28 205 / 39 960 | 0 |
+
+No definition that agreed was lost at any step (`--verdicts` files compared).  The whole path
+(`run_image_survey.py --front`, 1 188 programs) went 142 → 147 agree with the join rewrite,
+take_local and slot mints in, 0 differ; two R-ValueRecord programs that now reach the runner
+leak.
+
+What stops the most programs now (scope gate, programs whose ONLY refusal it is): the view walk
+55, `inline_struct_return` 43, `pure_reuse` 33, `arm_lift::arm_bind` (a heap local as a branch
+arm) 30, `vec_copy` 21.  By first refusal: the view walk 533 programs, `inline_struct_return`
+408, `move_elide` 399, `pure_reuse` 326, a stale callee summary 315, keyed bindings 189,
+`arm_bind` 177, `elide_borrows` 148, closure records 138.  The view walk is
+`view_walk.rs` + `disturbance.rs` (≈3 200 lines, with the scan's materialise legs); `vec_copy`
+and `repeat_run`'s local clause need the schema's vector type (`Data::vector_element_type`,
+ported privately in `ir_fill_loop.loft`).
+
+A loft defect met, both backends, worked around in `scope_byte_copy::chain` (not filed yet): a
+record local first bound to a vector ELEMENT, rebound in a loop to a literal that holds its own
+old value, loses that value on the second pass — `cond = tests[2]!; while k >= 0 { cond = Pair
+{ c: Leaf { n: k }, t: cond }; k -= 1; }` answers `(0 null)`, not `(0 (1 3))`; one pass, or a
+first bind from a literal, answers right.
+
 ## Passes
 
 Step 4's second half: the IR passes `compile::close_program` runs after the scope pass,
