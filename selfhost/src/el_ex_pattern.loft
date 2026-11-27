@@ -3323,7 +3323,14 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         if mixed_enum >= 0 {
           // A value of the enum is copied whole into the fresh element.
           mx = xs[it#index]!;
-          if el_types::struct_enum_def(mx.tp) != mixed_enum || mx.tp is TyOptional {
+          // (A `null` item of a `vector<E?>` copies the null sentinel into its element.)
+          mxn = mx.tp is TyNull || el_ir::unspan(mx.code) is NdNull || match el_ir::unspan(mx.code) { NdCall { def_nr: mnd, args: mna } => len(mna) == 0 && el::def(e, mnd).name == "OpNullRefSentinel", _ => false };
+          if mxn && !e.first_pass {
+            ls += [el_ir::cl(e, "OpCopyRecord", [el_ir::cl(e, "OpNullRefSentinel", []), at, ir::NdInt { n: el::def(e, mixed_enum).known_type + 16384 }])];
+            ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+            continue;
+          }
+          if !mxn && (el_types::struct_enum_def(mx.tp) != mixed_enum || mx.tp is TyOptional) {
             el::refuse(e, "a vector literal mixing variant literals with a value that is no plain value of their enum: {type_kind(mx.tp)}");
             return refused_build();
           }
