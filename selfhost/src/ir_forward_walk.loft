@@ -36,15 +36,15 @@ struct Ops {
 // it, rebuilt over the counter; `root`/`off` the record and field offset of a walk over a field
 // (`root` -1 over a local or parameter); `first_body` the loop operator the body starts at.
 pub struct Walk {
-  vec_t: integer,
-  src: integer,
-  idx: integer,
-  lv: integer,
-  read: ir::Node,
-  iter_scope: integer,
-  root: integer,
-  off: integer,
-  first_body: integer
+  pub vec_t: integer,
+  pub src: integer,
+  pub idx: integer,
+  pub lv: integer,
+  pub read: ir::Node,
+  pub iter_scope: integer,
+  pub root: integer,
+  pub off: integer,
+  pub first_body: integer
 }
 
 // `if <c> break else null`, either spelling of the break: `c`, or `Null` for any other node.
