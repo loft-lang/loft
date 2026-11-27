@@ -11,6 +11,7 @@ use ir;
 use scope_fn;
 use scope_scan;
 use binds;
+use scope_pure;
 
 pub struct Scanned {
   pub preamble: vector<ir::Node>,
@@ -290,7 +291,11 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
     if len(ls) >= 3 && (cn == "OpGetVector" || cn == "OpGetVectorNullable" || cn == "OpVectorRef" || cn == "OpVectorRefNullable") {
       match scope_fn::unspan(ls[0]!) {
         NdVar { n: x } => if vector_link(scope_fn::tp(f, x)) {
-          scope_scan::refuse(s, "args::copy_written_vector_operands: a vector read beside an operand that may write it");
+          for later in ls[1..] {
+            if may_write_vector(b, later, x) {
+              scope_scan::refuse(s, "args::copy_written_vector_operands: a vector read beside an operand that may write it");
+            }
+          }
         },
         _ => {}
       }
@@ -298,6 +303,41 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
     keep_viewed_displaced(s, b, outer_call, ls, f);
   }
   Scanned { preamble: preamble, ls: ls, postamble: postamble }
+}
+
+// `args::writes_vector`, read wider: a rebind of `x`, any call through a fn-ref, or any call
+// that is handed `x` (or a read rooted at it) and is not one of the read-only operators
+// (`pure_reuse::reads_only`).  Wider is the safe direction here: it refuses.
+fn may_write_vector(b: ir::Bundle, n: ir::Node, x: integer) -> boolean {
+  match n {
+    NdSet { var } => if var == x { return true; },
+    NdCallRef => { return true; },
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if !scope_pure::reads_only(nm) || nm == "OpCreateStack" {
+        for a in args {
+          if rooted_at(b, a, x) {
+            return true;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if may_write_vector(b, c, x) {
+      return true;
+    }
+  }
+  false
+}
+
+fn rooted_at(b: ir::Bundle, n: ir::Node, x: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => v == x,
+    NdCall { def_nr, args } => (def_name(b, def_nr).starts_with("OpGet") || def_name(b, def_nr) == "OpCreateStack") && len(args) > 0 && rooted_at(b, args[0]!, x),
+    _ => false
+  }
 }
 
 // `matches!(tp.peel_link(), Type::Vector(..))`.

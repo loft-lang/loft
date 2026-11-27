@@ -47,7 +47,7 @@ fn comparison(nm: text) -> boolean {
 }
 
 // port: pure_reuse.rs fn reads_only
-fn reads_only(nm: text) -> boolean {
+pub fn reads_only(nm: text) -> boolean {
   for p in ["OpGet", "OpLength", "OpConv", "OpCast", "OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpLt", "OpLe", "OpGt", "OpGe", "OpAnd", "OpOr", "OpXor", "OpNeg", "OpAbs", "OpShl", "OpShr", "OpLogical", "OpMathFunc"] {
     if nm.starts_with(p) {
       return true;
