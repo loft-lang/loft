@@ -80,6 +80,10 @@ pub fn copy_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, td: i
         return ir::NdBlock { block: [ab] };
       },
       _ => {
+        // (A bare `null` arm answers the record's null, the sentinel — `type_null_arms`.)
+        if el_ir::unspan(n) is NdNull {
+          return el_ir::cl(e, "OpNullRefSentinel", []);
+        }
         if el_expressions::branch_yields_null(e, n) {
           return n;
         }
