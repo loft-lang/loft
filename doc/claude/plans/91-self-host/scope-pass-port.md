@@ -225,39 +225,54 @@ and called from `ir_passes::close_program` in Rust's order.  Shared tree helpers
 `ir_pass_tree.loft` (a node rebuilt over new children, `add_unique`, and `relayout`, which lays the
 frame out again with `scope::intervals` / `scope::assign_slots` as Rust's
 `compute_function_intervals` / `assign_function_slots` do).  A pass that cannot carry a definition
-refuses it by name; none needs to yet.
+refuses it by name; `tail_self` refuses a function whose lowered body shows no jump (an internal
+compiler error in Rust), and none does on the corpus.
 
 The gate is `selfhost/bench/passes_survey.py` (Rust's image right after the scope pass, through the
-loft passes, against Rust's image after `close_program`, per definition).  Each commit was checked
-against the previous verdict file: no agreeing definition lost.
+loft passes, against Rust's image after `close_program`, per definition).  It also hands `passed`
+the closed image, for the one fact the host sets between the two: `Definition::native`, the
+bridge symbol a native library build exports (`native_adopt::mark_exports`), which the passes read
+and the scoped image cannot hold.  Each commit was checked against the previous verdict file: no
+agreeing definition lost.
 
 | measured | programs agree | definitions agree | differ |
 |---|---|---|---|
-| no pass (baseline) | 1 067 / 2 277 | 34 122 / 37 796 | 3 674 |
-| the transcribed passes below | 1 843 / 2 277 | 36 413 / 37 796 | 1 383 |
+| no pass (baseline, an earlier corpus) | 1 067 / 2 277 | 34 122 / 37 796 | 3 674 |
+| through `complete_write` (passes9) | 1 836 / 2 277 | 38 570 / 40 047 | 1 477 |
+| + `loop_buffer` | 1 943 / 2 277 | 38 787 / 40 047 | 1 260 |
+| + `value_record`, `tail_self` (passes10) | 2 164 / 2 277 | 39 804 / 40 047 | 243 |
 
 **Transcribed:** `arg_copy` (judged by `opt_writes::blocks_plain`, the C writer's port of
-`writes_store`), `leaf_inline` (ranges and non-sentinel facts from `opt_range` / `opt_non_sentinel`;
-the IR phase asks the latter with the program-wide parameter fact off, `new_ir_proof`),
+`writes_store`), `value_record` (`ir_value_record`, `ir_vr_shape`, `ir_vr_plan`, `ir_vr_rewrite`:
+the twinned plan `opt_vr::plan_twinned`, `split_public`, the callee and parameter shapes, the
+admission and twin fixpoints, the carrier rewrite and the exits, the view leaves read off
+`opt_vr_view`'s plan), `leaf_inline` (ranges and non-sentinel facts from `opt_range` /
+`opt_non_sentinel`; the IR phase asks the latter with the program-wide parameter fact off,
+`new_ir_proof`), `tail_self` (`ir_tail_self`, with `tail_frame`'s predicate in `ir_tail_frame`),
 `zero_count`, `exp_pow`, `forward_walk`, `self_replace`, `in_range` (with its field clause, which
 `forward_walk` asks), `single_use` (with `same_read`'s `pure`/`discharge`/`plain_read`),
-`discharge_into`, `keyed_entry` (with `keyed_place::site`), `text_len`, and `complete_write`'s
-fresh-field flags.
+`discharge_into`, `keyed_entry` (with `keyed_place::site`), `text_len`, `loop_buffer` (with
+`hoist::loop_buffers` and `hoist::invariant_literals` in `ir_hoist`, `buffer_owner::owners` in
+`ir_buffer_owner`), and `complete_write`'s fresh-field flags.
 
-**Not transcribed**, with what the remaining differences rank them by (first-difference shapes of
-the last run, ≈800 of the 1 383 classified):
+**Not transcribed**, ranked by the first differences of passes10 (243 definitions):
 
 | pass | differ (≈) | what it needs first |
 |---|---|---|
-| `value_record` | 450 | the program plan (`opt_vr*.loft` port it for the C writer: check it matches `value_records_twinned`), then `value_record.rs` itself (3 300 lines) |
-| `loop_buffer` | 210 | `hoist::loop_buffers`, and `buffer_owner::owners`' two unported owners: `hoist::invariant_literals` and `hoist::element_first` |
-| `elem_first` | 30 | `hoist::element_first` (≈1 000 lines with its helpers, `namings_avoid_place` among them) |
-| `tail_self` | 22 | `tail_frame.rs` |
-| `loop_record`, `lift_reuse` | 20 | `buffer_owner::owners` (as `loop_buffer`); tuple lifts (as `value_record`) |
-| `same_read` | 10 | the pass itself (its guard, get-or-insert and match clauses) |
-| `fill_loop` | — | `Data::vector_element_type` and `Stores::vector` over the image's types |
+| `elem_first` | 70 | `hoist::element_first` (≈1 200 lines with `comprehension_rows`, `destination_views`, which reads the scope pass's `store_viewers` and `value_view_places_depth`); `buffer_owner`'s element-first claim waits on it too |
+| `fill_loop` | 25 | `push_window::push_loop` / `push_loop_body`, and `Data::vector_element_type` / `Stores::vector`, which may add a type to the schema |
+| `loop_record` | 25 | `loop_records.rs` (≈1 000 lines) beside `buffer_owner::owners` |
+| `same_read` | 17 | the pass itself (its guard, get-or-insert and match clauses) |
+| `lift_reuse` | 5 | the pass (≈260 lines) |
+| `tail_self`, `value_record` residue | 9 | a join's `___ret_join_N` delivery under a jump; a record answered through a cell's buffer |
 
 Also open: `complete_write`'s stored fact (`Definition::no_prefill`, decided by
 `loop_records::group_covers_type`) is not computed — the gate does not print it, so the writers
 read Rust's; `ledger_sites` (inert without `LOFT_LEDGER`) and `sync_capture_ownership` are not
-called.  The survey takes ≈80 s at `--jobs 5`; `LOFT_PASSES_BIN` reuses a built `passed`.
+called.  The survey takes ≈200 s at `--jobs 5` (the twinned plan is most of it);
+`LOFT_PASSES_BIN` reuses a built `passed`, and the `defs` tool must be built from the same tree as
+the images (`LOFT_SCOPE_DEFS`).
+
+A loft defect met on the way, worked around in `ir_tail_self::releases`: a function that returns
+a local rebound from a comprehension over itself (`f = [for x in f { x }]; f`) answers an empty
+vector, on `--interpret` and `--native` alike; the same rebind not returned answers right.
