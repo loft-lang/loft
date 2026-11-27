@@ -2261,11 +2261,9 @@ pub fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::N
     NdCall { def_nr: rcd, args } => {
       // (On the second pass too for a callee declared BELOW: the first pass met it before its
       // answer took a buffer, so its `__ref_N` shows only now, where Rust's `ref_return` first
-      // meets it — the vector road's `late_tail`.  HELD behind `LOFT_ELAB_LATE_RECORD_TAIL=1`:
-      // measured right on its shapes, but lifting it turns audience_crystal's four programs from
-      // refused to differ — older gaps elsewhere in them, the `#330` self-read hoist of a literal
-      // written into a keyed slot (`crystal_incr_rebuild_chunks`) — so it waits on those.)
-      if e.first_pass || (rcd > e.context && (env_variable("LOFT_ELAB_LATE_RECORD_TAIL") ?? "") != "") {
+      // meets it — the vector road's `late_tail`.  `LOFT_ELAB_NO_LATE_RECORD_TAIL=1` switches it
+      // off, the first bisect step.)
+      if e.first_pass || (rcd > e.context && (env_variable("LOFT_ELAB_NO_LATE_RECORD_TAIL") ?? "") == "") {
         w = hidden_ref_arg(vars, args);
         if w >= 0 {
           return w;
