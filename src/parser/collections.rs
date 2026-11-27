@@ -5868,9 +5868,6 @@ use #count instead"
         d_nr
     }
 
-    // parallel_for IR builder; threads unrelated IR params alongside &mut self — no sensible grouping
-    #[allow(clippy::too_many_arguments)]
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// The `par` result binding's type with its borrows in THIS frame.  A worker's return deps
     /// are its ATTRIBUTE indices (generics.rs re-attaches them as such): parameter 0 is the
     /// loop element, so a result that borrows it views what the element views — the iterated
@@ -5911,6 +5908,9 @@ use #count instead"
             .with_deps(&crate::data::Deps::frame(roots))
     }
 
+    // parallel_for IR builder; threads unrelated IR params alongside &mut self — no sensible grouping
+    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn build_parallel_for_ir(
         &mut self,
         code: &mut Value,
