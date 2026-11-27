@@ -2881,6 +2881,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       return refused_build();
     }
     if in_t is TyVector {
+      // (Refused, but the literal's `vector<vector<…>>` and its wrapper are registered first, at
+      // its `]`, as Rust's `vector_def` makes them for a repeat of a vector item.)
+      rnm = el_types::elem_name(e, el_types::without_deps(in_t));
+      if rnm != "" && el_schema::wants_vector_def(e, rnm) {
+        rtk = match e.p.nodes[n] { SVecLit { at } => at, _ => -1 };
+        if rtk >= 0 {
+          el_schema::make_vector_def(e, el_types::without_deps(in_t), rnm, el::pos_at(e, closing_bracket(e, rtk)), false);
+        }
+      }
       el::refuse(e, "a repeated vector item of vectors");
       return refused_build();
     }
