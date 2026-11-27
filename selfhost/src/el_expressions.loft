@@ -2376,7 +2376,9 @@ pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb:
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
   // (A join that can leave — a `return` in an arm — is copied arm by arm, its exit building
   // into the buffer itself: `materialize_return_into`'s `leaving_branch`.)
-  if el_ex_copy::returns_in([tail]) > 0 {
+  // (So is a `τ?` join: each arm's view copied where present, the sentinel where not — a dense
+  // join is copied whole, Rust's `MaterializeView` on the join.)
+  if el_ex_copy::returns_in([tail]) > 0 || result is TyOptional {
     arms = el_ex_copy::copy_arms(e, vars, tail, rb, td, owned);
     if arms == null {
       return null;

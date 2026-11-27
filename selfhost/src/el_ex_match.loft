@@ -653,8 +653,11 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
   // text subject.  An enum's `match` (plain or struct) widens only where `null_arm_widens` says,
   // a non-null scalar: its record join keeps the arms' type (`match c { Red => FInt { … },
   // Green => null }` is `ref(FInt)`), the declared `E?` answering the null.
-  // (A vector result likewise: `match c { true => [1], false => null }` is `vector<integer>?`.)
-  if null_arm && !enum_subject && sd < 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector) && !(result is TyOptional) {
+  // (A vector result likewise: `match c { true => [1], false => null }` is `vector<integer>?`;
+  // and a struct enum's, `match k { 0 => g[0], _ => null }` answering `Ty?`.)
+  // (Not the `__nullable<…>` carrier a nullable field is stored as: it is the optional already.)
+  nullable_carrier = match el_types::base(result) { TyEnum { n: nce } => starts_with(el::def(e, nce).name, "__nullable<"), _ => false };
+  if null_arm && !enum_subject && sd < 0 && (el_types::base(result) is TyReference || el_types::base(result) is TyVector || (el_convert::struct_enum(el_types::base(result)) && !nullable_carrier)) && !(result is TyOptional) {
     result = ir::TyOptional { inner: result };
   }
   // A record join keeps its arms on the first pass (as an `if` does): the parameters they hand
