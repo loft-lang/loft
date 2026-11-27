@@ -33,8 +33,26 @@ Per restriction:
 speed tests, which are built from the routines real libraries and programs contain
 (PERF_PORTAL.md, PERFORMANCE.md: a rule is *"never built for the bench alone, only for a shape
 real programs use"*).  Whether a restriction bites, and whether a cost is owed, is read from
-what the consumers and the libraries actually write: a form nobody writes is not natural, and
-a gap in it is deferred (goal F), however large the probe measures it.
+what the consumers and the libraries actually write.
+
+**But the corpus is written against the language as it is, so its absences are biased** (the
+owner): a form the language refuses or punishes never appears, and the workaround around it
+reads as the natural form.  An absence counts as *nobody wants this* only when all three hold:
+
+1. **The form compiles and runs** — a refused form is absent by construction (R10's `-> &T`,
+   R6's closure in a collection and struct `par` argument).  For those, look for the
+   WORKAROUND's signature instead: the inline index where an accessor would be, a consumer's
+   gotcha note, an issue.
+2. **Nothing steered writers away** — the `loft-write` skill, the docs, a diagnostic.
+3. **It was never tried and removed** — `git log -G '<form>'` over the consumers and the
+   libraries; a form added and rewritten later was wanted, and then pushed off.
+
+Measured for `map`/`filter`/`reduce`: they compile on vectors, the `loft-write` skill TEACHES
+them (`map(nums, double)`, `filter(nums, |x| …)`, `reduce(…)` and the method forms), and no
+consumer or library history ever added a real call and removed it (19 commits matched the
+pattern; every hit is a comment or `graphics`' own `Texture.filter`).  So for them the absence
+is evidence, and the deferral of their speed stands.  For the refused forms it is none, and
+their verdicts rest on the workaround evidence instead.
 
 The probes in [`probes/`](probes/) are the evidence for the verdicts, not tests; tests are
 written where a lift needs them.  A lift that removes a restriction also removes its refusal and
