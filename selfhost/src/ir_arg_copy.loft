@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/arg_copy.rs` transcribed (`@FR-F-ParamText`): a store-viewing `text` argument
+// is copied only where the call can move it.  The parser spells every such argument as a copy
+// into a work text; a call that cannot write any store — not its callee at any depth, not one of
+// its arguments — cannot move the bytes either, and the copy is dropped.  `writes_store` is the
+// judge (`opt_writes::blocks_plain`, its port for the C writer).
+
+use ir;
+use scope_fn;
+use opt_writes;
+use ir_pass_tree;
+
+// `data::TEXT_ARG_COPY`
+TEXT_ARG_COPY = "text argument copy";
+
+fn is_copy(v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => block[0]!.name == TEXT_ARG_COPY,
+    _ => false
+  }
+}
+
+// The view a copy block was made from — only while the block is still the three statements the
+// parser wrote (`work = ""; OpAppendText(work, view); work`).  `NdNull` for none.
+fn view_of(b: ir::Bundle, v: ir::Node) -> ir::Node {
+  bl = match scope_fn::unspan(v) { NdBlock { block } => block[0]!, _ => return ir::NdNull };
+  if len(bl.operators) != 3 {
+    return ir::NdNull;
+  }
+  work = match bl.operators[0]! { NdSet { var } => var, _ => return ir::NdNull };
+  result = match bl.operators[2]! { NdVar { n } => n, _ => return ir::NdNull };
+  append = bl.operators[1]!;
+  operands = ir_pass_tree::args_of(append);
+  if work == result && ir_pass_tree::def_name(b, ir_pass_tree::call_def(append)) == "OpAppendText"
+    && len(operands) > 1 && (ir_pass_tree::var_of(operands[0]!) ?? -1) == work {
+    return operands[1]!;
+  }
+  ir::NdNull
+}
+
+// The call under `n`'s spans with `args` as its arguments.
+fn with_args(n: ir::Node, args: vector<ir::Node>) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_args(inner, args) },
+    NdCall { def_nr } => ir::NdCall { def_nr: def_nr, args: args },
+    _ => n
+  }
+}
+
+fn rewrite(b: ir::Bundle, w: opt_writes::Writes, vd: integer, node: ir::Node) -> ir::Node {
+  kids = scope_fn::children(node);
+  if len(kids) == 0 {
+    return node;
+  }
+  n2 = ir_pass_tree::with_children(node, [for k in kids { rewrite(b, w, vd, k) }]);
+  u = scope_fn::unspan(n2);
+  d = match u { NdCall { def_nr } => def_nr, _ => return n2 };
+  args = ir_pass_tree::args_of(u);
+  any = false;
+  for a in args {
+    if is_copy(a) {
+      any = true;
+    }
+  }
+  if !any {
+    return n2;
+  }
+  views: vector<ir::Node> = [];
+  for a in args {
+    if !is_copy(a) {
+      views += [a];
+    } else {
+      v = view_of(b, a);
+      if v is NdNull {
+        return n2;
+      }
+      views += [v];
+    }
+  }
+  probe = ir::NdCall { def_nr: d, args: views };
+  // Judged with the caller's variables, so the hidden `&text` buffer a text-returning callee
+  // is handed reads as the frame address it is.
+  keep = opt_writes::blocks_plain(b, w, vd, probe);
+  if (env_variable("LOFT_TRACE_ARG_COPY") ?? "") != "" {
+    eprintln("arg_copy: {ir_pass_tree::def_name(b, d)} — {if keep { "kept: the call can write a store" } else { "dropped" }}");
+  }
+  if keep {
+    return n2;
+  }
+  with_args(n2, views)
+}
+
+fn has_copy(n: ir::Node) -> boolean {
+  if is_copy(n) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if has_copy(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: arg_copy.rs fn rewrite_program — the argument copies no store write can need dropped.
+pub fn rewrite_program(b: ir::Bundle) {
+  if (env_variable("LOFT_KEEP_ARG_COPY") ?? "0") != "0" {
+    return;
+  }
+  w = opt_writes::new_writes(b);
+  for d in b.data.definitions {
+    if d.def_type != 1 || len(d.code) == 0 || !has_copy(d.code[0]!) {
+      continue;
+    }
+    b.data.definitions[d#index].code = [rewrite(b, w, d#index, d.code[0]!)];
+  }
+}
