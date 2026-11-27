@@ -2471,7 +2471,7 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   app = if stack { "OpAppendStackText" } else { "OpAppendText" };
   it = el_ir::v_block(head + [b.code], vt, "Iter For");
   steps: vector<ir::Node> = [el_ir::v_set(val, it), el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "," }]), ir::NdNull), el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))];
-  el_ex_call::append_spec(e, steps, w, ir::NdVar { n: val }, vt, stack, f);
+  el_ex_call::append_spec(e, vars, steps, w, ir::NdVar { n: val }, vt, stack, f);
   [el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "[" }]), ir::NdInsert { items: init }] + extra + [el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "]" }])]
 }
 

@@ -747,7 +747,7 @@ pub fn lower_tv_blocks(e: el::El, vars: el_vars::Vars, n: ir::Node, bound: ir::T
         wv = match el_ir::unspan(a2[0]!) { NdVar { n: fw } => fw, _ => -1 };
         if wv >= 0 {
           list: vector<ir::Node> = [];
-          append_spec(e, list, wv, a2[1]!, el_types::base(bound), nm == "OpFormatStackDatabase", plain_fmt());
+          append_spec(e, vars, list, wv, a2[1]!, el_types::base(bound), nm == "OpFormatStackDatabase", plain_fmt());
           return ir::NdInsert { items: list };
         }
       }
@@ -2514,7 +2514,7 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
         // (Registered where this hole ends — before the text after it — not at the string's end.)
         after = if h#index + 1 < len(parts) - 1 { (parts[h#index + 1] ?? 1) - 1 } else { last };
         vector_row_def(e, tp, string_end(e, after));
-        append_spec(e, list, var, x.code, tp, stack, f!);
+        append_spec(e, vars, list, var, x.code, tp, stack, f!);
         s = text_part(e, after);
         if s != "" {
           list += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [ir::NdVar { n: var }, ir::NdText { s: s }])];
@@ -2558,7 +2558,7 @@ fn slice_append(e: el::El, vars: el_vars::Vars, w: integer, x: Ex, f: Fmt) -> ve
     el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, "OpAppendText", [wv, ir::NdText { s: "," }]), ir::NdNull),
     el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))
   ];
-  append_spec(e, steps, w, ir::NdVar { n: val }, elem, el_vars::tp(vars, w) is TyRefVar, f);
+  append_spec(e, vars, steps, w, ir::NdVar { n: val }, elem, el_vars::tp(vars, w) is TyRefVar, f);
   [el_ir::cl(e, "OpAppendText", [wv, ir::NdText { s: "[" }]), init, el_ir::v_set(cnt, ir::NdInt { n: 0 }), el_ir::v_loop(steps, "Append Iter"), el_ir::cl(e, "OpAppendText", [wv, ir::NdText { s: "]" }])]
 }
 
@@ -2786,14 +2786,14 @@ pub fn un_ref(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex {
 
 // `Parser::append_data` with the default output state: the format op a value of this type
 // renders through.  An untyped value (a callee the first pass has not met) renders nothing.
-pub fn append_data(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT) {
-  append_spec(e, list, var, val, tp, false, plain_fmt());
+pub fn append_data(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT) {
+  append_spec(e, vars, list, var, val, tp, false, plain_fmt());
 }
 
 // `append_data` under a spec; `stack`: a `&text` accumulator (a promoted return buffer) takes the
 // `OpFormatStack…` ops.  A width on a value that renders through no padded op (a character, a
 // record, a vector, an enum: `append_data`'s scratch-text composition) is refused by name.
-pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean, f: Fmt) {
+pub fn append_spec(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean, f: Fmt) {
   start = if stack { "OpFormatStack" } else { "OpFormat" };
   w = ir::NdVar { n: var };
   b = el_types::base(tp);
@@ -2877,8 +2877,50 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
     },
     TyReference { n } => {
       d = el::def(e, n);
-      if (d.def_type != el::DT_STRUCT && d.def_type != el::DT_ENUM_VALUE) || el::def_nr(e, "t_{len(d.name)}{d.name}_to_text") >= 0 {
+      if d.def_type != el::DT_STRUCT && d.def_type != el::DT_ENUM_VALUE {
         el::refuse(e, "a formatted record of this kind");
+        return;
+      }
+      // `try_bound_to_text_call`: a struct's `operator to_text(self: S)` renders it — handed a
+      // fresh work text for a hidden `&text` buffer (`p242_to_text_work`) — and
+      // `append_user_text_unless_null` appends its answer unless the record is null, the record
+      // held in a `hole_subject` temp unless it is a place a test may read twice.
+      tts = el::def_nr(e, "t_{len(d.name)}{d.name}_to_text");
+      if tts >= 0 {
+        ttd = el::def(e, tts);
+        names_self = match ttd.attributes[0] ?? el::attribute("", ir::TyVoid) { _ => match (ttd.attributes[0] ?? el::attribute("", ir::TyVoid)).typedef[0] ?? ir::TyVoid { TyReference { n: sn } => sn == n, _ => false } };
+        if !names_self || !ttd.operator_form {
+          el::refuse(e, "a formatted record whose `to_text` is no operator of its own");
+          return;
+        }
+        targs: vector<ir::Node> = [val];
+        for ta in ttd.attributes {
+          if ta#index == 0 {
+            continue;
+          }
+          match ta.typedef[0] ?? ir::TyVoid {
+            TyRefVar { inner: _ } => {
+              twv = el_vars::work_text(vars);
+              targs += [el_ir::v_block([el_ir::v_set(twv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: twv }])], ir::TyReference { n: el::def_nr(e, "reference"), dep: [twv] }, "p242_to_text_work")];
+            },
+            _ => {
+              el::refuse(e, "a formatted record whose `to_text` takes a spec");
+              return;
+            }
+          }
+        }
+        subj = val;
+        if !el_ex_name::repeatable_place(e, el_ir::unspan(val)) {
+          hs = el_vars::create_unique(vars, "hole_subject", (ttd.attributes[0] ?? el::attribute("", ir::TyVoid)).typedef[0] ?? ir::TyVoid);
+          el_vars::set_defined(vars, hs);
+          list += [el_ir::v_set(hs, val)];
+          subj = ir::NdVar { n: hs };
+          targs[0] = subj;
+        }
+        is_null = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [subj]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [subj])]));
+        null_arm = format_text_as(e, start, w, el_ir::cl(e, "OpConvTextFromNull", []), f);
+        value_arm = format_text_as(e, start, w, ir::NdCall { def_nr: tts, args: targs }, f);
+        list += [el_ir::v_if(is_null, null_arm, value_arm)];
         return;
       }
       list += [el_ir::cl(e, "{start}Database", [w, val, ir::NdInt { n: d.known_type }, ir::NdInt { n: db }])];

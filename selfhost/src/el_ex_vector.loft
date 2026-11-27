@@ -2032,7 +2032,7 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
   if stack && el_types::base(x.tp) is TyCharacter {
     render += [el_ir::cl(e, "OpAppendStackCharacter", [w, x.code])];
   } else {
-    el_ex_call::append_spec(e, render, acc, x.code, x.tp, stack, el_ex_call::plain_fmt());
+    el_ex_call::append_spec(e, vars, render, acc, x.code, x.tp, stack, el_ex_call::plain_fmt());
   }
   if e.first_pass {
     for op in render {
