@@ -3178,9 +3178,15 @@ pub fn divisor_nonzero(e: el::El, vars: el_vars::Vars, d: ir::Node) -> boolean {
     NdFloat { f } => f != 0.0,
     NdSingle { f } => f != 0.0f,
     NdVar { n } => vars.nonzero.contains(n),
+    // (Any expression that const-folds to a non-zero number — `1.5 * HEX_SIZE`, a named float
+    // constant — as Rust's `const_eval` reads it, floats included.)
     _ => {
       c = el_convert::const_int(e, d);
-      c != null && c! != 0
+      if c != null {
+        return c! != 0;
+      }
+      cf = el_ex_base::const_float(e, d);
+      cf != null && cf! != 0.0
     }
   }
 }
