@@ -7,8 +7,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Needs approval ([@PLN232](https://github.com/loft-lang/plans/issues/232), from loft#2659).  The owner
-rules on § Open design questions before anything is built.  Nothing is implemented.
+Designed, not built ([@PLN232](https://github.com/loft-lang/plans/issues/232), from loft#2659).  Every
+design question is decided (owner, 2026-11-27; § Design questions).  Phase 0 shipped on
+`tuxedo-pr2657-next` (loft#2661); phases A–D wait for the owner to schedule them.
 
 ## Goal
 
@@ -163,16 +164,15 @@ emit byte-for-byte what it does now: the phase gates below prove it.
 Each B phase keeps the old path for every `-> T` program, compared exactly: the byte-identical
 emission diff is the parallel run.
 
-## Open design questions
+## Design questions
 
-Each comes with the recommendation, and with what was measured behind it.
+Each records the owner's decision, the recommendation it took, and what was measured behind it.
 
 1. **Lift or drop.**  **Decided (owner, 2026-11-27): lift** (*"create a plan to lift it"*).  Recommended: the rule, @C77's ruling and a consumer
    all ask for it.  The alternative is a one-line edit taking the exception out of `(F-Ret)`.
-2. **A plain bind `e = first(s)`.**  Recommended: as the place binds, so a VIEW for a record
-   (`@FR-B-View`, 90 today with `e = s.enemies[0]`) and a COPY for a scalar or a text (`x = v[1]`
-   copies today), with `&` for a link in every case.  The alternative, a link for every bind,
-   makes one call spelling mean two things depending on how the function was declared.
+2. **A plain bind `e = first(s)`.**  **Decided (owner, 2026-11-27): as the place binds** — a VIEW
+   for a record (`@FR-B-View`, 90 today with `e = s.enemies[0]`) and a COPY for a scalar or a text
+   (`x = v[1]` copies today), with `&` for a link in every case.
 3. **A temporary argument (`first(mk())`).**  **Decided (owner, 2026-11-27): follows the place.**
    `first(mk())` answers what `mk().enemies[0]` answers: `&first(mk())` is refused (as
    `&mk().enemies[0]` is), a plain bind takes its own value, and passing it on writes into the
