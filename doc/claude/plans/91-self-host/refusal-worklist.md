@@ -211,7 +211,10 @@ instances; Rust-only definitions 267), one to four per program.  What each open 
 - iterator element vectors: DONE (23e4ed95e: the base carries no program-specific row;
   fee317776: a generator handle is stored as its `DbRef` row, so a `vector<iterator<T>>` field
   has content and names `vector<iterator>`).  Open in that family: a nullable vector element's
-  plain vector at the wrapper fill (923's `vector<vector<Ent>>`, parent `Ent`).
+  plain vector at the wrapper fill (923's `vector<vector<Ent>>`, parent `Ent`).  Giving the element
+  its inner vector's content at the fill (try 9f15686be) names it right but makes the inner
+  vector's store row before Rust does: 923's agreeing `vector<Ent>` takes row 105 for Rust's 106.
+  Needs the row's moment, not just its name.
 - the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
