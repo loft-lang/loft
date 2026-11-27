@@ -1,0 +1,6 @@
+// @PLN231 probe — an interface used as a value's type
+// Expect on both backends: refused: an interface is not a type
+interface Named { fn name(self: Self) -> text }
+struct A { n: integer }
+fn name(self: A) -> text { "A" }
+fn main() { x: Named = A { n: 1 }; println("{x.name()}"); }

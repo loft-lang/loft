@@ -1,0 +1,9 @@
+// @PLN231 probe — a par loop
+// Expect on both backends: par sum 30
+fn sq(x: integer) -> integer { x * x }
+fn main() {
+  v = [1, 2, 3, 4];
+  t = 0;
+  for item in v par(b=sq(item), 2) { t += b; }
+  println("par sum {t}");
+}

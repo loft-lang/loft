@@ -1,0 +1,11 @@
+// @PLN231 probe — a par worker given a captured struct
+// Expect on both backends: refused: a captured reference
+struct C { m: integer }
+fn mul(x: integer, c: C) -> integer { x * c.m }
+fn main() {
+  v = [1, 2, 3, 4];
+  c = C { m: 10 };
+  t = 0;
+  for item in v par(b=mul(item, c), 2) { t += b; }
+  println("par struct arg {t}");
+}

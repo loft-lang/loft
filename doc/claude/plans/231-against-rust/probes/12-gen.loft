@@ -1,0 +1,4 @@
+// @PLN231 probe — a generator
+// Expect on both backends: gen sum 10
+fn count(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }
+fn main() { t = 0; for v in count(5) { t += v; } println("gen sum {t}"); }
