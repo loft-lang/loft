@@ -1437,6 +1437,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // (A FILTERED comprehension never unrolls: its step is `if c { null } else { continue }`, which
   // `const_eval_with_var` does not fold to a boolean — it is walked as any other.)
   if ranged && fill_count < 0 && constant_body(e, b.code) {
+    // (Refused, but a local's `vector<…>` is registered first, as Rust's `vector_def` makes it for
+    // any element: `[for y in 0..4 { [for x in 0..3 { … }] }]` makes `main_vector<vector<integer>>`.)
+    if v >= 0 && in_t is TyVector {
+      _ = vector_rows(e, in_t, n, false);
+    }
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
     return ex(ir::NdNull, ir::TyVoid);
   }
