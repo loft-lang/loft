@@ -21,6 +21,8 @@ use scope_join_rewrite;
 use scope;
 use scope_pure;
 use binds;
+use own;
+use scope_value_struct;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -36,6 +38,20 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   program: vector<text> = [];
   for d in b.data.definitions {
     program += [if d.def_type != 1 || len(d.code) == 0 || d.source == 0 { "" } else { program_rewrites(b, free, d.code[0]!, d.variables) }];
+  }
+  // `value_struct_copy` (@PLN101) rewrites the parser's bodies after the refused pre-loop
+  // rewrites: a summary it asks of a body one of those would change is refused.
+  blocked: vector<integer> = [];
+  for d in b.data.definitions {
+    if (program[d#index] ?? "") != "" {
+      blocked += [d#index];
+    }
+  }
+  vs = scope_value_struct::value_struct_copy(b, own::ops_of(b), blocked);
+  for i in 0..len(vs) {
+    if (vs[i] ?? "") != "" && (program[i] ?? "") == "" {
+      program[i] = vs[i]!;
+    }
   }
   // The functions refused so far: Rust laid each out before the ones after it, so a summary of
   // one of them (`use_analysis::return_ownership`) reads its SETTLED body, which the image here

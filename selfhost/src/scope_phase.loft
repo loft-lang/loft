@@ -77,6 +77,8 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     moved_av: -1,
     prefix_released: [],
     place_operand: false,
+    fnref_bound: [],
+    fnref_depth: 0,
     rbuf_buf: -1,
     rbuf_flag: -1,
     entry_buf: -1,
@@ -262,6 +264,12 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
   if has_block(code, "fn_ref_with_closure") {
     scope_scan::refuse(s, "closure_keep::closure_keep_set: a closure built");
   }
+  // `closure_keep_set` gates a frame without a closure record of its own where a fn-ref holder
+  // is SHARED (`g = f`, a link written from a holder, a holder bound from a call handed one):
+  // its releases are then decided by store identity (`closure_keep_*`), not transcribed.
+  if closure_keep_shared(b, code, f) {
+    scope_scan::refuse(s, "closure_keep::closure_keep_set: a fn-ref holder shared (releases by store identity)");
+  }
   // A record type with a DROP cascade (a hook, or a droppable member): its hand-offs, per-path
   // flags and displaced drops (`handoff.rs`, `drops::displaced_drop`, `drop_hook`) are not
   // transcribed.  Without one, every one of them answers none.
@@ -297,6 +305,62 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
   if view_of_disturbed_container(b, code, f) {
     scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a record view of a container the body may disturb");
   }
+}
+
+// port: closure_keep.rs fn closure_keep_set, its `shared` answer over the holders and links
+// (`records` is empty on a frame the pass carries: a `___clos_N` local is refused).
+fn closure_keep_shared(b: ir::Bundle, code: ir::Node, f: ir::Function) -> boolean {
+  holders: vector<integer> = [];
+  links: vector<integer> = [];
+  for x in f.variables {
+    v = x#index;
+    if x.argument {
+      match scope_fn::base(x.type_def[0] ?? ir::TyVoid) {
+        TyRefVar { inner } => if scope_fn::base(inner) is TyFunction { links += [v]; },
+        _ => {}
+      }
+      continue;
+    }
+    if scope_fn::base(x.type_def[0] ?? ir::TyVoid) is TyFunction && !scope_fn::is_compiler_generated(f, v) {
+      holders += [v];
+    }
+  }
+  len(holders) > 0 && keep_shared_walk(b, code, holders, links)
+}
+
+fn keep_shared_walk(b: ir::Bundle, n: ir::Node, holders: vector<integer>, links: vector<integer>) -> boolean {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => {
+      rhs = scope_fn::unspan(inner);
+      if scope_fn::has(links, var) && match rhs { NdVar { n: x } => scope_fn::has(holders, x), _ => false } {
+        return true;
+      }
+      if !scope_fn::has(links, var) || !(match rhs { NdVar { n: x } => scope_fn::has(holders, x), _ => false }) {
+        if scope_fn::has(holders, var) {
+          match rhs {
+            NdVar { n: x } => if scope_fn::has(holders, x) { return true; },
+            NdCall { def_nr, args } => if !b.data.definitions[def_nr]!.name.starts_with("Op") {
+              for a in args {
+                match scope_fn::unspan(a) {
+                  NdVar { n: x } => if scope_fn::has(holders, x) { return true; },
+                  NdBlock { block } => if block[0].name == "fn_ref_with_closure" { return true; },
+                  _ => {}
+                }
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    if keep_shared_walk(b, c, holders, links) {
+      return true;
+    }
+  }
+  false
 }
 
 // A `t_<n><Type>_OpCopy` hook (or its cascade) for record type `d`.

@@ -55,6 +55,15 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       record_release(s, b, f, v, ret_var, delivered, ls);
       continue;
     }
+    // A fn-ref local releases its closure store (`Type::Function`, asked BARE: a `fn(…)?`
+    // matches none of the sweep's arms and is released by nobody).
+    if t is TyFunction {
+      fnref_release(s, b, f, v, tp, ret_var, delivered, ls);
+      continue;
+    }
+    if bt is TyFunction {
+      continue;
+    }
     // `outer_collection_backing`, `outer_tuple_backings`, the owner witness, the store
     // release with its `leaves_frame`, `OpFreeRefIfDistinct` pairings and drop hooks, a
     // generator handle's release, a fn-ref's closure: each asks a pass not transcribed.
@@ -80,6 +89,74 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
   // `view_rebind` snapshots are refused by the phase.
   pair_literal_buffers(s, b, f, ls);
   ls
+}
+
+// The fn-ref leg of `get_free_vars`: `OpDropFnRef` (where some closure has a cascade) and
+// `OpFreeRef` of the closure store, unless the fn-ref carries it out of the frame or a record
+// scoped apart from it releases it.  The closure-keep stand-downs (`closure_keep_stand_down`,
+// `fnref_stand_down`) and a capturing record's adoption (`capture_adoption_owns_free`) act on a
+// frame's own closure records, which the phase refuses.
+fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>) {
+  def = b.data.definitions[s.d_nr]!;
+  rt = def.returned[0] ?? ir::TyVoid;
+  ret_carries = false;
+  if !(scope_fn::base(rt) is TyTuple) {
+    for e in scope_fn::depend(rt) {
+      if e != scope_fn::NONE && (e / 32768) % 2 == 1 && e - 32768 == v {
+        ret_carries = true;
+      }
+    }
+  }
+  // `closure_records_of_source`: a fn-ref local's own type names the record it holds.
+  carried: vector<integer> = [];
+  for w in scope_fn::deps(f, v) {
+    if !scope_fn::has(carried, w) {
+      carried += [w];
+    }
+  }
+  // `link_written_closure_records` — the records written out through a `&fn(…)` link.
+  if len(carried) > 0 && has_fn_link(f) {
+    scope_scan::refuse(s, "capture_adoption::link_written_closure_records: a fn-ref beside a `&fn` link");
+  }
+  holds_closure = match scope_fn::base(tp) {
+    TyText => false,
+    TyInteger => false,
+    TyBoolean => false,
+    TyFloat => false,
+    TySingle => false,
+    TyCharacter => false,
+    TyVoid => false,
+    TyNever => false,
+    TyNull => false,
+    TyEnum { is_ref } => is_ref,
+    _ => true
+  };
+  dep_delivers = scope_fn::has(scope_fn::depend(tp), v) && holds_closure;
+  leaves_frame = dep_delivers || ret_carries || v == ret_var || scope_fn::has(delivered.sources, v);
+  vs = scope_scan::get(s.var_scope, v);
+  record_outlives = false;
+  for r in scope_fn::deps(f, v) {
+    if r != v && r < scope_fn::count(f) && scope_scan::get(s.var_scope, r) != vs {
+      record_outlives = true;
+    }
+  }
+  if !leaves_frame && !scope_fn::is_skip_free(f, v) && !record_outlives {
+    if s.ops.any_closure_drop {
+      ls += [ir::NdCall { def_nr: s.ops.drop_fn_ref, args: [ir::NdVar { n: v }] }];
+    }
+    ls += [scope_drops::free_ref(s, v)];
+  }
+}
+
+// A `&fn(…)` variable (bare `RefVar(Function)`): the frame may write a closure out through it.
+fn has_fn_link(f: ir::Function) -> boolean {
+  for x in f.variables {
+    match x.type_def[0] ?? ir::TyVoid {
+      TyRefVar { inner } => if inner is TyFunction { return true; },
+      _ => {}
+    }
+  }
+  false
 }
 
 // port: get_free_vars.rs fn owns_text_copy

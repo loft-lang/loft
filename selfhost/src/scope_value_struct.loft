@@ -1,0 +1,472 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/value_struct.rs` transcribed (scope-pass-port.md step 3): @PLN101's
+// value-struct copy, run by `check` before its loop on the parser's bodies.  A `value struct`
+// local bound from a VIEW whose backing may change (the taint oracle) is rewritten to mint a
+// fresh store and copy into it under a presence test; the local then owns its copy (its view
+// dep and never-free mark cleared).  The ownership oracle reads the callees' parser bodies, as
+// Rust's does here; where a callee's body a refused pre-loop rewrite would have changed is
+// reached, the function is refused by name (`blocked`).
+
+use ir;
+use own;
+use scope_fn;
+
+pub struct VsOps {
+  database: integer,
+  copy_record: integer,
+  conv_bool_from_ref: integer,
+  own_ops: own::Ops,
+  // The definitions whose body a pre-loop rewrite this pass refuses would change.
+  blocked: vector<integer>
+}
+
+// port: value_struct.rs fn value_struct_copy — returns, per definition, the refusal met ("" for
+// none).
+pub fn value_struct_copy(b: ir::Bundle, own_ops: own::Ops, blocked: vector<integer>) -> vector<text> {
+  out: vector<text> = [];
+  any = false;
+  for d in b.data.definitions {
+    if d.value_struct {
+      any = true;
+    }
+  }
+  if !any {
+    return out;
+  }
+  ops = VsOps {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    copy_record: scope_fn::def_nr(b, "OpCopyRecord"),
+    conv_bool_from_ref: scope_fn::def_nr(b, "OpConvBoolFromRef"),
+    own_ops: own_ops,
+    blocked: blocked
+  };
+  for d in b.data.definitions {
+    d_nr = d#index;
+    if d.def_type != 1 || len(d.code) == 0 || d.source == 0 {
+      continue;
+    }
+    body = d.code[0]!;
+    defs = own::function_defs(b, d_nr, own_ops);
+    tainted = vs_scope_taint(b, [body]);
+    cleared: vector<integer> = [];
+    w = Walk { why: "" };
+    code = vs_copy_walk(b, body, d_nr, ops, tainted, cleared, body, defs, w);
+    while len(out) <= d_nr {
+      out += [""];
+    }
+    out[d_nr] = w.why;
+    if len(cleared) == 0 {
+      continue;
+    }
+    b.data.definitions[d_nr].code = [code];
+    f = b.data.definitions[d_nr].variables;
+    for v in cleared {
+      match f.variables[v]!.type_def[0] ?? ir::TyVoid {
+        TyReference { n: p } => { f.variables[v].type_def = [ir::TyReference { n: p, dep: [] }]; },
+        _ => {}
+      }
+      f.variables[v].skip_free = false;
+    }
+  }
+  out
+}
+
+pub struct Walk { why: text }
+
+// port: value_struct.rs fn vs_source_temp
+fn vs_source_temp(b: ir::Bundle, d_nr: integer, vv: integer, source: ir::Node) -> integer {
+  f = b.data.definitions[d_nr].variables;
+  view_type = scope_fn::tp(f, vv);
+  root = if scope_fn::unspan(source) is NdVar { -1 } else { vs_view_root(b, source) };
+  if root >= 0 {
+    match scope_fn::base(view_type) {
+      TyReference { n: p, dep } => if len(dep) == 0 {
+        rooted = ir::TyReference { n: p, dep: [root] };
+        view_type = if view_type is TyOptional { ir::TyOptional { inner: rooted } } else { rooted };
+      },
+      _ => {}
+    }
+  }
+  src_tmp = scope_fn::add_temp_var(f, "__vs_src_{vv}", view_type);
+  if root >= 0 {
+    f.variables[src_tmp].skip_free = true;
+  }
+  src_tmp
+}
+
+// port: value_struct.rs fn vs_view_root — -1 for none.
+fn vs_view_root(b: ir::Bundle, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => v,
+    NdCall { def_nr, args } => if len(args) > 0 && b.data.definitions[def_nr]!.name.starts_with("OpGet") { vs_view_root(b, args[0]!) } else { -1 },
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k > 0 { vs_view_root(b, block[0].operators[k - 1]!) } else { -1 }
+    },
+    NdInsert { items } => if len(items) > 0 { vs_view_root(b, items[len(items) - 1]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// port: value_struct.rs fn vs_find_binding — the first `Set(var, …)`'s right-hand side.
+fn vs_find_binding(n: ir::Node, var: integer) -> ir::Node? {
+  match n {
+    NdSet { var: v, inner } => {
+      if v == var {
+        return inner;
+      }
+      return vs_find_binding(inner, var);
+    },
+    NdBlock { block } => {
+      for op in block[0].operators {
+        r = vs_find_binding(op, var);
+        if r != null {
+          return r;
+        }
+      }
+    },
+    NdLoop { block } => {
+      for op in block[0].operators {
+        r = vs_find_binding(op, var);
+        if r != null {
+          return r;
+        }
+      }
+    },
+    NdInsert { items } => {
+      for op in items {
+        r = vs_find_binding(op, var);
+        if r != null {
+          return r;
+        }
+      }
+    },
+    NdIf { cond, t, f } => {
+      for x in [cond, t, f] {
+        r = vs_find_binding(x, var);
+        if r != null {
+          return r;
+        }
+      }
+    },
+    NdReturn { inner } => return vs_find_binding(inner, var),
+    NdDrop { inner } => return vs_find_binding(inner, var),
+    NdCall { args } => {
+      for a in args {
+        r = vs_find_binding(a, var);
+        if r != null {
+          return r;
+        }
+      }
+    },
+    NdIter { create, next, init } => {
+      for x in [create, next, init] {
+        r = vs_find_binding(x, var);
+        if r != null {
+          return r;
+        }
+      }
+    },
+    NdSpan { inner } => return vs_find_binding(inner, var),
+    _ => {}
+  }
+  null
+}
+
+// port: value_struct.rs fn vs_base_vars
+fn vs_base_vars(b: ir::Bundle, rhs: ir::Node, code: ir::Node, out: vector<integer>) {
+  work: vector<integer> = [];
+  r = vs_view_root(b, rhs);
+  if r >= 0 {
+    work += [r];
+  }
+  hops = 0;
+  while len(work) > 0 {
+    v = work[len(work) - 1]!;
+    work = work[0..len(work) - 1];
+    if scope_fn::has(out, v) {
+      continue;
+    }
+    out += [v];
+    hops += 1;
+    if hops > 8 {
+      break;
+    }
+    bind = vs_find_binding(code, v);
+    if bind != null {
+      r2 = vs_view_root(b, bind!);
+      if r2 >= 0 {
+        work += [r2];
+      }
+    }
+  }
+}
+
+// port: parser/mod.rs fn find_field_written_vars
+fn find_field_written_vars(b: ir::Bundle, n: ir::Node, written: vector<integer>) {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = b.data.definitions[def_nr]!.name;
+      first = nm.starts_with("OpSet") || nm.starts_with("OpPush") || nm == "OpNewRecord" || nm == "OpAppendCopy"
+        || nm == "OpAppendVector" || nm == "OpClearVector" || nm == "OpClearKeyed" || nm == "OpSetKeyed"
+        || nm == "OpHashRemove" || nm == "OpInsertVector" || nm == "OpRemoveVector" || nm == "OpReplaceVector";
+      second = nm == "OpCopyRecord" || nm == "OpRemove";
+      for a in args {
+        if a#index == 0 && first {
+          collect_vars_in(a, written);
+        }
+        if a#index == 1 && second {
+          collect_vars_in(a, written);
+        }
+        find_field_written_vars(b, a, written);
+      }
+    },
+    NdSet { inner } => find_field_written_vars(b, inner, written),
+    NdBlock { block } => for x in block[0].operators { find_field_written_vars(b, x, written); },
+    NdLoop { block } => for x in block[0].operators { find_field_written_vars(b, x, written); },
+    NdInsert { items } => for x in items { find_field_written_vars(b, x, written); },
+    NdIf { cond, t, f } => {
+      find_field_written_vars(b, cond, written);
+      find_field_written_vars(b, t, written);
+      find_field_written_vars(b, f, written);
+    },
+    NdReturn { inner } => find_field_written_vars(b, inner, written),
+    NdDrop { inner } => find_field_written_vars(b, inner, written),
+    NdIter { create, next, init } => {
+      find_field_written_vars(b, create, written);
+      find_field_written_vars(b, next, written);
+      find_field_written_vars(b, init, written);
+    },
+    NdSpan { inner } => find_field_written_vars(b, inner, written),
+    _ => {}
+  }
+}
+
+// port: parser/closures.rs fn collect_vars_in
+fn collect_vars_in(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdVar { n: v } => if !scope_fn::has(out, v) { out += [v]; },
+    NdTupleGet { var } => if !scope_fn::has(out, var) { out += [var]; },
+    NdSet { inner } => collect_vars_in(inner, out),
+    NdCall { args } => for a in args { collect_vars_in(a, out); },
+    NdBlock { block } => for x in block[0].operators { collect_vars_in(x, out); },
+    NdLoop { block } => for x in block[0].operators { collect_vars_in(x, out); },
+    NdInsert { items } => for x in items { collect_vars_in(x, out); },
+    NdIf { cond, t, f } => {
+      collect_vars_in(cond, out);
+      collect_vars_in(t, out);
+      collect_vars_in(f, out);
+    },
+    _ => collect_rest(n, out)
+  }
+}
+
+// The arms of `collect_vars_in` after `If`.
+fn collect_rest(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdReturn { inner } => collect_vars_in(inner, out),
+    NdDrop { inner } => collect_vars_in(inner, out),
+    NdIter { create, next, init } => {
+      collect_vars_in(create, out);
+      collect_vars_in(next, out);
+      collect_vars_in(init, out);
+    },
+    NdSpan { inner } => collect_vars_in(inner, out),
+    _ => {}
+  }
+}
+
+// port: value_struct.rs fn vs_collect_taint — the seed and the alias edges (pairs).
+fn vs_collect_taint(b: ir::Bundle, n: ir::Node, seed: vector<integer>, edges: vector<integer>) {
+  match n {
+    NdSet { var: w, inner } => {
+      match scope_fn::unspan(inner) {
+        NdVar { n: x } => { edges += [w, x]; },
+        _ => {}
+      }
+      vs_collect_taint(b, inner, seed, edges);
+    },
+    NdReturn { inner } => taint_escape(b, inner, seed, edges),
+    NdDrop { inner } => taint_escape(b, inner, seed, edges),
+    NdCall { def_nr, args } => {
+      is_op = b.data.definitions[def_nr]!.name.starts_with("Op");
+      for a in args {
+        if !is_op {
+          match scope_fn::unspan(a) {
+            NdVar { n: v } => if !scope_fn::has(seed, v) { seed += [v]; },
+            _ => {}
+          }
+        }
+        vs_collect_taint(b, a, seed, edges);
+      }
+    },
+    NdBlock { block } => for x in block[0].operators { vs_collect_taint(b, x, seed, edges); },
+    NdLoop { block } => for x in block[0].operators { vs_collect_taint(b, x, seed, edges); },
+    NdInsert { items } => for x in items { vs_collect_taint(b, x, seed, edges); },
+    NdIf { cond, t, f } => {
+      vs_collect_taint(b, cond, seed, edges);
+      vs_collect_taint(b, t, seed, edges);
+      vs_collect_taint(b, f, seed, edges);
+    },
+    NdIter { create, next, init } => {
+      vs_collect_taint(b, create, seed, edges);
+      vs_collect_taint(b, next, seed, edges);
+      vs_collect_taint(b, init, seed, edges);
+    },
+    NdSpan { inner } => vs_collect_taint(b, inner, seed, edges),
+    _ => {}
+  }
+}
+
+fn taint_escape(b: ir::Bundle, x: ir::Node, seed: vector<integer>, edges: vector<integer>) {
+  match scope_fn::unspan(x) {
+    NdVar { n: v } => if !scope_fn::has(seed, v) { seed += [v]; },
+    _ => {}
+  }
+  vs_collect_taint(b, x, seed, edges);
+}
+
+// port: value_struct.rs fn vs_scope_taint (with `vs_tainted`'s closure over the alias edges).
+fn vs_scope_taint(b: ir::Bundle, ops: vector<ir::Node>) -> vector<integer> {
+  tainted: vector<integer> = [];
+  edges: vector<integer> = [];
+  for op in ops {
+    find_field_written_vars(b, op, tainted);
+    vs_collect_taint(b, op, tainted, edges);
+  }
+  work: vector<integer> = [for t in tainted { t }];
+  while len(work) > 0 {
+    v = work[len(work) - 1]!;
+    work = work[0..len(work) - 1];
+    i = 0;
+    while i + 1 < len(edges) {
+      a = edges[i]!;
+      c = edges[i + 1]!;
+      n = if a == v { c } else if c == v { a } else { -1 };
+      if n >= 0 && !scope_fn::has(tainted, n) {
+        tainted += [n];
+        work += [n];
+      }
+      i += 2;
+    }
+  }
+  tainted
+}
+
+// Does `n` name a call or function value whose call closure reaches a `blocked` definition?
+fn reaches_blocked(b: ir::Bundle, n: ir::Node, blocked: vector<integer>) -> boolean {
+  if len(blocked) == 0 {
+    return false;
+  }
+  todo: vector<integer> = [];
+  callees(n, todo);
+  seen: vector<integer> = [];
+  while len(todo) > 0 {
+    x = todo[len(todo) - 1]!;
+    todo = todo[0..len(todo) - 1];
+    if scope_fn::has(seen, x) {
+      continue;
+    }
+    seen += [x];
+    if scope_fn::has(blocked, x) {
+      return true;
+    }
+    xd = b.data.definitions[x];
+    if xd == null || xd!.def_type != 1 || len(xd!.code) == 0 {
+      continue;
+    }
+    callees(xd!.code[0]!, todo);
+  }
+  false
+}
+
+fn callees(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdCall { def_nr } => out += [def_nr],
+    NdFnRef { def_nr } => out += [def_nr],
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    callees(c, out);
+  }
+}
+
+// port: value_struct.rs fn vs_copy_walk — the rewritten node.
+fn vs_copy_walk(b: ir::Bundle, n: ir::Node, d_nr: integer, ops: VsOps, tainted: vector<integer>, cleared: vector<integer>, body: ir::Node, defs: own::Defs, w: Walk) -> ir::Node {
+  match n {
+    NdSet { var: vv, inner } => {
+      rhs = vs_copy_walk(b, inner, d_nr, ops, tainted, cleared, body, defs, w);
+      f = b.data.definitions[d_nr].variables;
+      p = match scope_fn::tp(f, vv) { TyReference { n: x } => x, _ => -1 };
+      if p < 0 || !b.data.definitions[p]!.value_struct {
+        return ir::NdSet { var: vv, inner: rhs };
+      }
+      if reaches_blocked(b, rhs, ops.blocked) {
+        if w.why == "" {
+          w.why = "value_struct::value_struct_copy: an ownership summary reads a body a refused rewrite changes";
+        }
+        return ir::NdSet { var: vv, inner: rhs };
+      }
+      if !(own::ownership_of_with(b, ops.own_ops, d_nr, rhs, defs) is Borrowed) {
+        return ir::NdSet { var: vv, inner: rhs };
+      }
+      affected: vector<integer> = [vv];
+      vs_base_vars(b, rhs, body, affected);
+      needs_copy = false;
+      for x in affected {
+        if scope_fn::has(tainted, x) {
+          needs_copy = true;
+        }
+      }
+      if !needs_copy {
+        return ir::NdSet { var: vv, inner: rhs };
+      }
+      kt = b.data.definitions[p]!.known_type;
+      src_tmp = vs_source_temp(b, d_nr, vv, rhs);
+      cleared += [vv];
+      ir::NdInsert { items: [
+        ir::NdSet { var: src_tmp, inner: rhs },
+        ir::NdSet { var: vv, inner: ir::NdNull },
+        ir::NdIf {
+          cond: ir::NdCall { def_nr: ops.conv_bool_from_ref, args: [ir::NdVar { n: src_tmp }] },
+          t: ir::NdInsert { items: [
+            ir::NdCall { def_nr: ops.database, args: [ir::NdVar { n: vv }, ir::NdInt { n: kt }] },
+            ir::NdCall { def_nr: ops.copy_record, args: [ir::NdVar { n: src_tmp }, ir::NdVar { n: vv }, ir::NdInt { n: kt }] }
+          ] },
+          f: ir::NdNull
+        }
+      ] }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      items = [for x in bl.operators { vs_copy_walk(b, x, d_nr, ops, tainted, cleared, body, defs, w) }];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: items, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      loop_taint = vs_scope_taint(b, bl.operators);
+      items = [for x in bl.operators { vs_copy_walk(b, x, d_nr, ops, loop_taint, cleared, body, defs, w) }];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: items, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { vs_copy_walk(b, x, d_nr, ops, tainted, cleared, body, defs, w) }] },
+    NdIf { cond, t, f } => ir::NdIf {
+      cond: vs_copy_walk(b, cond, d_nr, ops, tainted, cleared, body, defs, w),
+      t: vs_copy_walk(b, t, d_nr, ops, tainted, cleared, body, defs, w),
+      f: vs_copy_walk(b, f, d_nr, ops, tainted, cleared, body, defs, w)
+    },
+    NdReturn { inner } => ir::NdReturn { inner: vs_copy_walk(b, inner, d_nr, ops, tainted, cleared, body, defs, w) },
+    NdDrop { inner } => ir::NdDrop { inner: vs_copy_walk(b, inner, d_nr, ops, tainted, cleared, body, defs, w) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { vs_copy_walk(b, a, d_nr, ops, tainted, cleared, body, defs, w) }] },
+    NdIter { var, create, next, init } => ir::NdIter {
+      var: var,
+      create: vs_copy_walk(b, create, d_nr, ops, tainted, cleared, body, defs, w),
+      next: vs_copy_walk(b, next, d_nr, ops, tainted, cleared, body, defs, w),
+      init: vs_copy_walk(b, init, d_nr, ops, tainted, cleared, body, defs, w)
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: vs_copy_walk(b, inner, d_nr, ops, tainted, cleared, body, defs, w) },
+    _ => n
+  }
+}

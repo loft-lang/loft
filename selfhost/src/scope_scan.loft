@@ -21,6 +21,7 @@ use scope_convert;
 use scope_args;
 use scope_free_vars;
 use scope_get_free_vars;
+use opt_names;
 
 // The definitions the pass keys on, looked up once per image.
 pub struct Ops {
@@ -42,7 +43,12 @@ pub struct Ops {
   pub init_ref_sentinel: integer,
   pub distinct_store: integer,
   pub conv_bool_from_ref: integer,
-  pub ref_alias: integer
+  pub ref_alias: integer,
+  pub drop_fn_ref: integer,
+  pub fn_ref_closure: integer,
+  pub fn_ref_detach_shared: integer,
+  // `Data::any_closure_drop`: some lambda's closure record has a drop cascade.
+  pub any_closure_drop: boolean
 }
 
 pub fn ops_of(b: ir::Bundle) -> Ops {
@@ -65,8 +71,23 @@ pub fn ops_of(b: ir::Bundle) -> Ops {
     init_ref_sentinel: scope_fn::def_nr(b, "OpInitRefSentinel"),
     distinct_store: scope_fn::def_nr(b, "OpDistinctStore"),
     conv_bool_from_ref: scope_fn::def_nr(b, "OpConvBoolFromRef"),
-    ref_alias: scope_fn::def_nr(b, "OpRefAlias")
+    ref_alias: scope_fn::def_nr(b, "OpRefAlias"),
+    drop_fn_ref: scope_fn::def_nr(b, "OpDropFnRef"),
+    fn_ref_closure: scope_fn::def_nr(b, "OpFnRefClosure"),
+    fn_ref_detach_shared: scope_fn::def_nr(b, "OpFnRefDetachShared"),
+    any_closure_drop: any_closure_drop(b)
   }
+}
+
+// port: data.rs fn any_closure_drop
+fn any_closure_drop(b: ir::Bundle) -> boolean {
+  for d in b.data.definitions {
+    r = d.closure_record;
+    if r >= 0 && r < len(b.data.definitions) && opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
+      return true;
+    }
+  }
+  false
 }
 
 // port: scopes.rs struct Scopes — the fields this transcription carries.
@@ -144,6 +165,10 @@ pub struct Scopes {
   // The records a statement prefix releases, and the `_place` operand flag (`args.rs`).
   pub prefix_released: vector<integer>,
   pub place_operand: boolean,
+  // The fn-ref locals bound in each open `convert` (`fnref_bound`, a stack of sets): entries
+  // `depth * 65536 + v`, `fnref_depth` the number of open `convert`s.
+  pub fnref_bound: vector<integer>,
+  pub fnref_depth: integer,
   // The facts of the passes this transcription refuses before the scan (the owner witness,
   // the per-path hand-off flags, the handle views, the materialised views, the drop-bearing
   // records' hand-offs, the runtime witnesses): always empty while it runs, and every reader
@@ -420,22 +445,26 @@ pub fn register_binding(s: Scopes, v: integer, f: ir::Function) {
   put_scope(s, v);
   t = scope_fn::tp(f, v);
   collection = scope_fn::base(t) is TyVector || scope_fn::base(t) is TyTuple;
+  // A fn-ref's closure record releases in the fn-ref's turn, just BEFORE it (loft#1606).
   fn_ref = scope_fn::base(t) is TyFunction;
-  if fn_ref || scope_fn::base(t) is TyTuple {
-    // the closure records' and the tuple members' backings: `backings::member_backing`
-    refuse(s, "scan::register_binding: a fn-ref or tuple binding (backings::member_backing)");
+  if scope_fn::base(t) is TyTuple {
+    // the tuple members' backings: `backings::member_backing`
+    refuse(s, "scan::register_binding: a tuple binding (backings::member_backing)");
   }
+  records: vector<integer> = [];
   for d in scope_fn::deps(f, v) {
     nm = scope_fn::name(f, d);
-    if nm.starts_with("__vdb_") || (collection && nm.starts_with("__ref_")) {
-      at = position(s.var_order, d);
-      if at >= 0 {
-        remove_at(s.var_order, at);
-        s.var_order += [d];
-      }
+    at = position(s.var_order, d);
+    if fn_ref && nm.starts_with("___clos_") && at >= 0 {
+      remove_at(s.var_order, at);
+      records += [d];
+    } else if (nm.starts_with("__vdb_") || (collection && nm.starts_with("__ref_"))) && at >= 0 {
+      remove_at(s.var_order, at);
+      s.var_order += [d];
     }
   }
   s.var_order += [v];
+  s.var_order += records;
 }
 
 pub fn position(v: vector<integer>, x: integer) -> integer {

@@ -1088,17 +1088,17 @@ fn insert_free(s: scope_scan::Scopes, b: ir::Bundle, block: ir::Block, free: vec
       }
     }
     // A free of a var the returned tail still READS that the return-delivery materializer
-    // consumed in-arm (`Function::is_arm_consumed`, not in the image) is dropped: such a var
-    // is a record or a collection, refused where it could be one.
-    ret_frees: vector<ir::Node> = [for x in trailing_frees { x }];
-    ret_frees += free;
-    if is_return {
-      for fr in ret_frees {
-        fv = scope_scan::scope_free_op_var(s, fr);
-        if fv >= 0 && scope_fn::reads_var(o, fv) && !scope_fn::is_text(scope_fn::tp(f, fv)) {
-          scope_scan::refuse(s, "insert_free: a returned tail reading a store it frees (Function::is_arm_consumed, not in the image)");
-        }
+    // consumed in-arm (`Function::is_arm_consumed`) is dropped: the tail frees that store
+    // inside the expression.
+    ret_frees: vector<ir::Node> = [];
+    all_frees: vector<ir::Node> = [for x in trailing_frees { x }];
+    all_frees += free;
+    for fr in all_frees {
+      fv = scope_scan::scope_free_op_var(s, fr);
+      if is_return && fv >= 0 && scope_fn::reads_var(o, fv) && f.variables[fv]!.arm_consumed {
+        continue;
       }
+      ret_frees += [fr];
     }
     is_refvar_text = match scope_fn::base(result) { TyRefVar { inner } => scope_fn::is_text(inner), _ => false };
     if hoist_tmp < 0 && is_return && is_refvar_text && len(ret_frees) > 0 && scope_fn::unspan(o) is NdIf {

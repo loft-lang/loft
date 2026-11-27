@@ -49,9 +49,12 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     scope_scan::put(s.split_count, v, scope_scan::get(s.split_count, v) + 1);
   }
   t = scope_fn::tp(f, v);
-  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) {
+  // A fn-ref binding takes the generic legs below (its deps reserved, its first bind registered
+  // with its closure record after it); its rebind and scope-end releases are `convert`'s
+  // (`fnref_call_rebind`) and `get_free_vars`'.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) {
     // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox, the
-    // collection backings and materialise copies, the generator handle frees, the fn-ref joins.
+    // collection backings and materialise copies, the generator handle frees.
     scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
     if !scope_scan::in_scope(s, v) {
       scope_scan::register_binding(s, v, f);

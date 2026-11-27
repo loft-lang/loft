@@ -13,13 +13,15 @@ use scope_scan;
 use scope_branches;
 use scope_free_vars;
 use scope_drops;
+use binds;
 
 // port: convert.rs fn convert
 pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function, is_return: boolean) -> vector<ir::Node> {
   ls: vector<ir::Node> = [];
   at_end: vector<ir::Node> = [];
-  // `closure_keep.gated`: the phase refuses a function with a closure record, so the holders'
-  // null-inits are never owed here.
+  s.fnref_depth += 1;
+  // `closure_keep.gated`: the phase refuses a frame the closure-keep pass gates, so the
+  // holders' null-inits are never owed here.
   ops = bl.operators;
   void_block = (bl.result[0] ?? ir::TyVoid) is TyVoid;
   for v in ops {
@@ -51,13 +53,27 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
       scope_scan::refuse(s, "drops::in_place_rebuild: a droppable record rebuilt in place");
     }
     statement_rewrites(s, b, v, f);
+    // `vector_call_rebind` (refused above), `closure_keep_rebind` (gated frames, refused by the
+    // phase), then `fnref_call_rebind`.
+    rebind_pre: vector<ir::Node> = [];
+    rebind_post: vector<ir::Node> = [];
+    fnref_call_rebind(s, b, v, f, rebind_pre, rebind_post);
+    match scope_fn::unspan(v) {
+      NdSet { var: ov } => if scope_fn::base(scope_fn::tp(f, ov)) is TyFunction {
+        scope_scan::set_add(s.fnref_bound, s.fnref_depth * 65536 + scope_scan::mapped(s, ov));
+      },
+      _ => {}
+    }
     sv = scope_scan::scan(s, b, v, f);
+    ls += rebind_pre;
     // The hand-offs a statement arms after it is scanned (`drop_handoff_node`, the tuple member
     // moves) are facts about drop-bearing records and tuples, refused where they are bound.
     match sv {
       NdInsert { items } => { ls += items; },
       _ => { ls += [sv]; }
     }
+    // A fn-ref rebind's statement is no vector literal's group: its release follows at once.
+    ls += rebind_post;
     // loft#1331 — detach an accumulator this statement repointed.
     if (void_block || i + 1 < len(ops)) {
       acc = repointed_literal_accumulator(v, f);
@@ -156,7 +172,76 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
   }
   ls += scope_free_vars::free_vars(s, b, is_return, expr, f, result, s.scope);
   // `closure_keep_pass_end`: no closure record reaches here (the phase refuses them).
+  s.fnref_bound = [for e in s.fnref_bound if e / 65536 != s.fnref_depth { e }];
+  s.fnref_depth -= 1;
   ls
+}
+
+// Is fn-ref local `v` bound in an open `convert` (`fnref_bound.iter().any(|b| b.contains(&v))`)?
+pub fn fnref_bound(s: scope_scan::Scopes, v: integer) -> boolean {
+  for e in s.fnref_bound {
+    if e % 65536 == v {
+      return true;
+    }
+  }
+  false
+}
+
+// port: closure_keep.rs fn fnref_call_rebind — `@FR-L-CapOwn` at a REBIND of a fn-ref local that
+// may hold a call's closure (loft#1609, loft#2155): the displaced value is copied aside before the
+// statement and released after it, unless it shares its closure with the new value.  Fills
+// `pre` and `post`; leaves both empty where it is not such a rebind.
+fn fnref_call_rebind(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, f: ir::Function, pre: vector<ir::Node>, post: vector<ir::Node>) {
+  ov = match scope_fn::unspan(stmt) { NdSet { var } => var, _ => -1 };
+  if ov < 0 {
+    return;
+  }
+  v = scope_scan::mapped(s, ov);
+  if !(scope_fn::base(scope_fn::tp(f, v)) is TyFunction) || !fnref_bound(s, v) || !scope_scan::in_scope(s, v)
+    || scope_fn::is_argument(f, v) || binds::is_captured(f, v) || scope_fn::is_compiler_generated(f, v)
+    || scope_fn::is_skip_free(f, v) {
+    return;
+  }
+  count = scope_fn::count(f);
+  // Any frame local in its deps other than a closure record is a value this release cannot
+  // reason about.
+  for r in scope_fn::deps(f, v) {
+    if r < count && !is_record_local(f, r) {
+      return;
+    }
+  }
+  frame_records: vector<integer> = [];
+  for r in 0..count {
+    if is_record_local(f, r) {
+      frame_records += [r];
+    }
+  }
+  for u in 0..count {
+    if u != v && scope_fn::base(scope_fn::tp(f, u)) is TyFunction && scope_fn::has(scope_fn::deps(f, u), v) {
+      return;
+    }
+  }
+  if len(frame_records) > 0 {
+    // `closure_keep_unless_shared` over the frame's records: a closure record is refused by the
+    // phase, so this is never reached on a frame the pass carries.
+    scope_scan::refuse(s, "closure_keep::fnref_call_rebind: a fn-ref rebound beside a closure record");
+    return;
+  }
+  s.lift_counter += 1;
+  tmp = scope_fn::add_temp_var(f, "__fdisp_{s.lift_counter}", scope_fn::tp(f, v));
+  scope_scan::set_scope_of(s, tmp, s.scope);
+  pre += [scope_fn::v_set(tmp, ir::NdVar { n: v })];
+  post += [ir::NdCall { def_nr: s.ops.fn_ref_detach_shared, args: [ir::NdVar { n: tmp }, ir::NdVar { n: v }] }];
+  if s.ops.any_closure_drop {
+    post += [ir::NdCall { def_nr: s.ops.drop_fn_ref, args: [ir::NdVar { n: tmp }] }];
+  }
+  post += [scope_drops::free_ref(s, tmp)];
+  post += [scope_fn::v_set(tmp, ir::NdNull)];
+}
+
+// port: capture_builds.rs fn is_record_local — a frame's own closure record `___clos_N`.
+pub fn is_record_local(f: ir::Function, w: integer) -> boolean {
+  !scope_fn::is_argument(f, w) && scope_fn::name(f, w).starts_with("___clos_")
 }
 
 // `stmt`'s outer span around `n`, where `stmt` had one.
@@ -173,9 +258,6 @@ fn statement_rewrites(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::
       t = scope_fn::base(scope_fn::tp(f, scope_scan::mapped(s, ov)));
       if t is TyVector {
         scope_scan::refuse(s, "drops::vector_rebind_release: a vector local bound");
-      }
-      if t is TyFunction {
-        scope_scan::refuse(s, "closure_keep::fnref_call_rebind: a fn-ref local bound");
       }
     },
     NdCall { def_nr, args } => {
