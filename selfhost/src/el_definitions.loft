@@ -1807,6 +1807,34 @@ fn flat_expression(n: ir::Node) -> boolean {
   }
 }
 
+// A constant text expression's value: a literal, a text constant's, or `+` of two such; null
+// for anything else.
+fn fold_text(e: el::El, n: integer) -> text? {
+  match e.p.nodes[n] {
+    SText { s: ts } => ts,
+    SString { parts } => if len(parts) == 1 { fold_text(e, parts[0]!) } else { null },
+    SName { name: nm, member: mb } => {
+      if mb != "" {
+        return null;
+      }
+      cd = el::def_nr(e, nm);
+      if cd < 0 || el::def(e, cd).def_type != el::DT_CONSTANT {
+        return null;
+      }
+      match el_ir::unspan(el::def(e, cd).code[0] ?? ir::NdNull) { NdText { s: cs } => cs, _ => null }
+    },
+    SBin { op, l, r } => {
+      if op != "+" {
+        return null;
+      }
+      a = fold_text(e, l);
+      b = fold_text(e, r);
+      if a == null || b == null { null } else { "{a!}{b!}" }
+    },
+    _ => null
+  }
+}
+
 // `Parser::parse_constant`, `const NAME = value;`: a definition of its own (`DefType::Constant`),
 // positioned where the parser stands on the `;`, typed by its value and holding the value's code,
 // which every use inlines.  The value is read with no frame of its own.  A declared type, and a
@@ -1872,6 +1900,14 @@ fn parse_constant(e: el::El, at: integer, name: text, tp: integer?, value: integ
       return;
     }
     x = el_ex_base::Ex { code: cx!, tp: declared! };
+  }
+  // A text built by `+` from literals and other text constants folds to its literal (Rust's
+  // constant is `"hi!"` for `T_BASE + "!"`, whichever is declared first).
+  if el_types::base(x.tp) is TyText && !(el_ir::unspan(x.code) is NdText) {
+    ft = fold_text(e, value!);
+    if ft != null {
+      x = el_ex_base::Ex { code: ir::NdText { s: ft! }, tp: ir::TyText { dep: [] } };
+    }
   }
   plain = el_convert::plain_scalar(x.tp) || (x.tp is TyText && el_ir::unspan(x.code) is NdText);
   // A value that names a slot of the scratch frame needs a temporary the use site does not have.
