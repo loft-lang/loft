@@ -479,6 +479,11 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
       uv = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
       el_vars::mark_user_named(vars, uv, "parse_var_inner");
     }
+    // (A type's spelling — a variant written above its enum, `Two` — leaves a stub of the name
+    // the declaration adopts in place (loft#801, loft#1047), as a construction's does.)
+    if looks_like_a_type(name) && el::def_nr(e, name) < 0 && e.at >= 0 && !el::pending_import_names(e, name) && el::any_source_nr(e, name) < 0 {
+      e.speculative += [el::add_def(e, name, el::pos_at(e, e.at), el::DT_UNKNOWN)];
+    }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el::refuse(e, "a name that is not a variable: {kind}");

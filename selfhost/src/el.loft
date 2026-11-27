@@ -215,6 +215,9 @@ pub struct El {
   pub name_only: vector<integer>,
   // The forward references' stubs a declaration adopted this pass (`Data::adopted_stubs`).
   pub adopted: vector<integer>,
+  // The stubs a CONSTRUCTION or a bare type-spelled name left (`speculative_type_refs`): never
+  // reported on their own — the construction's second pass does.
+  pub speculative: vector<integer>,
   // The standard library's `#loft"…"` operator templates, by definition (`create.loft` writes
   // `fill.loft` from them; the Rust compiler skips the annotation).
   pub loft_ops: vector<LoftOp>
@@ -309,6 +312,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     loading: [],
     name_only: [],
     adopted: [],
+    speculative: [],
     loft_ops: []
   }
 }
@@ -427,6 +431,24 @@ fn key(source: integer, name: text) -> text {
 }
 
 // `Data::source_nr`: the definition `name` of `source`, or -1.
+// A name a `use` of this source imports but has not applied yet (`pending`, applied after
+// the file): Rust's `use` makes it visible at once, so it is no forward reference.
+pub fn pending_import_names(el: El, name: text) -> boolean {
+  for pi in el.pending {
+    if pi.for_source == el.source {
+      if pi.star && source_nr(el, pi.lib_source, name) >= 0 {
+        return true;
+      }
+      for im in pi.names {
+        if im.bind == name {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
 pub fn source_nr(el: El, source: integer, name: text) -> integer {
   e = el.names[key(source, name)];
   if e == null { -1 } else { e.nr }
