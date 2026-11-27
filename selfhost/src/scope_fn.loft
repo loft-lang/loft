@@ -383,6 +383,28 @@ pub fn v_set(v: integer, n: ir::Node) -> ir::Node {
   ir::NdSet { var: v, inner: n }
 }
 
+// A `par` loop's element variable, named `_<name>_par<N>` by the parser (`b_var`), which marks it
+// a loop variable (`Function::was_loop_var`, not in the image).
+pub fn is_par_loop_var(nm: text) -> boolean {
+  if !nm.starts_with("_") {
+    return false;
+  }
+  at = nm.rfind("_par");
+  if at == null || at! < 2 {
+    return false;
+  }
+  digits = nm[at! + 4..];
+  if digits.size() == 0 {
+    return false;
+  }
+  for c in digits {
+    if c < '0' || c > '9' {
+      return false;
+    }
+  }
+  true
+}
+
 // `Value::Insert(items)`, built in a call: a local rebound to an insert whose items were read out
 // of its own old value (`x = NdInsert { items: ops }`) is a construct the compiler's move
 // elision builds over that old value (scope-pass-port.md § Built, step 6).

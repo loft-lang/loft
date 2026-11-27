@@ -205,8 +205,9 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if d >= scope_fn::count(f) {
       continue;
     }
-    // A `par` loop's result variable (`_r_par<N>`) is a loop variable: unregistered.
-    if !scope_scan::in_scope(s, d) && !scope_fn::name(f, d).starts_with("_r_par") {
+    // A `par` loop's element variable (`_<name>_par<N>`, `parser/collections.rs`' `b_var`) is a
+    // loop variable (`vars.loop_var(b_var)`): unregistered.
+    if !scope_scan::in_scope(s, d) && !scope_fn::is_par_loop_var(scope_fn::name(f, d)) {
       // `function.was_loop_var(d)` is not in the image: a dep that is not a text temp may be a
       // loop's variable, which Rust leaves unregistered.
       if scope_fn::has(s.loopish, d) && (!scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d)) {

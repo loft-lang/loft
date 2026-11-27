@@ -455,6 +455,11 @@ fn callref_owned_return(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node, f: 
   returned = peeled(rt);
   opt = rt is TyOptional;
   record_return = is_record_type(returned);
+  // Only a record or a collection is lifted: any other return answers `None` whatever the
+  // oracle says, so it is not asked.
+  if !scope_fn::is_dbref(returned) {
+    return null;
+  }
   o = scope_scan::ownership(s, b, val);
   join_lifts = record_return && is_named_join(o) && outer_call >= 0;
   blocks = callref_capture_blocks(s, b, val);
