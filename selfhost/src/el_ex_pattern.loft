@@ -1619,12 +1619,14 @@ pub fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?)
     return ex(ir::NdNull, ir::TyVoid);
   }
   vars.whiles += 1;
+  vars.while_marks += [len(vars.active_loops)];
   // `parse_while`: the body runs only where the condition holds, so a non-null proof in it
   // narrows its variable there as an `if`'s does (`(N-Chain)`); a write drops it.
   facts = el_ex_call::assume_condition(e, vars, c.code, true);
   b = el_ex_assign::parse_block(e, vars, body!, "while", ir::TyVoid);
   forget_facts(vars, facts);
   vars.whiles -= 1;
+  vars.while_marks = vars.while_marks[0..len(vars.while_marks) - 1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
