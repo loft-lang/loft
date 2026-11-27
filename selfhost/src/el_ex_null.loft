@@ -2704,6 +2704,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
   if kind == "return" {
     result = el::def(e, e.context).returned[0];
     if x == null {
+      // (A bare `return` from a function answering `τ?` answers `τ`'s null: `?? return` in a
+      // `-> integer?` is `return OpConvIntFromNull()`.)
+      if result is TyOptional {
+        rnl = el_convert::null_of(e, el_types::base(result));
+        if rnl != null {
+          return ex(ir::NdReturn { inner: rnl! }, ir::TyNever);
+        }
+      }
       if !(result is TyVoid) {
         el::refuse(e, "a `return` without a value from a function with one");
       }
@@ -3067,6 +3075,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         },
         _ => {}
       }
+    }
+    // (A void function returning a void call — `x ?? return note(0)` — runs the call and leaves:
+    // `return n_note(0)`.)
+    if result is TyVoid && v.tp is TyVoid {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
