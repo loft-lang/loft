@@ -1827,6 +1827,11 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   if null_then {
     nv = el_convert::null_of(e, f.tp);
+    // (A struct enum's null is the reference sentinel, as a record's is: `if t == null { null }
+    // else { t }` over `t: Ty?`.)
+    if nv == null && el_convert::struct_enum(el_types::base(f.tp)) {
+      nv = el_ir::cl(e, "OpNullRefSentinel", []);
+    }
     if f.tp is TyNull || f.tp is TyNever || nv == null {
       el::refuse(e, "an `if` arm that never finishes or is null");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
