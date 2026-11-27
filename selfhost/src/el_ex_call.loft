@@ -2106,6 +2106,15 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
         continue;
       }
     }
+    // (…and so is a variable viewing a `vector<E?>` element slot, a `for e in v` loop
+    // variable: `enum_slot_view`'s variable branch, the slot's null test then the pointer.)
+    if !e.first_pass && at is TyOptional && pt is TyOptional && el_types::struct_enum_def(at) >= 0 && el_types::struct_enum_def(at) == el_types::struct_enum_def(pt) && el_ir::unspan(arg) is NdVar {
+      sr = el_ex_into::enum_slot_read(e, arg, at, vars);
+      if sr != arg {
+        conv += [sr];
+        continue;
+      }
+    }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
     // `S?` parameter is read through its tag, so absence arrives as the reference null.
     if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_into::nullable_payload(e, el_types::struct_enum_def(at)) {

@@ -1598,7 +1598,7 @@ pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_re
 pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   syn = match x.tp { TyEnum { n, is_ref } => if is_ref && is_nullable_wrapper(e, x.tp) { n } else { -1 }, _ => -1 };
   if syn < 0 {
-    return ex(enum_slot_read(e, x.code, x.tp), x.tp);
+    return ex(enum_slot_read(e, x.code, x.tp, vars), x.tp);
   }
   some_d = el::variant_of(e, syn, "Some");
   sd = nullable_payload(e, syn);
@@ -1623,11 +1623,19 @@ pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
 // leaving its slot for a position that is no slot (a field read's base, a local) is the pointer —
 // the null sentinel where the slot's first word is zero: `if OpGetInt4(r, pos) == 0 nullref else
 // OpGetField(r, pos, E)`.  On the second pass, for a slot off a place a test may read twice.
-pub fn enum_slot_read(e: el::El, code: ir::Node, tp: ir::TypeT) -> ir::Node {
+pub fn enum_slot_read(e: el::El, code: ir::Node, tp: ir::TypeT, vars: el_vars::Vars? = null) -> ir::Node {
   if e.first_pass || !(tp is TyOptional) || el_types::struct_enum_def(el_types::base(tp)) < 0 || is_nullable_wrapper(e, tp) {
     return code;
   }
   match el_ir::unspan(code) {
+    // (A variable viewing a `vector<E?>` element slot — a `for e in v` loop variable — is a
+    // sub-reference into the slot: absent where its handle is null or its tag is zero.)
+    NdVar { n: sv } => {
+      if vars != null && el_ex_null::views_nullable_element_slot(vars!, tp) {
+        absent = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [code]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [code, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
+        return el_ir::v_if(absent, el_ir::cl(e, "OpNullRefSentinel", []), code);
+      }
+    },
     NdCall { def_nr: gd, args: ga } => {
       if el::def(e, gd).name == "OpGetField" && len(ga) == 3 && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
         return el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [ga[0]!, ga[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), code);
