@@ -208,6 +208,12 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
 
 **Rust-only types (open).**  38 at loft30-gate fee317776 (vectors, tuple records, type
 instances; Rust-only definitions 267), one to four per program.  What each open group needs:
+- 2209 (a program `Item` beside a library's `default2209::Item`): Rust registers the second as
+  `src1::Item` (`qualified_type_name`: the source's most qualified `use` name, else `src<n>`) and
+  makes a SECOND `main_vector<Item>` definition for it; the port refuses the struct.  Registering
+  it qualified (measured) gives the row but out of Rust's order: the port makes `vector<Item>` /
+  `vector<Ev2209>` at the empty declared literal (`vector_of` over a library row), Rust at the
+  fill — so the empty-declared-literal case of that rule is wrong too.  Both needed together.
 - iterator element vectors: DONE (23e4ed95e: the base carries no program-specific row;
   fee317776: a generator handle is stored as its `DbRef` row, so a `vector<iterator<T>>` field
   has content and names `vector<iterator>`).  Open in that family: a nullable vector element's
