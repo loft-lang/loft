@@ -806,20 +806,24 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
       ir::TyTuple { elems: ts }
     },
     // `fn(T, …) -> R`: the argument types, a `const` one's bit in `consts` (`ConstParams`), and
-    // the result (`void` when none is written).  A `&` argument is refused by name.
+    // the result (`void` when none is written).  A `&T` argument is `Parser::ref_var_type`'s
+    // link to `T`, as a declared `&` parameter is; a `&` tuple argument is refused by name.
     STyFn { at: _, args, ret } => {
       ts: vector<ir::TypeT> = [];
       bits = 0;
       for a in args {
         match e.p.nodes[a] {
           STyArg { amp, fixed, tp } => {
-            if amp {
-              el::refuse(e, "a function type with a `&` argument");
-              return null;
-            }
             at = if tp == null { null } else { parse_type(e, tp!) };
             if at == null {
               return null;
+            }
+            if amp {
+              if at! is TyTuple {
+                el::refuse(e, "a function type with a `&` tuple argument");
+                return null;
+              }
+              at = ir::TyRefVar { inner: at! };
             }
             if fixed && len(ts) < 32 {
               bits += 1 << len(ts);
