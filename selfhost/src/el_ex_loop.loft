@@ -2398,7 +2398,16 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     init = [el_ir::v_set(idx, ir::NdInt { n: -1 })];
   }
   val = el_vars::create_unique(vars, "val", ir::TyUnknown { n: 0 });
-  lv = loop_var(vars, src_id, id, lt);
+  // (`iter_for` names a `_` loop variable as written — `create_loop_var("_")` — where a
+  // statement loop's is a unique one.)
+  lv = -1;
+  if id == "_" {
+    lv = el_vars::loop_variable(vars, id, lt);
+    el_vars::set_defined(vars, lv);
+    vars.loop_vars += [lv];
+  } else {
+    lv = loop_var(vars, src_id, id, lt);
+  }
   tv = -1;
   res = -1;
   if walks_text {
