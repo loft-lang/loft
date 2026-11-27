@@ -172,7 +172,8 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
   }
   ls += scope_free_vars::free_vars(s, b, is_return, expr, f, result, s.scope);
   // `closure_keep_pass_end`: no closure record reaches here (the phase refuses them).
-  s.fnref_bound = [for e in s.fnref_bound if e / 65536 != s.fnref_depth { e }];
+  open_bound = [for e in s.fnref_bound if e / 65536 != s.fnref_depth { e }];
+  s.fnref_bound = open_bound;
   s.fnref_depth -= 1;
   ls
 }

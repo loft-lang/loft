@@ -24,6 +24,7 @@ use binds;
 use own;
 use scope_value_struct;
 use scope_capture_adoption;
+use scope_text_replace;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -136,6 +137,10 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       refused += ["{d.name}: capture_adoption::cascade_before_record_frees: a closure record released"];
     }
   }
+  // `@FR-H-TextReplace` — which text-field assignments release what they replace.
+  for i in scope_text_replace::admit(b, settled) {
+    refused += ["{b.data.definitions[i]!.name}: text_replace::admit: a text field assigned through a parameter a refused caller decides"];
+  }
   refused
 }
 
@@ -227,9 +232,6 @@ fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, 
       }
       if nm == "OpAppendVector" && len(args) > 1 && scope_fn::unspan(args[1]!) is NdVar {
         note(w, "bound_append::rewrite_program: a local appended whole");
-      }
-      if nm == "OpSetTextReplace" {
-        note(w, "text_replace::admit: a text field assigned");
       }
       // `move_elide` (default on): a record copied out of a local at that local's last use is
       // built in the copy's destination instead (`MovePlan`, the `a.field = base` rewrite).

@@ -16,7 +16,6 @@
 use ir;
 use scope_fn;
 use opt_names;
-use ir_pass_tree;
 
 // port: capture_adoption.rs fn capture_attr_is_cascade_relevant
 pub fn capture_attr_is_cascade_relevant(b: ir::Bundle, record: integer, a: integer) -> boolean {
@@ -185,7 +184,32 @@ fn drop_calls(n: ir::Node, pruned: vector<boolean>) -> ir::Node {
     NdCall { def_nr } => if def_nr >= 0 && (pruned[def_nr] ?? false) { return ir::NdNull; },
     _ => {}
   }
-  ir_pass_tree::with_children(n, [for c in scope_fn::children(n) { drop_calls(c, pruned) }])
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: drop_calls(inner, pruned) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { drop_calls(x, pruned) }] },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { drop_calls(x, pruned) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { drop_calls(x, pruned) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: drop_calls(inner, pruned) },
+    NdReturn { inner } => ir::NdReturn { inner: drop_calls(inner, pruned) },
+    NdDrop { inner } => ir::NdDrop { inner: drop_calls(inner, pruned) },
+    NdYield { inner } => ir::NdYield { inner: drop_calls(inner, pruned) },
+    NdIf { cond, t, f } => ir::NdIf { cond: drop_calls(cond, pruned), t: drop_calls(t, pruned), f: drop_calls(f, pruned) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { drop_calls(x, pruned) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { drop_calls(x, pruned) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { drop_calls(x, pruned) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: drop_calls(inner, pruned) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: drop_calls(create, pruned), next: drop_calls(next, pruned), init: drop_calls(init, pruned) },
+    NdParallel { arms } => ir::NdParallel { arms: [for x in arms { drop_calls(x, pruned) }] },
+    _ => n
+  }
 }
 
 // `cascade_before_record_frees` would patch a statement of `d`: a free of a closure-record
