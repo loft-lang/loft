@@ -104,10 +104,14 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     // (A `τ?` body ending in `null` promotes nothing: an early exit answering a fresh literal or
     // a vector local of its own returns it as it stands, in its own store; a parameter's was
     // copied into the buffer at its `return`.)
-    null_tail = result is TyOptional && (el_ir::is_null(tail) || match tail { NdCall { def_nr: ntd, args: nta } => len(nta) == 0 && el::def(e, ntd).name == "OpNullRefSentinel", _ => false });
+    // (A dense vector's `null` tail the same: Rust answers the sentinel, nothing promoted.)
+    null_tail = (result is TyOptional || el_types::base(result) is TyVector) && (el_ir::is_null(tail) || match tail { NdCall { def_nr: ntd, args: nta } => len(nta) == 0 && el::def(e, ntd).name == "OpNullRefSentinel", _ => false });
     if null_tail && len(bl.operators) > 0 {
       nmids = bl.operators[0..len(bl.operators) - 1];
-      if el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) + el_ex_copy::buffer_returns(nmids, rb) {
+      // (A dense result's exit that answers the buffer — a parameter copied in — is not carried
+      // under a `null` tail: its result's borrow is the `τ?` road's alone.)
+      dense_buf = !(result is TyOptional) && el_ex_copy::buffer_returns(nmids, rb) > 0;
+      if !dense_buf && el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) + el_ex_copy::buffer_returns(nmids, rb) {
         null_exits = true;
         // (An exit answering the buffer makes the body borrow what it handed back.)
         if el_ex_copy::buffer_returns(nmids, rb) > 0 {
