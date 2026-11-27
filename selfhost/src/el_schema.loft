@@ -546,7 +546,9 @@ fn fill_database(e: el::El, d: integer) {
   def = el::def(e, d);
   // `main_vector<unknown>` — a first-pass literal's wrapper whose element was not typed yet — is
   // never laid out: its field's content has no definition (`fill_database` skips it).
-  if def.name == "main_vector<unknown>" {
+  // (Nor is `main_vector<vector>`, a literal of such literals' wrapper, while its element is
+  // the library's untyped `vector`.)
+  if def.name == "main_vector<unknown>" || (def.name == "main_vector<vector>" && len(def.attributes) > 0 && el_types::is_unknown(def.attributes[0]!.typedef[0])) {
     return;
   }
   // @PLN165 D5 — an OPEN instance (`Box<T>` inside a template) gets a ROW and no layout: the
