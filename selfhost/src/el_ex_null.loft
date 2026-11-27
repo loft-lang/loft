@@ -562,12 +562,9 @@ pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, 
   match rt {
     TyVector { inner } => {
       nm = el_types::elem_name(e, inner);
-      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" {
-        el::refuse(e, "a file read of a vector with no size, or of this element type: {type_kind(inner)}");
-        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-      }
-      // (loft#899: the read declares its vector here — `vector_def` — where nothing declared it.)
-      if el::def_nr(e, "main_vector<{nm}>") < 0 {
+      // (loft#899: the read declares its vector here — `vector_def` — where nothing declared it,
+      // for any element it names; a refused read registers it first.)
+      if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
         // (At the lexer's place once the cast is read, the token after its `>`; `vector_def`
         // registers no store type of its own, a narrow element's either.)
         ci = at;
@@ -584,6 +581,10 @@ pub fn file_read_as(e: el::El, vars: el_vars::Vars, fv: integer, arg: integer?, 
           ci += 1;
         }
         el_schema::make_vector_def(e, inner, nm, el::pos_at(e, ci + 1), true, narrow_early: false);
+      }
+      if arg == null || !el_convert::plain_scalar(inner) || el_convert::plain_enum(inner) || nm == "" {
+        el::refuse(e, "a file read of a vector with no size, or of this element type: {type_kind(inner)}");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
       n_code = el_ex_assign::expression(e, vars, arg!).code;
       el_vars::in_use(vars, fv, true);
