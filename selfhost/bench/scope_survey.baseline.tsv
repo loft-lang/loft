@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	3642dcda3551625c7b8fdae7e97f0271a6e9f89e
+suite	d5e4e3311b29d6c84abe705e2da8dfabb1a9d6f7
 
-layer	scope	agree	138	of	2247
+layer	scope	agree	142	of	2278
 scope	unscoped	lib/audience_crystal/src/audience_crystal.loft
 scope	unscoped	lib/audience_crystal/tests/01-editor-helpers.loft
 scope	unscoped	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -603,6 +603,7 @@ scope	unscoped	loft-suite/rules/iteration/I-For/a-reverse-walk-over-a-local-fill
 scope	unscoped	loft-suite/rules/iteration/I-For/a-walk-over-a-link-parameter-is-a-walk-over-the-vector.loft
 scope	unscoped	loft-suite/rules/iteration/I-For/a-write-the-loop-leaves-right-after-is-not-reported.loft
 scope	unscoped	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft
+scope	unscoped	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft
 scope	differ	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft
 scope	unscoped	loft-suite/rules/iteration/I-NullSrc/a-call-declared-dense-that-answers-null-runs-no-round.loft
 scope	unscoped	loft-suite/rules/iteration/I-NullSrc/a-discharged-null-source-runs-no-round-whatever-it-is.loft
@@ -1405,11 +1406,14 @@ scope	unscoped	loft-suite/rules/types/T-Syn/type-name-of-a-generic-instance-name
 scope	unscoped	loft-suite/rules/types/W-Lit/a-literal-checks-at-the-width-it-is-expected-at.loft
 scope	unscoped	loft-suite/rules/types/W-Lit/a-literal-right-operand-checks-at-its-left-operands-width.loft
 scope	unscoped	loft-suite/rules/types/W-Name/a-regime-file-names-32-bits-and-asks-64-by-name.loft
+scope	unscoped	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft
 scope	differ	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft
+scope	unscoped	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft
 scope	unscoped	selfhost/front/cells/a-boxed-tuple-return-destructured.loft
 scope	unscoped	selfhost/front/cells/a-boxed-tuple-with-a-text-member.loft
 scope	unscoped	selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft
 scope	unscoped	selfhost/front/cells/a-branch-tail-after-an-early-return-of-a-local.loft
+scope	unscoped	selfhost/front/cells/a-call-bound-arm-local-beside-call-arms-keeps-the-buffer.loft
 scope	unscoped	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft
 scope	differ	selfhost/front/cells/a-closure-built-in-a-return.loft
 scope	unscoped	selfhost/front/cells/a-coalesce-tail-borrows-its-subject-alone.loft
@@ -1417,6 +1421,7 @@ scope	unscoped	selfhost/front/cells/a-comprehension-of-vectors-element-borrows-t
 scope	unscoped	selfhost/front/cells/a-comprehension-over-a-call-answering-a-sorted.loft
 scope	unscoped	selfhost/front/cells/a-comprehension-over-a-literal.loft
 scope	unscoped	selfhost/front/cells/a-concatenation-of-narrow-vectors.loft
+scope	unscoped	selfhost/front/cells/a-const-binding-binds-and-its-contents-stay-writable.loft
 scope	unscoped	selfhost/front/cells/a-constant-fill-comprehension.loft
 scope	unscoped	selfhost/front/cells/a-constant-member-of-a-destructured-literal.loft
 scope	unscoped	selfhost/front/cells/a-cursor-match-reads-a-prefix-and-advances.loft
@@ -1427,11 +1432,14 @@ scope	unscoped	selfhost/front/cells/a-field-literals-element-temp-borrows-the-re
 scope	unscoped	selfhost/front/cells/a-field-of-a-struct-declared-below.loft
 scope	differ	selfhost/front/cells/a-fields-lambda-capturing-a-store.loft
 scope	unscoped	selfhost/front/cells/a-fill-and-vectors-as-elements.loft
+scope	unscoped	selfhost/front/cells/a-filtered-comprehension-over-constant-bounds-walks.loft
 scope	unscoped	selfhost/front/cells/a-for-in-a-format-hole-over-a-call.loft
 scope	unscoped	selfhost/front/cells/a-for-in-a-format-hole-over-a-keyed-local.loft
 scope	unscoped	selfhost/front/cells/a-for-in-a-format-hole-over-a-range-with-a-filter.loft
 scope	unscoped	selfhost/front/cells/a-for-in-a-format-hole-over-a-text.loft
 scope	unscoped	selfhost/front/cells/a-for-in-a-format-hole-over-a-vector.loft
+scope	unscoped	selfhost/front/cells/a-for-over-a-float-char-or-boolean-literal-walks-its-items-on-both-passes.loft
+scope	unscoped	selfhost/front/cells/a-formatted-slice-is-written-from-its-iterator.loft
 scope	unscoped	selfhost/front/cells/a-formatted-vector-of-records-after-its-literal.loft
 scope	unscoped	selfhost/front/cells/a-function-field-called-off-a-call.loft
 scope	unscoped	selfhost/front/cells/a-function-field-given-a-local-or-a-lambda.loft
@@ -1469,6 +1477,8 @@ scope	unscoped	selfhost/front/cells/a-match-arm-that-can-leave-builds-its-exit-i
 scope	unscoped	selfhost/front/cells/a-match-of-variant-or-null-arms.loft
 scope	unscoped	selfhost/front/cells/a-match-on-a-subject-not-typed-on-the-first-pass.loft
 scope	unscoped	selfhost/front/cells/a-match-over-a-nullable-call-holds-the-record.loft
+scope	unscoped	selfhost/front/cells/a-match-tail-answers-a-parameter-beside-a-variant-it-builds.loft
+scope	unscoped	selfhost/front/cells/a-match-tail-block-arm-local-takes-the-return-buffer.loft
 scope	unscoped	selfhost/front/cells/a-match-tail-of-literal-vectors-delivers-each-arm.loft
 scope	unscoped	selfhost/front/cells/a-match-tail-of-literals-beside-a-call-into-the-buffer.loft
 scope	unscoped	selfhost/front/cells/a-name-only-some-listed-patterns-bind.loft
@@ -1491,10 +1501,13 @@ scope	differ	selfhost/front/cells/a-par-text-worker-and-an-empty-range-comprehen
 scope	unscoped	selfhost/front/cells/a-par-worker-answering-a-function.loft
 scope	unscoped	selfhost/front/cells/a-par-worker-answering-a-narrow-value.loft
 scope	unscoped	selfhost/front/cells/a-par-worker-answering-a-record.loft
+scope	unscoped	selfhost/front/cells/a-par-worker-may-be-a-method-or-declared-below.loft
 scope	unscoped	selfhost/front/cells/a-parameter-join-with-a-call-on-a-local-view-is-bound.loft
 scope	unscoped	selfhost/front/cells/a-partial-key-for-walks-the-key-prefix.loft
 scope	unscoped	selfhost/front/cells/a-place-handed-to-a-reference-parameter.loft
+scope	unscoped	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft
 scope	unscoped	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft
+scope	unscoped	selfhost/front/cells/a-range-walk-in-a-comprehension-or-format-hole-keeps-its-type-and-init.loft
 scope	unscoped	selfhost/front/cells/a-record-appended-to-a-sorted-collection.loft
 scope	unscoped	selfhost/front/cells/a-record-branch-tail-copied-whole-or-arm-by-arm.loft
 scope	unscoped	selfhost/front/cells/a-record-if-tail-of-views-and-calls.loft
@@ -1506,9 +1519,12 @@ scope	unscoped	selfhost/front/cells/a-record-written-into-an-element-or-a-field.
 scope	unscoped	selfhost/front/cells/a-record-written-into-an-element.loft
 scope	unscoped	selfhost/front/cells/a-record-written-through-a-local-link.loft
 scope	unscoped	selfhost/front/cells/a-remove-through-a-vector-link.loft
+scope	unscoped	selfhost/front/cells/a-renamed-block-arm-local-beside-a-literal-arm.loft
 scope	unscoped	selfhost/front/cells/a-return-null-from-a-nullable-heap-function.loft
 scope	unscoped	selfhost/front/cells/a-return-of-a-named-function.loft
 scope	unscoped	selfhost/front/cells/a-returned-local-viewing-a-parameter-through-a-question-mark.loft
+scope	unscoped	selfhost/front/cells/a-returned-optional-text-call-publishes-no-borrow.loft
+scope	unscoped	selfhost/front/cells/a-reversed-slice-walks-down-from-its-top.loft
 scope	unscoped	selfhost/front/cells/a-self-slice-and-an-appended-slice.loft
 scope	differ	selfhost/front/cells/a-short-lambda-answering-a-record-or-a-vector.loft
 scope	unscoped	selfhost/front/cells/a-short-lambda-hinted-by-a-field-or-a-result.loft
@@ -1517,13 +1533,16 @@ scope	unscoped	selfhost/front/cells/a-slice-bound-in-a-generic.loft
 scope	unscoped	selfhost/front/cells/a-slice-of-a-byte-vector.loft
 scope	differ	selfhost/front/cells/a-slice-of-a-nullable-text-local.loft
 scope	unscoped	selfhost/front/cells/a-slice-of-texts-and-of-records.loft
+scope	differ	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft
 scope	unscoped	selfhost/front/cells/a-store-lock-and-an-append-to-a-nullable-vector.loft
 scope	unscoped	selfhost/front/cells/a-struct-enum-field-written-whole.loft
 scope	unscoped	selfhost/front/cells/a-struct-enum-holding-itself-out-of-line.loft
 scope	unscoped	selfhost/front/cells/a-struct-enum-match-tail-copied-whole.loft
 scope	differ	selfhost/front/cells/a-struct-enum-parameter-rebound.loft
 scope	unscoped	selfhost/front/cells/a-struct-holding-itself-out-of-line.loft
+scope	unscoped	selfhost/front/cells/a-tail-call-inside-a-plain-block-is-handed-the-buffer.loft
 scope	unscoped	selfhost/front/cells/a-tail-viewing-a-local-is-bound-in-branches.loft
+scope	unscoped	selfhost/front/cells/a-text-cast-to-a-vector-parses-it.loft
 scope	differ	selfhost/front/cells/a-text-function-ending-in-return-null.loft
 scope	unscoped	selfhost/front/cells/a-text-if-appended-with-a-variable-arm.loft
 scope	unscoped	selfhost/front/cells/a-text-slice-element-keeps-the-name-it-reuses.loft
@@ -1537,12 +1556,16 @@ scope	unscoped	selfhost/front/cells/a-tuple-with-a-vector-member.loft
 scope	unscoped	selfhost/front/cells/a-typed-empty-bind-in-a-sibling-block-leaves-the-local-backed.loft
 scope	unscoped	selfhost/front/cells/a-union-closure-record-for-one-field.loft
 scope	unscoped	selfhost/front/cells/a-unit-variant-before-a-brace.loft
+scope	unscoped	selfhost/front/cells/a-value-into-a-nullable-narrow-slot-is-cast-then-guarded.loft
 scope	unscoped	selfhost/front/cells/a-variant-beside-a-null-arm.loft
 scope	unscoped	selfhost/front/cells/a-variant-literal-built-in-its-place.loft
+scope	unscoped	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft
 scope	unscoped	selfhost/front/cells/a-vector-appended-through-a-link.loft
 scope	unscoped	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft
 scope	unscoped	selfhost/front/cells/a-vector-if-tail-answering-parameters.loft
+scope	unscoped	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft
 scope	unscoped	selfhost/front/cells/a-vector-literal-mixing-literals-and-records.loft
+scope	unscoped	selfhost/front/cells/a-vector-match-joins-what-each-arm-borrows.loft
 scope	unscoped	selfhost/front/cells/a-vector-of-i32.loft
 scope	unscoped	selfhost/front/cells/a-vector-of-narrow-integer-vectors.loft
 scope	unscoped	selfhost/front/cells/a-vector-of-nullable-floats-or-booleans.loft
@@ -1558,9 +1581,13 @@ scope	unscoped	selfhost/front/cells/an-append-through-a-link-to-a-hash.loft
 scope	unscoped	selfhost/front/cells/an-arm-answering-a-viewing-local-copies-it-into-the-buffer.loft
 scope	unscoped	selfhost/front/cells/an-assert-over-an-enum-converts-it.loft
 scope	unscoped	selfhost/front/cells/an-element-inserted-into-a-vector.loft
+scope	unscoped	selfhost/front/cells/an-element-literal-built-apart-stages-its-place-reads.loft
 scope	unscoped	selfhost/front/cells/an-element-of-a-local-at-the-tail-is-bound.loft
 scope	unscoped	selfhost/front/cells/an-empty-arm-mints-its-literals-temps-on-the-first-pass.loft
+scope	unscoped	selfhost/front/cells/an-if-of-a-nullable-enum-and-a-variant-joins-to-the-nullable-enum.loft
+scope	unscoped	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft
 scope	unscoped	selfhost/front/cells/an-insert-through-a-link-and-in-a-generic.loft
+scope	unscoped	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft
 scope	unscoped	selfhost/front/cells/an-out-of-line-field-written-back-or-moved.loft
 scope	unscoped	selfhost/front/cells/an-out-of-line-field-written-whole.loft
 scope	unscoped	selfhost/front/cells/an-unwrapped-local-set-into-an-out-of-line-field.loft
@@ -2116,7 +2143,7 @@ scope	unscoped	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.l
 scope	unscoped	tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft
 scope	unscoped	tests/scripts/two-vectors-pushed-in-lockstep-share-a-length-local.loft
 
-layer	scope-functions	agree	19758	of	37558
+layer	scope-functions	agree	19904	of	37800
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::BRANCH_LEN_BASE
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::BRANCH_SPACING
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::CONNECT_TICKS
@@ -9520,6 +9547,32 @@ scope-functions	agree	loft-suite/rules/iteration/I-For/a-write-the-loop-leaves-r
 scope-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::R
 scope-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::n_test_a_text_cursor_is_a_byte_offset
 scope-functions	agree	loft-suite/rules/iteration/I-Index/x-index-is-where-x-was-read-in-the-walked-source.loft::vector<R>
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::E
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_generator_0
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_generator_1
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_generator_2
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_generator_3
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_generator_4
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_hash_0
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_hash_1
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_hash_2
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_hash_3
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_0
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_1
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_2
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_3
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_4
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_5
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_6
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_sorted_and_an_index_7
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n___lambda_test_a_vector_0
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_add
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_addv
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_big
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_dbl
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_nums
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::n_ten
+scope-functions	agree	loft-suite/rules/iteration/I-Map/2658-map-filter-reduce-take-every-source-a-for-walks.loft::vector<E>
 scope-functions	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::Acc
 scope-functions	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::P
 scope-functions	agree	loft-suite/rules/iteration/I-Map/map-filter-reduce-are-their-comprehensions.loft::__closure_main_0
@@ -16565,9 +16618,24 @@ scope-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operat
 scope-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_test_an_i32_operation_inside_i32_proves_its_range
 scope-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_test_an_i32_shift_past_i32_reads_0_in_a_u32
 scope-functions	agree	loft-suite/rules/types/W-Op/a-u32-operand-makes-the-operation-64-bit.loft::n_top_wo
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::MC
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::Nd
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::NdInt
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::NdNull
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::NdTwo
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::n_sz
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::vector<MC>
+scope-functions	agree	selfhost/front/cells/a-bang-on-a-nullable-struct-enum-field-reads-it-through-its-tag.loft::vector<Nd>
 scope-functions	agree	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft::A
 scope-functions	agree	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft::B
 scope-functions	agree	selfhost/front/cells/a-bang-on-a-struct-enum-and-a-literal-reading-its-local.loft::E
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::Bx
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::Num
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::Pt
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::Tok
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::__const_n_mk
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::vector<Pt>
+scope-functions	agree	selfhost/front/cells/a-bound-vector-match-capture-views-its-subject.loft::vector<Tok>
 scope-functions	agree	selfhost/front/cells/a-boxed-tuple-return-destructured.loft::S
 scope-functions	agree	selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft::V3
 scope-functions	agree	selfhost/front/cells/a-branch-of-a-parameter-and-an-owned-local-renames-the-buffer-onto-the-local.loft::Vert
@@ -16577,6 +16645,10 @@ scope-functions	agree	selfhost/front/cells/a-branch-tail-after-an-early-return-o
 scope-functions	agree	selfhost/front/cells/a-branch-tail-after-an-early-return-of-a-local.loft::Sp
 scope-functions	agree	selfhost/front/cells/a-break-with-a-value-returns-it.loft::n_c11_first_square_above
 scope-functions	agree	selfhost/front/cells/a-break-with-a-value-returns-it.loft::n_main
+scope-functions	agree	selfhost/front/cells/a-call-bound-arm-local-beside-call-arms-keeps-the-buffer.loft::A
+scope-functions	agree	selfhost/front/cells/a-call-bound-arm-local-beside-call-arms-keeps-the-buffer.loft::B
+scope-functions	agree	selfhost/front/cells/a-call-bound-arm-local-beside-call-arms-keeps-the-buffer.loft::C
+scope-functions	agree	selfhost/front/cells/a-call-bound-arm-local-beside-call-arms-keeps-the-buffer.loft::Nd
 scope-functions	agree	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft::B
 scope-functions	agree	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft::H
 scope-functions	agree	selfhost/front/cells/a-capturing-lambda-stored-in-a-field.loft::__closure_main_1
@@ -16593,6 +16665,11 @@ scope-functions	agree	selfhost/front/cells/a-comprehension-over-a-call-answering
 scope-functions	agree	selfhost/front/cells/a-concatenation-of-narrow-vectors.loft::vector<integer(-32768, 32767)>
 scope-functions	agree	selfhost/front/cells/a-concatenation-of-narrow-vectors.loft::vector<integer(0, 255)>
 scope-functions	agree	selfhost/front/cells/a-concatenation-of-narrow-vectors.loft::vector<vector<integer(0, 255)>>
+scope-functions	agree	selfhost/front/cells/a-const-binding-binds-and-its-contents-stay-writable.loft::T
+scope-functions	agree	selfhost/front/cells/a-const-scalar-declaration-binds-value-const.loft::Col
+scope-functions	agree	selfhost/front/cells/a-const-scalar-declaration-binds-value-const.loft::Green
+scope-functions	agree	selfhost/front/cells/a-const-scalar-declaration-binds-value-const.loft::Red
+scope-functions	agree	selfhost/front/cells/a-const-scalar-declaration-binds-value-const.loft::n_main
 scope-functions	agree	selfhost/front/cells/a-constant-fill-comprehension.loft::vector<float>
 scope-functions	agree	selfhost/front/cells/a-constant-member-of-a-destructured-literal.loft::n_opt
 scope-functions	agree	selfhost/front/cells/a-cursor-match-reads-a-prefix-and-advances.loft::Cur
@@ -16639,6 +16716,12 @@ scope-functions	agree	selfhost/front/cells/a-fill-and-vectors-as-elements.loft::
 scope-functions	agree	selfhost/front/cells/a-fill-and-vectors-as-elements.loft::__const_n_codes
 scope-functions	agree	selfhost/front/cells/a-fill-and-vectors-as-elements.loft::vector<vector<integer>>
 scope-functions	agree	selfhost/front/cells/a-for-in-a-format-hole-over-a-keyed-local.loft::E
+scope-functions	agree	selfhost/front/cells/a-for-over-a-float-char-or-boolean-literal-walks-its-items-on-both-passes.loft::vector<boolean>
+scope-functions	agree	selfhost/front/cells/a-for-over-a-float-char-or-boolean-literal-walks-its-items-on-both-passes.loft::vector<character>
+scope-functions	agree	selfhost/front/cells/a-for-over-a-float-char-or-boolean-literal-walks-its-items-on-both-passes.loft::vector<float>
+scope-functions	agree	selfhost/front/cells/a-format-spec-with-a-space-fill.loft::n_main
+scope-functions	agree	selfhost/front/cells/a-formatted-slice-is-written-from-its-iterator.loft::P
+scope-functions	agree	selfhost/front/cells/a-formatted-slice-is-written-from-its-iterator.loft::vector<P>
 scope-functions	agree	selfhost/front/cells/a-formatted-vector-of-records-after-its-literal.loft::Pt
 scope-functions	agree	selfhost/front/cells/a-formatted-vector-of-records-after-its-literal.loft::vector<Pt>
 scope-functions	agree	selfhost/front/cells/a-formatted-vector-parameter-of-records.loft::Pt
@@ -16769,6 +16852,12 @@ scope-functions	agree	selfhost/front/cells/a-match-over-a-nullable-call-holds-th
 scope-functions	agree	selfhost/front/cells/a-match-over-a-nullable-call-holds-the-record.loft::TInt
 scope-functions	agree	selfhost/front/cells/a-match-over-a-nullable-call-holds-the-record.loft::TVec
 scope-functions	agree	selfhost/front/cells/a-match-over-a-nullable-call-holds-the-record.loft::n_main
+scope-functions	agree	selfhost/front/cells/a-match-tail-answers-a-parameter-beside-a-variant-it-builds.loft::NdInt
+scope-functions	agree	selfhost/front/cells/a-match-tail-answers-a-parameter-beside-a-variant-it-builds.loft::NdNull
+scope-functions	agree	selfhost/front/cells/a-match-tail-answers-a-parameter-beside-a-variant-it-builds.loft::Node
+scope-functions	agree	selfhost/front/cells/a-match-tail-block-arm-local-takes-the-return-buffer.loft::B
+scope-functions	agree	selfhost/front/cells/a-match-tail-block-arm-local-takes-the-return-buffer.loft::Own
+scope-functions	agree	selfhost/front/cells/a-match-tail-block-arm-local-takes-the-return-buffer.loft::Owned
 scope-functions	agree	selfhost/front/cells/a-match-tail-of-literals-beside-a-call-into-the-buffer.loft::Leaf
 scope-functions	agree	selfhost/front/cells/a-match-tail-of-literals-beside-a-call-into-the-buffer.loft::N
 scope-functions	agree	selfhost/front/cells/a-match-tail-of-literals-beside-a-call-into-the-buffer.loft::Span
@@ -16782,6 +16871,7 @@ scope-functions	agree	selfhost/front/cells/a-name-only-some-listed-patterns-bind
 scope-functions	agree	selfhost/front/cells/a-name-only-some-listed-patterns-bind.loft::Rn
 scope-functions	agree	selfhost/front/cells/a-name-only-some-listed-patterns-bind.loft::Rp
 scope-functions	agree	selfhost/front/cells/a-name-only-some-listed-patterns-bind.loft::n_both
+scope-functions	agree	selfhost/front/cells/a-narrow-start-types-its-range-walk.loft::n_main
 scope-functions	agree	selfhost/front/cells/a-nested-literals-element-temp-is-the-nested-vector.loft::vector<vector<integer>>
 scope-functions	agree	selfhost/front/cells/a-nested-literals-element-temp-is-the-nested-vector.loft::vector<vector<text>>
 scope-functions	agree	selfhost/front/cells/a-nested-vector-literal-in-value-position.loft::n_tail
@@ -16829,6 +16919,11 @@ scope-functions	agree	selfhost/front/cells/a-par-worker-answering-a-narrow-value
 scope-functions	agree	selfhost/front/cells/a-par-worker-answering-a-narrow-value.loft::n_low
 scope-functions	agree	selfhost/front/cells/a-par-worker-answering-a-narrow-value.loft::n_odd
 scope-functions	agree	selfhost/front/cells/a-par-worker-answering-a-record.loft::Pt
+scope-functions	agree	selfhost/front/cells/a-par-worker-may-be-a-method-or-declared-below.loft::Bag
+scope-functions	agree	selfhost/front/cells/a-par-worker-may-be-a-method-or-declared-below.loft::Sc
+scope-functions	agree	selfhost/front/cells/a-par-worker-may-be-a-method-or-declared-below.loft::n_dbl
+scope-functions	agree	selfhost/front/cells/a-par-worker-may-be-a-method-or-declared-below.loft::t_2Sc_get_value
+scope-functions	agree	selfhost/front/cells/a-par-worker-may-be-a-method-or-declared-below.loft::vector<Sc>
 scope-functions	agree	selfhost/front/cells/a-parameter-join-with-a-call-on-a-local-view-is-bound.loft::If
 scope-functions	agree	selfhost/front/cells/a-parameter-join-with-a-call-on-a-local-view-is-bound.loft::Leaf
 scope-functions	agree	selfhost/front/cells/a-parameter-join-with-a-call-on-a-local-view-is-bound.loft::N
@@ -16842,6 +16937,16 @@ scope-functions	agree	selfhost/front/cells/a-place-handed-to-a-reference-paramet
 scope-functions	agree	selfhost/front/cells/a-place-handed-to-a-reference-parameter.loft::n_dec
 scope-functions	agree	selfhost/front/cells/a-place-handed-to-a-reference-parameter.loft::n_put
 scope-functions	agree	selfhost/front/cells/a-place-handed-to-a-reference-parameter.loft::vector<In>
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::A
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::B
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::Col
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::FFloat
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::FInt
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::Fd
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::Green
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::It
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::R
+scope-functions	agree	selfhost/front/cells/a-plain-enum-match-of-variants-answers-its-arms.loft::Red
 scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft::A
 scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft::B
 scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft::E
@@ -16850,6 +16955,7 @@ scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-
 scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft::n_fmt
 scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft::n_given
 scope-functions	agree	selfhost/front/cells/a-prefix-not-on-a-record-or-a-struct-enum.loft::n_neg
+scope-functions	agree	selfhost/front/cells/a-range-walk-in-a-comprehension-or-format-hole-keeps-its-type-and-init.loft::vector<integer(0, 255)>
 scope-functions	agree	selfhost/front/cells/a-record-appended-to-a-sorted-collection.loft::Rec
 scope-functions	agree	selfhost/front/cells/a-record-branch-tail-copied-whole-or-arm-by-arm.loft::Bl
 scope-functions	agree	selfhost/front/cells/a-record-branch-tail-copied-whole-or-arm-by-arm.loft::Nd
@@ -16896,6 +17002,10 @@ scope-functions	agree	selfhost/front/cells/a-remove-through-a-vector-link.loft::
 scope-functions	agree	selfhost/front/cells/a-remove-through-a-vector-link.loft::S
 scope-functions	agree	selfhost/front/cells/a-remove-through-a-vector-link.loft::n_drop_first
 scope-functions	agree	selfhost/front/cells/a-remove-through-a-vector-link.loft::vector<S>
+scope-functions	agree	selfhost/front/cells/a-renamed-block-arm-local-beside-a-literal-arm.loft::V
+scope-functions	agree	selfhost/front/cells/a-renamed-block-arm-local-beside-a-literal-arm.loft::VNone
+scope-functions	agree	selfhost/front/cells/a-renamed-block-arm-local-beside-a-literal-arm.loft::VText
+scope-functions	agree	selfhost/front/cells/a-renamed-block-arm-local-beside-a-literal-arm.loft::vector<integer(0, 255)>
 scope-functions	agree	selfhost/front/cells/a-return-null-from-a-nullable-heap-function.loft::Circle
 scope-functions	agree	selfhost/front/cells/a-return-null-from-a-nullable-heap-function.loft::Dot
 scope-functions	agree	selfhost/front/cells/a-return-null-from-a-nullable-heap-function.loft::Node
@@ -16906,6 +17016,9 @@ scope-functions	agree	selfhost/front/cells/a-return-of-a-named-function.loft::n_
 scope-functions	agree	selfhost/front/cells/a-return-of-a-named-function.loft::n_pick
 scope-functions	agree	selfhost/front/cells/a-returned-local-viewing-a-parameter-through-a-question-mark.loft::Pt
 scope-functions	agree	selfhost/front/cells/a-returned-local-viewing-a-parameter-through-a-question-mark.loft::vector<Pt>
+scope-functions	agree	selfhost/front/cells/a-returned-optional-text-call-publishes-no-borrow.loft::T
+scope-functions	agree	selfhost/front/cells/a-returned-optional-text-call-publishes-no-borrow.loft::n_h
+scope-functions	agree	selfhost/front/cells/a-returned-optional-text-call-publishes-no-borrow.loft::n_text_src
 scope-functions	agree	selfhost/front/cells/a-scalar-written-whole-through-a-link.loft::Blue
 scope-functions	agree	selfhost/front/cells/a-scalar-written-whole-through-a-link.loft::Col
 scope-functions	agree	selfhost/front/cells/a-scalar-written-whole-through-a-link.loft::Green
@@ -16937,6 +17050,14 @@ scope-functions	agree	selfhost/front/cells/a-slice-of-a-nullable-text-local.loft
 scope-functions	agree	selfhost/front/cells/a-slice-of-a-nullable-text-local.loft::n_plain
 scope-functions	agree	selfhost/front/cells/a-slice-of-texts-and-of-records.loft::R
 scope-functions	agree	selfhost/front/cells/a-slice-of-texts-and-of-records.loft::vector<R>
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::A
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::C
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::S2B
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::Sh
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::n_f1
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::n_f2
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::n_f4
+scope-functions	agree	selfhost/front/cells/a-slice-or-pattern-arm-tests-each-alternative.loft::vector<Sh>
 scope-functions	agree	selfhost/front/cells/a-store-lock-and-an-append-to-a-nullable-vector.loft::D
 scope-functions	agree	selfhost/front/cells/a-struct-enum-field-written-whole.loft::Circle
 scope-functions	agree	selfhost/front/cells/a-struct-enum-field-written-whole.loft::Dot
@@ -16957,7 +17078,10 @@ scope-functions	agree	selfhost/front/cells/a-struct-enum-parameter-rebound.loft:
 scope-functions	agree	selfhost/front/cells/a-struct-enum-parameter-rebound.loft::n_main
 scope-functions	agree	selfhost/front/cells/a-struct-holding-itself-out-of-line.loft::Tree
 scope-functions	agree	selfhost/front/cells/a-struct-holding-itself-out-of-line.loft::n_total
+scope-functions	agree	selfhost/front/cells/a-tail-call-inside-a-plain-block-is-handed-the-buffer.loft::Ex
 scope-functions	agree	selfhost/front/cells/a-tail-viewing-a-local-is-bound-in-branches.loft::vector<vector<integer>>
+scope-functions	agree	selfhost/front/cells/a-text-cast-to-a-vector-parses-it.loft::Pt
+scope-functions	agree	selfhost/front/cells/a-text-cast-to-a-vector-parses-it.loft::vector<float>
 scope-functions	agree	selfhost/front/cells/a-text-function-ending-in-return-null.loft::n_a
 scope-functions	agree	selfhost/front/cells/a-text-function-ending-in-return-null.loft::n_b
 scope-functions	agree	selfhost/front/cells/a-text-function-ending-in-return-null.loft::n_c
@@ -16999,6 +17123,11 @@ scope-functions	agree	selfhost/front/cells/a-unit-variant-before-a-brace.loft::B
 scope-functions	agree	selfhost/front/cells/a-unit-variant-before-a-brace.loft::Owned
 scope-functions	agree	selfhost/front/cells/a-unit-variant-before-a-brace.loft::P
 scope-functions	agree	selfhost/front/cells/a-unit-variant-before-a-brace.loft::n_main
+scope-functions	agree	selfhost/front/cells/a-value-into-a-nullable-narrow-slot-is-cast-then-guarded.loft::D
+scope-functions	agree	selfhost/front/cells/a-value-into-a-nullable-narrow-slot-is-cast-then-guarded.loft::S
+scope-functions	agree	selfhost/front/cells/a-value-into-a-nullable-narrow-slot-is-cast-then-guarded.loft::vector<D>
+scope-functions	agree	selfhost/front/cells/a-value-into-a-nullable-narrow-slot-is-cast-then-guarded.loft::vector<integer(0, 255)>
+scope-functions	agree	selfhost/front/cells/a-value-into-a-nullable-narrow-slot-is-cast-then-guarded.loft::vector<integer(0, 255)?>
 scope-functions	agree	selfhost/front/cells/a-variant-beside-a-null-arm.loft::At
 scope-functions	agree	selfhost/front/cells/a-variant-beside-a-null-arm.loft::Leaf
 scope-functions	agree	selfhost/front/cells/a-variant-beside-a-null-arm.loft::Nd
@@ -17014,6 +17143,17 @@ scope-functions	agree	selfhost/front/cells/a-variant-literal-built-in-its-place.
 scope-functions	agree	selfhost/front/cells/a-variant-literal-built-in-its-place.loft::Sh
 scope-functions	agree	selfhost/front/cells/a-variant-literal-built-in-its-place.loft::n_area
 scope-functions	agree	selfhost/front/cells/a-variant-literal-built-in-its-place.loft::vector<Sh>
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::Nd
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::NdCall
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::NdInt
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::NdNull
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::NdT
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::NdTwo
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::NdV
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::V
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::W
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::n_set9
+scope-functions	agree	selfhost/front/cells/a-variant-literal-into-a-struct-enum-field-is-built-in-place-or-apart.loft::vector<Nd>
 scope-functions	agree	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft::Box
 scope-functions	agree	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft::P
 scope-functions	agree	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft::PBase
@@ -17023,8 +17163,18 @@ scope-functions	agree	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-
 scope-functions	agree	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft::vector<P>
 scope-functions	agree	selfhost/front/cells/a-vector-field-of-a-struct-enum-from-a-literal.loft::vector<Part>
 scope-functions	agree	selfhost/front/cells/a-vector-if-tail-answering-parameters.loft::n_pick
+scope-functions	agree	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft::H
+scope-functions	agree	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft::HD
+scope-functions	agree	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft::HS
+scope-functions	agree	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft::HT
+scope-functions	agree	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft::S
+scope-functions	agree	selfhost/front/cells/a-vector-literal-into-a-nullable-vector-field-is-built-in-place.loft::vector<S>
 scope-functions	agree	selfhost/front/cells/a-vector-literal-mixing-literals-and-records.loft::S
 scope-functions	agree	selfhost/front/cells/a-vector-literal-mixing-literals-and-records.loft::vector<S>
+scope-functions	agree	selfhost/front/cells/a-vector-match-joins-what-each-arm-borrows.loft::A
+scope-functions	agree	selfhost/front/cells/a-vector-match-joins-what-each-arm-borrows.loft::B
+scope-functions	agree	selfhost/front/cells/a-vector-match-joins-what-each-arm-borrows.loft::C
+scope-functions	agree	selfhost/front/cells/a-vector-match-joins-what-each-arm-borrows.loft::Nd
 scope-functions	agree	selfhost/front/cells/a-vector-of-narrow-integer-vectors.loft::vector<integer(-32768, 32767)>
 scope-functions	agree	selfhost/front/cells/a-vector-of-narrow-integer-vectors.loft::vector<integer(0, 255)>
 scope-functions	agree	selfhost/front/cells/a-vector-of-narrow-integer-vectors.loft::vector<vector<integer(-32768, 32767)>>
@@ -17056,10 +17206,33 @@ scope-functions	agree	selfhost/front/cells/an-append-through-a-link-to-a-hash.lo
 scope-functions	agree	selfhost/front/cells/an-arm-answering-a-viewing-local-copies-it-into-the-buffer.loft::vector<vector<integer>>
 scope-functions	agree	selfhost/front/cells/an-element-inserted-into-a-vector.loft::P
 scope-functions	agree	selfhost/front/cells/an-element-inserted-into-a-vector.loft::vector<P>
+scope-functions	agree	selfhost/front/cells/an-element-literal-built-apart-stages-its-place-reads.loft::E
+scope-functions	agree	selfhost/front/cells/an-element-literal-built-apart-stages-its-place-reads.loft::vector<E>
 scope-functions	agree	selfhost/front/cells/an-element-of-a-local-at-the-tail-is-bound.loft::vector<vector<integer>>
 scope-functions	agree	selfhost/front/cells/an-empty-arm-mints-its-literals-temps-on-the-first-pass.loft::P
 scope-functions	agree	selfhost/front/cells/an-empty-arm-mints-its-literals-temps-on-the-first-pass.loft::vector<P>
+scope-functions	agree	selfhost/front/cells/an-if-of-a-nullable-enum-and-a-variant-joins-to-the-nullable-enum.loft::MC
+scope-functions	agree	selfhost/front/cells/an-if-of-a-nullable-enum-and-a-variant-joins-to-the-nullable-enum.loft::Nd
+scope-functions	agree	selfhost/front/cells/an-if-of-a-nullable-enum-and-a-variant-joins-to-the-nullable-enum.loft::NdInt
+scope-functions	agree	selfhost/front/cells/an-if-of-a-nullable-enum-and-a-variant-joins-to-the-nullable-enum.loft::NdNull
+scope-functions	agree	selfhost/front/cells/an-if-of-a-nullable-enum-and-a-variant-joins-to-the-nullable-enum.loft::NdTwo
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::S2T
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::S2TInt
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::S2TRef
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::TU
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::TV
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::TW
+scope-functions	agree	selfhost/front/cells/an-if-of-an-enum-and-its-variants-joins-as-its-arms-are-read.loft::Ty
 scope-functions	agree	selfhost/front/cells/an-insert-through-a-link-and-in-a-generic.loft::n_put
+scope-functions	agree	selfhost/front/cells/an-open-range-counts-to-the-largest-integer.loft::n_first_square_over
+scope-functions	agree	selfhost/front/cells/an-open-range-counts-to-the-largest-integer.loft::n_main
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::A
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::B
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::C
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::Nd
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::Out
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::n_int
+scope-functions	agree	selfhost/front/cells/an-optional-match-tail-delivers-its-call-arms-into-the-buffer.loft::n_num
 scope-functions	agree	selfhost/front/cells/an-out-of-line-field-written-back-or-moved.loft::Tree
 scope-functions	agree	selfhost/front/cells/an-out-of-line-field-written-whole.loft::N
 scope-functions	agree	selfhost/front/cells/an-unwrapped-local-set-into-an-out-of-line-field.loft::T
