@@ -13,7 +13,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 |---|---|
 | A — Probe catalogue | ✅ 17 probes in [`probes/`](probes/), each with its expected answer, run on the interpreter and the C backend |
 | B — Cause and verdict per restriction | 🟡 a first reading for all nine below; R3 and R6 still owe the probes named in their rows |
-| C — The probes become tests | 🔴 not started |
+| C — The probes become tests | ✅ five new tests in `tests/comparisons/`, each failing when its expected value is flipped; the other probes are already guarded or owe a rule first (§ Stage C) |
 | D — Cures | ⏸️ each cure the owner approves becomes its own plan or fix; none is built here |
 
 ## Goal
@@ -59,9 +59,11 @@ revisit trigger).
 - **Cause.** Ownership is internal and there is no user-facing borrow checker (@C79).  A
   whole-value bind copies; sharing happens only through a parameter or an explicit `&` (@C86).
   `const` marks a name, not a value.
-- **Is it one?**  The data-race half is not: a `par` worker runs on a clone whose parent stores it
-  may only read (THREADING.md, `Stores::clone_for_light_worker`), and a captured reference is
-  refused (probe 14).  So no two threads can write the same place.  The aliasing half is
+- **Is it one?**  The data-race half is narrow: a `par` worker runs on a clone whose parent stores
+  it may only read (THREADING.md, `Stores::clone_for_light_worker`), and a captured reference is
+  refused (probe 14), so no two workers write one store.  What is left is impurity: a worker
+  that prints or touches a file has an UNDEFINED result (`@FR-C-Impure`), and loft does not
+  check for it (probe 15 prints, on both backends).  The aliasing half is
   narrower than Rust's problem.  Two names write one place only when a parameter shares it, and
   the call site shows that.  Reshaping a container under a live `&` is a compile error (@C86).
 - **Measured.** Two parameters of one call can name the same struct: `both(a, a)` writes
@@ -134,10 +136,10 @@ revisit trigger).
 - **Is it one?**  Partly.  The cure @C116 names works: a vector of structs whose `fn` fields
   capture runs on both backends (probe 09).  So the restriction is one wrapper struct deep.  For
   `par`, a scalar or the loop element may be passed; a struct cannot (probe 14).
-- **Still to probe.** Probe 15 shows a `par` worker may `println`, while `00-vs-rust.html` § 14
-  says a worker may not touch shared state "(no println, no file access)".  Is printing from a
-  worker a supported, ordered result on both backends and in a browser page, or does the rule
-  hold and go unchecked?  The answer decides whether the page or the compiler changes.
+- **Settled by the rules.** Probe 15 has a `par` worker `println`.  `@FR-C-Impure` makes an impure
+  worker's result undefined and says loft does not check it, which is what `00-vs-rust.html` § 14
+  says.  So the page is right, and the open choice is whether to CHECK purity: refuse a worker
+  that reaches I/O, or keep it a documented programmer obligation.
 - **What we could do.** For collections: let the compiler box a capturing closure into the
   wrapper struct by itself (the shape probe 09 builds by hand).  That is cheap if @C116's
   layout argument is the whole cause, and it needs the owner's call.  For `par`: pass a struct
@@ -172,23 +174,31 @@ revisit trigger).
 
 ## Stage C — the probes become tests
 
-Each probe becomes a cell, so the comparison is checked on every run:
+Each new test sits in the `tests/comparisons/` file of the subject it proves, names the rule it
+guards (`@FR-…`) and the probe it came from, and runs on the interpreter
+(`wrap::comparisons`) and the C backend (`native::native_comparisons`).  Each one was checked
+to fail by flipping its expected value in a copy.
 
-- A claim the user page makes (`00-vs-rust.html`) → a test in its `tests/comparisons/<subject>.loft`
-  file, under the `@SUBJECT` it belongs to.
-- A language rule a probe exercises → a cell in `../loft-suite` under that rule, with its header
-  naming the `@FR-` rule, and a `@falsified-at` receipt (`make falsify`).
-- A refusal (probes 04, 05, 06, 07, 14) → an `@EXPECT_ERROR` cell, so the restriction showing up
-  or going away is a test change, not a surprise.
-
-Probe 02 needs both runs (with and without `--production`); probe 10 asserts the count of
-elements made, not only the sum, or it cannot tell lazy from eager.
+| Probe | Where it went |
+|---|---|
+| 01 faults | `exceptions.loft` — overflow answers null (`@FR-E-Uncomp`), a parse is discharged at the cast (`@FR-N-Parse`); out-of-range and ÷0 were already there |
+| 02 assert | already guarded: `tests/issues.rs` T1-1 runs `assert` and `panic` with and without production mode |
+| 03 alias | `variables.loft` — a whole-struct bind copies (`@FR-B-Copy`); `parameters.loft` — a struct parameter is shared (`@FR-F-ParamHeap`) |
+| 04 constw, 05 dyn, 07 clvec | already guarded: the three refusals' messages are pinned in `tests/parse_errors.rs` |
+| 06 defmeth | not pinned: the refusal is a bare syntax error at the body.  A pin would freeze that message; the test comes with a message that names the restriction (R3) |
+| 08 clfield, 09 vtable | `closures.loft` — a vector of structs holds capturing closures (`@FR-L-Escape`, @C116's cure) |
+| 10, 11 lazy | `filtered-loops.loft` — a generator stage is lazy: three of a million elements made (`@FR-G-Yield`) |
+| 12 gen, 13 par | already guarded: `parallel.loft` and the coroutine tests |
+| 14 parcap | already guarded: `tests/scripts/947-feature-worked-examples.loft` |
+| 15 parprint | no test: `@FR-C-Impure` makes the answer undefined, so there is nothing to assert |
+| 16 twice | no test yet: no rule says what `both(a, a)` answers.  The rule comes first (R1), and probe 16 becomes its cell |
+| 17 constfn | no test: there is no `const fn` syntax to guard; R4's decision decides whether one is wanted |
 
 ## Documentation
 
 - [VS_RUST.md](../../VS_RUST.md) — every verdict that moves a row, in the same commit.
 - [`00-vs-rust.html`](../../../00-vs-rust.html) via `tests/comparisons/` — § 12 says there are no associated
-  types (they shipped, @PLN125); § 14's "no println" depends on R6's probe.
+  types (they shipped, @PLN125); § 14's "no println" is right (`@FR-C-Impure`).
 - [SUBJECTS.md](../../SUBJECTS.md) — a row for metaprogramming once R4 has a decision.
 - [INTERFACES.md](../../INTERFACES.md) § What is out of scope — if R3's default bodies are taken.
 - [STDLIB.md](../../STDLIB.md) — if R5's lazy adapters are added.
