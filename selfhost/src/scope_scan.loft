@@ -149,6 +149,8 @@ pub struct Scopes {
   pub mentions: vector<integer>,
   pub sunk: vector<integer>,
   pub assigned: vector<integer>,
+  // The variables that MAY have served as a loop's variable (`scope_phase::loopish_in`).
+  pub loopish: vector<integer>,
   // The ownership oracle's operators (`own::ops_of`) and the function's definitions, asked
   // once (`Scopes::fn_defs`: empty until the first question).
   pub own_ops: own::Ops,

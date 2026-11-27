@@ -209,7 +209,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if !scope_scan::in_scope(s, d) && !scope_fn::name(f, d).starts_with("_r_par") {
       // `function.was_loop_var(d)` is not in the image: a dep that is not a text temp may be a
       // loop's variable, which Rust leaves unregistered.
-      if !scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d) {
+      if scope_fn::has(s.loopish, d) && (!scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d)) {
         scope_scan::refuse(s, "scan_set: a dep that may be a loop variable (variables::was_loop_var, not in the image)");
       }
       depend += [d];
