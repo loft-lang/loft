@@ -18,6 +18,7 @@ use cgen_w::*;
 use cgen_fn;
 use cgen_clibs;
 use cgen_names;
+use cgen_natives;
 use opt_names;
 use opt_frame_calls;
 use opt_non_sentinel;
