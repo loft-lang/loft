@@ -219,6 +219,10 @@ instances; Rust-only definitions 267), one to four per program.  What each open 
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
   counting every stub as below lost 29 agreeing definitions in 947 — Rust's rule is narrower.
+  Measured: Rust mints the one `main_vector<unknown>` at the FIRST pass-1 literal whose element
+  is unknown — in 947 a field append into a struct declared below (689:70), not `h += [Rec947 …]`
+  (32:80), because Rust types the local `h` by `Rec947`'s stub there while the port's pass-1 `h`
+  has no element yet.  The gap is the port's pass-1 typing of such a local, not the literal rule.
 - a lambda argument's tuple record on the first pass (`last(v, |x| { (x, x + 1, x + 2) })`):
   making it there shifted later second-pass rows of the same program — needs Rust's exact moment.
 - cross-library keyed tuples and instances (2435).
