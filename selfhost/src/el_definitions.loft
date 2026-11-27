@@ -2592,7 +2592,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   if std_op {
     e.context = if e.first_pass { add_op(e, name, arguments, el::pos_at(e, after)) } else { el::def_nr(e, name) };
   } else if e.first_pass {
-    if el::def_nr(e, key) >= 0 {
+    // (`Data::add_def`'s dual-definition guard is per source: a library's or the program's
+    // own `chr` beside the standard library's is a definition of its own.)
+    if el::source_nr(e, e.source, key) >= 0 {
       el::refuse(e, "a function over an existing name: {name}");
       return "";
     }
