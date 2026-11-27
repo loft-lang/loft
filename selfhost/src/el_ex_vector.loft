@@ -2010,13 +2010,14 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
   w = ir::NdVar { n: acc };
   // A promoted `&text` accumulator is written through (`OpAppendStackText`).
   stack = el_vars::tp(vars, acc) is TyRefVar;
-  if el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+  // (A `text?` operand appends as a text does — a null one makes the accumulator null, the
+  // store's own rule; a nullable scalar renders as its scalar, under the null test below.)
+  if el_types::base(x.tp) is TyText {
     list += [el_ir::cl(e, if stack { "OpAppendStackText" } else { "OpAppendText" }, [w, x.code])];
     return;
   }
   if x.tp is TyOptional {
-    el::refuse(e, "a nullable concatenation operand");
-    return;
+    x = ex(x.code, el_types::base(x.tp));
   }
   // On the second pass an operand that is not repeatable is held first: a scalar in a
   // `_concat_N` of its own type (a heap operand's work ref is not carried: refused by name).
