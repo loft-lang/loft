@@ -889,114 +889,46 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if len(pats) != 1 {
-          el::refuse(e, "a tuple match arm with alternatives");
+        tp0 = tuple_pattern(e, vars, pats[0]!, elems, tmp);
+        if tp0 == null {
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
-        cond: ir::Node? = null;
-        tnames: vector<el_vars::VarName> = [];
-        tbinds: vector<ir::Node> = [];
-        match e.p.nodes[pats[0]!] {
-          PWild => {},
-          PTuple { elems: pes } => {
-            if len(pes) != len(elems) {
-              el::refuse(e, "a tuple pattern of another length");
-              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-            }
-            for pe in pes {
-              if e.p.nodes[pe] is PWild {
-                continue;
-              }
-              et = elems[pe#index]!;
-              tget = ir::NdTupleGet { var: tmp, idx: pe#index };
-              // `name: <pattern>` on a scalar or text member: the name bound first (Rust's
-              // `peek_named_arg` binding), then the pattern read at the member as written alone.
-              tpe = pe;
-              match e.p.nodes[pe] {
-                PCap { name: tcn, pat: tcp } => {
-                  if tcp != null && (struct_enum_of(e, et) >= 0 || el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
-                    tcv = pattern_bind(vars, tcn, et, tnames);
-                    tbinds += [el_ir::v_set(tcv, tget)];
-                    tpe = tcp!;
-                  }
-                },
-                _ => {}
-              }
-              if e.p.nodes[tpe] is PWild {
-                continue;
-              }
-              match e.p.nodes[tpe] {
-                PLit { e: tle } => {
-                  if tle == null || struct_enum_of(e, et) >= 0 {
-                    el::refuse(e, "a tuple pattern literal on a member of this type: {type_kind(et)}");
-                    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-                  }
-                  // (`-` then a number is that number negated, a literal — not the expression
-                  // `-127` reads as elsewhere.)
-                  tlx = el_ex_assign::expression(e, vars, tle!);
-                  match e.p.nodes[tle!] {
-                    SUnary { op: tno, e: tne } => {
-                      if tno == "-" && tne != null && (e.p.nodes[tne!] is SInt || e.p.nodes[tne!] is SLong || e.p.nodes[tne!] is SFloat) {
-                        tin = el_ex_assign::expression(e, vars, tne!);
-                        tneg = match el_ir::unspan(tin.code) { NdInt { n: tnv } => ir::NdInt { n: -tnv }, NdLong { n: tnv } => ir::NdLong { n: -(tnv ?? 0) }, NdFloat { f: tnv } => ir::NdFloat { f: -tnv }, _ => ir::NdNull };
-                        if !(tneg is NdNull) {
-                          tlx = ex(tneg, tin.tp);
-                        }
-                      }
-                    },
-                    _ => {}
-                  }
-                  tle_c = el_ex_null::builtin_op(e, vars, "==", ex(tget, et), tlx);
-                  cond = if cond == null { tle_c.code } else { el_ir::v_if(cond!, tle_c.code, ir::NdBoolean { b: false }) };
-                  continue;
-                },
-                _ => {}
-              }
-              tbn = el_ex_pattern::rename_of(e, tpe);
-              if tbn != "" && struct_enum_of(e, et) < 0 {
-                if !el_ex_call::scalar(el_types::base(et)) && !(el_types::base(et) is TyText) {
-                  el::refuse(e, "a tuple pattern binding of a member of this type: {type_kind(et)}");
-                  return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-                }
-                tbv = pattern_bind(vars, tbn, et, tnames);
-                tbinds += [el_ir::v_set(tbv, tget)];
-                continue;
-              }
-              // A plain struct member's `S { … }` (`parse_field_sub_pattern` over the member): its
-              // bare fields bound, its sub-patterns `field_sub` tests (`struct_alternative`).
-              tpd = struct_ref(e, el_types::base(et));
-              if tpd >= 0 && struct_enum_of(e, et) < 0 && e.p.nodes[tpe] is PName {
-                tsa = el_ex_pattern::struct_alternative(e, vars, ex(tget, et), tpd, tpe, []);
-                if tsa == null {
-                  return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-                }
-                tbinds += tsa!.binds;
-                tnames += tsa!.names;
-                for tsc in tsa!.conds {
-                  cond = if cond == null { tsc } else { el_ir::v_if(cond!, tsc, ir::NdBoolean { b: false }) };
-                }
-                continue;
-              }
-              sd = struct_enum_of(e, et);
-              if sd < 0 {
-                el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
-                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-              }
-              mc = member_cond(e, vars, tpe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
-              if mc.refused {
-                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-              }
-              if mc.cond != null {
-                cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
-              }
-              tbinds += mc.binds;
-              tnames += mc.aliases;
-            }
-          },
-          _ => {
-            el::refuse(e, "a tuple match arm of this pattern: {syn_kind(e, pats[0]!)}");
+        cond: ir::Node? = tp0!.cond;
+        tnames: vector<el_vars::VarName> = tp0!.names;
+        tbinds: vector<ir::Node> = tp0!.binds;
+        // `parse_tuple_alternatives`: each further pattern binds fresh variables, copied into the
+        // first's (`x#1 = x#2`), the names then naming the first's again for the body.
+        alts: vector<TPat> = [];
+        for ap in pats {
+          if ap#index == 0 {
+            continue;
+          }
+          tpa = tuple_pattern(e, vars, ap, elems, tmp);
+          if tpa == null {
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
+          ab = tpa!.binds;
+          for avn in tpa!.names {
+            if avn.nr >= 0 {
+              ab += [el_ir::v_set(avn.nr, ir::NdVar { n: el_vars::var(vars, avn.name) })];
+            }
+          }
+          for an2 in rev(tpa!.names) {
+            el_vars::restore_name(vars, an2.name, an2.nr);
+          }
+          // (Alternatives over record or variant members, or binding other names than the
+          // first — Rust's shared field views and the absent name's null — are not carried.)
+          same = tp0!.plain && tpa!.plain && len(tpa!.names) == len(tp0!.names);
+          for avc in tpa!.names {
+            if len([for fn0 in tp0!.names if fn0.name == avc.name { 1 }]) == 0 {
+              same = false;
+            }
+          }
+          if !same {
+            el::refuse(e, "a tuple match alternative over a record member, or binding other names than the first");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          alts += [TPat { cond: tpa!.cond, binds: ab, names: [], plain: true }];
         }
         // `tuple-arm ::= tuple-pattern [ guard ] '=>' expression`: the guard read after the
         // pattern, its bindings in scope; the bindings then stay apart from the body, for the
@@ -1015,15 +947,23 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
         for tal in rev(tnames) {
           el_vars::restore_name(vars, tal.name, tal.nr);
         }
-        if len(tbinds) > 0 && tg == null {
-          b.code = el_ir::v_block(tbinds + [b.code], b.tp, "tuple_binding");
-        }
+        first_code = if len(tbinds) > 0 && tg == null { el_ir::v_block(tbinds + [b.code], b.tp, "tuple_binding") } else { b.code };
         if arm_settles(result, b.tp) {
           result = b.tp;
         }
         result = join_fn_arm(result, b);
         result = join_int_arm(e, vars, result, b);
-        out += [TArm { cond: cond, guard: tg, binds: if tg == null { [] } else { tbinds }, code: b.code }];
+        out += [TArm { cond: cond, guard: tg, binds: if tg == null { [] } else { tbinds }, code: first_code }];
+        // (Each alternative runs the same body under its own bindings.)
+        // (…and the same guard: its bindings, which fill the first pattern's variables, run
+        // ahead of it.)
+        for ta in alts {
+          if tg != null {
+            out += [TArm { cond: ta.cond, guard: tg, binds: ta.binds, code: b.code }];
+          } else {
+            out += [TArm { cond: ta.cond, guard: null, binds: [], code: if len(ta.binds) > 0 { el_ir::v_block(ta.binds + [b.code], b.tp, "tuple_binding") } else { b.code } }];
+          }
+        }
         // (An arm that only binds matches everything, but is no wildcard: the arms after it
         // are still read, as Rust's loop reads them; nor is a guarded one.)
         if cond == null && len(tbinds) == 0 && tg == null {
@@ -1070,6 +1010,129 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
     }
   }
   ex(el_ir::v_block([el_ir::v_set(tmp, x.code), chain], result, "tuple_match"), result)
+}
+
+// One tuple pattern of an arm (`parse_tuple_pattern_elements`): its member tests and-ed, its
+// bindings, and the names they took (for the arm's end); null where it is refused.
+pub struct TPat {
+  pub cond: ir::Node?,
+  pub binds: vector<ir::Node>,
+  pub names: vector<el_vars::VarName>,
+  // (Only literals, `_` and plain bindings: no member's record or variant pattern, whose field
+  // views alternatives share rather than copy.)
+  pub plain: boolean
+}
+
+fn tuple_pattern(e: el::El, vars: el_vars::Vars, pn: integer, elems: vector<ir::TypeT>, tmp: integer) -> TPat? {
+  cond: ir::Node? = null;
+  tnames: vector<el_vars::VarName> = [];
+  tbinds: vector<ir::Node> = [];
+  plain = true;
+  match e.p.nodes[pn] {
+          PWild => {},
+          PTuple { elems: pes } => {
+            if len(pes) != len(elems) {
+              el::refuse(e, "a tuple pattern of another length");
+              return null;
+            }
+            for pe in pes {
+              if e.p.nodes[pe] is PWild {
+                continue;
+              }
+              et = elems[pe#index]!;
+              tget = ir::NdTupleGet { var: tmp, idx: pe#index };
+              // `name: <pattern>` on a scalar or text member: the name bound first (Rust's
+              // `peek_named_arg` binding), then the pattern read at the member as written alone.
+              tpe = pe;
+              match e.p.nodes[pe] {
+                PCap { name: tcn, pat: tcp } => {
+                  if tcp != null && (struct_enum_of(e, et) >= 0 || el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
+                    tcv = pattern_bind(vars, tcn, et, tnames);
+                    tbinds += [el_ir::v_set(tcv, tget)];
+                    tpe = tcp!;
+                  }
+                },
+                _ => {}
+              }
+              if e.p.nodes[tpe] is PWild {
+                continue;
+              }
+              match e.p.nodes[tpe] {
+                PLit { e: tle } => {
+                  if tle == null || struct_enum_of(e, et) >= 0 {
+                    el::refuse(e, "a tuple pattern literal on a member of this type: {type_kind(et)}");
+                    return null;
+                  }
+                  // (`-` then a number is that number negated, a literal — not the expression
+                  // `-127` reads as elsewhere.)
+                  tlx = el_ex_assign::expression(e, vars, tle!);
+                  match e.p.nodes[tle!] {
+                    SUnary { op: tno, e: tne } => {
+                      if tno == "-" && tne != null && (e.p.nodes[tne!] is SInt || e.p.nodes[tne!] is SLong || e.p.nodes[tne!] is SFloat) {
+                        tin = el_ex_assign::expression(e, vars, tne!);
+                        tneg = match el_ir::unspan(tin.code) { NdInt { n: tnv } => ir::NdInt { n: -tnv }, NdLong { n: tnv } => ir::NdLong { n: -(tnv ?? 0) }, NdFloat { f: tnv } => ir::NdFloat { f: -tnv }, _ => ir::NdNull };
+                        if !(tneg is NdNull) {
+                          tlx = ex(tneg, tin.tp);
+                        }
+                      }
+                    },
+                    _ => {}
+                  }
+                  tle_c = el_ex_null::builtin_op(e, vars, "==", ex(tget, et), tlx);
+                  cond = if cond == null { tle_c.code } else { el_ir::v_if(cond!, tle_c.code, ir::NdBoolean { b: false }) };
+                  continue;
+                },
+                _ => {}
+              }
+              tbn = el_ex_pattern::rename_of(e, tpe);
+              if tbn != "" && struct_enum_of(e, et) < 0 {
+                if !el_ex_call::scalar(el_types::base(et)) && !(el_types::base(et) is TyText) {
+                  el::refuse(e, "a tuple pattern binding of a member of this type: {type_kind(et)}");
+                  return null;
+                }
+                tbv = pattern_bind(vars, tbn, et, tnames);
+                tbinds += [el_ir::v_set(tbv, tget)];
+                continue;
+              }
+              // A plain struct member's `S { … }` (`parse_field_sub_pattern` over the member): its
+              // bare fields bound, its sub-patterns `field_sub` tests (`struct_alternative`).
+              tpd = struct_ref(e, el_types::base(et));
+              if tpd >= 0 && struct_enum_of(e, et) < 0 && e.p.nodes[tpe] is PName {
+                plain = false;
+                tsa = el_ex_pattern::struct_alternative(e, vars, ex(tget, et), tpd, tpe, []);
+                if tsa == null {
+                  return null;
+                }
+                tbinds += tsa!.binds;
+                tnames += tsa!.names;
+                for tsc in tsa!.conds {
+                  cond = if cond == null { tsc } else { el_ir::v_if(cond!, tsc, ir::NdBoolean { b: false }) };
+                }
+                continue;
+              }
+              sd = struct_enum_of(e, et);
+              if sd < 0 {
+                el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
+                return null;
+              }
+              plain = false;
+              mc = member_cond(e, vars, tpe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
+              if mc.refused {
+                return null;
+              }
+              if mc.cond != null {
+                cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
+              }
+              tbinds += mc.binds;
+              tnames += mc.aliases;
+            }
+          },
+          _ => {
+            el::refuse(e, "a tuple match arm of this pattern: {syn_kind(e, pn)}");
+            return null;
+          }
+        }
+  TPat { cond: cond, binds: tbinds, names: tnames, plain: plain }
 }
 
 pub struct MemberCond {
