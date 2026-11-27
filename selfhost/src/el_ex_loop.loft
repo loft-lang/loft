@@ -1261,6 +1261,20 @@ fn field_rows(place: ir::Node) -> el_ex_base::VecRows? {
   }
 }
 
+
+// A comprehension over constant range bounds inside another comprehension's body (`[for y in 0..8
+// { [for x in 0..3 { … }] }]`): Rust makes its vector row where it is read, ahead of the wrappers
+// the fill lays out; one over a vector, or with a bound that is not a literal, makes none there.
+fn nested_constant_range(e: el::El, vars: el_vars::Vars, v: integer, source: integer) -> boolean {
+  if !starts_with(el_vars::name_of(vars, v), "_vec_") || len(vars.active_loops) == 0 {
+    return false;
+  }
+  match e.p.nodes[source] {
+    SRange { lo, hi, inclusive: _ } => lo != null && hi != null && e.p.nodes[lo!] is SInt && e.p.nodes[hi!] is SInt,
+    _ => false
+  }
+}
+
 pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT = ir::TyUnknown { n: 0 }, as_value: boolean = false) -> Ex {
   binds: vector<text> = [];
   source = 0;
@@ -1439,8 +1453,20 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   if ranged && fill_count < 0 && constant_body(e, b.code) {
     // (Refused, but a local's `vector<…>` is registered first, as Rust's `vector_def` makes it for
     // any element: `[for y in 0..4 { [for x in 0..3 { … }] }]` makes `main_vector<vector<integer>>`.)
-    if v >= 0 && in_t is TyVector {
+    if v >= 0 && (in_t is TyVector || nested_constant_range(e, vars, v, source)) {
       _ = vector_rows(e, in_t, n, false);
+      // (A nested one's row is made here, where its element has one: `vector_of`.)
+      if nested_constant_range(e, vars, v, source) {
+        crs = stored_row(e, in_t);
+        if crs >= 0 {
+          el_schema::vector_type(e, crs);
+        }
+      }
+    }
+    // (…and the vector it makes has its type, so a comprehension around it registers its own:
+    // `[for z in 0..2 { [for y in 0..3 { [for x in 0..2 { … }] }] }]`.)
+    if v >= 0 && el_types::is_unknown(el_vars::tp(vars, v)) {
+      _ = el_vars::change_var_type(e, vars, v, ir::TyVector { inner: in_t, dep: [] });
     }
     el::refuse(e, "a range comprehension that fills or unrolls a constant");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1492,6 +1518,11 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   // `build_comprehension_code` — the order the schema numbers them in.
   // (A field's comprehension names no vector type of its own: the field's row is the one its
   // place reads.)
+  // (A nested comprehension's vector row is made at it where its element has one, as
+  // `vector_of` does: `[for y in … { [for x in … { y as float }] }]` makes `vector<float>`'s.)
+  if v >= 0 && !made_tup && e.first_pass && nested_constant_range(e, vars, v, source) {
+    _ = stored_row(e, ir::TyVector { inner: in_t, dep: [] });
+  }
   rows = if v >= 0 && made_tup { el_ex_base::tuple_vector_rows(e, in_t, n, vars.annotated.contains(v)) } else if v >= 0 { vector_rows(e, in_t, n, false) } else { field_rows(dest) };
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);

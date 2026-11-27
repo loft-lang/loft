@@ -2308,10 +2308,14 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
 // The store row a vector element is stored as, where every vector under it already has its
 // row: a nullable vector is stored as the vector it holds, a vector as the vector of its
 // element's row (made where missing).  -1 where a leaf has no row yet.
-fn stored_row(e: el::El, t: ir::TypeT) -> integer {
+pub fn stored_row(e: el::El, t: ir::TypeT) -> integer {
   match t {
     TyOptional { inner } => if el_types::base(inner) is TyVector { stored_row(e, el_types::base(inner)) } else { -1 },
     TyVector { inner } => {
+      // (A narrow element's vector is laid out at the fill, not here.)
+      if match el_types::base(inner) { TyInteger { spec: _ } => el_types::elem_name(e, el_types::base(inner)) != "integer", _ => false } {
+        return -1;
+      }
       kn = el_types::type_key_name(e, t);
       kd = if kn == "" { -1 } else { el::def_nr(e, kn) };
       if kd >= 0 && el::def(e, kd).known_type != el_schema::NO_TYPE {
@@ -2320,6 +2324,12 @@ fn stored_row(e: el::El, t: ir::TypeT) -> integer {
       s = stored_row(e, inner);
       if s < 0 { -1 } else { el_schema::vector_type(e, s) }
     },
+    // (A scalar has the library's row.)
+    TyFloat => el_schema::content_type(e, t),
+    TyBoolean => el_schema::content_type(e, t),
+    TyCharacter => el_schema::content_type(e, t),
+    TyText { dep: _ } => el_schema::content_type(e, t),
+    TyInteger { spec: _ } => if el_types::elem_name(e, t) == "integer" { el_schema::content_type(e, t) } else { -1 },
     _ => -1
   }
 }
