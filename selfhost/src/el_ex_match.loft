@@ -734,8 +734,9 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
     // tail's per-arm delivery (`if_tail_yields_text`) sees every arm answer a text.
     tnull = el_convert::null_of(e, el_types::base(result));
     // (No arm taken answers the text's null as well — the chain's last `else`, as the second
-    // pass builds it: every arm of the tail then yields a text and takes the accumulator.)
-    fc = if sd >= 0 && tnull != null { tnull! } else { ir::NdNull };
+    // pass builds it and as Rust's `null_value` fallback is on every pass, whatever the
+    // subject: every arm of the tail then yields a text and takes the accumulator.)
+    fc = if tnull != null { tnull! } else { ir::NdNull };
     for a in rev(out) {
       ac = if a.tp is TyNull && el_ir::is_null(a.code) && tnull != null { tnull! } else { a.code };
       fc = if a.cond == null { ac } else { el_ir::v_if(a.cond!, ac, fc) };
