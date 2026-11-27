@@ -367,12 +367,22 @@ pub(super) fn write_out_joined_copies(code: &mut Value, function: &Function, dat
             *node = Value::Call(self.op, vec![source, self.dest.clone(), self.tp.clone()]);
         }
         /// The owner block for a bare minting call, or `None` where the call is not one.
+        ///
+        /// A call MINTS only where its callee's return borrows no visible parameter — the
+        /// question `Parser::materialise_owned_call`, the other builder of this block, asks.
+        /// A callee that answers its argument (`fn strip(v: Node) -> Node { v }`) hands back a
+        /// view of a store the caller does not own (`@FR-O-Derived`): bound into the buffer,
+        /// the buffer's frame-exit free released the argument's store, and the caller's own
+        /// release of it came second (loft#2665).  Such an arm stays the bare call, and the arm
+        /// lift binds it as the bound-first spelling does: a copy where it answered its
+        /// argument, the callee's own store where it minted one.
         fn owned(&self, node: &Value) -> Option<Value> {
             let Value::Call(fd, args) = node.unspan() else {
                 return None;
             };
             let def = self.data.def(*fd);
             if !def.is_loft_defined()
+                || def.returns_borrowed_view()
                 || !matches!(
                     def.returned().peel_optional().0,
                     Type::Reference(_, _) | Type::Enum(_, true, _)
