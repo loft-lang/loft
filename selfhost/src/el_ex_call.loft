@@ -1090,7 +1090,9 @@ pub fn instance_preallocs(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::No
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: instance_preallocs(e, vars, inner) },
     NdCall { def_nr, args } => {
       a2: vector<ir::Node> = [for a in args { instance_preallocs(e, vars, a) }];
-      if el::def(e, def_nr).name == "OpPreAllocVector" && len(a2) == 3 && a2[2]! is NdInt {
+      // (…and a `reserve` over a `vector<T>`, whose claim the template could not size —
+      // Rust's `TV_RESERVE`, lowered per instance at the bound element's width.)
+      if (el::def(e, def_nr).name == "OpPreAllocVector" || el::def(e, def_nr).name == "OpReserveVector") && len(a2) == 3 && a2[2]! is NdInt {
         match a2[0]! {
           NdVar { n: pv } => {
             match el_types::base(el_vars::tp(vars, pv)) {
