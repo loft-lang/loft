@@ -125,6 +125,11 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   record-return family in general (`a function returning a record from something other than a
   literal`, `a return of a record that is not a literal`): R-HostStore's recursive struct-enum
   with early variant returns is the deep case.
+- `fn ret_vec(h: H4) -> vector<integer> { h.v }` with `struct H4` declared BELOW it (probe
+  `rv6`): Rust types the body block `vector<integer>`, with `H4` above `vector<integer>["h"]` —
+  a declaration-order dependence reported to the tester as a Rust deviation candidate, not
+  mirrored.  It holds back `t.0 = null` on a nullable vector tuple member
+  (`t.0 = OpNullRefSentinel()`, probe `tn4`), which would expose it in 153-p4.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
