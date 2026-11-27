@@ -1516,6 +1516,113 @@ fn a_manifest_takes_only_the_image_it_was_written_with() {
     let _ = fa::remove_dir_all(&control);
 }
 
+/// A `[c] shim` whose source changed since the cold run is another shim: the bundle names the
+/// library its cold parse built, so a warm load that kept it bound the program to the shim of
+/// the old source — the new code built into an archive no program named.  The shim's sources
+/// and the headers they include are in the drift manifest (`c_shim::compiled_files`), so the
+/// edit is a miss and the program is written as an uncached run writes it.
+#[test]
+fn a_warm_load_whose_shim_source_changed_names_the_new_shim() {
+    if loft::platform::process::harness_command("cc")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        return; // no C compiler: no shim is built
+    }
+    let pid = std::process::id();
+    let tree = std::env::temp_dir().join(format!("loft_arce_shimsrc_{pid}"));
+    let _ = fa::remove_dir_all(&tree);
+    let pkg = tree.join("libs").join("thrice");
+    fa::create_dir_all(pkg.join("c")).expect("shim dir");
+    fa::create_dir_all(pkg.join("src")).expect("src dir");
+    fa::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"thrice\"\nversion = \"0.1.0\"\nloft = \">=2026.10.0\"\n\n\
+         [library]\nentry = \"src/thrice.loft\"\n\n[c]\nshim = \"c/thrice.c\"\n",
+    )
+    .expect("manifest");
+    let shim = |k: u32| {
+        fa::write(
+            pkg.join("c").join("thrice.c"),
+            format!("#include \"thrice.h\"\nint64_t th_mul(int64_t v) {{ return v * {k}; }}\n"),
+        )
+        .expect("shim");
+    };
+    fa::write(
+        pkg.join("c").join("thrice.h"),
+        "#include <stdint.h>\nint64_t th_mul(int64_t v);\n",
+    )
+    .expect("header");
+    shim(3);
+    fa::write(
+        pkg.join("src").join("thrice.loft"),
+        "fn th_mul(v: integer) -> integer;\n#c \"th_mul\" \"int64_t(int64_t)\"\n\
+         pub fn mul(v: integer) -> integer { th_mul(v) }\n",
+    )
+    .expect("library");
+    let script = tree.join("main.loft");
+    fa::write(
+        &script,
+        "use thrice;\nfn main() {\n  println(\"{thrice::mul(7)}\");\n}\n",
+    )
+    .expect("script");
+    let cache_dir = tree.join("cache");
+    let emit = |out: &str, cached: bool| {
+        let c = tree.join(out);
+        let mut cmd = loft::platform::process::harness_command(loft_bin());
+        cmd.arg("--lib")
+            .arg(tree.join("libs"))
+            .arg("--native-c")
+            .arg("--native-emit")
+            .arg(&c)
+            .arg(&script)
+            .current_dir(&tree)
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env("XDG_CACHE_HOME", &cache_dir);
+        if cached {
+            cmd.env_remove("LOFT_NO_CACHE");
+        } else {
+            cmd.env("LOFT_NO_CACHE", "1");
+        }
+        let ran = cmd.output().expect("run loft");
+        assert!(
+            ran.status.success(),
+            "{out}: {}",
+            String::from_utf8_lossy(&ran.stderr)
+        );
+        fa::read_to_string(&c).expect("read the C")
+    };
+    let cold = emit("cold.c", true);
+    // `assert!` over the comparison, not `assert_eq!`: a failure would print two programs of
+    // C, megabytes each.
+    assert!(
+        emit("warm.c", true) == cold,
+        "a warm load writes the cold run's C"
+    );
+    shim(5);
+    let changed = emit("changed.c", true);
+    assert!(
+        changed != cold,
+        "the shim's source changed, and the warm load still named the shim of the old one"
+    );
+    assert!(
+        changed == emit("fresh.c", false),
+        "after the shim's source changed, the program is written as an uncached run writes it"
+    );
+    // The header the shim includes is compiled into it as well.
+    fa::write(
+        pkg.join("c").join("thrice.h"),
+        "#include <stdint.h>\n/* another header */\nint64_t th_mul(int64_t v);\n",
+    )
+    .expect("header");
+    assert!(
+        emit("header.c", true) != changed,
+        "the shim's header changed, and the warm load still named the shim built before"
+    );
+    let _ = fa::remove_dir_all(&tree);
+}
+
 /// A `[c] shim` the C writer finds beside its package is opened at start and called through
 /// its handle; one it does not find is linked by name — so the C depends on the shim's file
 /// being there.  A warm load whose shim was removed since the cold run (a cleaned

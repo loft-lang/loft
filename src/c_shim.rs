@@ -513,6 +513,20 @@ fn hash_local_includes(
     seen: &mut Vec<crate::file_access::PathText>,
 ) {
     use sha2::Digest;
+    walk_local_includes(file, bytes, seen, &mut |name, _, text| {
+        hasher.update(name.as_bytes());
+        hasher.update(text);
+    });
+}
+
+/// The walk [`hash_local_includes`] hashes: `visit(name, header, text)` for every local header
+/// `bytes` (the text of `file`) reaches, in include order, each before the headers it includes.
+fn walk_local_includes(
+    file: &std::path::Path,
+    bytes: &[u8],
+    seen: &mut Vec<crate::file_access::PathText>,
+    visit: &mut dyn FnMut(&str, &std::path::Path, &[u8]),
+) {
     let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
     for line in String::from_utf8_lossy(bytes).lines() {
         let Some(rest) = line.trim_start().strip_prefix('#') else {
@@ -539,10 +553,31 @@ fn hash_local_includes(
             continue;
         };
         seen.push(resolved);
-        hasher.update(name.as_bytes());
-        hasher.update(&text);
-        hash_local_includes(hasher, &header, &text, seen);
+        visit(name, &header, &text);
+        walk_local_includes(&header, &text, seen, visit);
     }
+}
+
+/// Every file a shim built from `sources` (absolute paths, `CLibrary::shim`) is compiled from:
+/// each source and every local header it reaches — the files its key hashes.  A program
+/// bundle's drift manifest hashes them too: the bundle names the shim its cold parse built, so
+/// an edit to one of them must be a miss, or the warm run binds the library built from the old
+/// sources.
+pub fn compiled_files(sources: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: Vec<crate::file_access::PathText> = Vec::new();
+    for s in sources {
+        let p = std::path::Path::new(s);
+        let Ok(bytes) = crate::file_access::read(p) else {
+            continue;
+        };
+        out.push(s.clone());
+        seen.extend(crate::file_access::canonical(p));
+        walk_local_includes(p, &bytes, &mut seen, &mut |_, header, _| {
+            out.push(header.to_string_lossy().into_owned());
+        });
+    }
+    out
 }
 
 /// The shim's artefact identity: its stem (`<package>_shim_<key>`, the key a hash of the

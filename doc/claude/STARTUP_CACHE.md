@@ -20,7 +20,10 @@ Its record: [STARTUP_CACHE-history.md](STARTUP_CACHE-history.md).
 The bundle contains the fully-parsed IR (`Data`) for the entire program prefix:
 every `default/*.loft` file, every `use`-d library, and the user script.  It is
 keyed on a drift manifest holding a SHA-256 of each parsed source's bytes
-(`cache::file_hash`), so any source edit invalidates the cache automatically.
+(`cache::file_hash`), so any source edit invalidates the cache automatically.  The manifest
+also hashes the nearest `loft.toml` above each source and every file a `[c] shim` is compiled
+from — its sources and the headers they include (`c_shim::compiled_files`): the bundle names
+the shim its cold parse built, so a warm load after a shim edit would bind the old library.
 Beside the parse, the manifest carries what the cold run SAID: its diagnostics (`diag`
 lines, the scope pass's `advice[view-copied]` among them), replayed on a warm load so a
 program reports the same on every run — the parser and the scope pass do not run on one.

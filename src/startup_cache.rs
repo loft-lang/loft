@@ -727,7 +727,8 @@ fn replay_parse_state(
 }
 
 /// The files a program bundle's manifest hashes: every parsed source and the nearest
-/// `loft.toml` above each, sorted, without the stdlib's own files (the `stdk` line pins them).
+/// `loft.toml` above each, and every file a `[c] shim` is compiled from, sorted, without the
+/// stdlib's own files (the `stdk` line pins them).
 #[cfg(feature = "mmap")]
 fn hashed_sources(p: &Parser, default_dir: &str) -> Vec<String> {
     // The manifests decided which sources those were: a `[dependencies]` line removed or
@@ -746,7 +747,21 @@ fn hashed_sources(p: &Parser, default_dir: &str) -> Vec<String> {
                 .map(|m| m.to_string_lossy().into_owned())
         })
         .collect();
-    let mut paths: Vec<String> = p.parsed_sources.iter().chain(&manifests).cloned().collect();
+    // A `[c] shim`'s sources and the headers they include: the bundle names the shim its cold
+    // parse built from them, so an edit to one is a miss as an edit to a `.loft` source is.
+    let shims: Vec<String> = p
+        .data
+        .c_libraries
+        .iter()
+        .flat_map(|c| crate::c_shim::compiled_files(&c.shim))
+        .collect();
+    let mut paths: Vec<String> = p
+        .parsed_sources
+        .iter()
+        .chain(&manifests)
+        .chain(&shims)
+        .cloned()
+        .collect();
     paths.sort_unstable();
     paths.dedup();
     // The stdlib's own files are pinned by the `stdk` line — a hash of exactly
