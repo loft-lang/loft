@@ -1,0 +1,501 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/vec_copy.rs` transcribed (`@FR-R-VecCopy`): a `for` walk of a vector whose body
+// pushes each element, unchanged, into an EXCLUSIVE vector is one `OpAppendVector` of the
+// source.  Run by `check` on the settled body, after `byte_copy`, as Rust's is.
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use ir_fill_loop;
+
+struct Ops {
+  get_nullable: integer,
+  add_int: integer,
+  le_int: integer,
+  lt_int: integer,
+  length_vector: integer,
+  pre_alloc: integer,
+  get_field: integer,
+  place_record: integer,
+  append_vector: integer,
+  // `KINDS`: the element read and its push, and whether the push carries the byte bias.
+  gets: vector<integer>,
+  pushes: vector<integer>,
+  biased: vector<boolean>
+}
+
+fn ops_of(b: ir::Bundle) -> Ops {
+  gets: vector<integer> = [];
+  pushes: vector<integer> = [];
+  biased: vector<boolean> = [];
+  for k in ["Int", "Int4", "Float", "Single", "Boolean", "Enum", "Character", "Byte"] {
+    gets += [scope_fn::def_nr(b, "OpGet{k}")];
+    pushes += [scope_fn::def_nr(b, "OpPush{k}")];
+    biased += [k == "Byte"];
+  }
+  Ops {
+    get_nullable: scope_fn::def_nr(b, "OpGetVectorNullable"),
+    add_int: scope_fn::def_nr(b, "OpAddInt"),
+    le_int: scope_fn::def_nr(b, "OpLeInt"),
+    lt_int: scope_fn::def_nr(b, "OpLtInt"),
+    length_vector: scope_fn::def_nr(b, "OpLengthVector"),
+    pre_alloc: scope_fn::def_nr(b, "OpPreAllocVector"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    place_record: scope_fn::def_nr(b, "OpPlaceRecord"),
+    append_vector: scope_fn::def_nr(b, "OpAppendVector"),
+    gets: gets,
+    pushes: pushes,
+    biased: biased
+  }
+}
+
+// One admitted copy: the target, the source, the index and the place the source was read from.
+struct Site {
+  t: integer,
+  src: integer,
+  index: integer
+}
+
+// port: vec_copy.rs fn rewrite — `d` is the definition, `f` its settled variables.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if (env_variable("LOFT_NO_VEC_COPY") ?? "") != "" {
+    return code;
+  }
+  o = ops_of(b);
+  if o.get_nullable < 0 || !any_call(code, o.get_nullable) {
+    return code;
+  }
+  found: vector<Site> = [];
+  places: vector<ir::Node> = [];
+  find(code, o, d, f, code, found, places);
+  for site in found {
+    tp = shared_element_type(b, f, site.t, site.src);
+    if tp < 0 {
+      continue;
+    }
+    append = ir::NdCall { def_nr: o.append_vector, args: [ir::NdVar { n: site.t }, places[site#index]!, ir::NdInt { n: tp }] };
+    done = [false];
+    code = replace_loop(code, site.src, site.index, append, done);
+  }
+  code
+}
+
+fn any_call(n: ir::Node, op: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == op { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if any_call(c, op) {
+      return true;
+    }
+  }
+  false
+}
+
+fn find(v: ir::Node, o: Ops, d: ir::Definition, f: ir::Function, whole: ir::Node, out: vector<Site>, places: vector<ir::Node>) {
+  s = match_copy(v, o, d, f, whole);
+  if s != null {
+    out += [s!];
+    places += [scope_fn::unspan(site_place(v))];
+    return;
+  }
+  for c in scope_fn::children(v) {
+    find(c, o, d, f, whole, out, places);
+  }
+}
+
+// port: vec_copy.rs fn replace_loop — the first walk of `src` by `index` (pre-order) is the
+// append; `done[0]` says whether it was found.
+fn replace_loop(v: ir::Node, src: integer, index: integer, append: ir::Node, done: vector<boolean>) -> ir::Node {
+  if done[0]! {
+    return v;
+  }
+  if is_walk_of(v, src, index) {
+    done[0] = true;
+    return append;
+  }
+  match v {
+    NdSpan { pos, inner } => {
+      n = replace_loop(inner, src, index, append, done);
+      if done[0]! {
+        return ir::NdSpan { pos: pos, inner: n };
+      }
+    },
+    NdCall { def_nr, args } => {
+      items = replace_in(args, src, index, append, done);
+      if done[0]! {
+        return ir::NdCall { def_nr: def_nr, args: items };
+      }
+    },
+    NdCallRef { var, args } => {
+      items = replace_in(args, src, index, append, done);
+      if done[0]! {
+        return ir::NdCallRef { var: var, args: items };
+      }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      items = replace_in(bl.operators, src, index, append, done);
+      if done[0]! {
+        return ir::NdBlock { block: [ir::Block { name: bl.name, operators: items, result: bl.result, scope: bl.scope, var_size: bl.var_size }] };
+      }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      items = replace_in(bl.operators, src, index, append, done);
+      if done[0]! {
+        return ir::NdLoop { block: [ir::Block { name: bl.name, operators: items, result: bl.result, scope: bl.scope, var_size: bl.var_size }] };
+      }
+    },
+    NdInsert { items } => {
+      out = replace_in(items, src, index, append, done);
+      if done[0]! {
+        return ir::NdInsert { items: out };
+      }
+    },
+    NdSet { var, inner } => {
+      n = replace_loop(inner, src, index, append, done);
+      if done[0]! {
+        return ir::NdSet { var: var, inner: n };
+      }
+    },
+    NdReturn { inner } => {
+      n = replace_loop(inner, src, index, append, done);
+      if done[0]! {
+        return ir::NdReturn { inner: n };
+      }
+    },
+    NdIf { cond, t, f } => {
+      c = replace_loop(cond, src, index, append, done);
+      if done[0]! {
+        return ir::NdIf { cond: c, t: t, f: f };
+      }
+      x = replace_loop(t, src, index, append, done);
+      if done[0]! {
+        return ir::NdIf { cond: cond, t: x, f: f };
+      }
+      y = replace_loop(f, src, index, append, done);
+      if done[0]! {
+        return ir::NdIf { cond: cond, t: t, f: y };
+      }
+    },
+    _ => {}
+  }
+  v
+}
+
+fn replace_in(items: vector<ir::Node>, src: integer, index: integer, append: ir::Node, done: vector<boolean>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for x in items {
+    out += [replace_loop(x, src, index, append, done)];
+  }
+  out
+}
+
+// port: vec_copy.rs fn sig — exactly the `n` statements but the line marks and nulls.
+fn sig(ls: vector<ir::Node>, n: integer) -> vector<ir::Node>? {
+  out: vector<ir::Node> = [];
+  for v in ls {
+    u = scope_fn::unspan(v);
+    if !(u is NdLine) && !(u is NdNull) {
+      out += [v];
+    }
+  }
+  if len(out) == n { out } else { null }
+}
+
+fn block_ops(v: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => block[0].operators,
+    _ => null
+  }
+}
+
+fn for_block(v: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => if block[0].name == "For block" { block[0].operators } else { null },
+    _ => null
+  }
+}
+
+fn set_of(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) { NdSet { var } => var, _ => -1 }
+}
+
+fn set_value(v: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) { NdSet { inner } => inner, _ => ir::NdNull }
+}
+
+// The place an admitted walk reads its source from: its first statement's value.
+fn site_place(v: ir::Node) -> ir::Node {
+  ops = for_block(v);
+  set_value(sig(ops!, 3)![0]!)
+}
+
+// port: vec_copy.rs fn is_walk_of
+fn is_walk_of(v: ir::Node, src: integer, index: integer) -> boolean {
+  ops = for_block(v);
+  if ops == null {
+    return false;
+  }
+  s = sig(ops!, 3);
+  s != null && set_of(s![0]!) == src && set_of(s![1]!) == index
+}
+
+// port: vec_copy.rs fn is_place — a variable, or a field read of one at literal offsets.
+fn is_place(v: ir::Node, o: Ops) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar => true,
+    NdCall { def_nr, args } => def_nr == o.get_field && len(args) == 3 && int(args[1]!) != null && int(args[2]!) != null && is_place(args[0]!, o),
+    _ => false
+  }
+}
+
+fn call(v: ir::Node, op: integer) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr == op && op >= 0 { args } else { null },
+    _ => null
+  }
+}
+
+fn var(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) { NdVar { n } => n, _ => -1 }
+}
+
+fn int(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) { NdInt { n } => n, _ => null }
+}
+
+// port: vec_copy.rs fn break_if — `if c { break } else null`'s condition, or null.
+fn break_if(v: ir::Node) -> ir::Node? {
+  match scope_fn::unspan(v) {
+    NdIf { cond, t, f } => {
+      brk = t;
+      match scope_fn::unspan(t) {
+        NdBlock { block } => {
+          one = sig(block[0].operators, 1);
+          if one != null {
+            brk = one![0]!;
+          }
+        },
+        _ => {}
+      }
+      is_brk = match scope_fn::unspan(brk) { NdBreak { n } => n == 0, _ => false };
+      if is_brk && (scope_fn::unspan(f) is NdNull) { cond } else { null }
+    },
+    _ => null
+  }
+}
+
+// port: vec_copy.rs fn match_copy
+fn match_copy(v: ir::Node, o: Ops, d: ir::Definition, f: ir::Function, whole: ir::Node) -> Site? {
+  ops = for_block(v);
+  if ops == null {
+    return null;
+  }
+  top = sig(ops!, 3);
+  if top == null {
+    return null;
+  }
+  src = set_of(top![0]!);
+  index = set_of(top![1]!);
+  if src < 0 || index < 0 {
+    return null;
+  }
+  place = set_value(top![0]!);
+  if int(set_value(top![1]!)) != -1 || !is_place(place, o) {
+    return null;
+  }
+  lp_ops = match scope_fn::unspan(top![2]!) { NdLoop { block } => block[0].operators, _ => return null };
+  four = sig(lp_ops, 4);
+  if four == null {
+    return null;
+  }
+  e = set_of(four![0]!);
+  if e < 0 {
+    return null;
+  }
+  step = block_ops(set_value(four![0]!));
+  if step == null {
+    return null;
+  }
+  two = sig(step!, 2);
+  if two == null {
+    return null;
+  }
+  bumped = set_of(two![0]!);
+  add = call(set_value(two![0]!), o.add_int);
+  if add == null || bumped != index || var(add![0]!) != index || int(add![1]!) != 1 {
+    return null;
+  }
+  read_op = -1;
+  read_args: vector<ir::Node> = [];
+  match scope_fn::unspan(two![1]!) {
+    NdCall { def_nr, args } => {
+      read_op = def_nr;
+      read_args = args;
+    },
+    _ => return null
+  }
+  k = -1;
+  for g in o.gets {
+    if k < 0 && g == read_op && g >= 0 {
+      k = g#index;
+    }
+  }
+  if k < 0 || len(read_args) == 0 {
+    return null;
+  }
+  push_op = o.pushes[k]!;
+  biased = o.biased[k]!;
+  elm = call(read_args[0]!, o.get_nullable);
+  if elm == null || len(elm!) < 3 || var(elm![0]!) != src || var(elm![2]!) != index || len(read_args) < 2 || int(read_args[1]!) != 0 {
+    return null;
+  }
+  c_end = break_if(four![1]!);
+  if c_end == null {
+    return null;
+  }
+  past_end = call(c_end!, o.le_int);
+  if past_end == null {
+    return null;
+  }
+  ln = call(past_end![0]!, o.length_vector);
+  if ln == null || var(ln![0]!) != src || var(past_end![1]!) != index {
+    return null;
+  }
+  c_neg = break_if(four![2]!);
+  if c_neg == null {
+    return null;
+  }
+  low = call(c_neg!, o.lt_int);
+  if low == null || var(low![0]!) != index || int(low![1]!) != 0 {
+    return null;
+  }
+  work = block_ops(four![3]!);
+  if work == null {
+    return null;
+  }
+  push = ir::NdNull;
+  reserve: vector<ir::Node>? = null;
+  w1 = sig(work!, 1);
+  w2 = sig(work!, 2);
+  if w1 != null {
+    push = w1![0]!;
+  } else if w2 != null {
+    reserve = call(w2![0]!, o.pre_alloc);
+    if reserve == null {
+      return null;
+    }
+    push = w2![1]!;
+  } else {
+    return null;
+  }
+  pargs = call(push, push_op);
+  if pargs == null || len(pargs!) == 0 {
+    return null;
+  }
+  t = var(pargs![0]!);
+  if t < 0 {
+    return null;
+  }
+  if biased {
+    if len(pargs!) != 3 || int(pargs![1]!) == null || len(read_args) < 3 || int(pargs![1]!) != int(read_args[2]!) {
+      return null;
+    }
+  } else if len(pargs!) != 2 {
+    return null;
+  }
+  if var(pargs![len(pargs!) - 1]!) != e {
+    return null;
+  }
+  if reserve != null && var(reserve![0]!) != t {
+    return null;
+  }
+  if t == src || scope_fn::reads_var(place, t) {
+    return null;
+  }
+  if !exclusive_vector(o, d, f, whole, t) {
+    return null;
+  }
+  Site { t: t, src: src, index: index }
+}
+
+fn binds_of(n: ir::Node, t: integer, out: vector<ir::Node>) {
+  match n {
+    NdSet { var, inner } => if var == t && !(scope_fn::unspan(inner) is NdNull) {
+      out += [inner];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    binds_of(c, t, out);
+  }
+}
+
+// port: vec_copy.rs fn exclusive_vector — `t` holds a vector no other name reaches: a local
+// bound only from fresh literal backings (`OpGetField(__vdb, 0, …)` of a buffer never rebound but
+// by a placement), or a hidden work or return buffer.
+fn exclusive_vector(o: Ops, d: ir::Definition, f: ir::Function, whole: ir::Node, t: integer) -> boolean {
+  binds: vector<ir::Node> = [];
+  binds_of(whole, t, binds);
+  if scope_fn::is_argument(f, t) {
+    slot = -1;
+    i = 0;
+    for x in f.variables {
+      if x.argument {
+        if x#index == t {
+          slot = i;
+        }
+        i += 1;
+      }
+    }
+    hidden = false;
+    if slot >= 0 && slot < len(d.attributes) && d.attributes[slot]!.work_buffer {
+      hidden = true;
+    }
+    h = binds::hidden_return_buffer_attr(d);
+    if h != null && binds::var_named(f, d.attributes[h!]!.name) == t {
+      hidden = true;
+    }
+    if !hidden {
+      return false;
+    }
+  } else if len(binds) == 0 {
+    return false;
+  }
+  for rhs in binds {
+    a = call(rhs, o.get_field);
+    if a == null || len(a!) < 2 {
+      return false;
+    }
+    vdb = var(a![0]!);
+    if vdb < 0 || scope_fn::is_argument(f, vdb) || int(a![1]!) != 0 {
+      return false;
+    }
+    rebinds: vector<ir::Node> = [];
+    binds_of(whole, vdb, rebinds);
+    for r in rebinds {
+      if call(r, o.place_record) == null {
+        return false;
+      }
+    }
+  }
+  true
+}
+
+// port: vec_copy.rs fn shared_element_type — the schema type of the element both vectors hold,
+// -1 when they differ or the element has none.
+fn shared_element_type(b: ir::Bundle, f: ir::Function, t: integer, src: integer) -> integer {
+  tc = match scope_fn::base(scope_fn::tp(f, t)) { TyVector { inner } => inner, _ => return -1 };
+  sc = match scope_fn::base(scope_fn::tp(f, src)) { TyVector { inner } => inner, _ => return -1 };
+  if "{scope_fn::base(tc)}" != "{scope_fn::base(sc)}" {
+    return -1;
+  }
+  ir_fill_loop::vector_element_type(b, tc)
+}

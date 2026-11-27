@@ -33,6 +33,7 @@ use scope_take_local;
 use scope_byte_copy;
 use scope_loop_kernel;
 use scope_view_walk;
+use scope_vec_copy;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -200,6 +201,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     code = scope_loop_kernel::rewrite(b, code);
     // `@FR-R-ByteCopy`.
     code = scope_byte_copy::rewrite(b, code);
+    // `@FR-R-VecCopy` (after `repeat_run`, refused above where it would fire).
+    code = scope_vec_copy::rewrite(b, d, code, ph.function);
     // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
     code = scope_wrapper::rewrite(b, code);
     b.data.definitions[d_nr].variables = ph.function;
@@ -430,8 +433,8 @@ fn join_rewrites(f: ir::Function) -> text {
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
 // is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
-// `compact`, `byte_copy`'s vector clause, `repeat_run`, `vec_copy`, `slice_text`, `slice_into`.
-// `take_local`, `loop_kernel_rewrite` and `byte_copy` are transcribed and run by `check`.
+// `compact`, `byte_copy`'s vector clause, `repeat_run`, `slice_text`, `slice_into`.
+// `take_local`, `loop_kernel_rewrite`, `byte_copy` and `vec_copy` are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
   for x in f.variables {
@@ -470,10 +473,6 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
   match n {
     NdLoop { block } => {
       lp = true;
-      // `vec_copy`: a walk of a vector whose body pushes its element into a target.
-      if contains_call(b, n, "OpGetVectorNullable") && contains_call(b, n, "OpPush") {
-        note(w, "vec_copy::rewrite: a vector copied one element at a time");
-      }
     },
     NdBlock { block } => {
       // `repeat_run`: four or more consecutive pushes of one constant into one target.
