@@ -699,13 +699,11 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
     while k >= 0 && vars.active_loops[k] != lv {
       k -= 1;
     }
-    if lv >= 0 && k >= 0 && vars.whiles == 0 {
-      out = len(vars.active_loops) - 1 - k;
+    if lv >= 0 && k >= 0 {
+      // (Every `while` opened inside the target loop is a level out too: `Function::loops_out`.)
+      inner_whiles = len([for wm in vars.while_marks if wm > k { 1 }]);
+      out = len(vars.active_loops) - 1 - k + inner_whiles;
       return ex(if attr == "break" { ir::NdBreak { n: out } } else { ir::NdContinue { n: out } }, ir::TyNever);
-    }
-    if vars.whiles > 0 {
-      el::refuse(e, "a `#break` or `#continue` with a `while` open");
-      return ex(ir::NdNull, ir::TyNever);
     }
   }
   // `x#remove` in a forward walk of a vector local: `OpRemove(x#index, v, on, row)` — `on` the
