@@ -144,6 +144,12 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   (inside a format hole the element temp of `[jp]` is typed `ref(boolean)`, as a bind
   `ref(Point)`; probe eb1, reported), and G-Mono/a-spec-part-… needs the template to defer the
   choice for a type variable (the instance binds `float` and pads directly).
+- A destructure reusing an earlier loop variable's name (`for a in [7, 8] {…}; for (a, b) in
+  [("p", 3)] {…}`, B-Scope/a-loop-name-a-destructure-reuses-compiles, probe dr4): exempting loop
+  variables from `destructure_members`' refusal names the member `a#1` right, but its type then
+  borrows a LATER loop's vector (`text["_vector_3"]` where Rust's is plain `text`) — the type is
+  not set by `set_type` on pass 2, so it is the pass-1 variable's; advancing `loop_binding` for
+  the pass-1 members did not cure it.  Held.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
