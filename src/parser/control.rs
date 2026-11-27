@@ -3576,6 +3576,15 @@ impl Parser {
                         } else {
                             delivered
                         };
+                    // `@FR-O-Buffer`: the buffer is the CALLER's store.  A local renamed onto
+                    // it and bound once from a buffer-filling call (`r = other(v)`, the tail a
+                    // join of `r` and another value) must have that call fill the buffer, as
+                    // the single-tail `Rename` delivery's collapse does; left on its own
+                    // `__ref_N`, the call displaced the caller's store and nobody freed it —
+                    // one store per call, both backends (loft#2672).  The arms materialised
+                    // above clear and append, so `r`'s one assignment stays that call.
+                    let collapsed = self.nrvo_collapse_defining_call(l, buf_var);
+                    self.suppress_collapsed_workrefs(l, collapsed);
                     true
                 } else {
                     false
@@ -4887,8 +4896,16 @@ impl Parser {
             return;
         }
 
-        // (1) Tail must be `Var(cv)` or `Return(Var(cv))`, modulo Span.
+        // (1) Tail must be `Var(cv)` or `Return(Var(cv))`, modulo Span.  A join tail whose arms
+        //     answer the ONE local renamed onto the buffer (`if c { r } else { r }`) is the same
+        //     delivery spread over arms: that local's single top-level defining call still
+        //     fills the buffer (loft#2672).  With two renamed locals both calls would write
+        //     the one store, so that declines.
         let Some(cv) = Self::tail_var(&l[last]) else {
+            if let [cv] = ls {
+                let collapsed = self.nrvo_collapse_defining_call(l, *cv);
+                self.suppress_collapsed_workrefs(l, collapsed);
+            }
             return;
         };
         if !ls.contains(&cv) {
