@@ -1080,7 +1080,9 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               // field as the text it reads.
               // An out-of-line field (a struct enum's child) binds as that view too.
               // (So does a struct enum's, `_mv_inner_1: ref(In)["o"]`.)
-              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
+              // (A nullable vector field is stored as the vector it holds, and binds as one's view.)
+              opt_vec = match ft { TyOptional { inner: ovf } => el_types::base(ovf) is TyVector, _ => false };
+              if ft is TyVector || opt_vec || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
                 // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
                 // root where the subject is read in place (`match_borrow_source`).
                 sroot = el_ex_match::match_borrow_source(e, vars, subj);
