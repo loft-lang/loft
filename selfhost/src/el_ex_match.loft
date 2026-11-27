@@ -913,7 +913,7 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
               tpe = pe;
               match e.p.nodes[pe] {
                 PCap { name: tcn, pat: tcp } => {
-                  if tcp != null && struct_enum_of(e, et) < 0 && (el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
+                  if tcp != null && (struct_enum_of(e, et) >= 0 || el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
                     tcv = pattern_bind(vars, tcn, et, tnames);
                     tbinds += [el_ir::v_set(tcv, tget)];
                     tpe = tcp!;
@@ -988,6 +988,8 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
               if mc.cond != null {
                 cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
               }
+              tbinds += mc.binds;
+              tnames += mc.aliases;
             }
           },
           _ => {
@@ -1071,7 +1073,9 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
 
 pub struct MemberCond {
   pub cond: ir::Node?,
-  pub refused: boolean
+  pub refused: boolean,
+  pub binds: vector<ir::Node>,
+  pub aliases: vector<el_vars::VarName>
 }
 
 // One tuple-pattern member's test (`variant_arm` over the member), handed back as a value of the
@@ -1080,13 +1084,16 @@ pub struct MemberCond {
 pub fn member_cond(e: el::El, vars: el_vars::Vars, pe: integer, sd: integer, subj: ir::Node) -> MemberCond {
   va = el_ex_pattern::variant_arm(e, vars, [pe], sd, subj);
   if va == null {
-    return MemberCond { cond: null, refused: true };
+    return MemberCond { cond: null, refused: true, binds: [], aliases: [] };
   }
-  if len(va!.binds) > 0 {
-    el::refuse(e, "a binding in a tuple pattern");
-    return MemberCond { cond: null, refused: true };
+  // (A variant's bare fields bind as `_mv_<field>_N` views, its spellings aliased for the arm,
+  // `parse_field_sub_pattern`'s bindings; a field sub-pattern's test and alternatives are not
+  // carried.)
+  if va!.fcond != null || len(va!.alts) > 0 {
+    el::refuse(e, "a field test or alternatives in a tuple member's variant pattern");
+    return MemberCond { cond: null, refused: true, binds: [], aliases: [] };
   }
-  MemberCond { cond: va!.cond, refused: false }
+  MemberCond { cond: va!.cond, refused: false, binds: va!.binds, aliases: va!.aliases }
 }
 
 // `own_joined_call_arms` (loft#1019) for a `match`: where the merged record borrows, an arm whose
