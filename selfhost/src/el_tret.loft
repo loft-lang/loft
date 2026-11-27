@@ -20,6 +20,11 @@ use el_buffers;
 use own;
 
 pub fn promote_text_returns(e: el::El) {
+  // (A generic instance whose text answer took a hidden buffer while it was filled: its
+  // callers were built against the shorter signature.)
+  if len(e.tret_instances) > 0 {
+    patch_callers(e, e.tret_instances, true);
+  }
   flagged: vector<integer> = [];
   for d in e.b.data.definitions {
     if d.source == el::MAIN_SOURCE && d.def_type == el::DT_FUNCTION && own::text_return_orphan_risk(e.b, d#index) != "" {
@@ -244,7 +249,7 @@ fn renumber_list(l: vector<ir::Node>, from: integer, to: integer) -> vector<ir::
 // `patch_tret_callers` (Phase B): every call of a promoted function that hands fewer arguments
 // than it now takes is given a fresh `__work_cN` buffer (`add_defaults`' `&text` arm), each new
 // buffer set empty at the head of the caller's body.
-fn patch_callers(e: el::El, promoted: vector<integer>) {
+fn patch_callers(e: el::El, promoted: vector<integer>, after_decls: boolean = false) {
   for c in e.b.data.definitions {
     cd = c#index;
     body = c.code[0] ?? ir::NdNull;
@@ -257,9 +262,19 @@ fn patch_callers(e: el::El, promoted: vector<integer>) {
     match el_ir::unspan(code) {
       NdBlock { block } => {
         bl = block[0];
+        // (For an instance's callers, after the body's leading declarations of its work
+        // references, which Rust's later passes place ahead of the patched buffers.)
+        lead = 0;
+        if after_decls {
+          for o in bl.operators {
+            if lead == o#index && match o { NdSet { var: dv, inner: di } => el_ir::is_null(di) && starts_with(el_vars::name_of(vars, dv), "__"), _ => false } {
+              lead += 1;
+            }
+          }
+        }
         for x in vars.vars {
           if x#index >= before && starts_with(x.name, "__work_c") {
-            bl.operators = [el_ir::v_set(x#index, ir::NdText { s: "" })] + bl.operators;
+            bl.operators = bl.operators[0..lead] + [el_ir::v_set(x#index, ir::NdText { s: "" })] + bl.operators[lead..];
           }
         }
         code = el_ir::respan(code, ir::NdBlock { block: [bl] });
