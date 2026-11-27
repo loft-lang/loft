@@ -130,6 +130,14 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   a declaration-order dependence reported to the tester as a Rust deviation candidate, not
   mirrored.  It holds back `t.0 = null` on a nullable vector tuple member
   (`t.0 = OpNullRefSentinel()`, probe `tn4`), which would expose it in 153-p4.
+- A generic instance at TEXT whose tail is an `if`/`match` of text arms (`pick<T>(a, b, c) ->
+  T { if c { a } else { b } }` at `text`, probe `gt1`): the port has `promote_monomorph_text_return`'s
+  accumulator leg, but `text_instance_carried` refuses first.  Lifting that guard (an
+  `if_tail_yields_text` exemption) agrees on the probes and admits F26, yet turns four programs
+  refused → differ: a caller of the grown instance is not handed its hidden buffer
+  (`patch_tret_call`, G-Gen-Scope/a-type-variable-is-a-name-only…), and three older vector-instance
+  gaps (`___ret_copy_N` per returned parameter, G-Gen/an-unbounded-variable…; result block deps,
+  R-TailSelf ×2).  Held back until those are ported.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
