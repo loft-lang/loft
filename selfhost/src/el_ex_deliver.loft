@@ -1666,12 +1666,20 @@ fn projection_params(e: el::El, vars: el_vars::Vars, n: ir::Node, out: vector<in
 }
 
 // An arm among the `if`'s answering a body local, a buffered call or a projection.
+// Is block `b` a fresh vector build — a literal, a concatenation, a comprehension, a slice?
+fn fresh_vector_build(b: ir::Block) -> boolean {
+  b.name == "Vector" || b.name == "Append Vector" || b.name == "Vector comprehension" || b.name == "iter_vec"
+}
+
 fn built_arm(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
   match n {
     NdSpan { inner } => built_arm(e, vars, inner),
     NdIf { cond: _, t, f } => built_arm(e, vars, t) || built_arm(e, vars, f),
-    // (A concatenation, `a + [k]`, is a fresh build as a literal is: its `_vec_N` is its own.)
-    NdBlock { block } => block[0].name != "Vector" && block[0].name != "Append Vector" && len(block[0].operators) > 0 && built_arm(e, vars, block[0].operators[-1]!),
+    // (A fresh build — a literal, a concatenation `a + [k]`, a comprehension, a slice — owns the
+    // store it minted: its `_vec_N` is its own, no built local.  By the build's own block: a
+    // block that merely ENDS in a store minted inside it — `{ b = Box { items: … }; b.items }`,
+    // 1493 — answers a local's field, which is copied.)
+    NdBlock { block } => !fresh_vector_build(block[0]) && len(block[0].operators) > 0 && built_arm(e, vars, block[0].operators[-1]!),
     NdInsert { items } => len(items) > 0 && built_arm(e, vars, items[-1]!),
     // (…and the local the buffer was renamed onto, built there: a literal arm beside it is copied
     // in, `{ buf = …; buf }, _ => []`.)
