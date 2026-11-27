@@ -1254,10 +1254,13 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         }
         if !e.first_pass {
           // The second pass converts the default to the field (`set_attr_value`).
-          if dv != null {
-            for a in el::def(e, d).attributes {
-              if a.name == fname {
+          for a in el::def(e, d).attributes {
+            if a.name == fname {
+              if dv != null {
                 e.b.data.definitions[d].attributes[a#index].value = [dv!];
+              }
+              if field_value_const(e, mods) {
+                e.b.data.definitions[d].attributes[a#index].value_const = true;
               }
             }
           }
@@ -1288,6 +1291,7 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         // computed is write-once, and the image says so (`Attribute::const_field`) for the
         // passes and backends that read it.  A computed (virtual) field is refused above.
         a.const_field = fixed;
+        a.value_const = field_value_const(e, mods);
         a.fact = alias_fact(e, tn!);
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
         if tp is TyInteger {
@@ -1309,22 +1313,52 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
 }
 
 // A field declaration's one type, when it is nothing but a type and maybe a `= default`.
+// (A `const` item beside the type — `v: const vector<integer>` — is `parse_field`'s
+// `value_const`, read by `field_value_const`; any other item is not carried.)
 fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
-  if len(mods) != 1 {
-    return null;
+  ty: integer? = null;
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldType { tp, caps } => {
+        if ty != null || len(caps) > 0 {
+          return null;
+        }
+        ty = tp;
+      },
+      SFieldMod { kind } => {
+        if kind != "const" {
+          return null;
+        }
+      },
+      _ => {
+        return null;
+      }
+    }
   }
-  match e.p.nodes[mods[0]] {
-    SFieldType { tp, caps } => if len(caps) == 0 { tp } else { null },
-    _ => null
+  ty
+}
+
+fn field_value_const(e: el::El, mods: vector<integer>) -> boolean {
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldMod { kind } => if kind == "const" { return true; },
+      _ => {}
+    }
   }
+  false
 }
 
 // The `= default` of a field declaration, or null.
 fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
-  match e.p.nodes[mods[0] ?? 0] {
-    SFieldType { init } => init,
-    _ => null
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldType { init } => {
+        return init;
+      },
+      _ => {}
+    }
   }
+  null
 }
 
 // `default_replayable_in_place`, read off the syntax for the kinds carried: a vector literal for
