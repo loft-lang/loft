@@ -1552,6 +1552,13 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
             if idx < len(elems) && is_scalar(el_types::base(elems[idx])) {
               return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: elems[idx] });
             }
+            // (Refused, but the tuple's record is made first, past the statement, as Rust boxes
+            // the tuple a link into a heap member needs: `c = &a.0` makes
+            // `__tuple<vector<integer>,integer>`.)
+            // (Not a text member's: Rust links a text member without boxing.)
+            if idx < len(elems) && el_types::base(elems[idx]) is TyVector {
+              _ = el_types::tuple_def(e, [for m in elems { el_types::without_deps(m) }], el::pos_at(e, el_ex_pattern::statement_end(e, if e.at >= 0 { e.at } else { 0 })));
+            }
           },
           _ => {}
         }
@@ -1655,6 +1662,8 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if e.first_pass && el_types::is_unknown(a.tp) {
       return a;
     }
+    // (A tuple's record is made first: `r = &b` of a tuple local makes `__tuple<integer,integer>`.)
+    match el_types::base(a.tp) { TyTuple { elems: re } => { _ = el_types::tuple_def(e, [for m in re { el_types::without_deps(m) }], el::pos_at(e, el_ex_pattern::statement_end(e, if e.at >= 0 { e.at } else { 0 }))); }, _ => {} }
     el::refuse(e, "a `&` reference to something other than a scalar or a vector place: {type_kind(el_types::base(a.tp))}");
     // Refused; a link to a KEYED collection keeps Rust's type (`@FR-B-Ref-Uniform`: `&τ` is a
     // link to the place of any `τ`): unknown, the link's next use read its operand untyped, so
