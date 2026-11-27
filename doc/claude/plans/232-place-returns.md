@@ -173,9 +173,12 @@ Each comes with the recommendation, and with what was measured behind it.
    (`@FR-B-View`, 90 today with `e = s.enemies[0]`) and a COPY for a scalar or a text (`x = v[1]`
    copies today), with `&` for a link in every case.  The alternative, a link for every bind,
    makes one call spelling mean two things depending on how the function was declared.
-3. **A temporary argument (`first(mk())`).**  Recommended: as its place.  `e = &first(mk())` is
-   refused (as `&mk().enemies[0]` is), and the plain bind and the argument answer as
-   `mk().enemies[0]` does: a write into it loses nothing the caller can reach.  No new rule.
+3. **A temporary argument (`first(mk())`).**  **Decided (owner, 2026-11-27): follows the place.**
+   `first(mk())` answers what `mk().enemies[0]` answers: `&first(mk())` is refused (as
+   `&mk().enemies[0]` is), a plain bind takes its own value, and passing it on writes into the
+   temporary, which loses nothing the caller reaches.  The use case is READING through accessors
+   on call results (`first(load_level(3)).hp`, `top(rank(enemies_of(world)))`): those compile
+   with `-> T` today and must keep compiling when an accessor becomes `-> &T`.  No new rule.
 4. **Branches.**  **Decided (owner, 2026-11-27): accepted as long as every place the body can
    return lives in the SAME lifetime; refused only when they do not.**  Branches, match arms and
    early returns into one parameter (`if c { s.enemies[0] } else { s.boss }`) are accepted.  The
