@@ -2135,7 +2135,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
   first = if len(types) > 0 { types[0] } else { ir::TyUnknown { n: 0 } };
   // `next(g)` advances a generator's handle (`OpCoroutineNext`, typed as its element) and
   // `exhausted(g)` asks whether it is done; a tuple element's advance is not carried.
-  if source < 0 && name == "reserve" {
+  if source < 0 && name == "reserve" && !own_reserve(e, first) {
     return reserve_call(e, list, types);
   }
   if source < 0 && name == "reverse" && len(list) == 1 {
@@ -2548,6 +2548,17 @@ pub fn reverse_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>)
   }
   refuse_known(e, coll, "a `reverse` of this collection: {type_kind(coll)}");
   ex(ir::NdNull, ir::TyVoid)
+}
+
+// A receiver whose own type declares `reserve` (`fn reserve(self: Pool, n: integer)`) calls that
+// method, as `find_fn` resolves it; only the collections take `parse_reserve`.
+pub fn own_reserve(e: el::El, t: ir::TypeT) -> boolean {
+  rt = el_types::base(match t { TyRefVar { inner } => inner, _ => t });
+  match rt {
+    TyReference { n } => el_ex_call::type_method(e, n, "reserve") >= 0,
+    TyEnum { n, is_ref } => is_ref && el_ex_call::type_method(e, n, "reserve") >= 0,
+    _ => false
+  }
 }
 
 pub fn reserve_call(e: el::El, list: vector<ir::Node>, types: vector<ir::TypeT>) -> Ex {
@@ -3244,7 +3255,7 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   if name == "remove" && len(list) == 2 && match x.tp { TyRefVar { inner: ri } => el_types::base(ri) is TyVector && !(ri is TyOptional), _ => false } {
     return vector_remove(e, at, ex(x.code, match x.tp { TyRefVar { inner: ri2 } => ri2, _ => x.tp }), ex(list[1], types[1]));
   }
-  if name == "reserve" {
+  if name == "reserve" && !own_reserve(e, types[0] ?? ir::TyVoid) {
     return reserve_call(e, list, types);
   }
   if name == "reverse" && len(list) == 1 {
