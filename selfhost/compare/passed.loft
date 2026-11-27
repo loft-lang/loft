@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `passed <scoped image> <std image>` — the loft IR passes' side of the passes gate: a program's
+// image right AFTER the scope pass (`LOFT_EMIT_SCOPED`), run through `ir_passes::close_program`,
+// and its program definitions reported as `defs <image> program <std image>` reports the Rust
+// image after `close_program` (`--emit-image`).  A function a pass refuses is named on an
+// `unscoped:` row.
+use load;
+use report;
+use el;
+use ir_passes;
+
+fn main() {
+  a = arguments();
+  b = load::load(a[0] ?? "");
+  std = load::load(a[1] ?? "");
+  if b == null || std == null {
+    eprintln("usage: passed <scoped image> <std image>");
+    exit(2);
+  }
+  for r in ir_passes::close_program(b!) {
+    println("unscoped: {r}");
+  }
+  print(report::defs_report(b!, el::std_count(std!)));
+}

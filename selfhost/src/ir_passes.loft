@@ -1,0 +1,20 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the IR passes `compile::close_program` runs after the scope pass, transcribed one by
+// one (doc/claude/plans/91-self-host/scope-pass-port.md step 4).  Each pass runs over the whole
+// program in Rust's order; a pass not transcribed yet runs as no pass, and the passes gate
+// (`selfhost/bench/passes_survey.py`) shows each definition it would have changed as a
+// difference.
+use ir;
+
+// `close_program`'s passes over `b`, in order.  Answers the functions a pass refuses by name.
+pub fn close_program(_b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  // Transcribed passes are called here, in `close_program`'s order: sync_capture_ownership,
+  // ledger_sites, arg_copy, value_record, leaf_inline, tail_self, zero_count, exp_pow,
+  // ctor_literal, forward_walk, same_read, self_replace, in_range, single_use, discharge_into,
+  // fill_loop, keyed_entry, elem_first, text_len, loop_buffer, complete_write, loop_record,
+  // lift_reuse.
+  refused
+}
