@@ -762,7 +762,7 @@ pub fn lambda_call_chain(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: int
 
 // A lambda's literal (or comprehension) tail copied into its buffer `rb`, the body clearing it
 // first and answering it; the result borrows the buffer.  Any other tail is left as it is.
-pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
+pub fn lambda_vector_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   bl = match code { NdBlock { block } => block[0], _ => return code };
   if len(bl.operators) == 0 {
     return code;
@@ -801,6 +801,19 @@ pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::Ty
     // too — which this port left as it stood: a silent differ.)
     ltail = el_ir::unspan(bl.operators[-1]);
     lmatch = match ltail { NdBlock { block: lmb } => lmb[0].name == "scalar_match" || lmb[0].name == "match" || lmb[0].name == "vector_match", _ => false };
+    // (A branch or a match tail is delivered arm by arm into the late buffer, as a function's is
+    // — `arm_delivery` — where that road takes it; otherwise refused by name.)
+    if (ltail is NdIf || lmatch) && (env_variable("LOFT_ELAB_REFUSE_LAMBDA_ARMS") ?? "") == "" {
+      lba = attr_nr(el::def(e, e.context), "__retbuf");
+      lad = if lba >= 0 { arm_delivery(e, vars, code, rb, result, lba) } else { null };
+      if lad != null {
+        lret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
+        if !el_types::deps(lret).contains(lba) {
+          e.b.data.definitions[e.context].returned = [el_types::with_deps(lret, el_types::deps(lret) + [lba])];
+        }
+        return lad!;
+      }
+    }
     if ltail is NdIf || ltail is NdVar || lmatch {
       el::refuse(e, "a lambda returning a vector from a branch or a variable");
     }
