@@ -1,0 +1,3 @@
+// @PLN231 R5 probe — map over a text, with a typed fn
+// Expect on both backends: refused: map: first argument must be a vector
+fn main() { s = "abc"; println("{map(s, fn(c: character) -> character { c })}"); }

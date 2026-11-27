@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — map over a generator, with a lambda
+// Expect on both backends: refused: Cannot infer type for lambda parameter 'x' (the refusal below it is hidden)
+fn nums(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }
+fn main() { println("{map(nums(4), |x| { x * 2 })}"); }

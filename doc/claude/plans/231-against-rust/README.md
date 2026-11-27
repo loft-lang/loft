@@ -46,7 +46,7 @@ revisit trigger).
 | R2 | No moves, no consuming `self` | through R10: copies are what accessors lose writes to | by design | @C86 | 03 |
 | R3 | No dynamic dispatch on interfaces, no default methods | no consumer evidence | partial | INTERFACES.md § What is out of scope | 05, 06, 09 |
 | R4 | No metaprogramming | no consumer evidence | real; no decision recorded | none written down | 17 |
-| R5 | No lazy iterator chain | no consumer evidence | not one in the language; a library gap | the stdlib's `map`/`filter` are on `vector` | 10, 11, 12 |
+| R5 | `map`/`filter`/`reduce` take only a vector | no consumer evidence; kept for habit users (owner) | a deviation from `(I-Map)`/`(I-Filter)`/`(I-Reduce)` | their own parsing in `src/parser/` | 31–41 |
 | R6 | Closures: not in a collection; `par` takes no reference | loft-found only (loft#1358, #2492) | partial | @C116, @C74, @C115; `par` isolation | 07, 08, 09, 14, 15 |
 | R7 | Slower than `rustc -O` | yes — every consumer's speed; @C136 owns it | real, and a defect past 3× | @C136; the keyed and alloc-temp classes | perf portal |
 | R8 | No Rust ecosystem, a small own one | not measured | by design | @C170, @C78 (@PLN225) | — |
@@ -169,14 +169,38 @@ revisit trigger).
   defaults folded at compile time); a hygienic macro system, which is H and would add a second
   language to learn.
 
-### R5 — lazy chains
+### R5 — `map`, `filter` and `reduce` take only a vector
 
-- **Cause.** `map`, `filter` and `reduce` in `default/01_code.loft` take and return `vector`.
-- **Is it one?**  Not in the language.  A generic generator adapter is four lines and lazy on
-  both backends: probe 10 stops after three of a million elements, probe 11 is the generic form.
-- **What we could do.** Add lazy adapters over `iterator<T>` to the stdlib (`map`, `filter`,
-  `take`, `zip`), and measure them against the `vector` forms on both backends.  S.  Then
-  `VS_RUST.md` row 5 moves to "a library gap" or goes away.
+- **Does it bite?**  No consumer has hit it: nothing outside loft's own tests and docs calls
+  them (the `graphics` hits are an unrelated `Texture.filter`).  The owner's reason to keep and
+  fix them rather than remove them: a newcomer reaches for them out of habit, and that first
+  use should work.
+- **Cause.**  The formal rules define all three as a rewrite over ANY source a `for` takes —
+  `(I-Map)` `src.map(f) ≡ [ for x in src { f(x) } ]`, `(I-Filter)`, `(I-Reduce)` in
+  `formal/iteration.md`.  The compiler parses them on their own (`parse_map`, `parse_filter`,
+  `parse_reduce`, `reduce_is_special` in `src/parser/`, about 730 lines) and refuses every
+  source but a vector.  That refusal is a deviation the rules do not record.
+- **Measured** (probes 31–41, both backends):
+
+  | Source | The comprehension | `map` / `filter` / `reduce` |
+  |---|---|---|
+  | vector | works | works, method form and fn-refs included |
+  | hash, sorted | works (probes 38, 40) | refused: *"first argument must be a vector"* (33, 35) |
+  | text | works (39) | refused (34) |
+  | generator | works (37) | refused (32) |
+  | range | works inside `for` | a range is not a value at all (41) — a separate limit |
+
+  With a lambda the real refusal is hidden behind *"Cannot infer type for lambda parameter"*
+  (31, 36): the user is first told to type the lambda, then refused once they have.
+- **Can we lift it?  Feasible.**  The target is the right-hand side of each rule, and that
+  already works for every source on both backends.  The lift is to parse the three calls (and
+  their method forms) as exactly that rewrite; the element type then types the lambda as it does
+  in a comprehension, and the special parsing shrinks to the rewrite.  Laziness is not part of
+  it: the rules give a vector result, which is also what a Rust user's `.collect()` gives.
+  Fusing `map(filter(…))` into one loop is not part of it either: the rules finish `filter`
+  before `map` starts, and an impure lambda would see the difference.
+- **Verdict.**  Liftable, and the rules already say how.  What leaves the plan is a deviation
+  entry under `formal/iteration.md` and an issue carrying the table above.
 
 ### R6 — closure limits
 

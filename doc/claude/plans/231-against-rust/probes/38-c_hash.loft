@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — the comprehension over a hash
+// Expect on both backends: 30
+struct E { k: text, v: integer }
+fn main() { h: hash<E[k]> = [E { k: "a", v: 1 }, E { k: "b", v: 2 }]; t = 0; for y in [for e in h { e.v * 10 }] { t += y; } println("{t}"); }

@@ -1,0 +1,3 @@
+// @PLN231 R5 probe — the comprehension over a text
+// Expect on both backends: ['a','b','c']
+fn main() { s = "abc"; println("{[for c in s { c }]}"); }
