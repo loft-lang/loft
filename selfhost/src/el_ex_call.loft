@@ -3328,6 +3328,10 @@ pub fn statement_proofs(e: el::El, vars: el_vars::Vars, code: ir::Node) {
         if !p.then {
           push_nonzero(vars, p.v);
         }
+        sp = math_sign_proof(e, cond);
+        if !sp.then {
+          push_sign(vars, sp);
+        }
         push_bounds(vars, guard_pairs_negated(e, cond));
       }
     },
@@ -3355,6 +3359,10 @@ fn assert_proofs(e: el::El, vars: el_vars::Vars, test: ir::Node) {
   p = divisor_proof(e, test);
   if p.then {
     push_nonzero(vars, p.v);
+  }
+  sp = math_sign_proof(e, test);
+  if sp.then {
+    push_sign(vars, sp);
   }
   push_bounds(vars, guard_pairs(e, test));
   pp = presence_proof(e, vars, test);
@@ -3583,6 +3591,51 @@ pub fn push_present(vars: el_vars::Vars, v: integer) {
   }
 }
 
+// `Parser::math_sign_proof_from_condition`: `0 < x` / `0 <= x` proves `x` positive / non-negative
+// where it holds; `x < 0` / `x <= 0` proves non-negative / positive where it fails.
+pub struct SignProof { pub v: integer, pub sign: integer, pub then: boolean }
+
+pub fn math_sign_proof(e: el::El, test: ir::Node) -> SignProof {
+  none = SignProof { v: -1, sign: 0, then: false };
+  match el_ir::unspan(test) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      strict = starts_with(nm, "OpLt");
+      if !(strict || starts_with(nm, "OpLe")) || len(args) != 2 {
+        return none;
+      }
+      a0 = el_ir::unspan(args[0]);
+      a1 = el_ir::unspan(args[1] ?? ir::NdNull);
+      match a1 {
+        NdVar { n } => { if sign_zero(a0) { return SignProof { v: n, sign: if strict { el_ex_base::SIGN_POS } else { el_ex_base::SIGN_NONNEG }, then: true }; } },
+        _ => {}
+      }
+      match a0 {
+        NdVar { n } => { if sign_zero(a1) { return SignProof { v: n, sign: if strict { el_ex_base::SIGN_NONNEG } else { el_ex_base::SIGN_POS }, then: false }; } },
+        _ => {}
+      }
+      none
+    },
+    _ => none
+  }
+}
+
+// (The math proof's zero: an integer, a float or a single `0`.)
+fn sign_zero(n: ir::Node) -> boolean {
+  match n {
+    NdFloat { f } => f == 0.0,
+    NdSingle { f } => f == 0.0f,
+    _ => is_zero(n)
+  }
+}
+
+pub fn push_sign(vars: el_vars::Vars, p: SignProof) {
+  if p.v >= 0 && !vars.sign_vars.contains(p.v) {
+    vars.sign_vars += [p.v];
+    vars.sign_vals += [p.sign];
+  }
+}
+
 pub fn push_nonzero(vars: el_vars::Vars, v: integer) {
   if v >= 0 && !vars.nonzero.contains(v) {
     vars.nonzero += [v];
@@ -3590,7 +3643,7 @@ pub fn push_nonzero(vars: el_vars::Vars, v: integer) {
 }
 
 pub fn fact_mark(vars: el_vars::Vars) -> FactMark {
-  FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven), bounded: len(vars.bounded) }
+  FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven), bounded: len(vars.bounded), signs: len(vars.sign_vars) }
 }
 
 // `Parser::assume_condition` (`@FR-N-Guard`): what `test` proves on its `side` (true: where it
@@ -3601,6 +3654,10 @@ pub fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: bo
   dv = divisor_proof(e, test);
   if dv.then == side {
     push_nonzero(vars, dv.v);
+  }
+  sgp = math_sign_proof(e, test);
+  if sgp.then == side {
+    push_sign(vars, sgp);
   }
   pp = presence_proof(e, vars, test);
   if pp.then == side {
