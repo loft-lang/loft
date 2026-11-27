@@ -45,6 +45,45 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
+- **2026-11-27 state:** loft30-gate 12d1c0290 (1666/2277, 0 differ).  `tuxedo-pln204-next` now
+  MERGES loft30-gate (a force-push after a rebase was refused by the session's classifier); a
+  try is its `selfhost/` diff from loft30-gate, or the listed commits.  Gating: 0d3a4a6e8 +
+  9f2334531 (a type constructed or named above its declaration: Rust's construction and
+  bare-name stubs, adopted by a struct or a variant, across files too).
+- **Rust deviation, reported (T-Record):** a comprehension whose tuple body computes a text
+  member (`[for i in 0..3 { (i, "x{i}") }]`) types the element `(integer, text["__work_1"])` and
+  the `__tuple<integer,text>` record's FIELD `_1: text["#4"]`, a frame work text's borrow inside
+  a record field.  `formal/tuples.md` (T-Record): a text member is the tuple's own text, as a
+  field's.  The port keeps the shape refused (el_ex_loop `made_tup`); re-probe `tc2` once Rust
+  is fixed.
+- **A lambda whose TAIL is a call through a captured fn value that borrows its parameter**
+  (1323's `fwd = fn(q) { inner(q) }`, probe `fr3`): Rust's tail result borrows `q` and its
+  `__retbuf`/result take attribute 0 (`borrowed_view: 1`); the port's `fnref_result_type`
+  mapping gives nothing for a parameter argument.  The same call NOT at the tail agrees (`fr5`).
+  `call_ref` keeps such a call refused (`crt_borrows`); start from Rust's ref_return over a
+  CallRef tail.
+- **Score a try per DEFINITION** (the tester's gate), not per program: a change that registers
+  or reorders definitions shifts numbers in refused programs too.  `defcmp.sh BASE NEW FILE`
+  (c035ae98 scratchpad) counts the differing `#N` headers, `defbody.py BASE NEW FILE…` the
+  definitions whose BODY equals Rust's on BASE but not on NEW.  `score.sh BASE NEW LIST` runs
+  both and prints `CLEAN` only where no verdict worsens (refused → differ included), no program
+  gains differing headers and no body is lost — proven on 1990's `n_j20` (a body, 2026-11-27)
+  and H-Free/a-discharged-call-answer's refused → differ (a verdict).  Build the base from a detached worktree of
+  loft30-gate.  A struct-enum twin of a shape that agrees for a record is a good place to look
+  for a SILENT differ (four found on 2026-11-27: `τ?` match and `if` joins, a returned join, a
+  held view-call subject).  Open: Rust's stub for a qualified `Color::Green` written above
+  `enum Color` (371-p375).
+- **Rust's tail prune is not ported** (`stale_visible`, control.rs ~14450, loft#1888/#2179): at
+  the tail a VISIBLE parameter that neither the tail nor a body `return` reads is dropped from
+  the result — one merged mid-return parameter beside a store the function made leaves the
+  buffer alone; two or more stay.  Rust's pass-1 `return p` is already the buffer copy, so it
+  reads the buffer, not `p`.  The port's `rename_onto` joins instead: with
+  `if c { return p; } v = [8]; v` (dense or `?`) the pass-1 rows keep `p` (2 rows).  Port the
+  prune at the tail, and make the pass-1 parameter `return` the copy.
+- A lambda that rebinds a captured vector or keyed local (`f = fn() { v = [5]; }`): refused
+  ("a binding the first pass did not see" / "written by it, of this type TyHash").  Rust clears
+  the closure field (`OpClearVector(OpGetDbRef(__closure, 0))`) and builds into it.
+
 - **A guarded projection narrows on PASS 2 only** (measured, 2026-11-26): Rust's
   `narrowed_non_null_exprs` (`b.mid != null`'s then, `h.r == null`'s else) types a block tail
   `τ`, while an inferred local keeps the `τ?` its first-pass read gave it (`z = b.mid.n` →
