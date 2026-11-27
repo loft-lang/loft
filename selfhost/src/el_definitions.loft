@@ -1324,6 +1324,25 @@ fn hoists_default(e: el::El, init: integer, t: ir::TypeT) -> boolean {
   if e.p.nodes[init] is SVecLit && t is TyVector {
     return true;
   }
+  // (A `??` holds its subject in a temporary, which no construction site can replay: Rust
+  // hoists it — `e: u8 = (early(12) as u8?) ?? 0`.)
+  if has_coalesce(e, init) {
+    return true;
+  }
+  // (`takes_checked_narrow`: a nullable narrow integer field — `u8?`, `i32?` — takes its default
+  // through the checked narrowing, which only a function of its own carries; any value but
+  // `null`, a literal included.  An `integer?` field narrows nothing.)
+  match t {
+    TyOptional { inner: ni } => match el_types::base(ni) {
+      TyInteger { spec: nsp } => {
+        if (el_types::narrow_width(nsp) > 0 || nsp.forced_size != 0 || el_types::elem_name(e, el_types::base(ni)) != "integer") && !(e.p.nodes[init] is SNull) {
+          return true;
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
   if t is TyText {
     return match e.p.nodes[init] { SString { parts } => len([for p in parts if e.p.nodes[p] is SHole { 1 }]) > 0, _ => false };
   }
@@ -1345,6 +1364,19 @@ fn names_any(e: el::El, n: integer, names: vector<text>) -> boolean {
   }
   for c in el_length::children(e, n) {
     if names_any(e, c, names) {
+      return true;
+    }
+  }
+  false
+}
+
+fn has_coalesce(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SBin { op: cop } => { if cop == "??" { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if has_coalesce(e, c) {
       return true;
     }
   }
