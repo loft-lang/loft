@@ -9,6 +9,7 @@ use load;
 use report;
 use el;
 use scope;
+use scope_check;
 
 fn main() {
   a = arguments();
@@ -18,7 +19,10 @@ fn main() {
     eprintln("usage: scoped <parsed image> <std image>");
     exit(2);
   }
-  for r in scope::scope_bundle(b!) {
+  // `LOFT_SCOPE_PORT=1`: the transcribed pass (`scope_check`, scope-pass-port.md) instead of
+  // the re-derived slice (`scope`).
+  port = (env_variable("LOFT_SCOPE_PORT") ?? "0") != "0";
+  for r in if port { scope_check::check(b!) } else { scope::scope_bundle(b!) } {
     println("unscoped: {r}");
   }
   print(report::defs_report(b!, el::std_count(std!)));

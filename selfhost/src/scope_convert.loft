@@ -1,0 +1,504 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/convert.rs` transcribed: the releases and re-mints around each statement
+// of a block, then the block's own exit (`free_vars`).  The statement rewrites of the passes not
+// transcribed (`drops`, `closure_keep`, the tuple hand-offs) refuse the function where their
+// Rust gate could fire; see scope_scan.loft for the refusal rule.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_branches;
+use scope_free_vars;
+
+// port: convert.rs fn convert
+pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function, is_return: boolean) -> vector<ir::Node> {
+  ls: vector<ir::Node> = [];
+  at_end: vector<ir::Node> = [];
+  // `closure_keep.gated`: the phase refuses a function with a closure record, so the holders'
+  // null-inits are never owed here.
+  ops = bl.operators;
+  void_block = (bl.result[0] ?? ir::TyVoid) is TyVoid;
+  for v in ops {
+    i = v#index;
+    if scope_fn::unspan(v) is NdLine {
+      ls += at_end;
+      at_end = [];
+    }
+    // loft#1156 — a local a loop or a statement block first assigns that something after reads.
+    hoist: vector<integer> = [];
+    locals_read_after(s, v, ops[i + 1..], f, hoist);
+    for h in hoist {
+      scope_scan::register_binding(s, h, f);
+      if scope_fn::is_record(scope_fn::tp(f, h)) {
+        scope_scan::refuse(s, "convert::locals_read_after: a record hoisted out of a loop (owned_refs)");
+      }
+      if scope_fn::tp(f, h) is TyText {
+        ls += [scope_fn::v_set(h, ir::NdText { s: "" })];
+      } else {
+        ls += [scope_fn::v_set(h, ir::NdNull)];
+      }
+    }
+    statement_rewrites(s, b, v, f);
+    sv = scope_scan::scan(s, b, v, f);
+    // The hand-offs a statement arms after it is scanned (`drop_handoff_node`, the tuple member
+    // moves) are facts about drop-bearing records and tuples, refused where they are bound.
+    match sv {
+      NdInsert { items } => { ls += items; },
+      _ => { ls += [sv]; }
+    }
+    // loft#1331 — detach an accumulator this statement repointed.
+    if (void_block || i + 1 < len(ops)) {
+      acc = repointed_literal_accumulator(v, f);
+      if acc >= 0 {
+        ls += [scope_fn::v_set(acc, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+      }
+    }
+  }
+  if len(at_end) > 0 {
+    if void_block || len(ls) == 0 {
+      ls += at_end;
+    } else {
+      tail = ls[len(ls) - 1]!;
+      ls = ls[0..len(ls) - 1];
+      ls += at_end;
+      ls += [tail];
+    }
+  }
+  expr = ir::NdNull;
+  if len(ls) > 0 && !void_block {
+    expr = ls[len(ls) - 1]!;
+    ls = ls[0..len(ls) - 1];
+  }
+  // @PLN85 skip_free-orphan (case a) — free each `__ncc_N` text temp a non-tail statement
+  // consumes in place, right after it.
+  with_frees: vector<ir::Node> = [];
+  for stmt in ls {
+    inner = match stmt { NdSpan { inner: x } => x, _ => stmt };
+    match inner {
+      NdParallel { arms } => {
+        par = ir::NdParallel { arms: free_arm_texts(s, arms, f) };
+        with_frees += [respan(stmt, par)];
+        continue;
+      },
+      NdIf { cond, t, f: e } => {
+        cond_frees = ncc_text_frees(s, cond, f);
+        if len(cond_frees) > 0 {
+          s.ret_temp_counter += 1;
+          tmp = scope_fn::add_temp_var(f, "__cond_{s.ret_temp_counter}", ir::TyBoolean);
+          scope_scan::set_scope_of(s, tmp, s.scope);
+          s.var_order += [tmp];
+          with_frees += ncc_text_preinits(cond, f);
+          with_frees += [scope_fn::v_set(tmp, cond)];
+          with_frees += cond_frees;
+          branch = ir::NdIf { cond: ir::NdVar { n: tmp }, t: t, f: e };
+          with_frees += [respan(stmt, branch)];
+          continue;
+        }
+      },
+      _ => {}
+    }
+    st = respan(stmt, inner);
+    frees = ncc_text_frees(s, st, f);
+    with_frees += ncc_text_preinits(st, f);
+    with_frees += [st];
+    with_frees += frees;
+  }
+  ls = with_frees;
+  // A scalar tail that consumes an `__ncc_N` text hoists its value first.
+  result = bl.result[0] ?? ir::TyVoid;
+  scalar_result = match result {
+    TyInteger => true,
+    TyFloat => true,
+    TySingle => true,
+    TyBoolean => true,
+    TyCharacter => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  };
+  if !(expr is NdNull) && scalar_result {
+    ncc_frees = ncc_text_frees(s, expr, f);
+    if len(ncc_frees) > 0 {
+      was_return = false;
+      inner = expr;
+      match scope_fn::unspan(expr) {
+        NdReturn { inner: x } => {
+          inner = x;
+          was_return = true;
+        },
+        _ => {}
+      }
+      s.ret_temp_counter += 1;
+      tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", result);
+      scope_scan::set_scope_of(s, tmp, s.scope);
+      s.var_order += [tmp];
+      ls += ncc_text_preinits(inner, f);
+      ls += [scope_fn::v_set(tmp, inner)];
+      ls += ncc_frees;
+      expr = if was_return { ir::NdReturn { inner: ir::NdVar { n: tmp } } } else { ir::NdVar { n: tmp } };
+    }
+  }
+  for v in scope_scan::variables(s, s.scope) {
+    if v >= 0 && v < len(s.var_mapping) {
+      s.var_mapping[v] = -1;
+    }
+  }
+  ls += scope_free_vars::free_vars(s, b, is_return, expr, f, result, s.scope);
+  // `closure_keep_pass_end`: no closure record reaches here (the phase refuses them).
+  ls
+}
+
+// `stmt`'s outer span around `n`, where `stmt` had one.
+fn respan(stmt: ir::Node, n: ir::Node) -> ir::Node {
+  match stmt { NdSpan { pos } => ir::NdSpan { pos: pos, inner: n }, _ => n }
+}
+
+// The statement rewrites `convert` asks before it scans a statement, each refusing where its
+// Rust gate could fire: `in_place_rebuild`, `vector_rebind_release`, `vector_call_rebind`,
+// `closure_keep_rebind`, `fnref_call_rebind`, `promoted_vector_refill`.
+fn statement_rewrites(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::Function) {
+  st = scope_fn::unspan(v);
+  match st {
+    NdIf { t, f: rebuilt } => if scope_fn::unspan(t) is NdNull { st = scope_fn::unspan(rebuilt); },
+    _ => {}
+  }
+  match st {
+    NdCall { def_nr, args } => {
+      if def_nr == s.ops.database {
+        match scope_fn::unspan(args[0] ?? ir::NdNull) {
+          NdVar { n: ov } => if scope_scan::in_scope(s, scope_scan::mapped(s, ov)) {
+            scope_scan::refuse(s, "drops::in_place_rebuild: a record rebuilt in place");
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  match scope_fn::unspan(v) {
+    NdSet { var: ov } => {
+      t = scope_fn::base(scope_fn::tp(f, scope_scan::mapped(s, ov)));
+      if t is TyVector {
+        scope_scan::refuse(s, "drops::vector_rebind_release: a vector local bound");
+      }
+      if t is TyFunction {
+        scope_scan::refuse(s, "closure_keep::fnref_call_rebind: a fn-ref local bound");
+      }
+    },
+    NdCall { def_nr, args } => {
+      match scope_fn::unspan(args[0] ?? ir::NdNull) {
+        NdVar { n: x } => if scope_fn::is_argument(f, x) && scope_fn::base(scope_fn::tp(f, x)) is TyVector && def_nr == scope_fn::def_nr(b, "OpClearVector") {
+          scope_scan::refuse(s, "drops::promoted_vector_refill: a vector argument cleared");
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: convert.rs fn locals_read_after
+fn locals_read_after(s: scope_scan::Scopes, op: ir::Node, rest: vector<ir::Node>, f: ir::Function, out: vector<integer>) {
+  if len(rest) == 0 {
+    return;
+  }
+  assigned: vector<integer> = [];
+  if contains_loop(op) {
+    collect_loop_body_sets(s, op, assigned);
+  }
+  match scope_fn::unspan(op) {
+    NdBlock { block } => {
+      for inner in block[0].operators {
+        collect_sets_in(s, inner, assigned);
+      }
+    },
+    _ => {}
+  }
+  for v in assigned {
+    if scope_scan::in_scope(s, v) || scope_fn::has(out, v) || !scope_branches::needs_pre_init(scope_fn::tp(f, v)) {
+      continue;
+    }
+    // `function.was_loop_var(v)` is not in the image: a loop's own variable is a scalar or a
+    // collection's element, and an element that needs a pre-init is refused below.
+    all_ready = true;
+    for d in scope_fn::deps(f, v) {
+      if !scope_scan::in_scope(s, d) {
+        all_ready = false;
+      }
+    }
+    if !all_ready {
+      continue;
+    }
+    if first_use_in_seq(rest, v) == 1 {
+      if !(scope_fn::tp(f, v) is TyText) {
+        scope_scan::refuse(s, "convert::locals_read_after: a store local read after its loop (variables::was_loop_var, not in the image)");
+      }
+      out += [v];
+    }
+  }
+}
+
+fn contains_loop(n: ir::Node) -> boolean {
+  if scope_fn::unspan(n) is NdLoop {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if contains_loop(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn collect_loop_body_sets(s: scope_scan::Scopes, n: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdLoop { block } => {
+      for op in block[0].operators {
+        collect_sets_in(s, op, out);
+      }
+      return;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_loop_body_sets(s, c, out);
+  }
+}
+
+fn collect_sets_in(s: scope_scan::Scopes, n: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var } => {
+      r = scope_scan::mapped(s, var);
+      if !scope_fn::has(out, r) {
+        out += [r];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_sets_in(s, c, out);
+  }
+}
+
+// port: convert.rs fn first_use_of — 1 a read, 2 a write, 0 none.
+fn first_use_of(n: ir::Node, v: integer) -> integer {
+  match scope_fn::unspan(n) {
+    NdSet { var: t, inner } => {
+      r = first_use_of(inner, v);
+      if r != 0 {
+        return r;
+      }
+      if t == v { 2 } else { 0 }
+    },
+    NdVar { n: x } => if x == v { 1 } else { 0 },
+    NdBlock { block } => first_use_in_seq(block[0].operators, v),
+    NdInsert { items } => first_use_in_seq(items, v),
+    NdLoop { block } => if first_use_in_seq(block[0].operators, v) == 1 { 1 } else { 0 },
+    NdIf { cond, t, f } => {
+      r = first_use_of(cond, v);
+      if r != 0 {
+        return r;
+      }
+      a = first_use_of(t, v);
+      c = first_use_of(f, v);
+      if a == 1 || c == 1 {
+        1
+      } else if a == 2 && c == 2 {
+        2
+      } else {
+        0
+      }
+    },
+    NdTupleGet { var: x } => if x == v { 1 } else { 0 },
+    NdTuplePut { var: x, inner } => {
+      r = first_use_of(inner, v);
+      if r != 0 {
+        return r;
+      }
+      if x == v { 1 } else { 0 }
+    },
+    NdFnRefDnr { n: x } => if x == v { 1 } else { 0 },
+    NdFnRef { var: x } => if x == v { 1 } else { 0 },
+    _ => {
+      for c in scope_fn::children(scope_fn::unspan(n)) {
+        r = first_use_of(c, v);
+        if r != 0 {
+          return r;
+        }
+      }
+      0
+    }
+  }
+}
+
+fn first_use_in_seq(ops: vector<ir::Node>, v: integer) -> integer {
+  for op in ops {
+    r = first_use_of(op, v);
+    if r != 0 {
+      return r;
+    }
+  }
+  0
+}
+
+// port: convert.rs fn repointed_literal_accumulator
+fn repointed_literal_accumulator(n: ir::Node, f: ir::Function) -> integer {
+  match scope_fn::unspan(n) {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      k = len(ops);
+      if k > 0 {
+        match scope_fn::unspan(ops[k - 1]!) {
+          NdVar { n: acc } => {
+            nm = scope_fn::name(f, acc);
+            if nm.starts_with("__vdb") || nm.starts_with("__kvb") {
+              for op in ops {
+                match scope_fn::unspan(op) {
+                  NdSet { var: t, inner } => if t == acc && !(scope_fn::unspan(inner) is NdNull) {
+                    return acc;
+                  },
+                  _ => {}
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    r = repointed_literal_accumulator(c, f);
+    if r >= 0 {
+      return r;
+    }
+  }
+  -1
+}
+
+// port: variables/mod.rs fn is_staged_text_temp
+fn is_staged_text_temp(f: ir::Function, v: integer) -> boolean {
+  if !scope_fn::is_skip_free(f, v) || !scope_fn::is_text(scope_fn::tp(f, v)) {
+    return false;
+  }
+  n = scope_fn::name(f, v);
+  n.starts_with("__ncc_") || n.starts_with("__ret_")
+}
+
+// port: convert.rs fn ncc_text_frees
+fn ncc_text_frees(s: scope_scan::Scopes, n: ir::Node, f: ir::Function) -> vector<ir::Node> {
+  vs: vector<integer> = [];
+  arms: vector<boolean> = [];
+  collect_consumed_ncc_text(n, f, false, vs, arms);
+  [for v in vs { ir::NdCall { def_nr: s.ops.free_text, args: [ir::NdVar { n: v }] } }]
+}
+
+// port: convert.rs fn ncc_text_preinits
+fn ncc_text_preinits(n: ir::Node, f: ir::Function) -> vector<ir::Node> {
+  vs: vector<integer> = [];
+  arms: vector<boolean> = [];
+  collect_consumed_ncc_text(n, f, false, vs, arms);
+  out: vector<ir::Node> = [];
+  for v in vs {
+    if arms[v#index] ?? false {
+      out += [scope_fn::v_set(v, ir::NdText { s: "" })];
+    }
+  }
+  out
+}
+
+// port: convert.rs fn collect_consumed_ncc_text
+fn collect_consumed_ncc_text(n: ir::Node, f: ir::Function, under_arm: boolean, vs: vector<integer>, arms: vector<boolean>) {
+  match n {
+    NdSpan { inner } => collect_consumed_ncc_text(inner, f, under_arm, vs, arms),
+    NdIf { cond, t, f: e } => {
+      collect_consumed_ncc_text(cond, f, under_arm, vs, arms);
+      collect_consumed_ncc_text(t, f, true, vs, arms);
+      collect_consumed_ncc_text(e, f, true, vs, arms);
+    },
+    NdBlock { block } => {
+      if block[0].name == "ncc" {
+        for op in block[0].operators {
+          match scope_fn::unspan(op) {
+            NdSet { var, inner } => {
+              iv = scope_fn::unspan(inner);
+              if is_staged_text_temp(f, var) && scope_fn::name(f, var).starts_with("__ncc_") && !(iv is NdText) && !(iv is NdNull) {
+                vs += [var];
+                arms += [under_arm];
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    },
+    NdLoop => {},
+    _ => {
+      for c in scope_fn::children(n) {
+        collect_consumed_ncc_text(c, f, under_arm, vs, arms);
+      }
+    }
+  }
+}
+
+// port: convert.rs fn free_arm_texts
+fn free_arm_texts(s: scope_scan::Scopes, arms: vector<ir::Node>, f: ir::Function) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for a in arms {
+    arm = nested_arm_texts(s, a, f);
+    work: vector<integer> = [];
+    arm_work(arm, f, work);
+    if len(work) == 0 {
+      out += [arm];
+      continue;
+    }
+    ops: vector<ir::Node> = [arm];
+    for w in work {
+      ops += [ir::NdCall { def_nr: s.ops.free_text, args: [ir::NdVar { n: w }] }];
+    }
+    out += [ir::NdInsert { items: ops }];
+  }
+  out
+}
+
+fn nested_arm_texts(s: scope_scan::Scopes, n: ir::Node, f: ir::Function) -> ir::Node {
+  match n {
+    NdParallel { arms } => ir::NdParallel { arms: free_arm_texts(s, arms, f) },
+    _ => {
+      if contains_parallel(n) {
+        scope_scan::refuse(s, "convert::free_arm_texts: a parallel block nested in an arm");
+      }
+      n
+    }
+  }
+}
+
+fn contains_parallel(n: ir::Node) -> boolean {
+  if n is NdParallel {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if contains_parallel(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// `arm.walk`: every text a `Set` writes and every `__work_` text read, in walk order.
+fn arm_work(n: ir::Node, f: ir::Function, work: vector<integer>) {
+  w = -1;
+  match n {
+    NdVar { n: x } => if scope_fn::name(f, x).starts_with("__work_") { w = x; },
+    NdSet { var } => { w = var; },
+    _ => {}
+  }
+  if w >= 0 && scope_fn::is_text(scope_fn::tp(f, w)) && !scope_fn::is_argument(f, w) && !scope_fn::has(work, w) {
+    work += [w];
+  }
+  for c in scope_fn::children(n) {
+    arm_work(c, f, work);
+  }
+}

@@ -1,0 +1,370 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/scan_set.rs` `scan_set` transcribed: one assignment.  The order of its
+// decisions is Rust's; every decision that reads a fact of a record, a collection, a tuple, a
+// generator handle or a closure (the transition frees, the buffer pairings, the owner witness,
+// the materialised views, the hand-off flags) is reached only for a binding of such a type, and a
+// binding of one refuses the function by name.  A scalar or text binding runs the rest as Rust
+// does: the split of a binding whose scope has ended, the registration of its deps and itself,
+// the scan of its value and the preamble that value leaves.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_args;
+use scope_branches;
+
+// port: scan_set.rs fn scan_set
+pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::Node, f: ir::Function) -> ir::Node {
+  sc = scope_scan::get(s.var_scope, ov);
+  if sc >= 0 && s.scope != sc && !scope_fn::has(s.stack, sc) {
+    existing = scope_scan::get(s.var_mapping, ov);
+    if existing >= 0 {
+      cs = scope_scan::get(s.var_scope, existing);
+      if cs >= 0 && cs != s.scope && !scope_fn::has(s.stack, cs) {
+        nv = scope_branches::split_variable(s, f, ov, [value]);
+        scope_scan::put(s.var_mapping, ov, nv);
+      }
+    } else {
+      nv = scope_branches::split_variable(s, f, ov, [value]);
+      scope_scan::put(s.var_mapping, ov, nv);
+    }
+  }
+  v = scope_scan::mapped(s, ov);
+  if v != ov {
+    if scope_scan::get(s.split_from, v) < 0 {
+      scope_scan::put(s.split_from, v, ov);
+      scope_scan::put(s.split_count, v, 0);
+    }
+    scope_scan::put(s.split_count, v, scope_scan::get(s.split_count, v) + 1);
+  }
+  t = scope_fn::tp(f, v);
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) {
+    // The rest of `scan_set` for this binding asks the passes of its kind: the owner witness,
+    // `copy_temp_held_bind`, the tuple unbox, the arm write-out, the displaced drop, the
+    // transition frees, the buffer pairings, the materialised views.
+    scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
+    if !scope_scan::in_scope(s, v) {
+      scope_scan::register_binding(s, v, f);
+    }
+    return scope_fn::v_set(v, scope_scan::scan(s, b, value, f));
+  }
+  if scope_fn::owner_witness(f, v) >= 0 {
+    scope_scan::refuse(s, "scan_set: a witnessed binding (witness)");
+  }
+  was_in_scope = scope_scan::in_scope(s, v);
+  // A redundant re-init `Set(v, Null)` for an already-in-scope var is elided.
+  if was_in_scope && value is NdNull {
+    return ir::NdInsert { items: [] };
+  }
+  handoff_disarm: vector<ir::Node> = [];
+  w = delivered_work_ref(b, value, f);
+  if w >= 0 && w != v && scope_fn::proxy_says_owned(f, v) && (scope_fn::reads_var(value, v) || scope_fn::reads_var(value, ov)) {
+    handoff_disarm += [scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  }
+  // Register every dep of the binding not yet in scope, at this scope.
+  depend: vector<integer> = [];
+  pending = scope_fn::deps(f, v);
+  seen: vector<integer> = [];
+  while len(pending) > 0 {
+    d = pending[len(pending) - 1]!;
+    pending = pending[0..len(pending) - 1];
+    if scope_fn::has(seen, d) {
+      continue;
+    }
+    seen += [d];
+    if d >= scope_fn::count(f) {
+      continue;
+    }
+    if !scope_scan::in_scope(s, d) {
+      // `function.was_loop_var(d)` is not in the image: a dep that is not a text temp may be a
+      // loop's variable, which Rust leaves unregistered.
+      if !scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d) {
+        scope_scan::refuse(s, "scan_set: a dep that may be a loop variable (variables::was_loop_var, not in the image)");
+      }
+      depend += [d];
+      scope_scan::put_scope(s, d);
+      s.var_order += [d];
+      pending += scope_fn::deps(f, d);
+    }
+  }
+  first_binding = !scope_scan::in_scope(s, v);
+  if first_binding {
+    scope_scan::register_binding(s, v, f);
+  }
+  s.first_set = if was_in_scope { scope_fn::NONE } else { v };
+  if scope_args::is_value_branch(value) {
+    scope_args::arm_tails_need_binding(s, b, value, v, f);
+  }
+  s.first_set = scope_fn::NONE;
+  if first_binding {
+    s.binding_now += [v];
+  }
+  outer_hoists = s.value_hoists;
+  s.value_hoists = [];
+  scanned = scope_scan::scan(s, b, value, f);
+  viewed = s.value_hoists;
+  s.value_hoists = outer_hoists;
+  if ends_in_if(value) {
+    for tv in branch_tail_vars(value) {
+      if tv != v && scope_fn::name(f, tv).starts_with("_ncr_") && scope_scan::in_scope(s, tv) && !scope_fn::has(viewed, tv) {
+        viewed += [tv];
+      }
+    }
+  }
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0].name == "nullable_slot_read" {
+      for d in scope_fn::depend(block[0].result[0] ?? ir::TyVoid) {
+        if d != v && scope_fn::name(f, d).starts_with("__ref_") && !scope_fn::has(viewed, d) {
+          viewed += [d];
+        }
+      }
+    },
+    _ => {}
+  }
+  note_lift_viewers(s, v, viewed);
+  if first_binding {
+    k = len(s.binding_now);
+    s.binding_now = s.binding_now[0..k - 1];
+  }
+  delivered = delivered_work_ref(b, value, f) >= 0;
+  if !delivered {
+    match scanned {
+      NdSpan { pos, inner } => {
+        match inner {
+          NdInsert { items } => if len(items) >= 2 {
+            ops: vector<ir::Node> = [for x in items[0..len(items) - 1] { x }];
+            ops += [ir::NdSpan { pos: pos, inner: items[len(items) - 1]! }];
+            scanned = ir::NdInsert { items: ops };
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  ls: vector<ir::Node> = [];
+  set_value = scanned;
+  match scanned {
+    NdInsert { items } => {
+      if len(items) >= 2 {
+        ls = [for x in items[0..len(items) - 1] { x }];
+        set_value = items[len(items) - 1]!;
+      }
+    },
+    _ => {}
+  }
+  prefix: vector<ir::Node> = [];
+  for d in depend {
+    if d == v {
+      continue;
+    }
+    if scope_fn::tp(f, d) is TyText {
+      prefix += [scope_fn::v_set(d, ir::NdText { s: "" })];
+    } else {
+      prefix += [scope_fn::v_set(d, ir::NdNull)];
+    }
+    scope_scan::put_scope(s, d);
+  }
+  x = f.variables[v];
+  if was_in_scope && x != null && x!.buffer_witnessed {
+    scope_scan::refuse(s, "scan_set::kept_displaced_free: a buffer-witnessed binding");
+  }
+  if len(prefix) == 0 && len(ls) == 0 && len(handoff_disarm) == 0 {
+    return scope_fn::v_set(v, set_value);
+  }
+  all = prefix;
+  all += ls;
+  all += [scope_fn::v_set(v, set_value)];
+  all += handoff_disarm;
+  ir::NdInsert { items: all }
+}
+
+// port: scan_set.rs fn note_lift_viewers
+fn note_lift_viewers(s: scope_scan::Scopes, v: integer, lifts: vector<integer>) {
+  if len(lifts) == 0 {
+    return;
+  }
+  for l in lifts {
+    if l != v {
+      lpos = scope_scan::position(s.var_order, l);
+      if lpos >= 0 {
+        scope_scan::remove_at(s.var_order, lpos);
+        at = scope_scan::position(s.var_order, v);
+        if at < 0 {
+          at = lpos;
+        }
+        out: vector<integer> = [];
+        for y in s.var_order {
+          if y#index == at {
+            out += [l];
+          }
+          out += [y];
+        }
+        if at >= len(s.var_order) {
+          out += [l];
+        }
+        s.var_order.clear();
+        s.var_order += out;
+      }
+    }
+  }
+}
+
+fn ends_in_if(v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdIf => true,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && ends_in_if(block[0].operators[k - 1]!)
+    },
+    NdInsert { items } => {
+      k = len(items);
+      k > 0 && ends_in_if(items[k - 1]!)
+    },
+    _ => false
+  }
+}
+
+// port: join_rewrite.rs fn branch_tail_vars
+pub fn branch_tail_vars(n: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  tail_walk(n, out);
+  out
+}
+
+fn tail_walk(n: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
+    NdIf { t, f } => {
+      tail_walk(t, out);
+      tail_walk(f, out);
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name != "join-arm-owner" && bl.name != "ncc" && len(bl.operators) > 0 {
+        tail_walk(bl.operators[len(bl.operators) - 1]!, out);
+      }
+    },
+    NdInsert { items } => if len(items) > 0 { tail_walk(items[len(items) - 1]!, out); },
+    _ => {}
+  }
+}
+
+// port: backings.rs fn block_tail_var
+fn block_tail_var(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k == 0 { -1 } else { block_tail_var(block[0].operators[k - 1]!) }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 { -1 } else { block_tail_var(items[k - 1]!) }
+    },
+    _ => -1
+  }
+}
+
+fn work_ref_name(f: ir::Function, v: integer) -> boolean {
+  n = scope_fn::name(f, v);
+  n.starts_with("__ref_") || n.starts_with("__rref_")
+}
+
+// port: backings.rs fn construction_work_ref — -1 for none.
+pub fn construction_work_ref(rhs: ir::Node, f: ir::Function) -> integer {
+  u = scope_fn::unspan(rhs);
+  if !(u is NdBlock) && !(u is NdInsert) {
+    return -1;
+  }
+  v = block_tail_var(rhs);
+  if v >= 0 && work_ref_name(f, v) { v } else { -1 }
+}
+
+// port: backings.rs fn delivered_work_ref — -1 for none.
+pub fn delivered_work_ref(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> integer {
+  c = construction_work_ref(rhs, f);
+  if c >= 0 {
+    return c;
+  }
+  tail = scope_fn::unspan(rhs);
+  while true {
+    match tail {
+      NdBlock { block } => {
+        k = len(block[0].operators);
+        if k == 0 {
+          return -1;
+        }
+        tail = scope_fn::unspan(block[0].operators[k - 1]!);
+      },
+      NdInsert { items } => {
+        k = len(items);
+        if k == 0 {
+          return -1;
+        }
+        tail = scope_fn::unspan(items[k - 1]!);
+      },
+      _ => { break; }
+    }
+  }
+  d_nr = -1;
+  args: vector<ir::Node> = [];
+  match tail {
+    NdCall { def_nr, args: a } => {
+      d_nr = def_nr;
+      args = a;
+    },
+    _ => { return -1; }
+  }
+  def = b.data.definitions[d_nr];
+  if def == null || def!.def_type != 1 || def!.name.starts_with("Op") {
+    return -1;
+  }
+  body = scope_fn::unspan(def!.code[0] ?? ir::NdNull);
+  while true {
+    match body {
+      NdBlock { block } => {
+        k = len(block[0].operators);
+        if k == 0 {
+          return -1;
+        }
+        body = scope_fn::unspan(block[0].operators[k - 1]!);
+      },
+      NdInsert { items } => {
+        k = len(items);
+        if k == 0 {
+          return -1;
+        }
+        body = scope_fn::unspan(items[k - 1]!);
+      },
+      NdReturn { inner } => { body = scope_fn::unspan(inner); },
+      _ => { break; }
+    }
+  }
+  returned = match body { NdVar { n } => n, _ => -1 };
+  if returned < 0 {
+    return -1;
+  }
+  for k in scope_fn::depend(def!.returned[0] ?? ir::TyVoid) {
+    a = def!.attributes[k];
+    if k != returned || a == null || a!.hidden {
+      continue;
+    }
+    arg = args[k];
+    if arg == null {
+      continue;
+    }
+    match scope_fn::unspan(arg!) {
+      NdVar { n: wv } => if work_ref_name(f, wv) { return wv; },
+      _ => {
+        c2 = construction_work_ref(arg!, f);
+        if c2 >= 0 {
+          return c2;
+        }
+      }
+    }
+  }
+  -1
+}

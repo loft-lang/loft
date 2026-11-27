@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/get_free_vars.rs` transcribed: which variables a scope exit frees, and
+// how.  A text local is released with `OpFreeText` (unless it is never-free), the iteration
+// scratch with `OpFreeScratch`, a scalar with nothing; every release of a store — a record, a
+// collection, a tuple's members, a generator handle, a closure — asks the passes not transcribed
+// yet (the backings, the witnesses, the drop hooks, the closure stand-downs) and refuses the
+// function by name.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_free_vars;
+
+// port: get_free_vars.rs fn get_free_vars
+pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_scope: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered) -> vector<ir::Node> {
+  ls: vector<ir::Node> = [];
+  // `claimants_after_their_tuples`: the claimants are tuple members' buffers, and a tuple
+  // local refuses below, so the registration order stands.
+  vars = scope_scan::variables(s, to_scope);
+  for v in vars {
+    t = scope_fn::tp(f, v);
+    if v == ret_var {
+      continue;
+    }
+    if scope_fn::has(delivered.sources, v) && scope_fn::is_dbref(scope_fn::base(t)) {
+      continue;
+    }
+    if scope_fn::name(f, v).contains("hash_scratch") {
+      ls += [ir::NdCall { def_nr: scope_fn::def_nr(b, "OpFreeScratch"), args: [ir::NdVar { n: v }] }];
+      continue;
+    }
+    bt = scope_fn::base(t);
+    if bt is TyTuple {
+      scope_scan::refuse(s, "tuple_members::tuple_owned_elem_frees: a tuple local at a scope exit");
+      continue;
+    }
+    if bt is TyText {
+      if !scope_fn::is_skip_free(f, v) {
+        ls += [ir::NdCall { def_nr: s.ops.free_text, args: [ir::NdVar { n: v }] }];
+      }
+      continue;
+    }
+    if scope_fn::is_plain(t) {
+      continue;
+    }
+    // `outer_collection_backing`, `outer_tuple_backings`, the owner witness, the store
+    // release with its `leaves_frame`, `OpFreeRefIfDistinct` pairings and drop hooks, a
+    // generator handle's release, a fn-ref's closure: each asks a pass not transcribed.
+    scope_scan::refuse(s, "get_free_vars: a {scope_fn::kind_name(t)} local at a scope exit (drops, witness, backings, closure_keep)");
+  }
+  if to_scope == 1 {
+    for p in 0..scope_fn::count(f) {
+      orig = scope_fn::rebind_orig(f, p);
+      if orig < 0 || !scope_fn::is_argument(f, p) {
+        continue;
+      }
+      if p == ret_var || scope_fn::has(delivered.sources, p) {
+        continue;
+      }
+      scope_scan::refuse(s, "get_free_vars: a rebound parameter (rebind_params)");
+    }
+    if scope_fn::base(b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid) is TyIterator {
+      scope_scan::refuse(s, "get_free_vars: a generator returning function (its handle parameters)");
+    }
+  }
+  // `fnref_stand_down`, `captured_record_stand_down`, `captured_view_stand_down` and
+  // `pair_literal_buffers` act on the releases of fn-refs, closure records and literal buffers,
+  // none of which this transcription emits.
+  ls
+}

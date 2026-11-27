@@ -1,0 +1,720 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/scan.rs` transcribed (doc/claude/plans/91-self-host/scope-pass-port.md
+// step 1): the walk over a function body that opens and closes scopes, registers each binding at
+// its scope, and hands every node to the part that rewrites it.  The pass's state is `Scopes`
+// (src/scopes.rs `struct Scopes`): the fields this transcription carries, under their Rust names;
+// a map keyed by variable is a vector indexed by the variable number, -1 where Rust has no key.
+//
+// A branch whose Rust code calls a module not transcribed yet REFUSES the function by name
+// (`refuse`), so nothing is approximated: the scan runs on, and the function is reported
+// `unscoped: <fn>: <the first refusal>`.
+
+use ir;
+use scope_fn;
+use scope_scan_set;
+use scope_branches;
+use scope_convert;
+use scope_args;
+use scope_free_vars;
+use scope_get_free_vars;
+
+// The definitions the pass keys on, looked up once per image.
+pub struct Ops {
+  pub free_ref: integer,
+  pub free_text: integer,
+  pub free_ref_tag: integer,
+  pub free_if_distinct: integer,
+  pub free_or_hand_up: integer,
+  pub create_stack: integer,
+  pub database: integer,
+  pub set_dbref: integer,
+  pub get_dbref: integer,
+  pub copy_record: integer,
+  pub null_ref_sentinel: integer,
+  pub replace_keyed: integer,
+  pub append_vector: integer,
+  pub new_record: integer,
+  pub get_field: integer,
+  pub init_ref_sentinel: integer,
+  pub distinct_store: integer
+}
+
+pub fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_text: scope_fn::def_nr(b, "OpFreeText"),
+    free_ref_tag: scope_fn::def_nr(b, "OpFreeRefTag"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    free_or_hand_up: scope_fn::def_nr(b, "OpFreeRefOrHandUp"),
+    create_stack: scope_fn::def_nr(b, "OpCreateStack"),
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    set_dbref: scope_fn::def_nr(b, "OpSetDbRef"),
+    get_dbref: scope_fn::def_nr(b, "OpGetDbRef"),
+    copy_record: scope_fn::def_nr(b, "OpCopyRecord"),
+    null_ref_sentinel: scope_fn::def_nr(b, "OpNullRefSentinel"),
+    replace_keyed: scope_fn::def_nr(b, "OpReplaceKeyed"),
+    append_vector: scope_fn::def_nr(b, "OpAppendVector"),
+    new_record: scope_fn::def_nr(b, "OpNewRecord"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    init_ref_sentinel: scope_fn::def_nr(b, "OpInitRefSentinel"),
+    distinct_store: scope_fn::def_nr(b, "OpDistinctStore")
+  }
+}
+
+// port: scopes.rs struct Scopes — the fields this transcription carries.
+pub struct Scopes {
+  pub ops: Ops,
+  // The definition number of the current analyzed function.
+  pub d_nr: integer,
+  // The next scope number that will be created.
+  pub max_scope: integer,
+  // The current scope during traversal of the code. 0 is the scope of the function arguments.
+  pub scope: integer,
+  // The currently open scopes.
+  pub stack: vector<integer>,
+  // Per encountered variable the scope where it was created (-1: not yet).
+  pub var_scope: vector<integer>,
+  // Insertion order of variables into `var_scope` (excluding scope-0 arguments).
+  pub var_order: vector<integer>,
+  // Variables whose FIRST binding's right-hand side is being scanned.
+  pub binding_now: vector<integer>,
+  // Variables that are redefined after running out-of-scope get copied with this mapping.
+  pub var_mapping: vector<integer>,
+  // The scopes of the currently traversed loops.
+  pub loops: vector<integer>,
+  pub scan_depth: integer,
+  pub lift_counter: integer,
+  pub lift_vars: vector<integer>,
+  pub lift_texts: vector<integer>,
+  pub ret_temp_counter: integer,
+  pub late_owners: vector<integer>,
+  pub skipped_viewers: vector<integer>,
+  pub value_hoists: vector<integer>,
+  pub multi_assigned: vector<integer>,
+  pub first_set: integer,
+  pub null_led: vector<integer>,
+  pub null_led_first: vector<integer>,
+  // The scope pass's split copies, each with the variable it was split from and its binds.
+  pub split_from: vector<integer>,
+  pub split_count: vector<integer>,
+  pub mentions: vector<integer>,
+  pub sunk: vector<integer>,
+  pub assigned: vector<integer>,
+  // The facts of the passes this transcription refuses: always empty while it runs, and every
+  // reader asks them as Rust does.
+  pub owned_refs: vector<integer>,
+  // The first refusal met, "" while the scan is in its domain.
+  pub why: text
+}
+
+// Refuse the function: `module::function` and the shape it was asked about.
+pub fn refuse(s: Scopes, why: text) {
+  if s.why == "" {
+    s.why = why;
+  }
+}
+
+// ── the variable-keyed maps ──
+
+pub fn get(m: vector<integer>, v: integer) -> integer {
+  if v < 0 {
+    return -1;
+  }
+  m[v] ?? -1
+}
+
+pub fn put(m: vector<integer>, v: integer, x: integer) {
+  while len(m) <= v {
+    m += [-1];
+  }
+  m[v] = x;
+}
+
+// `var_scope.contains_key(&v)`
+pub fn in_scope(s: Scopes, v: integer) -> boolean {
+  get(s.var_scope, v) >= 0
+}
+
+// `*self.var_mapping.get(&v).unwrap_or(&v)`
+pub fn mapped(s: Scopes, v: integer) -> integer {
+  m = get(s.var_mapping, v);
+  if m >= 0 { m } else { v }
+}
+
+pub fn set_scope_of(s: Scopes, v: integer, sc: integer) {
+  put(s.var_scope, v, sc);
+}
+
+// port: scan.rs fn enter_scope
+pub fn enter_scope(s: Scopes) -> integer {
+  s.stack += [s.scope];
+  s.scope = s.max_scope;
+  s.max_scope += 1;
+  s.scope
+}
+
+// port: scan.rs fn exit_scope
+pub fn exit_scope(s: Scopes) {
+  k = len(s.stack);
+  if k > 0 {
+    s.scope = s.stack[k - 1]!;
+    s.stack = s.stack[0..k - 1];
+  }
+}
+
+// port: scan.rs fn put_scope — `confined` is empty on every phase this transcription runs.
+pub fn put_scope(s: Scopes, v: integer) {
+  set_scope_of(s, v, s.scope);
+}
+
+// port: scan.rs fn register_binding
+pub fn register_binding(s: Scopes, v: integer, f: ir::Function) {
+  put_scope(s, v);
+  t = scope_fn::tp(f, v);
+  collection = scope_fn::base(t) is TyVector || scope_fn::base(t) is TyTuple;
+  fn_ref = scope_fn::base(t) is TyFunction;
+  if fn_ref || scope_fn::base(t) is TyTuple {
+    // the closure records' and the tuple members' backings: `backings::member_backing`
+    refuse(s, "scan::register_binding: a fn-ref or tuple binding (backings::member_backing)");
+  }
+  for d in scope_fn::deps(f, v) {
+    nm = scope_fn::name(f, d);
+    if nm.starts_with("__vdb_") || (collection && nm.starts_with("__ref_")) {
+      at = position(s.var_order, d);
+      if at >= 0 {
+        remove_at(s.var_order, at);
+        s.var_order += [d];
+      }
+    }
+  }
+  s.var_order += [v];
+}
+
+pub fn position(v: vector<integer>, x: integer) -> integer {
+  for y in v {
+    if y == x {
+      return y#index;
+    }
+  }
+  -1
+}
+
+pub fn remove_at(v: vector<integer>, at: integer) {
+  out: vector<integer> = [];
+  for y in v {
+    if y#index != at {
+      out += [y];
+    }
+  }
+  v.clear();
+  v += out;
+}
+
+// port: scan.rs fn variables — the variables of the scopes from the current one out to
+// `to_scope`, most recently registered first.
+pub fn variables(s: Scopes, to_scope: integer) -> vector<integer> {
+  scopes: vector<integer> = [];
+  sc = s.scope;
+  scope_pos = len(s.stack);
+  while true {
+    if sc == 0 {
+      break;
+    }
+    scopes += [sc];
+    if sc == to_scope {
+      break;
+    }
+    if scope_pos == 0 {
+      break;
+    }
+    scope_pos -= 1;
+    sc = s.stack[scope_pos]!;
+  }
+  res: vector<integer> = [];
+  k = len(s.var_order);
+  i = k - 1;
+  while i >= 0 {
+    v = s.var_order[i]!;
+    vs = get(s.var_scope, v);
+    if vs >= 0 && scope_fn::has(scopes, vs) && !scope_fn::has(s.binding_now, v) {
+      res += [v];
+    }
+    i -= 1;
+  }
+  res
+}
+
+// port: scan.rs fn new_lift_var — a `__lift_N` temporary that owns an inline value.
+pub fn new_lift_var(s: Scopes, f: ir::Function, t: ir::TypeT) -> integer {
+  s.lift_counter += 1;
+  tmp = scope_fn::add_temp_var(f, "__lift_{s.lift_counter}", t);
+  if !scope_fn::has(f.inline_refs, tmp) {
+    f.inline_refs += [tmp];
+  }
+  set_scope_of(s, tmp, s.scope);
+  s.var_order += [tmp];
+  s.lift_vars += [tmp];
+  tmp
+}
+
+// port: scan.rs fn lift_set — the pairing half asks `use_analysis::adopts_minted_at_bind` of a
+// loft callee, which this transcription refuses.
+pub fn lift_set(s: Scopes, b: ir::Bundle, tmp: integer, value: ir::Node, f: ir::Function) -> ir::Node {
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0].name == "ncc" {
+      refuse(s, "scan::lift_set: a `??` value lifted (ncc_literal_accumulators)");
+    },
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr];
+      if d != null && is_loft_defined(d!) {
+        refuse(s, "scan::lift_set: a loft call lifted (use_analysis::adopts_minted_at_bind)");
+      }
+    },
+    _ => {}
+  }
+  scope_fn::v_set(tmp, value)
+}
+
+// port: data.rs fn is_loft_defined
+pub fn is_loft_defined(d: ir::Definition) -> boolean {
+  (d.name.starts_with("n_") || d.name.starts_with("t_") || d.name.starts_with("i_") || d.name.starts_with("f_")) && len(d.code) > 0 && !(d.code[0]! is NdNull)
+}
+
+// port: scan.rs fn scan
+pub fn scan(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> ir::Node {
+  // loft#1320 — `rewrite_keyed_replace_branch`: a keyed branch value's per-arm rewrite.
+  match val {
+    NdCall { def_nr, args } => if def_nr == s.ops.replace_keyed && scope_fn::unspan(args[0] ?? ir::NdNull) is NdIf {
+      refuse(s, "scan::rewrite_keyed_replace_branch: a keyed branch value");
+    },
+    _ => {}
+  }
+  s.scan_depth += 1;
+  result = scan_inner(s, b, val, f);
+  s.scan_depth -= 1;
+  result
+}
+
+fn is_insert_call_tail(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdInsert { items } => {
+      k = len(items);
+      if k <= 1 {
+        return false;
+      }
+      last = scope_fn::unspan(items[k - 1]!);
+      last is NdCall || last is NdCallRef
+    },
+    _ => false
+  }
+}
+
+// port: scan.rs fn scan_inner
+pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> ir::Node {
+  match val {
+    // The `text_mirror` arm and the two `respelled_group_write` arms read
+    // `views_to_materialise`, which the phase leaves empty (it refuses where the view walk could
+    // fill it), so they never fire here.
+    NdVar { n: ov } => ir::NdVar { n: mapped(s, ov) },
+    NdSet { var: ov, inner } => {
+      first = !in_scope(s, mapped(s, ov));
+      set = scope_scan_set::scan_set(s, b, ov, inner, f);
+      // A FIRST bind of a call whose arguments were hoisted is bound as the call itself.
+      match set {
+        NdSet { var: v, inner: sv } => {
+          if first && is_insert_call_tail(sv) {
+            match scope_fn::unspan(sv) {
+              NdInsert { items } => {
+                k = len(items);
+                ops: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+                ops += [scope_fn::v_set(v, items[k - 1]!)];
+                return ir::NdInsert { items: ops };
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+      // `moved_buffer` (loft#2594) is set only for a record local, which `scan_set` refuses.
+      set
+    },
+    NdLoop { block } => {
+      lp = block[0];
+      scope = enter_scope(s);
+      s.loops += [scope];
+      // `collect_drop_transferred` on each statement: a hand-off of a drop-bearing record, which
+      // `scan_set` and `scan_args` refuse before it could be armed.
+      ls = scope_convert::convert(s, b, lp, f, false);
+      k = len(s.loops);
+      s.loops = s.loops[0..k - 1];
+      exit_scope(s);
+      ir::NdLoop { block: [ir::Block { name: lp.name, operators: ls, result: [ir::TyVoid], scope: scope, var_size: 0 }] }
+    },
+    NdIf { cond, t, f: fv } => scope_branches::scan_if(s, b, cond, t, fv, f),
+    NdBreak { n: lv } => {
+      ls = scope_get_free_vars::get_free_vars(s, b, f, s.loops[len(s.loops) - lv - 1] ?? 0, ir::TyVoid, scope_fn::NONE, scope_free_vars::no_delivery());
+      if len(ls) == 0 {
+        return ir::NdBreak { n: lv };
+      }
+      ls += [ir::NdBreak { n: lv }];
+      ir::NdInsert { items: ls }
+    },
+    NdContinue { n: lv } => {
+      ls = scope_get_free_vars::get_free_vars(s, b, f, s.loops[len(s.loops) - lv - 1] ?? 0, ir::TyVoid, scope_fn::NONE, scope_free_vars::no_delivery());
+      if len(ls) == 0 {
+        return ir::NdContinue { n: lv };
+      }
+      ls += [ir::NdContinue { n: lv }];
+      ir::NdInsert { items: ls }
+    },
+    NdReturn { inner } => {
+      expr = scan(s, b, inner, f);
+      ret = b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid;
+      ir::NdInsert { items: scope_free_vars::free_vars(s, b, true, expr, f, ret, 1) }
+    },
+    NdBlock { block } => scan_block(s, b, block[0], f),
+    NdCall { def_nr, args } => scan_call(s, b, def_nr, args, f),
+    NdCallRef { var: v_nr, args } => {
+      sa = scope_args::scan_args(s, b, args, f, -1);
+      call = ir::NdCallRef { var: mapped(s, v_nr), args: sa.ls };
+      if len(sa.preamble) == 0 {
+        return call;
+      }
+      ops = sa.preamble;
+      ops += [call];
+      ir::NdInsert { items: ops }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { scan(s, b, x, f) }] },
+    NdDrop { inner } => {
+      scanned = scan(s, b, inner, f);
+      // #490 — a discarded result that owns a fresh store is bound to a `__lift_N`.
+      match scanned {
+        NdInsert { items } => {
+          if len(items) > 0 && scope_args::inline_struct_return(s, b, items[len(items) - 1]!, -1, f) {
+            refuse(s, "inline_returns::inline_struct_return: a discarded heap result");
+          }
+          ir::NdDrop { inner: scanned }
+        },
+        _ => {
+          if scope_args::inline_struct_return(s, b, scanned, -1, f) {
+            refuse(s, "inline_returns::inline_struct_return: a discarded heap result");
+          }
+          ir::NdDrop { inner: scanned }
+        }
+      }
+    },
+    NdIter { var: idx, create, next, init } => {
+      sc = scan(s, b, create, f);
+      sn = scan(s, b, next, f);
+      se = scan(s, b, init, f);
+      ir::NdIter { var: idx, create: sc, next: sn, init: se }
+    },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { scan(s, b, x, f) }] },
+    NdTupleGet { var, idx } => ir::NdTupleGet { var: mapped(s, var), idx: idx },
+    NdTuplePut { var, idx, inner } => {
+      refuse(s, "tuple_members::member_write: a tuple member written");
+      ir::NdTuplePut { var: mapped(s, var), idx: idx, inner: scan(s, b, inner, f) }
+    },
+    NdFnRefDnr { n: var } => ir::NdFnRefDnr { n: mapped(s, var) },
+    NdFnRef { def_nr, var: clos, t } => ir::NdFnRef { def_nr: def_nr, var: if clos == scope_fn::NONE { clos } else { mapped(s, clos) }, t: t },
+    NdYield { inner } => ir::NdYield { inner: scan(s, b, inner, f) },
+    NdSpan { pos, inner } => {
+      scanned = scan(s, b, inner, f);
+      lift_preamble = match scanned {
+        NdInsert { items } => {
+          first_lift = match items[0] ?? ir::NdNull {
+            NdSet { var } => scope_fn::name(f, var).starts_with("__lift_"),
+            _ => false
+          };
+          first_lift || scope_args::is_null_init_preamble(items, f)
+        },
+        _ => false
+      };
+      if lift_preamble {
+        scanned
+      } else {
+        ir::NdSpan { pos: pos, inner: scanned }
+      }
+    },
+    _ => val
+  }
+}
+
+// The `Value::Block` arm of `scan_inner`.
+fn scan_block(s: Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function) -> ir::Node {
+  hoisted_ref = -1;
+  k = len(bl.operators);
+  if k > 0 {
+    match bl.operators[k - 1]! {
+      NdVar { n: orig_ret } => {
+        ret_v = mapped(s, orig_ret);
+        t = scope_fn::tp(f, ret_v);
+        heap = match t { TyReference => true, TyVector => true, TyEnum { is_ref } => is_ref, _ => false };
+        if heap && !in_scope(s, ret_v) {
+          refuse(s, "scan: a block answering a record or vector local (use_analysis::binds_the_callees_minted_store)");
+        }
+      },
+      _ => {}
+    }
+  }
+  // @FR-F-Call / @FR-F-Block — the TEXT twin of the hoist above.
+  if hoisted_ref < 0 && s.scope >= 1 && scope_fn::is_text(bl.result[0] ?? ir::TyVoid) {
+    tails: vector<integer> = [];
+    if k > 0 {
+      tail_vars_through_arms(bl.operators[k - 1]!, tails);
+    }
+    for orig_ret in tails {
+      ret_v = mapped(s, orig_ret);
+      if !in_scope(s, ret_v) && !scope_fn::is_argument(f, ret_v) && !scope_fn::is_skip_free(f, ret_v) && scope_fn::is_text(scope_fn::tp(f, ret_v)) && !scope_fn::has(s.lift_texts, ret_v) {
+        set_scope_of(s, ret_v, 1);
+        s.var_order += [ret_v];
+        s.lift_texts += [ret_v];
+      }
+    }
+  }
+  result = bl.result[0] ?? ir::TyVoid;
+  def_returned = b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid;
+  is_body_return = s.scope == 0 && !(result is TyVoid) && !(def_returned is TyVoid);
+  outer_scope = s.scope;
+  lift_watermark = len(s.lift_vars);
+  scope = enter_scope(s);
+  ls = scope_convert::convert(s, b, bl, f, is_body_return);
+  exit_scope(s);
+  // loft#722 — a lift temp minted inside a value block that its result borrows moves out.
+  if !(result is TyVoid) && !(result is TyNever) && !is_body_return && len(s.lift_vars) > lift_watermark {
+    fresh: vector<integer> = [];
+    for v in s.lift_vars[lift_watermark..] {
+      if get(s.var_scope, v) == scope {
+        fresh += [v];
+      }
+    }
+    borrowed = result_borrow_roots(s, b, ls);
+    hoisted: vector<integer> = [for v in fresh if scope_fn::has(borrowed, v) { v }];
+    for v in hoisted {
+      set_scope_of(s, v, outer_scope);
+    }
+    s.value_hoists += hoisted;
+    if len(hoisted) > 0 {
+      ls = drop_tail_frees(s, ls, hoisted);
+    }
+  }
+  ir::NdBlock { block: [ir::Block { name: bl.name, operators: ls, result: bl.result, scope: scope, var_size: 0 }] }
+}
+
+// The `Value::Call` arm of `scan_inner`.
+fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> ir::Node {
+  // The owner-witness arms (`OpDatabase` on a witnessed local) find `owner_witness` empty: the
+  // phase refuses every local `owner_witness_locals` could pick.
+  if d_nr == s.ops.set_dbref || d_nr == s.ops.free_if_distinct {
+    first = scope_fn::unspan(args[0] ?? ir::NdNull);
+    rec = match first {
+      NdVar { n } => n,
+      NdCall { def_nr: g, args: ga } => if g == s.ops.get_dbref {
+        match scope_fn::unspan(ga[0] ?? ir::NdNull) { NdVar { n } => n, _ => -1 }
+      } else {
+        -1
+      },
+      _ => -1
+    };
+    if rec >= 0 && scope_fn::name(f, mapped(s, rec)).starts_with("___clos_") {
+      refuse(s, "scan::owner_slot_handoff: a closure record's capture (capture_adoption)");
+    }
+  }
+  sa = scope_args::scan_args(s, b, args, f, d_nr);
+  call = ir::NdCall { def_nr: d_nr, args: sa.ls };
+  // `@FR-H-Drop` — a copy that frees its source hands a work-ref's record on.
+  if d_nr == s.ops.copy_record {
+    match scope_fn::unspan(args[2] ?? ir::NdNull) {
+      NdInt { n: tp } => if (tp / 32768) % 2 == 1 {
+        refuse(s, "handoff::drop_bearing_source: a copy that frees its source");
+      },
+      _ => {}
+    }
+  }
+  // `arm_handoff_flags` and `regrown_flag` read `handed_off`/`per_path_pairs`, which the phase
+  // leaves empty.
+  preamble = sa.preamble;
+  postamble = sa.postamble;
+  if len(preamble) == 0 && len(postamble) == 0 {
+    return call;
+  }
+  if len(postamble) == 0 {
+    ops = preamble;
+    ops += [call];
+    return ir::NdInsert { items: ops };
+  }
+  ret = b.data.definitions[d_nr]!.returned[0] ?? ir::TyVoid;
+  ops = preamble;
+  if ret is TyVoid {
+    ops += [call];
+    ops += postamble;
+  } else {
+    refuse(s, "scan: a call with a store-back postamble answering a value (__wbret_N)");
+    ops += [call];
+    ops += postamble;
+  }
+  ir::NdInsert { items: ops }
+}
+
+// port: insert_free.rs fn scope_free_op_var — the variable a free releases.
+pub fn scope_free_op_var(s: Scopes, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => {
+      if is_free(s, def_nr) {
+        match scope_fn::unspan(args[0] ?? ir::NdNull) {
+          NdVar { n: v } => { return v; },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// `op_sets().frees`
+pub fn is_free(s: Scopes, d: integer) -> boolean {
+  d >= 0 && (d == s.ops.free_ref || d == s.ops.free_ref_tag || d == s.ops.free_text || d == s.ops.free_if_distinct || d == s.ops.free_or_hand_up)
+}
+
+// port: scan.rs fn result_borrow_roots
+fn result_borrow_roots(s: Scopes, b: ir::Bundle, ops: vector<ir::Node>) -> vector<integer> {
+  from_v: vector<integer> = [];
+  from_r: vector<integer> = [];
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdSet { var, inner } => {
+        r = borrow_root(b, inner);
+        if r >= 0 {
+          at = position(from_v, var);
+          if at >= 0 {
+            from_r[at] = r;
+          } else {
+            from_v += [var];
+            from_r += [r];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  roots: vector<integer> = [];
+  k = len(ops);
+  i = k - 1;
+  while i >= 0 {
+    o = ops[i]!;
+    if scope_free_op_var(s, o) < 0 {
+      visit_roots(s, b, o, from_v, from_r, roots);
+      return roots;
+    }
+    i -= 1;
+  }
+  roots
+}
+
+fn visit_roots(s: Scopes, b: ir::Bundle, n0: ir::Node, from_v: vector<integer>, from_r: vector<integer>, roots: vector<integer>) {
+  n = scope_fn::unspan(n0);
+  if scope_free_op_var(s, n) >= 0 {
+    return;
+  }
+  r = borrow_root(b, n);
+  if r >= 0 {
+    cur = r;
+    for _ in 0..len(from_v) + 1 {
+      if !scope_fn::has(roots, cur) {
+        roots += [cur];
+      }
+      at = position(from_v, cur);
+      if at < 0 || from_r[at]! == cur {
+        break;
+      }
+      cur = from_r[at]!;
+    }
+  }
+  for c in scope_fn::children(n) {
+    visit_roots(s, b, c, from_v, from_r, roots);
+  }
+}
+
+// port: scan.rs fn borrow_root
+fn borrow_root(b: ir::Bundle, val: ir::Node) -> integer {
+  match scope_fn::unspan(val) {
+    NdVar { n: v } => v,
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr];
+      if d == null || !d!.name.starts_with("OpGet") {
+        return -1;
+      }
+      r = scope_fn::base(d!.returned[0] ?? ir::TyVoid);
+      ok = match r {
+        TyReference => true,
+        TyVector => true,
+        TyText => true,
+        TyEnum { is_ref } => is_ref,
+        TySorted => true,
+        TyHash => true,
+        TyIndex => true,
+        _ => false
+      };
+      if !ok || len(args) == 0 {
+        return -1;
+      }
+      borrow_root(b, args[0]!)
+    },
+    _ => -1
+  }
+}
+
+// port: scan.rs fn drop_tail_frees
+fn drop_tail_frees(s: Scopes, ops: vector<ir::Node>, hoisted: vector<integer>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for op in ops {
+    fv = scope_free_op_var(s, op);
+    if fv < 0 || !scope_fn::has(hoisted, fv) {
+      out += [op];
+    }
+  }
+  k = len(out);
+  i = k - 1;
+  while i >= 0 {
+    o = out[i]!;
+    if scope_free_op_var(s, o) < 0 {
+      match o {
+        NdBlock { block } => {
+          bl = block[0];
+          out[i] = ir::NdBlock { block: [ir::Block { name: bl.name, operators: drop_tail_frees(s, bl.operators, hoisted), result: bl.result, scope: bl.scope, var_size: bl.var_size }] };
+        },
+        _ => {}
+      }
+      return out;
+    }
+    i -= 1;
+  }
+  out
+}
+
+// port: scan.rs fn tail_vars_through_arms
+fn tail_vars_through_arms(v: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(v) {
+    NdVar { n: x } => {
+      if !scope_fn::has(out, x) {
+        out += [x];
+      }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      r = scope_fn::base(bl.result[0] ?? ir::TyVoid);
+      if !(r is TyVoid) && !(r is TyNever) && len(bl.operators) > 0 {
+        tail_vars_through_arms(bl.operators[len(bl.operators) - 1]!, out);
+      }
+    },
+    NdIf { t, f } => {
+      tail_vars_through_arms(t, out);
+      tail_vars_through_arms(f, out);
+    },
+    _ => {}
+  }
+}

@@ -1,0 +1,416 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the `Function` (src/variables/mod.rs) and `Type` (src/data.rs) questions the
+// transcribed scope pass asks (`scope_*.loft`, doc/claude/plans/91-self-host/scope-pass-port.md),
+// read off the program image's `ir::Function`.  One loft function per Rust method, named as it
+// is; the type questions own.loft already ports are called there.
+
+use ir;
+use own;
+
+// `u16::MAX`: no variable, no scope.
+pub NONE = 65535;
+
+// port: variables/mod.rs fn count
+pub fn count(f: ir::Function) -> integer {
+  len(f.variables)
+}
+
+// port: variables/mod.rs fn tp — `Type::Unknown(0)` past the table.
+pub fn tp(f: ir::Function, v: integer) -> ir::TypeT {
+  x = f.variables[v];
+  if x == null {
+    return ir::TyUnknown { n: 0 };
+  }
+  x.type_def[0] ?? ir::TyUnknown { n: 0 }
+}
+
+// port: data.rs fn base — one `Optional` peeled.
+pub fn base(t: ir::TypeT) -> ir::TypeT {
+  match t { TyOptional { inner } => inner, _ => t }
+}
+
+// port: variables/mod.rs fn name
+pub fn name(f: ir::Function, v: integer) -> text {
+  x = f.variables[v];
+  if x == null { "??" } else { x.name }
+}
+
+// port: variables/mod.rs fn is_argument
+pub fn is_argument(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.argument }
+}
+
+// port: variables/mod.rs fn is_skip_free
+pub fn is_skip_free(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.skip_free }
+}
+
+// port: variables/mod.rs fn is_captured
+pub fn is_captured(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.captured }
+}
+
+// port: variables/mod.rs fn is_compiler_generated
+pub fn is_compiler_generated(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null {
+    return false;
+  }
+  x.name.starts_with("_") && !x.user_named
+}
+
+// port: variables/mod.rs fn rebind_orig — `None` as -1.
+pub fn rebind_orig(f: ir::Function, v: integer) -> integer {
+  x = f.variables[v];
+  if x == null || x.rebind_orig == NONE { -1 } else { x.rebind_orig }
+}
+
+// port: variables/mod.rs fn owner_witness — `None` as -1.
+pub fn owner_witness(f: ir::Function, v: integer) -> integer {
+  x = f.variables[v];
+  if x == null || x.owner_witness == NONE { -1 } else { x.owner_witness }
+}
+
+// port: data.rs fn depend
+pub fn depend(t: ir::TypeT) -> vector<integer> {
+  own::depend_of(t)
+}
+
+// port: variables/mod.rs `tp(v).depend()`
+pub fn deps(f: ir::Function, v: integer) -> vector<integer> {
+  own::depend_of(tp(f, v))
+}
+
+// port: data.rs fn has_no_deps
+pub fn has_no_deps(t: ir::TypeT) -> boolean {
+  match t {
+    TyRefVar { inner } => has_no_deps(inner),
+    TyOptional { inner } => has_no_deps(inner),
+    TyTuple { elems } => {
+      for e in elems {
+        if !has_no_deps(e) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => len(own::depend_of(t)) == 0
+  }
+}
+
+// port: variables/mod.rs fn deps_are_guarded_backings
+fn deps_are_guarded_backings(f: ir::Function, v: integer) -> boolean {
+  if rebind_orig(f, v) >= 0 {
+    return false;
+  }
+  ds = deps(f, v);
+  if len(ds) == 0 {
+    return false;
+  }
+  for d in ds {
+    x = f.variables[d];
+    if x == null || !x.skip_free || !has(f.inline_refs, d) || !x.name.starts_with("__vdb") {
+      return false;
+    }
+  }
+  true
+}
+
+// port: variables/mod.rs fn proxy_says_owned
+pub fn proxy_says_owned(f: ir::Function, v: integer) -> boolean {
+  (has_no_deps(tp(f, v)) || deps_are_guarded_backings(f, v)) && !is_skip_free(f, v)
+}
+
+// port: data.rs fn is_dbref, on the type as given.
+pub fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference => true,
+    TyVector => true,
+    TySorted => true,
+    TyIndex => true,
+    TyHash => true,
+    TyRadix => true,
+    TyTrie => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+// `matches!(t.base(), Type::Text(_))`.
+pub fn is_text(t: ir::TypeT) -> boolean {
+  base(t) is TyText
+}
+
+// `matches!(t, Type::Text(_))`, bare.
+pub fn is_text_bare(t: ir::TypeT) -> boolean {
+  t is TyText
+}
+
+// `matches!(t.base(), Type::Reference(..) | Type::Enum(_, true, _))`.
+pub fn is_record(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+// port: parser/vectors.rs fn is_keyed — through `base()`.
+pub fn is_keyed(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TySorted => true,
+    TyIndex => true,
+    TyHash => true,
+    TyRadix => true,
+    TyTrie => true,
+    _ => false
+  }
+}
+
+// A value no scope exit releases: the scalars, a plain enum, `void`.  The question the
+// transcription asks before every branch it carries only for such a value.
+pub fn is_plain(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyBoolean => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyInteger => true,
+    TyFloat => true,
+    TyVoid => true,
+    TyNull => true,
+    TyNever => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+// The kind of value a refusal names.
+pub fn kind_name(t: ir::TypeT) -> text {
+  match base(t) {
+    TyText => "text",
+    TyReference => "record",
+    TyEnum { is_ref } => if is_ref { "record" } else { "scalar" },
+    TyVector => "vector",
+    TySorted => "keyed collection",
+    TyIndex => "keyed collection",
+    TyHash => "keyed collection",
+    TyRadix => "keyed collection",
+    TyTrie => "keyed collection",
+    TyTuple => "tuple",
+    TyFunction => "fn-ref",
+    TyIterator => "generator handle",
+    TyRefVar => "`&` variable",
+    TyKeys => "keys",
+    _ => if is_plain(t) { "scalar" } else { "other" }
+  }
+}
+
+// port: variables/mod.rs fn add_temp_var — an existing name is handed back (re-typed where a
+// generated temp's type changed), else a new variable with that name.
+pub fn add_temp_var(f: ir::Function, nm: text, t: ir::TypeT) -> integer {
+  for n in f.names {
+    if n.name == nm {
+      nr = n.nr;
+      existing = tp(f, nr);
+      if existing is TyUnknown || (nm.starts_with("__") && !(t is TyUnknown) && "{existing}" != "{t}") {
+        f.variables[nr].type_def = [t];
+      }
+      return nr;
+    }
+  }
+  v = len(f.variables);
+  f.names += [ir::NameNr { name: nm, nr: v }];
+  f.variables += [temp_variable(nm, t)];
+  v
+}
+
+// port: variables/mod.rs fn copy_variable — a second binding of `v`'s name, no scope yet.
+pub fn copy_variable(f: ir::Function, v: integer) -> integer {
+  o = f.variables[v]!;
+  n = temp_variable(o.name, o.type_def[0] ?? ir::TyUnknown { n: 0 });
+  n.uses = o.uses;
+  n.user_named = o.user_named;
+  n.value_const = o.value_const;
+  n.linked_narrow = o.linked_narrow;
+  n.store_text_link = o.store_text_link;
+  n.skip_free = o.skip_free;
+  nv = len(f.variables);
+  f.variables += [n];
+  nv
+}
+
+// port: variables/mod.rs fn make_independent — `remove` out of `v`'s deps.
+pub fn make_independent(f: ir::Function, v: integer, remove: integer) {
+  f.variables[v].type_def = [without_dep(tp(f, v), remove)];
+}
+
+fn strip(dep: vector<integer>, remove: integer) -> vector<integer> {
+  [for d in dep if d != remove { d }]
+}
+
+// `Type::deps_mut` with one entry removed (the first occurrence: `position` then `remove`).
+fn without_dep(t: ir::TypeT, remove: integer) -> ir::TypeT {
+  match t {
+    TyText { dep } => ir::TyText { dep: strip(dep, remove) },
+    TyReference { n, dep } => ir::TyReference { n: n, dep: strip(dep, remove) },
+    TyEnum { n, is_ref, dep } => ir::TyEnum { n: n, is_ref: is_ref, dep: strip(dep, remove) },
+    TyVector { inner, dep } => ir::TyVector { inner: inner, dep: strip(dep, remove) },
+    TySorted { n, keys, dep } => ir::TySorted { n: n, keys: keys, dep: strip(dep, remove) },
+    TyIndex { n, keys, dep } => ir::TyIndex { n: n, keys: keys, dep: strip(dep, remove) },
+    TyHash { n, names, dep } => ir::TyHash { n: n, names: names, dep: strip(dep, remove) },
+    TyRadix { n, names, dep } => ir::TyRadix { n: n, names: names, dep: strip(dep, remove) },
+    TyTrie { n, key, dep } => ir::TyTrie { n: n, key: key, dep: strip(dep, remove) },
+    TyFunction { args, result, dep, consts } => ir::TyFunction { args: args, result: result, dep: strip(dep, remove), consts: consts },
+    TyOptional { inner } => ir::TyOptional { inner: without_dep(inner, remove) },
+    TyRefVar { inner } => ir::TyRefVar { inner: without_dep(inner, remove) },
+    _ => t
+  }
+}
+
+// `el_vars::fresh_variable`'s fields for a temp the pass makes (`Variable` of `add_temp_var`).
+pub fn temp_variable(nm: text, t: ir::TypeT) -> ir::Variable {
+  ir::Variable {
+    name: nm,
+    type_def: [t],
+    stack_pos: 65535,
+    uses: 1,
+    argument: false,
+    stack_allocated: false,
+    skip_free: false,
+    captured: false,
+    caller_hidden_buf: false,
+    view_elided: false,
+    lazy_buffer: false,
+    deferred_first_bind: false,
+    linked_narrow: false,
+    store_text_link: false,
+    user_named: false,
+    user_appended: false,
+    copy_bound: false,
+    buffer_witnessed: false,
+    value_const: false,
+    owner_witness: 65535,
+    rebind_orig: 65535,
+    scope: 65535
+  }
+}
+
+// A deep copy of a variable table (`Function::copy`): a scan phase works on its own.
+pub fn copy_function(f: ir::Function) -> ir::Function {
+  ir::Function {
+    name: f.name,
+    file: f.file,
+    variables: [for v in f.variables { copy_var(v) }],
+    names: [for n in f.names { ir::NameNr { name: n.name, nr: n.nr } }],
+    inline_refs: [for x in f.inline_refs { x }]
+  }
+}
+
+fn copy_var(v: ir::Variable) -> ir::Variable {
+  n = temp_variable(v.name, v.type_def[0] ?? ir::TyUnknown { n: 0 });
+  n.type_def = [for t in v.type_def { t }];
+  n.stack_pos = v.stack_pos;
+  n.uses = v.uses;
+  n.argument = v.argument;
+  n.stack_allocated = v.stack_allocated;
+  n.skip_free = v.skip_free;
+  n.captured = v.captured;
+  n.caller_hidden_buf = v.caller_hidden_buf;
+  n.view_elided = v.view_elided;
+  n.lazy_buffer = v.lazy_buffer;
+  n.deferred_first_bind = v.deferred_first_bind;
+  n.linked_narrow = v.linked_narrow;
+  n.store_text_link = v.store_text_link;
+  n.user_named = v.user_named;
+  n.user_appended = v.user_appended;
+  n.copy_bound = v.copy_bound;
+  n.buffer_witnessed = v.buffer_witnessed;
+  n.value_const = v.value_const;
+  n.owner_witness = v.owner_witness;
+  n.rebind_orig = v.rebind_orig;
+  n.scope = v.scope;
+  n
+}
+
+// port: data.rs fn def_nr — the definition named `nm`, -1 for none.
+pub fn def_nr(b: ir::Bundle, nm: text) -> integer {
+  for d in b.data.definitions {
+    if d.name == nm {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// `Value::unspan`
+pub fn unspan(n: ir::Node) -> ir::Node {
+  at = n;
+  while at is NdSpan {
+    match at {
+      NdSpan { inner } => { at = inner; },
+      _ => {}
+    }
+  }
+  at
+}
+
+// `v_set`
+pub fn v_set(v: integer, n: ir::Node) -> ir::Node {
+  ir::NdSet { var: v, inner: n }
+}
+
+// `Value::Call(data.def_nr(name), args)`.
+pub fn op(b: ir::Bundle, nm: text, args: vector<ir::Node>) -> ir::Node {
+  ir::NdCall { def_nr: def_nr(b, nm), args: args }
+}
+
+// The direct child nodes of `n`, in order (`Value::for_each_child`).
+pub fn children(n: ir::Node) -> vector<ir::Node> {
+  match n {
+    NdSpan { inner } => [inner],
+    NdCall { args } => args,
+    NdCallRef { args } => args,
+    NdBlock { block } => block[0].operators,
+    NdLoop { block } => block[0].operators,
+    NdInsert { items } => items,
+    NdTuple { items } => items,
+    NdSet { inner } => [inner],
+    NdReturn { inner } => [inner],
+    NdDrop { inner } => [inner],
+    NdYield { inner } => [inner],
+    NdIf { cond, t, f } => [cond, t, f],
+    NdIter { create, next, init } => [create, next, init],
+    NdTuplePut { inner } => [inner],
+    NdParallel { arms } => arms,
+    _ => []
+  }
+}
+
+// port: data.rs fn reads_var — a `Var(v)` anywhere in `n`.
+pub fn reads_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => if x == v { return true; },
+    _ => {}
+  }
+  for c in children(n) {
+    if reads_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `vec.contains(x)` over variable numbers.
+pub fn has(v: vector<integer>, x: integer) -> boolean {
+  for y in v {
+    if y == x {
+      return true;
+    }
+  }
+  false
+}

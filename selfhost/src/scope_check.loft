@@ -1,0 +1,201 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes.rs` `check` transcribed (doc/claude/plans/91-self-host/scope-pass-port.md
+// step 1): the scope pass over every function, in the order Rust runs its parts — the
+// whole-program rewrites on the parser's bodies, then per function the join rewrites, the scan
+// phase (`scope_phase`), the confinement rescan, last-use freeing, the settled-IR rewrites
+// (`place_result` … `wrapper_inline`), the intervals and the slots, and after the loop the
+// whole-program rewrites on the settled bodies.  A rewrite not transcribed yet refuses the
+// function by name where its Rust trigger is present in the body; `wrapper_inline` is
+// `scope_wrapper`, the intervals and slots are `scope.loft`'s.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_phase;
+use scope_args;
+use scope_wrapper;
+use scope;
+
+// port: scopes.rs fn check — the program's own functions (source 1), each laid out or refused
+// by name.
+pub fn check(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  ops = scope_scan::ops_of(b);
+  iops = scope::ops_of(b);
+  for d in b.data.definitions {
+    if d.def_type != 1 || len(d.code) == 0 || d.source != 1 {
+      continue;
+    }
+    d_nr = d#index;
+    orig_code = d.code[0]!;
+    why = program_rewrites(b, orig_code, d.variables);
+    if why == "" {
+      why = join_rewrites(b, orig_code, d.variables);
+    }
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables);
+    if why == "" {
+      why = ph.why;
+    }
+    if why == "" {
+      why = settled_rewrites(b, ph.code, ph.function);
+    }
+    if why != "" {
+      refused += ["{d.name}: {why}"];
+      continue;
+    }
+    // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
+    code = scope_wrapper::rewrite(b, ph.code);
+    b.data.definitions[d_nr].variables = ph.function;
+    b.data.definitions[d_nr].code = [code];
+    // `compute_function_intervals`, `assign_function_slots`.
+    f = b.data.definitions[d_nr].variables;
+    iv = scope::intervals(code, f, iops);
+    scope::assign_slots(f, iv, scope::range_aliases(code, f, iops), scope::local_start(f));
+    b.data.definitions[d_nr].code = [scope::zero_var_size(code)];
+  }
+  refused
+}
+
+// The whole-program rewrites `check` runs on the parser's bodies before the loop, each refused
+// where its trigger is in this body: `pure_reuse`, `bound_append`, `elide_borrows`,
+// `value_struct_copy` (`spent::record_all` records facts only; `move_elide` is off unless
+// `LOFT_MOVE_ELIDE`), and the post-loop ones on the settled bodies: `text_replace::admit`,
+// `buffer_detach`, `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
+// and closures, refused where they are bound).
+fn program_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
+  calls: vector<text> = [];
+  w = Trigger { why: "" };
+  triggers(b, code, f, calls, w);
+  w.why
+}
+
+struct Trigger { why: text }
+
+fn note(w: Trigger, why: text) {
+  if w.why == "" {
+    w.why = why;
+  }
+}
+
+fn triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<text>, w: Trigger) {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      d = b.data.definitions[def_nr];
+      if d != null && (nm.starts_with("n_") || nm.starts_with("t_")) && len(d!.code) > 0 {
+        key = "{def_nr}(";
+        for a in args {
+          key += "{scope_fn::unspan(a)},";
+        }
+        if calls.contains(key) {
+          note(w, "pure_reuse::reuse_in_block: a loft call made twice on the same arguments");
+        }
+        calls += [key];
+      }
+      if nm == "OpAppendVector" && len(args) > 1 && scope_fn::unspan(args[1]!) is NdVar {
+        note(w, "bound_append::rewrite_program: a local appended whole");
+      }
+      if nm == "OpSetTextReplace" {
+        note(w, "text_replace::admit: a text field assigned");
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    triggers(b, c, f, calls, w);
+  }
+}
+
+// `write_out_joined_copies`, `reassociate_coalesce_chains`, `retain_shared_handles` — the
+// rewrites `check` runs on each body before its scan.
+fn join_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
+  for v in f.variables {
+    if scope_fn::base(v.type_def[0] ?? ir::TyVoid) is TyIterator {
+      return "handles::retain_shared_handles: a generator handle";
+    }
+  }
+  w = Trigger { why: "" };
+  join_triggers(b, code, w);
+  w.why
+}
+
+fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
+  match n {
+    NdCall { def_nr, args } => {
+      if scope_args::def_name(b, def_nr) == "OpCopyRecord" && len(args) > 0 {
+        a0 = scope_fn::unspan(args[0]!);
+        if a0 is NdIf || a0 is NdBlock || a0 is NdInsert {
+          note(w, "join_rewrite::write_out_joined_copies: a join copied into a container");
+        }
+      }
+    },
+    NdIf { cond } => {
+      match scope_fn::unspan(cond) {
+        NdCall { def_nr, args } => {
+          nm = scope_args::def_name(b, def_nr);
+          if nm == "OpConvBoolFromRef" && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar {
+            note(w, "join_rewrite::reassociate_coalesce_chains: a record `??`");
+          }
+          if nm == "OpNot" && len(args) == 1 {
+            match scope_fn::unspan(args[0]!) {
+              NdCall { def_nr: inner } => if scope_args::def_name(b, inner) == "OpVectorIsNull" {
+                note(w, "join_rewrite::reassociate_coalesce_chains: a vector `??`");
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    join_triggers(b, c, w);
+  }
+}
+
+// The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
+// is in the body: `store_confinement` and `lastuse_reclaim` (a store local, refused where it is
+// bound), `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
+// `compact`, `take_local`, `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`,
+// `slice_text`, `slice_into`.
+fn settled_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
+  w = Trigger { why: "" };
+  settled_triggers(b, code, false, w);
+  w.why
+}
+
+fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
+  lp = in_loop;
+  match n {
+    NdLoop => { lp = true; },
+    NdCall { def_nr } => {
+      nm = scope_args::def_name(b, def_nr);
+      if nm == "OpAppendVector" {
+        note(w, "compact::rewrite / slice_into::rewrite: a vector appended to");
+      }
+      if nm == "OpPushFloat" || nm == "OpPushInt" || nm == "OpPushSingle" || nm == "OpPushInt4" {
+        note(w, "repeat_run::rewrite: a constant pushed");
+      }
+      if nm == "OpPushByte" {
+        note(w, "byte_copy::rewrite: a byte pushed");
+      }
+      if nm == "OpGetVectorNullable" {
+        note(w, "vec_copy::rewrite: a vector element read");
+      }
+      if nm == "n_text_from_bytes" {
+        note(w, "slice_text::rewrite: text from bytes");
+      }
+      if in_loop && nm == "OpGetVector" {
+        note(w, "loop_kernel_rewrite::rewrite: a vector read in a loop");
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    settled_triggers(b, c, lp, w);
+  }
+}

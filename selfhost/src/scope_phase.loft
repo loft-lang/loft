@@ -1,0 +1,297 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/phase.rs` transcribed: one scan PHASE over one function — gather the
+// facts the scan reads, scan the body, install the result.  The facts of the passes not
+// transcribed yet are computed by Rust before the scan and read inside branches the scan reaches
+// only for a record, a collection, a tuple or a closure, which refuse; where such a fact would
+// change the body or the table BEFORE the scan (a witness, a flag, a materialise buffer), the
+// phase refuses here, by the fact's name.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use binds;
+use scope_args;
+
+pub struct Phase {
+  pub code: ir::Node,
+  pub function: ir::Function,
+  pub why: text
+}
+
+// port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
+// `confined`, `sunk` and `late_owners` are empty on every phase this transcription runs (the
+// confinement rescan, the written-out arms and the late owners are facts of stores).
+pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function) -> Phase {
+  s = scope_scan::Scopes {
+    ops: ops,
+    d_nr: d_nr,
+    max_scope: 1,
+    scope: 0,
+    stack: [],
+    var_scope: [],
+    var_order: [],
+    binding_now: [],
+    var_mapping: [],
+    loops: [],
+    scan_depth: 0,
+    lift_counter: 0,
+    lift_vars: [],
+    lift_texts: [],
+    ret_temp_counter: 0,
+    late_owners: [],
+    skipped_viewers: [],
+    value_hoists: [],
+    multi_assigned: multi_assigned_in(orig_code),
+    first_set: scope_fn::NONE,
+    null_led: null_led_in(b, orig_code),
+    null_led_first: [],
+    split_from: [],
+    split_count: [],
+    mentions: var_mentions_in(orig_code),
+    sunk: [],
+    assigned: assigned_in(orig_code),
+    owned_refs: [],
+    why: ""
+  };
+  function = scope_fn::copy_function(orig_vars);
+  pre_scan_refusals(s, b, d_nr, orig_code, function);
+  for v in function.variables {
+    if v.argument {
+      scope_scan::set_scope_of(s, v#index, 0);
+    }
+  }
+  // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` parameter is re-pointed to lives for the whole
+  // function.
+  slot_cells: vector<integer> = [];
+  collect_slot_cells(s, orig_code, function, slot_cells);
+  for c in slot_cells {
+    scope_scan::set_scope_of(s, c, 0);
+    s.var_order += [c];
+  }
+  code = scope_scan::scan(s, b, orig_code, function);
+  // Each insert below goes at the head of the body block, the last one inserted first.
+  head: vector<ir::Node> = [];
+  for c in slot_cells {
+    head += [scope_fn::v_set(c, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  }
+  // `scan_args`' lifts are assigned inside conditional branches but freed at function exit:
+  // their null-inits reserve the slot on every path.
+  pre: vector<ir::Node> = [];
+  for v in s.lift_vars {
+    pre += [scope_fn::v_set(v, ir::NdNull)];
+  }
+  pre += head;
+  head = pre;
+  pre_t: vector<ir::Node> = [];
+  for v in s.lift_texts {
+    pre_t += [scope_fn::v_set(v, ir::NdText { s: "" })];
+  }
+  pre_t += head;
+  head = pre_t;
+  if len(head) > 0 {
+    code = prepend_body(code, head);
+  }
+  // `reuse_record_buffers` and `lazy_buffer_mints` act on `__ref_N` record and vector buffers,
+  // whose bindings `scan_set` refuses.
+  for v in s.var_scope {
+    if v >= 0 {
+      function.variables[v#index].scope = v;
+    }
+  }
+  Phase { code: code, function: function, why: s.why }
+}
+
+// `body_block_mut`, with `ops` put in front of its operators.
+fn prepend_body(code: ir::Node, ops: vector<ir::Node>) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: prepend_body(inner, ops) },
+    NdBlock { block } => {
+      bl = block[0];
+      all = ops;
+      all += bl.operators;
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: all, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => code
+  }
+}
+
+// The analyses `run_scan_phase` runs before the scan that change the body or the table there:
+// each refuses where its Rust gate can fire.
+fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function) {
+  d = b.data.definitions[d_nr]!;
+  // `hidden_return_buffer_var` — the return buffer's runtime witness (`__rbo_`, loft#1128) and
+  // its entry witness (`@FR-O-Buffer`).
+  h = binds::hidden_return_buffer_attr(d);
+  if h != null {
+    a = d.attributes[h!];
+    if a != null && scope_fn::is_dbref(scope_fn::base(a!.typedef[0] ?? ir::TyVoid)) {
+      scope_scan::refuse(s, "phase: a hidden return buffer (witness::displaces_return_buffer, Function::entry_witness)");
+    }
+  }
+  // `collect_views_to_materialise` — a `text` payload view a disturbance materialises
+  // (`text_mirror`); a record or collection view refuses where it is bound.
+  if has_block(code, "text_mirror") {
+    scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a text payload view");
+  }
+  // `capture_build_backings`, `closure_keep_set` — the closure records this frame builds.
+  for v in f.variables {
+    if v.name.starts_with("___clos_") {
+      scope_scan::refuse(s, "capture_builds::capture_build_backings: a closure record");
+    }
+  }
+  if has_block(code, "fn_ref_with_closure") {
+    scope_scan::refuse(s, "closure_keep::closure_keep_set: a closure built");
+  }
+}
+
+fn has_block(n: ir::Node, nm: text) -> boolean {
+  match n {
+    NdBlock { block } => if block[0].name == nm { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if has_block(c, nm) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Set(p, OpCreateStack(Var(c)))` with `p` a parameter and `c` a compiler cell.
+fn collect_slot_cells(s: scope_scan::Scopes, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  match n {
+    NdSet { var: p, inner } => {
+      if scope_fn::is_argument(f, p) {
+        match scope_fn::unspan(inner) {
+          NdCall { def_nr, args } => if def_nr == s.ops.create_stack && len(args) == 1 {
+            match args[0]! {
+              NdVar { n: c } => if scope_fn::is_compiler_generated(f, c) && !scope_fn::is_argument(f, c) && !scope_fn::has(out, c) {
+                out += [c];
+              },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_slot_cells(s, c, f, out);
+  }
+}
+
+// port: phase.rs fn multi_assigned_in — the variables bound at two or more sites.
+pub fn multi_assigned_in(n: ir::Node) -> vector<integer> {
+  counts: vector<integer> = [];
+  count_sets(n, counts);
+  [for c in counts if c >= 2 { c#index }]
+}
+
+fn count_sets(n: ir::Node, counts: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var } => {
+      while len(counts) <= var {
+        counts += [0];
+      }
+      counts[var] = counts[var]! + 1;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    count_sets(c, counts);
+  }
+}
+
+// port: phase.rs fn assigned_in
+pub fn assigned_in(n: ir::Node) -> vector<integer> {
+  counts: vector<integer> = [];
+  count_sets(n, counts);
+  [for c in counts if c >= 1 { c#index }]
+}
+
+// port: phase.rs fn null_led_in — one real bind and at least one null.
+pub fn null_led_in(b: ir::Bundle, n: ir::Node) -> vector<integer> {
+  nulls: vector<integer> = [];
+  reals: vector<integer> = [];
+  null_led_count(b, n, nulls, reals);
+  out: vector<integer> = [];
+  for x in nulls {
+    i = x#index;
+    if x >= 1 && (reals[i] ?? 0) == 1 {
+      out += [i];
+    }
+  }
+  out
+}
+
+fn null_led_count(b: ir::Bundle, n: ir::Node, nulls: vector<integer>, reals: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => {
+      while len(nulls) <= var {
+        nulls += [0];
+        reals += [0];
+      }
+      is_null = match scope_fn::unspan(inner) {
+        NdNull => true,
+        NdCall { def_nr, args } => len(args) == 0 && scope_args::def_name(b, def_nr) == "OpNullRefSentinel",
+        _ => false
+      };
+      if is_null {
+        nulls[var] = nulls[var]! + 1;
+      } else {
+        reals[var] = reals[var]! + 1;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    null_led_count(b, c, nulls, reals);
+  }
+}
+
+// port: phase.rs fn var_mentions_in — how many nodes name each variable.
+pub fn var_mentions_in(n: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  mentions_into(n, out);
+  out
+}
+
+fn named(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: v } => v,
+    NdSet { var } => var,
+    NdTupleGet { var } => var,
+    NdTuplePut { var } => var,
+    NdFnRefDnr { n: v } => v,
+    NdCallRef { var } => var,
+    NdIter { var } => var,
+    NdFnRef { var } => if var == scope_fn::NONE { -1 } else { var },
+    _ => -1
+  }
+}
+
+fn mentions_into(n: ir::Node, out: vector<integer>) {
+  v = named(scope_fn::unspan(n));
+  if v >= 0 {
+    while len(out) <= v {
+      out += [0];
+    }
+    out[v] = out[v]! + 1;
+  }
+  for c in scope_fn::children(n) {
+    mentions_into(c, out);
+  }
+}
+
+// port: branches.rs fn mentions_of — `var_mentions_in`'s count for one variable.
+pub fn mentions_of(n: ir::Node, v: integer) -> integer {
+  k = if named(scope_fn::unspan(n)) == v { 1 } else { 0 };
+  for c in scope_fn::children(n) {
+    k += mentions_of(c, v);
+  }
+  k
+}

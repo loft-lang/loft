@@ -1,0 +1,418 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/args.rs` `scan_args` transcribed: a call's arguments, each scanned, and
+// the preamble a lifted argument leaves before the call.  Every lift of a HEAP argument (an inline
+// record or collection a call answers, a `&` write-back, a borrow source the bracket cannot name)
+// belongs to the passes not transcribed yet and refuses the function by name; the text copy of a
+// by-value operand a later operand writes (`copy_written_text_operands`) is carried.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use binds;
+
+pub struct Scanned {
+  pub preamble: vector<ir::Node>,
+  pub ls: vector<ir::Node>,
+  pub postamble: vector<ir::Node>
+}
+
+// The type of the value a node answers, where the node says it: a variable, a call, a call
+// through a fn-ref, a value block, a literal.  `TyUnknown` where it does not.
+pub fn value_type(b: ir::Bundle, n: ir::Node, f: ir::Function) -> ir::TypeT {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => scope_fn::tp(f, v),
+    NdCall { def_nr } => def_returned(b, def_nr),
+    NdCallRef { var } => match scope_fn::base(scope_fn::tp(f, var)) {
+      TyFunction { result } => result,
+      _ => ir::TyUnknown { n: 0 }
+    },
+    NdBlock { block } => block[0].result[0] ?? ir::TyUnknown { n: 0 },
+    NdInt => ir::TyInteger { spec: ir::IntegerSpec { min: 0, max: 0, not_null: false, forced_size: 0 } },
+    NdBoolean => ir::TyBoolean,
+    NdText => ir::TyText { dep: [] },
+    NdNull => ir::TyNull,
+    _ => ir::TyUnknown { n: 0 }
+  }
+}
+
+// The declared result of definition `d`.
+pub fn def_returned(b: ir::Bundle, d: integer) -> ir::TypeT {
+  x = b.data.definitions[d];
+  if x == null {
+    return ir::TyUnknown { n: 0 };
+  }
+  x!.returned[0] ?? ir::TyUnknown { n: 0 }
+}
+
+// The name of definition `d`, "" for none.
+pub fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if x == null { "" } else { x!.name }
+}
+
+// A value no release is ever owed for, nor a store: a scalar, or a text.
+fn plain_or_text(t: ir::TypeT) -> boolean {
+  scope_fn::is_plain(t) || scope_fn::is_text(t)
+}
+
+// port: inline_returns.rs fn inline_struct_return — true where Rust answers a type (and the
+// argument is lifted into an owner).  Every answer it gives is a heap type, so a value of a
+// scalar or text type answers false; a heap one is decided by the branches below, as far as the
+// transcription goes, and is otherwise refused by the caller.
+pub fn inline_struct_return(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node, outer_call: integer, f: ir::Function) -> boolean {
+  match scope_fn::unspan(val) {
+    NdCallRef { var } => {
+      r = match scope_fn::base(scope_fn::tp(f, var)) { TyFunction { result } => result, _ => ir::TyUnknown { n: 0 } };
+      !plain_or_text(r)
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name != "ncc" && bl.name != "ncr" {
+        return false;
+      }
+      !plain_or_text(bl.result[0] ?? ir::TyVoid)
+    },
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr];
+      if d == null {
+        return false;
+      }
+      r = d!.returned[0] ?? ir::TyVoid;
+      if plain_or_text(r) {
+        return false;
+      }
+      if d!.name.starts_with("Op") {
+        // An operator lifts only a fresh struct-enum or vector (the body-less arms).
+        return match scope_fn::base(r) {
+          TyEnum { is_ref, dep } => is_ref && len(dep) == 0,
+          TyVector { dep } => len(dep) == 0,
+          _ => false
+        };
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+// port: arm_lift.rs fn is_value_branch
+pub fn is_value_branch(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf => true,
+    NdBlock { block } => {
+      bl = block[0];
+      r = bl.result[0] ?? ir::TyVoid;
+      if r is TyVoid || r is TyNull {
+        return false;
+      }
+      k = len(bl.operators);
+      if k == 0 {
+        return false;
+      }
+      tail = bl.operators[k - 1]!;
+      if is_value_branch(tail) {
+        return true;
+      }
+      match scope_fn::unspan(tail) {
+        NdVar { n: x } => {
+          for o in bl.operators {
+            match scope_fn::unspan(o) {
+              NdSet { var } => if var == x { return true; },
+              _ => {}
+            }
+          }
+          false
+        },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: arm_lift.rs fn arm_tails_need_binding — `arm_bind` answers only for a record, a vector
+// or a fn-ref call's tail; a scalar or text tail answers none, and a heap one refuses.
+pub fn arm_tails_need_binding(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, bound: integer, f: ir::Function) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf { t, f: e } => arm_tails_need_binding(s, b, t, bound, f) || arm_tails_need_binding(s, b, e, bound, f),
+    NdBlock { block } => {
+      bl = block[0];
+      r = bl.result[0] ?? ir::TyVoid;
+      k = len(bl.operators);
+      if r is TyVoid || r is TyNull || k == 0 {
+        return false;
+      }
+      arm_tails_need_binding(s, b, bl.operators[k - 1]!, bound, f)
+    },
+    NdInsert { items } => {
+      k = len(items);
+      k > 0 && arm_tails_need_binding(s, b, items[k - 1]!, bound, f)
+    },
+    NdCallRef => {
+      if !scope_fn::is_plain(value_type(b, n, f)) {
+        scope_scan::refuse(s, "arm_lift::arm_callref_lift_type: a fn-ref call's value as a branch arm");
+      }
+      false
+    },
+    NdCall => {
+      if !plain_or_text(value_type(b, n, f)) {
+        scope_scan::refuse(s, "arm_lift::arm_bind: a heap call's value as a branch arm");
+      }
+      false
+    },
+    NdVar => {
+      if !plain_or_text(value_type(b, n, f)) && bound != scope_fn::NONE && bound >= 0 {
+        scope_scan::refuse(s, "arm_lift::arm_bind: a heap local as a branch arm");
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: data.rs fn is_heap_owned
+fn is_heap_owned(t: ir::TypeT) -> boolean {
+  bt = scope_fn::base(t);
+  scope_fn::is_dbref(bt) && scope_fn::has_no_deps(bt)
+}
+
+// port: args.rs fn is_null_init_preamble
+pub fn is_null_init_preamble(ops: vector<ir::Node>, f: ir::Function) -> boolean {
+  k = len(ops);
+  if k < 2 {
+    return false;
+  }
+  for op in ops[0..k - 1] {
+    match op {
+      NdSet { var, inner } => if !(inner is NdNull) || !is_heap_owned(scope_fn::tp(f, var)) { return false; },
+      _ => { return false; }
+    }
+  }
+  true
+}
+
+// port: args.rs fn scan_args
+pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function, outer_call: integer) -> Scanned {
+  preamble: vector<ir::Node> = [];
+  ls: vector<ir::Node> = [];
+  postamble: vector<ir::Node> = [];
+  callee: ir::Definition? = if outer_call >= 0 { b.data.definitions[outer_call] } else { null };
+  borrows = callee != null && binds::is_loft_defined(callee!) && returns_borrowed_view(callee!);
+  for a in args {
+    arg_idx = a#index;
+    // loft#1320 — a branch value consumed by this call gets its arms' owners here.
+    if is_value_branch(a) && arm_tails_need_binding(s, b, a, scope_fn::NONE, f) {
+      scope_scan::refuse(s, "arm_lift::lift_join_arm_tails: a branch value as an argument");
+    }
+    scanned = scope_scan::scan(s, b, a, f);
+    match scanned {
+      NdSpan { inner } => if inner is NdInsert { scanned = inner; },
+      _ => {}
+    }
+    match scanned {
+      NdCall { def_nr: cs, args: cargs } => {
+        // loft#1287 / loft#2145 — a `&` argument of a rebound parameter or a view local.
+        if cs == s.ops.create_stack && outer_call >= 0 {
+          match scope_fn::unspan(cargs[0] ?? ir::NdNull) {
+            NdVar { n: v } => if scope_fn::rebind_orig(f, v) >= 0 {
+              scope_scan::refuse(s, "args::scan_args: a `&` argument of a rebound parameter (protect_store_frees)");
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+    match scanned {
+      NdInsert { items } => {
+        k = len(items);
+        p135 = k >= 2;
+        p179 = k >= 2;
+        for op in items[0..k - 1] {
+          match op {
+            NdSet { var } => {
+              if !scope_fn::name(f, var).starts_with("__lift_") { p135 = false; }
+              if !scope_fn::name(f, var).starts_with("__ref_") { p179 = false; }
+            },
+            _ => {
+              p135 = false;
+              p179 = false;
+            }
+          }
+        }
+        if is_null_init_preamble(items, f) || p135 || p179 {
+          scope_scan::refuse(s, "args::scan_args: a hoisted argument preamble (A5.6 / P135 / P179)");
+        }
+        if k > 0 && inline_struct_return(s, b, items[k - 1]!, outer_call, f) {
+          scope_scan::refuse(s, "inline_returns::inline_struct_return: a heap value an argument builds");
+        }
+        ls += [scanned];
+      },
+      _ => {
+        if inline_struct_return(s, b, scanned, outer_call, f) {
+          scope_scan::refuse(s, "inline_returns::inline_struct_return: a heap call as an argument");
+        } else {
+          match scope_fn::unspan(scanned) {
+            NdIf { t, f: e } => {
+              tc = scope_fn::unspan(t);
+              ec = scope_fn::unspan(e);
+              if ((tc is NdCall && ec is NdVar) || (tc is NdVar && ec is NdCall)) && inline_struct_return(s, b, if (tc is NdCall) { tc } else { ec }, -1, f) {
+                scope_scan::refuse(s, "args::lift_owned_coalesce_arm: a collection coalesce arm");
+              }
+            },
+            NdCall { def_nr: g } => {
+              rt = value_type(b, scanned, f);
+              if scope_fn::base(rt) is TyIterator {
+                scope_scan::refuse(s, "use_analysis::inline_handle_needs_holder: a generator handle as an argument");
+              }
+            },
+            NdTuple => scope_scan::refuse(s, "args::lift_tuple_call_members: a tuple literal as an argument"),
+            _ => {}
+          }
+          if borrows && !(scope_fn::unspan(scanned) is NdVar) {
+            pa = callee!.attributes[arg_idx];
+            if pa != null && scope_fn::is_dbref(scope_fn::base(pa!.typedef[0] ?? ir::TyVoid)) {
+              scope_scan::refuse(s, "args::unnameable_borrow_source: a borrow source the bracket cannot name");
+            }
+          }
+        }
+        ls += [scanned];
+      }
+    }
+  }
+  if outer_call >= 0 && len(ls) == len(args) {
+    copy_written_text_operands(s, b, outer_call, preamble, ls, f);
+    keep_viewed_displaced(s, b, outer_call, ls, f);
+  }
+  Scanned { preamble: preamble, ls: ls, postamble: postamble }
+}
+
+// port: data.rs fn returns_borrowed_view
+fn returns_borrowed_view(d: ir::Definition) -> boolean {
+  for x in scope_fn::depend(d.returned[0] ?? ir::TyVoid) {
+    a = d.attributes[x];
+    if a == null || !a!.hidden {
+      return true;
+    }
+  }
+  false
+}
+
+// port: args.rs fn copy_written_text_operands — a by-value text operand a later operand writes
+// is copied into a `__lift_N` text first.
+fn copy_written_text_operands(s: scope_scan::Scopes, b: ir::Bundle, callee: integer, preamble: vector<ir::Node>, ls: vector<ir::Node>, f: ir::Function) {
+  k = len(ls);
+  d = b.data.definitions[callee];
+  if k < 2 || d == null || (env_variable("LOFT_NO_COPY_WRITTEN_TEXT") ?? "0") != "0" {
+    return;
+  }
+  for j in 0..k - 1 {
+    x = match scope_fn::unspan(ls[j]!) { NdVar { n } => n, _ => -1 };
+    if x < 0 {
+      continue;
+    }
+    at = d!.attributes[j];
+    by_value = at != null && scope_fn::is_text(at!.typedef[0] ?? ir::TyVoid);
+    if !by_value || !scope_fn::is_text(scope_fn::tp(f, x)) {
+      continue;
+    }
+    written = false;
+    for later in ls[j + 1..] {
+      if writes_var(b, later, x) {
+        written = true;
+      }
+    }
+    if !written {
+      continue;
+    }
+    tmp = scope_scan::new_lift_var(s, f, ir::TyText { dep: [] });
+    preamble += [scope_fn::v_set(tmp, ir::NdVar { n: x })];
+    ls[j] = ir::NdVar { n: tmp };
+  }
+}
+
+// port: args.rs fn writes_var — `x` may be written by `v`: a `Set` of it, any call through a
+// fn-ref, or a call handed `x` at a parameter that is not a by-value text.
+fn writes_var(b: ir::Bundle, v: ir::Node, x: integer) -> boolean {
+  match v {
+    NdSet { var } => if var == x { return true; },
+    NdCallRef => { return true; },
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr];
+      if d != null {
+        for a in args {
+          match scope_fn::unspan(a) {
+            NdVar { n } => if n == x {
+              at = d!.attributes[a#index];
+              if at == null || !scope_fn::is_text(at!.typedef[0] ?? ir::TyVoid) {
+                return true;
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    if writes_var(b, c, x) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: args.rs fn keep_viewed_displaced — one owned local handed to a `&` heap parameter and to
+// a by-value heap parameter of the same call takes a snapshot; refused here.
+fn keep_viewed_displaced(s: scope_scan::Scopes, b: ir::Bundle, outer_call: integer, ls: vector<ir::Node>, f: ir::Function) {
+  d = b.data.definitions[outer_call];
+  if d == null {
+    return;
+  }
+  for arg in ls {
+    match scope_fn::unspan(arg) {
+      NdCall { def_nr: cs, args: cargs } => if cs == s.ops.create_stack {
+        match scope_fn::unspan(cargs[0] ?? ir::NdNull) {
+          NdVar { n: v } => {
+            at = d!.attributes[arg#index];
+            if at != null && amp_rebindable_heap(at!.typedef[0] ?? ir::TyVoid) && !scope_fn::is_argument(f, v) && len(scope_fn::deps(f, v)) == 0 && !scope_fn::is_skip_free(f, v) {
+              for other in ls {
+                if other#index != arg#index && root_var(b, other) == v {
+                  scope_scan::refuse(s, "args::keep_viewed_displaced: a local handed to a `&` and a by-value parameter");
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
+// `is_amp_rebindable_heap`: a `&` over a heap value.
+fn amp_rebindable_heap(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyRefVar { inner } => scope_fn::is_dbref(scope_fn::base(inner)),
+    _ => false
+  }
+}
+
+fn root_var(b: ir::Bundle, v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if (nm == "OpGetField" || nm == "OpGetVector") && len(args) > 0 {
+        root_var(b, args[0]!)
+      } else {
+        -1
+      }
+    },
+    _ => -1
+  }
+}
