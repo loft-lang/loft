@@ -237,6 +237,10 @@ reads only a projection's root).
 A native is read by its declaration: `-> T[p]` answers a view of parameter `p`, and a public
 native none of whose parameters holds a store answers a store of its own; any other native's
 answer is not followed (`LOFT_RECORDS_NO_NATIVE_ANSWERS=1` follows none).
+A `par` row (`n_parallel_buf_get_ref`) of a worker answering its element (summary `Arg(0)`) is a
+record of the vector the loop's `n_parallel_queue_ref` names, until `n_parallel_buf_drop_ref`: a
+free of the row ends that vector.  A row of a worker answering a store of its own lives in the
+par buffer, which the records do not follow, and stays unknown.
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through

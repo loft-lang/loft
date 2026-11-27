@@ -566,9 +566,11 @@ impl Parser {
     /// @PLN233 phase 0 (`LOFT_RETURN_DRIFT=1`) — each function whose return dependencies pass 2
     /// changed from what pass 1 recorded, one line on stderr:
     /// `return-drift <name> <file>:<line> pass1=[…] pass2=[…] harmful|benign`.  HARMFUL is pass 1
-    /// recording a borrow of a VISIBLE parameter that pass 2 dropped: a caller typed on pass 1
-    /// keeps that borrow (the variable deps are unioned across the passes, `Function::append`),
-    /// reads its owned result as a view, and never frees it (loft#2660).
+    /// recording a borrow of a VISIBLE parameter that pass 2 dropped: a caller pass 2 reads
+    /// BEFORE the callee's own pass-2 body (a callee declared below it) still types the call
+    /// with pass 1's borrow, reads its owned result as a view, and never frees it (loft#2660's
+    /// class; `@FR-O-Borrow-Final` keeps no list across the passes, @PLN233 phase 2 settles
+    /// the return itself).
     fn report_return_drift(&mut self) {
         if self.pass1_returns.is_empty() {
             return;
