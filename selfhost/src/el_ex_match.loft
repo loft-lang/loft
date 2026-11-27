@@ -1826,6 +1826,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
         vars.cursor = [];
         b = el_ex_pattern::empty_vector_arm(e, vars, body, expected) ?? el_ex_pattern::arm_body(e, vars, body, expected);
         vars.cursor = arm_cursor;
+        // (A record literal's arm is typed as the record: the literal's work ref is its block's
+        // own, not the arm's — `slice_binding: ref(P)` around `Object: ref(P)["__ref_p2_1"]`.)
+        if !e.first_pass && match el_ir::unspan(b.code) { NdBlock { block: obk } => obk[0].name == "Object", _ => false } && el_types::base(b.tp) is TyReference {
+          b = ex(b.code, el_types::without_deps(b.tp));
+        }
         // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
         // not carried.
         if !e.first_pass && el_ex_null::ends_in_halt(e, b.code) {
@@ -1834,6 +1839,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
         }
         if arm_settles(result, b.tp) {
           result = b.tp;
+        }
+        // (Two variants of one struct enum join to the enum, `@FR-C-Var`.)
+        vjt = el_vars::variant_join(e, result, b.tp);
+        if vjt != null {
+          result = vjt!;
         }
         result = join_fn_arm(result, b);
         result = join_int_arm(e, vars, result, b);
