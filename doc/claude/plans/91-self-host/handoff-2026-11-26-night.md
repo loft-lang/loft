@@ -174,6 +174,14 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   Mul { l, r } => { … }, _ => e }`); `arm_own_tp` may answer `b.tp` itself, the other arm a fresh
   call.  A 15-line reduction (an `Ex { code, tp: Ty }` record, the same `if`) does NOT reproduce
   on either backend — the reduction is open; start from the elaborator build with that one line.
+- `null` into a plain enum's `Col?` field (`H { c: null }` → `OpSetEnum(h, 8,
+  OpConvEnumFromNull(<type>))`): ported, agreeing on probes cn1/cn2, held (patch
+  held-null-enum-field.patch in the c035ae98 scratchpad): F-FaultSafe/a-hole-whose-value-faults-…
+  then meets an older silent differ — a caller buffer `__work_cN` (a call of `shown(T { id: 4 })`)
+  beside an `operator to_text` hook's `p242_to_text_work` `__work_N` in one function are numbered
+  apart from Rust's (probes th12–th14).  Minting the hook's work text on the second pass only
+  fixes th12–th14 but breaks th5 and adds pass-1 rows: Rust mints it on the first pass in some
+  shapes — read `try_bound_to_text_call`'s pass condition before the next attempt.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
