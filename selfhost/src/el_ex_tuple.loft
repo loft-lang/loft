@@ -183,7 +183,7 @@ fn plain_struct_member(e: el::El, t: ir::TypeT) -> boolean {
 // `unbox_tuple_from_dbref`'s cursor: the element held in a work ref typed `ref(<tuple>)`
 // borrowing the vector it is read out of (`vector_element_cursor_deps`), never freed where it
 // borrows — that mark taken on the second pass only (loft#848: the `__ref_N` counter restarts).
-fn unbox_cursor(e: el::El, vars: el_vars::Vars, td: integer, elem: ir::Node) -> integer {
+pub fn unbox_cursor(e: el::El, vars: el_vars::Vars, td: integer, elem: ir::Node) -> integer {
   croot = place_root(e, elem);
   ct = ir::TyReference { n: td, dep: if croot >= 0 { [croot] } else { [] } };
   cw = el_vars::work_ref(vars, ct);
