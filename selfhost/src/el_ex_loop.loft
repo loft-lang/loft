@@ -1453,7 +1453,16 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   if !made && (push == "" || in_t is TyOptional) {
     // Refused, but a local's `vector<…>` is registered first, as Rust's `vector_def` registers
     // it for any element: every definition after it keeps Rust's number.
-    if v >= 0 {
+    // (A tuple element is the `__tuple<…>` record each step copies: its vector is named by the
+    // record, `vector<__tuple<integer,text>>` and `main_vector<…>`, at the comprehension's `]`.)
+    // (Only into a local nothing declared: a declared one's `(…)` spelling is the declaration's
+    // — `rows: vector<(integer, integer)> = [for i in 0..4 { (i, 10) }]`.)
+    whole = v >= 0 && !vars.annotated.contains(v);
+    ttd = match in_t { TyTuple { elems: tes } => if whole { el_types::tuple_def_of(e, tes) } else { -1 }, _ => -1 };
+    if v >= 0 && ttd >= 0 {
+      ctok = match e.p.nodes[n] { SComprehension { at } => at, SVecLit { at } => at, _ => 0 };
+      el_schema::make_vector_def(e, ir::TyReference { n: ttd, dep: [] }, el::def(e, ttd).name, el::pos_at(e, closing_bracket(e, ctok)), true);
+    } else if v >= 0 {
       _ = vector_rows(e, in_t, n, false);
     }
     el::refuse(e, "a comprehension of this element type: {type_kind(in_t)}");
