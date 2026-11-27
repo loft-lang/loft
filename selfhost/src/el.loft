@@ -137,6 +137,10 @@ pub struct El {
   // to the number of definitions then.  A definition below it answers for what its fn fields'
   // closure records hold (`owns_droppable`'s `fn_field_record` arm); 0 before.
   pub fn_fields_settled: integer,
+  // `Parser::declared_fn_names` for the file being read (`fn_words_file`): every word that
+  // follows the word `fn` in its text, as often as it does (`file_has_pending_fn`).
+  pub fn_words_file: text,
+  pub fn_words: vector<text>,
   // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
   // shared with the lambdas its lambdas make; cleared as each pass starts.
   pub lambda_roots: vector<text>,

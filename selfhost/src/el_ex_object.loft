@@ -2208,6 +2208,13 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     lits = [for t in types { t#index < len(args) && literal_argument(e, args[t#index]!) }];
   }
   d = if set >= 0 { el_dispatch::select(e, set, name, types, el::pos_at(e, el_types::closing_paren(e, after_paren(e, at) - 1) + 1), only: source, literals: lits) } else { find_fn(e, name, routed_receiver(first, types), source) };
+  // loft#2331 (`@FR-B-Scope`): pass 1 has not registered a function this file declares BELOW
+  // the call, so the name reached another file's definition of it (a library's own
+  // `type_named(a, b)` matched against the standard library's).  While the file still declares
+  // one ahead, the call waits for pass 2, as any call of a later definition does.
+  if e.first_pass && d >= 0 && el::def(e, d).position.file != e.file && el_dispatch::file_has_pending_fn(e, name) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if d < 0 && set >= 0 {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }

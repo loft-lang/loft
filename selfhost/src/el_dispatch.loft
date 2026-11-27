@@ -651,6 +651,45 @@ fn dispatches_past_receiver(e: el::El, name: text, en: integer) -> boolean {
   false
 }
 
+// `Parser::file_has_pending_fn` (loft#2331, `@FR-B-Scope`: a file's declarations hold in any
+// order): does the file being read declare a function `name` that pass 1 has not reached yet —
+// one below this call?  The file's `fn <name>` words are counted by a lexical scan of its text
+// (a word in a comment or a `fn(…)` type counts too: it only defers the call to pass 2) and
+// compared with the functions of that file already registered.  The standard library's own
+// files are never scanned.
+pub fn file_has_pending_fn(e: el::El, name: text) -> boolean {
+  if e.source == el::STD_SOURCE {
+    return false;
+  }
+  if e.fn_words_file != e.file {
+    e.fn_words_file = e.file;
+    e.fn_words = [];
+    after_fn = false;
+    for ln in e.lines {
+      w = "";
+      for c in ln + " " {
+        if c.is_alphanumeric() || c == '_' {
+          w += c;
+          continue;
+        }
+        if w != "" {
+          if after_fn {
+            e.fn_words += [w];
+          }
+          after_fn = w == "fn";
+          w = "";
+        }
+      }
+    }
+  }
+  declared = len([for fw in e.fn_words if fw == name { 1 }]);
+  if declared == 0 {
+    return false;
+  }
+  reached = len([for d in e.b.data.definitions if (d.def_type == el::DT_FUNCTION || d.def_type == el::DT_GENERIC) && d.position.file == e.file && original_name(d.name) == name { 1 }]);
+  declared > reached
+}
+
 // port: data.rs original_name (`source_name_of_key`) — the name a definition key was written as:
 // a method's or a free overload's rest, an instance key's template key read again.
 fn original_name(key: text) -> text {
