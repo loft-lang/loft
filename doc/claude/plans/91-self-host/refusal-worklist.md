@@ -218,8 +218,13 @@ instances; Rust-only definitions 270), one to four per program.  What each open 
   table has no entry at that index (`e.b.types[content] is null`) — the standard library's
   `iterator` row is not carried in the port's schema, which this group needs first.  Measured:
   the std image's `iterator` definition (447) carries `known_type = 101` while the port starts with
-  100 types and no `iterator` row — the image numbers a row it does not hand over; settle on the
-  Rust side (the image writer, or where Rust's stores mint that row) before porting the fill.
+  100 types and no `iterator` row.  Cause (front/elab.loft, `el::load_base`): the standard
+  library's DEFINITIONS are copied from the program's own Rust image (`upto`), its TYPES from the
+  empty program's (`types_upto` = 100) — so a std definition whose row Rust minted for THIS program
+  (`iterator` → 101) arrives carrying Rust's answer, a row the port's table does not have.  The
+  fix is two-sided: `load_base` resets a std definition's `known_type` at or past `types_upto`
+  (the base carries no program-specific result), and the port mints the `iterator` row on demand
+  where Rust's stores do (the first stored iterator), before the wrapper fill's `check_vector`.
 - the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
