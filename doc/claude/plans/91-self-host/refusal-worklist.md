@@ -206,8 +206,8 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
   struct (121), a drop helper (90), a tuple record (84).
 `np/shift.py` and `np/verify.py` (the tester's scratch tools) rank them from the saved IR.
 
-**Rust-only types (open).**  52 at loft30-gate 12d1c0290 (vectors, tuple records, type
-instances; Rust-only definitions 283), one to four per program.  What each open group needs:
+**Rust-only types (open).**  49 at loft30-gate d1e819096 (vectors, tuple records, type
+instances; Rust-only definitions 278), one to four per program.  What each open group needs:
 - iterator element vectors (`vector<iterator>`, four programs): Rust's `check_vector` at the
   wrapper's field fill (`typedef.rs` `fill_database`, the `main_vector<iterator<…>>` place) on
   the SECOND pass; the port fills that wrapper on the first pass only, where an iterator field
@@ -219,11 +219,9 @@ instances; Rust-only definitions 283), one to four per program.  What each open 
 - a lambda argument's tuple record on the first pass (`last(v, |x| { (x, x + 1, x + 2) })`):
   making it there shifted later second-pass rows of the same program — needs Rust's exact moment.
 - cross-library keyed tuples and instances (2435).
-- a function's tail literal read at its declared element (`-> vector<(float, integer)> { [(1, 2)] }`,
-  an-expected-element-type-reaches-every-literal-position): the port builds it at its own
-  element.  Reading it at the result's element names the right vector, but Rust also hoists a
-  constant tail as `__const_n_<fn>`, which the port does not here — without that hoist the change
-  shifts the program's numbering (measured: 32 → 43 Rust-only image lines).
+- a function's tail literal at its declared element: DONE for a tuple element together with
+  the constant-tuple hoist (d1e819096).  A record or nested-vector tail is still built at its own
+  element (Rust keeps a record tail's element temp bare; a nested one is open).
 
 ## R10 — the 32-bit regime
 
