@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — the comprehension (I-Map's right-hand side) over a generator
+// Expect on both backends: [0,2,4,6]
+fn nums(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }
+fn main() { println("{[for x in nums(4) { x * 2 }]}"); }

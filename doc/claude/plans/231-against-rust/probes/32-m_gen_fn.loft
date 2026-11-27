@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — map over a generator, with a typed fn
+// Expect on both backends: refused: map: first argument must be a vector
+fn nums(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }
+fn main() { println("{map(nums(4), fn(x: integer) -> integer { x * 2 })}"); }
