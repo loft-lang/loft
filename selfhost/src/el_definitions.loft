@@ -2779,6 +2779,12 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // pass then finds no constant, its definition kept.  That pass-1 view is not carried:
     // refused by name, so no later definition is numbered one lower.
     if len(params) == 0 && len(tvars) == 0 && ends_in_repeat_literal(e, body!) {
+      // (Its twin is registered on the first pass as Rust's is — the definition kept although
+      // the second pass finds no constant in it — the function itself refused.)
+      if e.first_pass && !starts_with(name, "__dflt_") && el::def_nr(e, "__const_{el::def(e, e.context).name}") < 0 {
+        rcd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
+        e.b.data.definitions[rcd].returned = el::def(e, e.context).returned;
+      }
       el::refuse(e, "a function of no parameters whose body ends in a repeat literal (its pass-1 constant twin)");
     }
     // (A hoisted default is an internal function, `Definition::is_internal`: it gets no twin.)
