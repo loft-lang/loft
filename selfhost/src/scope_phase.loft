@@ -70,7 +70,6 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     written_out_v: [],
     written_out_t: [],
     assigned: assigned_in(orig_code),
-    loopish: loopish_in(b, orig_code, orig_vars),
     own_ops: own::ops_of(b),
     fn_defs: [],
     owned_refs: [],
@@ -786,35 +785,6 @@ pub fn assigned_in(n: ir::Node) -> vector<integer> {
   counts: vector<integer> = [];
   count_sets(n, counts);
   [for c in counts if c >= 1 { c#index }]
-}
-
-// `Function::was_loop_var` is not in the image.  A loop's variable is bound by its loop's header
-// on every turn, so it is set INSIDE a loop or a `par` body, or is an iterator's variable — or it
-// is the `#fields` walk's, unrolled into one block per field, of the `StructField` type.  The
-// variables that MAY have served as one; every other variable did not.
-pub fn loopish_in(b: ir::Bundle, n: ir::Node, f: ir::Function) -> vector<integer> {
-  out: vector<integer> = [];
-  loop_sets(n, false, out);
-  sf = scope_fn::def_nr(b, "StructField");
-  for v in f.variables {
-    rec = own::heap_def_nr(v.type_def[0] ?? ir::TyVoid);
-    if rec != null && rec! == sf && !scope_fn::has(out, v#index) {
-      out += [v#index];
-    }
-  }
-  out
-}
-
-fn loop_sets(n: ir::Node, inside: boolean, out: vector<integer>) {
-  in_loop = inside || n is NdLoop || n is NdParallel;
-  match n {
-    NdSet { var } => if in_loop && !scope_fn::has(out, var) { out += [var]; },
-    NdIter { var } => if !scope_fn::has(out, var) { out += [var]; },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    loop_sets(c, in_loop, out);
-  }
 }
 
 // port: phase.rs fn null_led_in — one real bind and at least one null.

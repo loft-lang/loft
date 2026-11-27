@@ -293,11 +293,9 @@ fn locals_read_after(s: scope_scan::Scopes, op: ir::Node, rest: vector<ir::Node>
     _ => {}
   }
   for v in assigned {
-    if scope_scan::in_scope(s, v) || scope_fn::has(out, v) || !scope_branches::needs_pre_init(scope_fn::tp(f, v)) {
+    if scope_scan::in_scope(s, v) || scope_fn::has(out, v) || scope_fn::was_loop_var(f, v) || !scope_branches::needs_pre_init(scope_fn::tp(f, v)) {
       continue;
     }
-    // `function.was_loop_var(v)` is not in the image: a loop's own variable is a scalar or a
-    // collection's element, and an element that needs a pre-init is refused below.
     all_ready = true;
     for d in scope_fn::deps(f, v) {
       if !scope_scan::in_scope(s, d) {
@@ -308,9 +306,6 @@ fn locals_read_after(s: scope_scan::Scopes, op: ir::Node, rest: vector<ir::Node>
       continue;
     }
     if first_use_in_seq(rest, v) == 1 {
-      if !(scope_fn::tp(f, v) is TyText) {
-        scope_scan::refuse(s, "convert::locals_read_after: a store local read after its loop (variables::was_loop_var, not in the image)");
-      }
       out += [v];
     }
   }

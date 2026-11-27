@@ -266,7 +266,7 @@ pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
 /// the fifteen codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 64;
+pub(crate) const VARIABLE_STRIDE: u32 = 72; // @PLN91 — +8 for was_loop_var
 pub(crate) const VAR_NAME: u32 = 40;
 pub(crate) const VAR_TYPE_DEF: u32 = 44; // vector<TypeT> (box-of-one)
 pub(crate) const VAR_STACK_POS: u32 = 0;
@@ -303,6 +303,8 @@ pub(crate) const VAR_BUFFER_WITNESSED: u32 = 61;
 pub(crate) const VAR_VALUE_CONST: u32 = 62;
 /// @PLN91 `Function::is_arm_consumed`, per variable.
 pub(crate) const VAR_ARM_CONSUMED: u32 = 63;
+/// @PLN91 `Function::was_loop_var`, per variable: the scope pass reads it.
+pub(crate) const VAR_WAS_LOOP_VAR: u32 = 64;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -1728,6 +1730,7 @@ mod tests {
         assert_eq!(pos(ids.variable, "buffer_witnessed"), VAR_BUFFER_WITNESSED);
         assert_eq!(pos(ids.variable, "value_const"), VAR_VALUE_CONST);
         assert_eq!(pos(ids.variable, "arm_consumed"), VAR_ARM_CONSUMED);
+        assert_eq!(pos(ids.variable, "was_loop_var"), VAR_WAS_LOOP_VAR);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);

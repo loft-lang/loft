@@ -225,6 +225,9 @@ struct Variable {
   // @PLN91 — a local the arm that consumed it moved out (`Function::is_arm_consumed`): read by
   // the scope pass, so the loft port reads it from the image
   arm_consumed: boolean,
+  // @PLN91 — it served as a loop's variable (`Function::was_loop_var`): read by the scope pass,
+  // so the loft port reads it from the image
+  was_loop_var: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

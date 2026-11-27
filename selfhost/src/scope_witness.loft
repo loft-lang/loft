@@ -178,6 +178,7 @@ fn witness_candidate(f: ir::Function, t: integer) -> boolean {
   t < scope_fn::count(f)
     && !scope_fn::name(f, t).starts_with("__")
     && !scope_fn::is_argument(f, t)
+    && !scope_fn::was_loop_var(f, t)
     && !(scope_fn::tp(f, t) is TyRefVar)
     && own::heap_def_nr(scope_fn::tp(f, t)) != null
 }
@@ -219,8 +220,7 @@ fn ends_in_choice(n: ir::Node) -> boolean {
 // port: witness.rs fn owner_witness_locals — the first local whose assignments MIX ownership
 // (one mints a store of its own, another views), -1 for none.  The capture clauses (a
 // captured local with an owner slot, `reassigned_after_build`) are a closure record's, refused
-// by the phase; a captured candidate is refused here.  `was_loop_var` is not in the image: a
-// candidate that would be witnessed is refused by name rather than read as no loop variable.
+// by the phase; a captured candidate is refused here.
 pub fn owner_witness_locals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> integer {
   minted: vector<integer> = [];
   viewed: vector<integer> = [];

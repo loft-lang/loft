@@ -893,10 +893,14 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let vars_vec = parent.field_recvec(base + ds::FN_VARIABLES, ds::VARIABLE_STRIDE);
     let mut vars = Vec::with_capacity(vars_vec.len(stores) as usize);
     let mut arm_consumed = Vec::new();
+    let mut loop_vars = Vec::new();
     for i in 0..vars_vec.len(stores) {
         let vr = vars_vec.get(i, stores);
         if vr.field_bool(stores, ds::VAR_ARM_CONSUMED) {
             arm_consumed.push(i as u16);
+        }
+        if vr.field_bool(stores, ds::VAR_WAS_LOOP_VAR) {
+            loop_vars.push(i as u16);
         }
         vars.push(RestoredVar {
             name: vr.field_str(stores, ds::VAR_NAME).to_string(),
@@ -937,6 +941,9 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let mut f = Function::from_snapshot(&name, &file, vars, names, inline_refs);
     for v in arm_consumed {
         f.set_arm_consumed(v);
+    }
+    for v in loop_vars {
+        f.served_as_loop_var(v);
     }
     f
 }

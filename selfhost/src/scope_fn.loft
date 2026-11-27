@@ -55,6 +55,12 @@ pub fn is_captured(f: ir::Function, v: integer) -> boolean {
   if x == null { false } else { x.captured }
 }
 
+// port: variables/mod.rs fn was_loop_var — has `v` served as a loop's variable?
+pub fn was_loop_var(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.was_loop_var }
+}
+
 // port: variables/mod.rs fn is_compiler_generated
 pub fn is_compiler_generated(f: ir::Function, v: integer) -> boolean {
   x = f.variables[v];
@@ -353,6 +359,7 @@ fn copy_var(v: ir::Variable) -> ir::Variable {
   n.rebind_orig = v.rebind_orig;
   n.scope = v.scope;
   n.arm_consumed = v.arm_consumed;
+  n.was_loop_var = v.was_loop_var;
   n
 }
 
@@ -381,28 +388,6 @@ pub fn unspan(n: ir::Node) -> ir::Node {
 // `v_set`
 pub fn v_set(v: integer, n: ir::Node) -> ir::Node {
   ir::NdSet { var: v, inner: n }
-}
-
-// A `par` loop's element variable, named `_<name>_par<N>` by the parser (`b_var`), which marks it
-// a loop variable (`Function::was_loop_var`, not in the image).
-pub fn is_par_loop_var(nm: text) -> boolean {
-  if !nm.starts_with("_") {
-    return false;
-  }
-  at = nm.rfind("_par");
-  if at == null || at! < 2 {
-    return false;
-  }
-  digits = nm[at! + 4..];
-  if digits.size() == 0 {
-    return false;
-  }
-  for c in digits {
-    if c < '0' || c > '9' {
-      return false;
-    }
-  }
-  true
 }
 
 // `Value::Call(data.def_nr(name), args)`.

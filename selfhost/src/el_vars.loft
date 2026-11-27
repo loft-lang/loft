@@ -1455,6 +1455,12 @@ pub fn stored(v: Vars) -> ir::Function {
       f.variables[c].captured = true;
     }
   }
+  // `Variable::was_loop_var`: a variable that has served as a loop's (`loop_var`).
+  for l in v.loop_vars {
+    if l >= 0 && l < len(f.variables) {
+      f.variables[l].was_loop_var = true;
+    }
+  }
   for n in v.names {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];
   }

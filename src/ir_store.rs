@@ -399,6 +399,7 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
         let r = vars.push(stores);
         write_var_snapshot(stores, &r, &v);
         r.set_field_bool(stores, ds::VAR_ARM_CONSUMED, f.is_arm_consumed(i as u16));
+        r.set_field_bool(stores, ds::VAR_WAS_LOOP_VAR, f.was_loop_var(i as u16));
     }
     // names: name -> var_nr.  Store order is irrelevant — the reader collects
     // into a HashMap and the JSON oracle re-sorts on emit.
