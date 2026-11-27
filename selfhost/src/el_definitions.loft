@@ -237,6 +237,39 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
   // directory, a `{ path = … }` dependency, a module beside the file — are not carried, so
   // where one of them could answer first the `use` stays refused.
   root = package_root(e.file);
+  // loft#976 (`bind_own_module`): inside a package, a bare `use <module>` that is neither the
+  // package's own name nor a declared dependency binds the package's own `<module>.loft`, keyed
+  // `<pkg>::<module>`; the short name stays a qualifier for it (an alias, a name of its own in
+  // the table — so the next library's source number is one further on, as Rust's).
+  pkg = if root != "" { toml_unquote(toml_raw("{root}/loft.toml", "[package]", 0, "name")) } else { "" };
+  if pkg != "" && lib != pkg && toml_raw("{root}/loft.toml", "[dependencies]", 0, lib) == "" {
+    own_mod = own_module_file(e, lib, root);
+    if own_mod != "" {
+      key = "{pkg}::{lib}";
+      if !el::use_exists(e, key) {
+        load_library(e, key, if alias != "" { alias } else { lib }, own_mod);
+      } else if !el::use_exists(e, lib) || alias != "" {
+        el::use_alias(e, if alias != "" { alias } else { lib }, el::get_source(e, key));
+      }
+      if !el::use_exists(e, key) {
+        return;
+      }
+      ksrc = el::get_source(e, key);
+      if e.loading.contains(ksrc) {
+        el::refuse(e, "a cyclic `use`");
+        return;
+      }
+      kimports: vector<el::ImportName> = [];
+      for kn in names {
+        match e.p.nodes[kn] {
+          SImport { name: kin, alias: kbind } => { kimports += [el::ImportName { name: kin, bind: if kbind == "" { kin } else { kbind } }]; },
+          _ => {}
+        }
+      }
+      e.pending += [el::PendingImport { for_source: e.source, lib_source: ksrc, star: star, names: kimports, public: public }];
+      return;
+    }
+  }
   if root != "" && !el::use_exists(e, lib) {
     own_entry = package_lib_path(e, lib, root);
     if own_entry == "" {
@@ -516,6 +549,21 @@ fn inline_field(v: text, field: text) -> text {
 
 // `Parser::probe_own_package`: the entry file of the package at `root` when its manifest's
 // `[package] name` is `id`, where that file exists; else "".
+// `Parser::own_module_path`: the package's own `<id>.loft` beside the file, in its `lib/`, or in
+// the package's `src/`; "" where none is.
+fn own_module_file(e: el::El, id: text, root: text) -> text {
+  cur_dir = script_dir(e.file);
+  if cur_dir == "" {
+    return "";
+  }
+  for c in ["{cur_dir}/{id}.loft", "{cur_dir}/lib/{id}.loft", "{root}/src/{id}.loft"] {
+    if exists(c) {
+      return c;
+    }
+  }
+  ""
+}
+
 fn own_package_entry(root: text, id: text) -> text {
   if toml_unquote(toml_raw("{root}/loft.toml", "[package]", 0, "name")) != id {
     return "";
