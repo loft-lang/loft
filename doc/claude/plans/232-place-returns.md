@@ -113,7 +113,7 @@ flag, and a call returning a part of parameter 0 is already typed `Reference(…
 - A `&text` link has a KIND, a text variable or a store field/element (`text-link-kind`,
   `parser/places.rs`).  A returned one would carry its kind in the signature, or need a twin per
   kind as `&text` parameters have.
-- Hence phase C, behind its own question (Q5).
+- Hence phase C, after B (Q5, decided).
 
 **The self-hosted front end.**  `selfhost/src/syntax.loft` `fn_ret` hard-codes `amp: false`, and
 `ty` has no `&`.  The ports of `returns_borrowed_view`, `borrowed_param_deps`, `set_amp_link`
@@ -156,7 +156,7 @@ emit byte-for-byte what it does now: the phase gates below prove it.
 | **B2** | A `-> &T` call in place positions: an argument, a field write, a method chain | A's cells for those rows pass on both backends, leak- and strict-checked; byte-identical elsewhere | M |
 | **B3** | Binds: `e = first(s)` as a view, `e = &first(s)` as a link, the dependency mapped onto the argument, and the reshape refusals and materialisation reaching it — for a branching body, the union of the containers its return sites reach | A's bind and grow rows; `ownership_drop_gate` on both backends; the poison and stack sweeps; `own_sweep.py` reads CAUGHT with the new arm switched off | M |
 | **B4** | Lints and records: `lost-write` and `double-move` skip a `&` callee, the needless-`&` lint, the store-records reading | a cell per lint proving silence on `-> &T` and the warning kept on `-> T`; the records checker matches the runtime on A's cells | S |
-| **C** | Scalar and text places (`-> &integer`, `-> &text`): a `RefVar` return on both backends and the text kind in the signature, if Q5 says yes | A's scalar and text rows; the C sweep in strict mode on clang | M–MH |
+| **C** | Scalar and text places (`-> &integer`, `-> &text`), after B (Q5, decided): a `RefVar` return on both backends, the text kind fixed per function or twinned per kind | A's scalar and text rows; the C sweep in strict mode on clang | M–MH |
 | **D** | The self-host port mirrors B (and C) | gate E agrees on A's cells; no agreeing program lost | S–M |
 
 Each B phase keeps the old path for every `-> T` program, compared exactly: the byte-identical
@@ -187,8 +187,12 @@ Each comes with the recommendation, and with what was measured behind it.
    and `Deps [0, 1]` for the second, measured on both backends.  Phase A adds cells for an
    accessor that returns another `-> &T` accessor's place (one lifetime through two calls) and for
    a place reached through a stored `reference<T>` field (another store: its own lifetime).
-5. **Scalar and text places (phase C).**  Recommended: build B first and C only when a consumer
-   asks.  dryopea's case is records, and C carries the new emission plus the text-link kind.
+5. **Scalar and text places (phase C).**  **Decided (owner, 2026-11-27): built, as phase C after
+   B.**  The local spellings are sound today (`l = &v[1]; l += 5`, `t = &o.s; t += "!"`), so by the
+   principle they are accepted; C is ordered after B for its size, not its risk.  The text-link
+   kind is resolved, not refused: one kind when every return site agrees (a field is the store
+   kind), and one compiled twin per kind where a `&text` parameter is handed back, as `&text`
+   parameters are twinned today.
 6. **The rule's home.**  Recommended: a return clause in `formal/binding.md` beside
    `(B-RefType-OfVar)` (*"a function's return may be `&τ`: the call is the place it returns"*),
    cited at the parse, the bind and the reshape sites, with @C77 amended.  `(F-Ret)`'s exception
