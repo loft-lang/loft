@@ -2305,6 +2305,25 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
   }
 }
 
+// The store row a vector element is stored as, where every vector under it already has its
+// row: a nullable vector is stored as the vector it holds, a vector as the vector of its
+// element's row (made where missing).  -1 where a leaf has no row yet.
+fn stored_row(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => if el_types::base(inner) is TyVector { stored_row(e, el_types::base(inner)) } else { -1 },
+    TyVector { inner } => {
+      kn = el_types::type_key_name(e, t);
+      kd = if kn == "" { -1 } else { el::def_nr(e, kn) };
+      if kd >= 0 && el::def(e, kd).known_type != el_schema::NO_TYPE {
+        return el::def(e, kd).known_type;
+      }
+      s = stored_row(e, inner);
+      if s < 0 { -1 } else { el_schema::vector_type(e, s) }
+    },
+    _ => -1
+  }
+}
+
 pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, appended: boolean = false) -> VecRows? {
   if t is TyTuple {
     return tuple_vector_rows(e, t, lit, declared);
@@ -2340,6 +2359,18 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, app
     }
     if !inner_first && inm != "" && len(nested) > 0 && el_schema::wants_vector_def(e, inm) {
       el_schema::make_vector_def(e, ie, inm, inner_pos, true, narrow_early: false);
+    }
+    // A nullable vector element is stored as the vector it holds.  Where the vectors under it
+    // already have their rows (the library's `vector<integer>`), Rust's `vector_of` makes each
+    // row above at the literal — `vector<vector<integer>?>`'s, then its own vector's — and the
+    // wrapper's fill names them (`check_vector`: `vector<vector<integer>>`).
+    srow = stored_row(e, t);
+    if srow >= 0 {
+      vr = el_schema::vector_type(e, srow);
+      vrd = el::def_nr(e, "vector<{rn}>");
+      if !(t is TyOptional) && vrd >= 0 && el::def(e, vrd).known_type == el_schema::NO_TYPE {
+        e.b.data.definitions[vrd].known_type = vr;
+      }
     }
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
