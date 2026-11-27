@@ -130,7 +130,7 @@ revisit trigger).
   | a helper declared above its caller before a local binds its call | #918 | a call to a lower function binds: `later 6` |
   | a keyed record read inline, never through an accessor | #974 | three accessor reads with a struct made between: `2 2 2` |
   | crawler: never swap struct elements through a held link | #338 | the swap answers `2 1` (probe 52) |
-  | crawler: the `ortler` tools are unusable, an 86 400-element literal takes 18 min to parse | #854 | parses and runs in 1.8 s on the interpreter, `last 657` as computed (generate it: `const BIG: vector<integer> = [i % 997 for i in 0..86400]` written out as a literal) |
+  | crawler: the `ortler` tools are unusable, an 86 400-element literal takes 18 min to parse | #854 | parses and runs in 1.8 s on the interpreter, `last 657` as computed (the file is generated, not kept: `const BIG: vector<integer> = [ … ]` holding `i % 997` for `i` in `0..86400`, written out by a script) |
 
 - **Cause.**  Nothing in loft: the notes were written when the defects were live, and nothing
   tells a consumer that a cited issue closed.
