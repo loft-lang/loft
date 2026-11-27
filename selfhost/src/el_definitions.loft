@@ -1254,8 +1254,19 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         }
         if !e.first_pass {
           // The second pass converts the default to the field (`set_attr_value`).
+          cvx = field_computed(e, mods);
+          if cvx != null {
+            dv = computed_value(e, cvx!, t!);
+            if dv == null {
+              el::refuse(e, "a computed field's expression of this kind");
+              continue;
+            }
+          }
           for a in el::def(e, d).attributes {
             if a.name == fname {
+              if cvx != null {
+                e.b.data.definitions[d].attributes[a#index].constant = true;
+              }
               if dv != null {
                 e.b.data.definitions[d].attributes[a#index].value = [dv!];
               }
@@ -1292,6 +1303,10 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         // passes and backends that read it.  A computed (virtual) field is refused above.
         a.const_field = fixed;
         a.value_const = field_value_const(e, mods);
+        // (A computed field holds no slot: its value is its expression, read on the second pass.)
+        if field_computed(e, mods) != null {
+          a.constant = true;
+        }
         a.fact = alias_fact(e, tn!);
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
         if tp is TyInteger {
@@ -1328,7 +1343,7 @@ fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
         ty = tp;
       },
       SFieldMod { kind } => {
-        if kind != "const" {
+        if kind != "const" && kind != "computed" && kind != "virtual" {
           return null;
         }
       },
@@ -1338,6 +1353,36 @@ fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
     }
   }
   ty
+}
+
+// The expression of a `computed(…)` / `virtual(…)` field (`parse_field_default`'s
+// `is_computed`), or null.
+fn field_computed(e: el::El, mods: vector<integer>) -> integer? {
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldMod { kind, a } => if kind == "computed" || kind == "virtual" { return a; },
+      _ => {}
+    }
+  }
+  null
+}
+
+// `parse_field_default`'s computed value: the expression read with `$` the record being declared
+// (`Var(0)`, `parse_var`), converted to the field's type; stored as the field's value, which a
+// read replays with the receiver in `$`'s place (`replace_record_ref`).
+fn computed_value(e: el::El, cx: integer, ft: ir::TypeT) -> ir::Node? {
+  vars = el_vars::new_vars("__default", e.file);
+  for pad in 0..e.dflt_vars {
+    el_vars::add_variable(vars, "__dflt_slot_{pad}", ir::TyVoid);
+  }
+  if len(vars.vars) == 0 {
+    el_vars::add_variable(vars, "$", ir::TyReference { n: e.context, dep: [] });
+  }
+  x = el_ex_assign::expression(e, vars, cx);
+  if el_types::is_unknown(x.tp) {
+    return null;
+  }
+  el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
 }
 
 fn field_value_const(e: el::El, mods: vector<integer>) -> boolean {

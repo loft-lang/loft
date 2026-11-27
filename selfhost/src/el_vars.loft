@@ -273,6 +273,9 @@ pub struct Vars {
   pub lit_root: integer = -1,
   // `literal_into_place`'s field notes of the literal being built into `lit_place` (`{field}:staged`).
   pub lit_notes: vector<text> = [],
+  // Where a literal's omitted-field defaults begin in the op list `object_fields` answered
+  // (-1: none): the staging of `parse_object_field` covers the written fields only.
+  pub lit_defaults_at: integer = -1,
   pub self_read: integer = -1,
   pub self_stage: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
