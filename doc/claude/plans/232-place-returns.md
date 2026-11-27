@@ -197,10 +197,13 @@ Each comes with the recommendation, and with what was measured behind it.
    kind is resolved, not refused: one kind when every return site agrees (a field is the store
    kind), and one compiled twin per kind where a `&text` parameter is handed back, as `&text`
    parameters are twinned today.
-6. **The rule's home.**  Recommended: a return clause in `formal/binding.md` beside
-   `(B-RefType-OfVar)` (*"a function's return may be `&τ`: the call is the place it returns"*),
-   cited at the parse, the bind and the reshape sites, with @C77 amended.  `(F-Ret)`'s exception
-   then cites it.
+6. **The rule's home.**  **Decided (owner, 2026-11-27): a return clause in `formal/binding.md`**
+   beside `(B-RefType-OfVar)`: *"a function's return may be `&τ`: the call is the place its body
+   returns, each parameter replaced by its argument, and every place it can return lives in one
+   parameter's lifetime."*  `(F-Ret)`'s exception cites it, @C77 is amended (`&` may also mark a
+   return), and the parse, bind and reshape sites cite the one rule.  The `&` is written in the
+   SIGNATURE only, as a parameter's is: the body's tail is the plain place, and
+   `(B-Ref-AnnotationOnly)` keeps `return &a` refused.
 7. **What may declare one.**  **Decided (owner, 2026-11-27): all three are accepted.**  Beside
    named functions and methods: a generic `-> &T` (each instance is a B or a C accessor, held to
    the one-lifetime check), an interface method (each implementation is checked; the caller
