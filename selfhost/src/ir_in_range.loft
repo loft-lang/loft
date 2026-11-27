@@ -1,0 +1,129 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/in_range.rs` transcribed (`@FR-R-InRange`): a record element its loop proves in
+// range needs no null discharge.  So far its field clause, `field_decline`, which
+// `ir_forward_walk` asks for a walk over a record's field; the pass itself is not transcribed.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use opt_writes;
+use ir_pass_tree;
+
+// The operators that read the walked vector and change nothing about it.
+READS = ["OpGetVector", "OpGetVectorNullable", "OpLengthVector", "t_6vector_len", "OpVecGetInt", "OpVecGetIntNullable"];
+
+// What the field clause's body check carries through the walk.
+struct FieldWalk {
+  root: integer,
+  off: integer,
+  root_is_param: boolean,
+  idx: integer,
+  lv: integer
+}
+
+// port: in_range.rs fn field_decline — why the body might resize `d.f` or move the counter, or
+// "".  `d` is named only through its fields, never assigned, handed bare to a call or captured;
+// the walked field is named only as the vector a read operator reads; a `&` parameter that could
+// be `d` itself declines, and so does any vector local that is a view into `d`.
+pub fn field_decline(b: ir::Bundle, f: ir::Function, root: integer, off: integer, idx: integer, lv: integer, body: vector<ir::Node>) -> text {
+  if scope_fn::is_captured(f, root) {
+    return "a closure captures the record";
+  }
+  for x in 0..scope_fn::count(f) {
+    if x != root && cgen_types::base(scope_fn::tp(f, x)) is TyVector && scope_fn::deps(f, x).contains(root) {
+      for o in body {
+        if scope_fn::reads_var(o, x) {
+          return "a vector local that views the record is used in the body";
+        }
+      }
+    }
+  }
+  cx = FieldWalk { root: root, off: off, root_is_param: scope_fn::is_argument(f, root), idx: idx, lv: lv };
+  for o in body {
+    why = walk(b, f, cx, o);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+// `d.f` itself, the walked field.
+fn ours(b: ir::Bundle, cx: FieldWalk, v: ir::Node) -> boolean {
+  a = ir_pass_tree::args_of(v);
+  len(a) == 3 && ir_pass_tree::def_name(b, ir_pass_tree::call_def(v)) == "OpGetField"
+    && (ir_pass_tree::var_of(a[0]!) ?? -1) == cx.root && (ir_pass_tree::int_of(a[1]!) ?? -2147483647) == cx.off
+}
+
+fn walk(b: ir::Bundle, f: ir::Function, cx: FieldWalk, node: ir::Node) -> text {
+  match node {
+    NdSpan { inner } => walk(b, f, cx, inner),
+    NdVar { n } => if n == cx.root { "the record is used other than through a field" } else { "" },
+    NdSet { var, inner } => {
+      if var == cx.root || var == cx.idx || var == cx.lv {
+        return "the body assigns the record or the counter";
+      }
+      walk(b, f, cx, inner)
+    },
+    NdCallRef => "a call through a reference, a yield or a par in the body",
+    NdYield => "a call through a reference, a yield or a par in the body",
+    NdParallel => "a call through a reference, a yield or a par in the body",
+    NdCall { def_nr, args } => {
+      name = ir_pass_tree::def_name(b, def_nr);
+      if ours(b, cx, node) {
+        return "the walked vector is used other than by a read";
+      }
+      // A field of the record, read whole: another field, or the record's own scalar.
+      if name == "OpGetField" && len(args) > 0 && (ir_pass_tree::var_of(args[0]!) ?? -1) == cx.root {
+        return "";
+      }
+      reads = READS.contains(name);
+      for a in args {
+        if ours(b, cx, a) {
+          if reads {
+            continue;
+          }
+          return "the walked vector is handed to an operator that may resize it";
+        }
+        n = ir_pass_tree::var_of(a);
+        if n != null && cx.root_is_param && n! != cx.root && scope_fn::is_argument(f, n!) && may_be_record(b, scope_fn::tp(f, n!)) {
+          // A `&text` or a `&` scalar (a result buffer among them) holds no record.
+          return "another record parameter, which may be the same record";
+        }
+        why = walk(b, f, cx, a);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    },
+    _ => {
+      for c in scope_fn::children(node) {
+        why = walk(b, f, cx, c);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    }
+  }
+}
+
+// The parameter types that can name the walked record (the `match` in `FieldWalk::walk`).
+fn may_be_record(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    // A record of scalars only owns no vector: it is not `d`, holds no part of it, and no write
+    // through it resizes one (a hidden `Cell` result buffer, `get_cell`).
+    TyReference { n } => !opt_writes::all_scalar_record(b, n),
+    TyRefVar { inner } => match cgen_types::base(inner) {
+      TyReference { n } => !opt_writes::all_scalar_record(b, n),
+      TyVector => true,
+      _ => false
+    },
+    // A record or vector passed plainly names the caller's record too.
+    TyVector => true,
+    _ => false
+  }
+}

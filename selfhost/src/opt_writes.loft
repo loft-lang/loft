@@ -341,7 +341,7 @@ fn writes_store(b: ir::Bundle, w: Writes, node: ir::Node, vd: integer) -> boolea
 }
 
 // `all_scalar_record`: a record type with no heap in it.
-fn all_scalar_record(b: ir::Bundle, rec: integer) -> boolean {
+pub fn all_scalar_record(b: ir::Bundle, rec: integer) -> boolean {
   for a in b.data.definitions[rec]!.attributes {
     routine = match cgen_types::base(a.typedef[0]!) {
       TyRoutine { n: _ } => true,

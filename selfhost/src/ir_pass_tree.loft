@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the `Value` tree questions the transcribed `close_program` passes (`ir_*.loft`) share:
+// a node rebuilt over new children (`for_each_child_mut`'s write side), the leaves read as
+// numbers, and the frame laid out again after a pass changed a body
+// (`compute_function_intervals`, `assign_function_slots`).
+
+use ir;
+use scope_fn;
+use scope;
+
+// `n` with its direct children replaced by `kids`, in the order `scope_fn::children` gives them
+// (`Value::for_each_child_mut`).  A leaf is answered as it is.
+pub fn with_children(n: ir::Node, kids: vector<ir::Node>) -> ir::Node {
+  match n {
+    NdSpan { pos } => ir::NdSpan { pos: pos, inner: kids[0]! },
+    NdCall { def_nr } => ir::NdCall { def_nr: def_nr, args: kids },
+    NdCallRef { var } => ir::NdCallRef { var: var, args: kids },
+    NdBlock { block } => ir::NdBlock { block: [with_operators(block[0]!, kids)] },
+    NdLoop { block } => ir::NdLoop { block: [with_operators(block[0]!, kids)] },
+    NdInsert => ir::NdInsert { items: kids },
+    NdTuple => ir::NdTuple { items: kids },
+    NdSet { var } => ir::NdSet { var: var, inner: kids[0]! },
+    NdReturn => ir::NdReturn { inner: kids[0]! },
+    NdDrop => ir::NdDrop { inner: kids[0]! },
+    NdYield => ir::NdYield { inner: kids[0]! },
+    NdIf => ir::NdIf { cond: kids[0]!, t: kids[1]!, f: kids[2]! },
+    NdIter { var } => ir::NdIter { var: var, create: kids[0]!, next: kids[1]!, init: kids[2]! },
+    NdTuplePut { var, idx } => ir::NdTuplePut { var: var, idx: idx, inner: kids[0]! },
+    NdParallel => ir::NdParallel { arms: kids },
+    _ => n
+  }
+}
+
+// A block like `bl` holding `ops`.
+pub fn with_operators(bl: ir::Block, ops: vector<ir::Node>) -> ir::Block {
+  ir::Block { name: bl.name, operators: ops, result: [for t in bl.result { t }], scope: bl.scope, var_size: bl.var_size }
+}
+
+// A block of `name` over `ops` answering `result` in `scope` (`Block { .., var_size: 0 }`).
+pub fn block(name: text, ops: vector<ir::Node>, result: ir::TypeT, scope: integer) -> ir::Block {
+  ir::Block { name: name, operators: ops, result: [result], scope: scope, var_size: 0 }
+}
+
+// `Value::Int(k)` under any spans, else null.
+pub fn int_of(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) {
+    NdInt { n } => n,
+    _ => null
+  }
+}
+
+// `Value::Var(n)` under any spans, else null.
+pub fn var_of(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    _ => null
+  }
+}
+
+// Is `v`, under any spans, a call of `op`?
+pub fn is_call(v: ir::Node, op: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr } => def_nr == op,
+    _ => false
+  }
+}
+
+// The arguments of a call under any spans; none for any other node.
+pub fn args_of(v: ir::Node) -> vector<ir::Node> {
+  match scope_fn::unspan(v) {
+    NdCall { args } => args,
+    _ => []
+  }
+}
+
+// The definition number of a call under any spans, -1 for any other node.
+pub fn call_def(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr } => def_nr,
+    _ => -1
+  }
+}
+
+// `data.def(d).name()`
+pub fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if x == null { "" } else { x.name }
+}
+
+// `Value::any_node` for a block of `name` (spans seen through).
+pub fn has_block(n: ir::Node, name: text) -> boolean {
+  match n {
+    NdBlock { block } => if block[0]!.name == name { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if has_block(c, name) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Value::map_nodes` replacing every `Var(from)` with `Var(to)`.
+pub fn rename_var(n: ir::Node, from: integer, to: integer) -> ir::Node {
+  match n {
+    NdVar { n: x } => if x == from { return ir::NdVar { n: to }; },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  with_children(n, [for c in kids { rename_var(c, from, to) }])
+}
+
+// `Function::add_unique`: a fresh local `_<prefix>_<n>` in `scope`, `n` its number.
+pub fn add_unique(f: ir::Function, prefix: text, t: ir::TypeT, scope: integer) -> integer {
+  v = len(f.variables);
+  x = scope_fn::temp_variable("_{prefix}_{v}", t);
+  x.scope = scope;
+  f.variables += [x];
+  v
+}
+
+// `compute_function_intervals` then `assign_function_slots` for definition `d`, whose code a
+// pass just replaced (`scope_check::check` lays a function out the same way).
+pub fn relayout(b: ir::Bundle, d: integer) {
+  ops = scope::ops_of(b);
+  code = b.data.definitions[d]!.code[0]!;
+  f = b.data.definitions[d]!.variables;
+  iv = scope::intervals(code, f, ops);
+  scope::assign_slots(f, iv, scope::range_aliases(code, f, ops), scope::local_start(f));
+  b.data.definitions[d].code = [scope::zero_var_size(code)];
+}
+
+// Is definition `d` a function with a body (`def_type == Function`, code not `Null`)?
+pub fn has_body(d: ir::Definition) -> boolean {
+  if d.def_type != 1 {
+    return false;
+  }
+  c = d.code[0];
+  if c == null {
+    return false;
+  }
+  !(c! is NdNull)
+}

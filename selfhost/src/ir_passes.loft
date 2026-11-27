@@ -7,14 +7,17 @@
 // (`selfhost/bench/passes_survey.py`) shows each definition it would have changed as a
 // difference.
 use ir;
+use ir_forward_walk;
 
 // `close_program`'s passes over `b`, in order.  Answers the functions a pass refuses by name.
-pub fn close_program(_b: ir::Bundle) -> vector<text> {
+pub fn close_program(b: ir::Bundle) -> vector<text> {
   refused: vector<text> = [];
   // Transcribed passes are called here, in `close_program`'s order: sync_capture_ownership,
   // ledger_sites, arg_copy, value_record, leaf_inline, tail_self, zero_count, exp_pow,
   // ctor_literal, forward_walk, same_read, self_replace, in_range, single_use, discharge_into,
   // fill_loop, keyed_entry, elem_first, text_len, loop_buffer, complete_write, loop_record,
   // lift_reuse.
+  // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
+  ir_forward_walk::rewrite_program(b);
   refused
 }
