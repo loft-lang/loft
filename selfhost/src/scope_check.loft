@@ -23,6 +23,7 @@ use scope_pure;
 use binds;
 use own;
 use scope_value_struct;
+use scope_capture_adoption;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -53,6 +54,18 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       program[i] = vs[i]!;
     }
   }
+  // `mark_borrowed_captures` (after the loop) decides a closure record's cascade from the
+  // building frame's settled body where a capture holds a store: such a cascade, and one calling
+  // it, is refused here by name.
+  decided = scope_capture_adoption::frame_decided_cascades(b);
+  for d in b.data.definitions {
+    i = d#index;
+    if (decided[i] ?? false) && (program[i] ?? "") == "" {
+      program[i] = "capture_adoption::mark_borrowed_captures: a drop cascade the building frame's capture verdicts decide";
+    }
+  }
+  // The definitions with a settled body: the standard library's, and each one laid out below.
+  settled: vector<boolean> = [for d in b.data.definitions { d.source == 0 }];
   // The functions refused so far: Rust laid each out before the ones after it, so a summary of
   // one of them (`use_analysis::return_ownership`) reads its SETTLED body, which the image here
   // does not hold.
@@ -107,6 +120,21 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     iv = scope::intervals(code, f, iops);
     scope::assign_slots(f, iv, scope::range_aliases(code, f, iops), scope::local_start(f));
     b.data.definitions[d_nr].code = [scope::zero_var_size(code)];
+    settled[d_nr] = true;
+  }
+  // After the loop: the cascades left with nothing to do are retired, and every call of one
+  // dropped (`prune_empty_cascades`); `cascade_before_record_frees` runs a record's cascade
+  // before each release of it.
+  for i in scope_capture_adoption::prune_empty_cascades(b, settled) {
+    d = b.data.definitions[i]!;
+    if d.source != 0 {
+      refused += ["{d.name}: capture_adoption::prune_empty_cascades: a call of a cascade a refused function decides"];
+    }
+  }
+  for d in b.data.definitions {
+    if d.source != 0 && (settled[d#index] ?? false) && scope_capture_adoption::owes_record_cascade(b, d) {
+      refused += ["{d.name}: capture_adoption::cascade_before_record_frees: a closure record released"];
+    }
   }
   refused
 }

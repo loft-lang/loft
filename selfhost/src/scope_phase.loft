@@ -255,12 +255,8 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
       scope_scan::refuse(s, "capture_builds::capture_build_backings: a closure record");
     }
   }
-  // `capture_adoption::mark_borrowed_captures` (after the loop) rewrites a closure record's
-  // drop cascade: the release of a capture the record borrows is dropped, a cascade it no
-  // longer needs is retired.
-  if d.name.contains("OpDrop") && (d.name.contains("__closure_") || calls_closure_drop(b, code)) {
-    scope_scan::refuse(s, "capture_adoption::mark_borrowed_captures: a closure record's drop cascade");
-  }
+  // `capture_adoption::mark_borrowed_captures` (after the loop): `check` refuses a cascade a
+  // frame's capture verdicts decide, and settles the pruning on the laid-out bodies.
   if has_block(code, "fn_ref_with_closure") {
     scope_scan::refuse(s, "closure_keep::closure_keep_set: a closure built");
   }
@@ -876,24 +872,4 @@ pub fn mentions_of(n: ir::Node, v: integer) -> integer {
     k += mentions_of(c, v);
   }
   k
-}
-
-// A call of a closure record's drop cascade anywhere in `n`: a cascade of a record holding a
-// closure, which `mark_borrowed_captures` rewrites with the closure's.
-fn calls_closure_drop(b: ir::Bundle, n: ir::Node) -> boolean {
-  match n {
-    NdCall { def_nr } => {
-      nm = scope_args::def_name(b, def_nr);
-      if nm.contains("__closure_") && nm.contains("OpDrop") {
-        return true;
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    if calls_closure_drop(b, c) {
-      return true;
-    }
-  }
-  false
 }
