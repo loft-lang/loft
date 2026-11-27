@@ -664,6 +664,8 @@ fn fill_database(e: el::El, d: integer) {
         match vti {
           TyTuple { elems: vte } => { vtd = el_types::tuple_def_of(e, vte); },
           TyFunction { args: _ } => { vtd = el::source_nr(e, 0, "i32"); },
+          // (A generator handle's is the library's `iterator`: `vector<iterator>`.)
+          TyIterator { step: _ } => { vtd = el::source_nr(e, 0, "iterator"); },
           TyReference { n: vrn, dep: vrd } => { if len(vrd) == 0 && el_types::type_var(e, vti) < 0 { vtd = vrn; } },
           TyEnum { n: ven } => { if el_types::type_var(e, vti) < 0 { vtd = ven; } },
           TyVector { inner: _ } => {
@@ -838,6 +840,18 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
     TyCharacter => known(e, "character"),
+    // (A generator handle is stored as the 12-byte `DbRef` it is: the library's `type iterator`
+    // takes that row the first time a layout asks for it, as Rust's `fill_database` gives it.)
+    TyIterator { step: _ } => {
+      itd = el::source_nr(e, 0, "iterator");
+      if itd < 0 {
+        return -1;
+      }
+      if el::def(e, itd).known_type == NO_TYPE {
+        e.b.data.definitions[itd].known_type = dbref(e);
+      }
+      el::def(e, itd).known_type
+    },
     // A struct with no row yet is filled here, as Rust's `fill_database` fills a field's type
     // when it meets one — which numbers it after the struct whose field it is.
     // A pointer field (`reference<T>`, a non-empty dep) is the 12-byte `DbRef` row.
@@ -861,6 +875,11 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if inner is TyTuple {
         tc = content_type(e, inner);
         return if tc < 0 { -1 } else { vector_type(e, tc) };
+      }
+      // (…and a generator handle's by the `DbRef` row it is stored as.)
+      if inner is TyIterator {
+        ic = content_type(e, inner);
+        return if ic < 0 { -1 } else { vector_type(e, ic) };
       }
       nm = el_types::elem_name(e, inner);
       if nm == "" {
