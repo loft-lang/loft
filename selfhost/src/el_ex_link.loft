@@ -290,6 +290,23 @@ pub fn link_argument(e: el::El, vars: el_vars::Vars, arg: ir::Node, at: ir::Type
       }
       return ir::NdInsert { items: [el_ir::v_set(wv, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: wv }])] };
     }
+    // (A vector's TUPLE element handed to a `&(…)` parameter, `step(rows[1], 5)`: the element is
+    // its `__tuple<…>` record in the vector's store, held in a second-pass work ref borrowing the
+    // vector and linked, as a record element is.)
+    tel = match el_types::base(at) { TyTuple { elems: tes } => tes, _ => [] };
+    tpd = match el_types::base(inner) { TyReference { n: tin } => if starts_with(el::def(e, tin).name, "__tuple<") { tin } else { -1 }, _ => -1 };
+    if len(tel) > 0 && tpd >= 0 && calls(e, place, "OpGetVector") && el_types::tuple_def_of(e, tel) == tpd {
+      // (Read as a tuple value first, the element takes its unbox cursor on both passes,
+      // `unbox_tuple_from_dbref` — a `__ref_N` the table keeps.)
+      _ = el_ex_tuple::unbox_cursor(e, vars, tpd, place);
+      if e.first_pass {
+        return arg;
+      }
+      troot = place_root(e, place);
+      tw = el_vars::work_ref_p2(vars, ir::TyReference { n: tpd, dep: if troot >= 0 { [troot] } else { [] } });
+      el_vars::set_skip_free(vars, tw, "convert_store_as");
+      return ir::NdInsert { items: [el_ir::v_set(tw, arg), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: tw }])] };
+    }
     tv = text_value_link(e, vars, arg, at, pt);
     if tv != null {
       return tv;
