@@ -1175,9 +1175,27 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
   }
   def = el::def(e, d);
   a = attr_nr(def, name);
+  // (`$.x` naming a field declared later does not resolve on the first pass — Rust's diagnostics
+  // are silent there — and does on the second.)
+  if a < 0 && e.first_pass && d == e.context && el_ir::unspan(x.code) == ir::NdVar { n: 0 } {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if a < 0 {
     el::refuse(e, "a field the struct does not declare: `{name}` of `{def.name}`");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
+  // A computed field (`constant`) reads its expression with the receiver in `$`'s place
+  // (`replace_record_ref`), typed as the field with the receiver's deps.
+  if def.attributes[a]!.constant {
+    ct = def.attributes[a]!.typedef[0] ?? ir::TyVoid;
+    for on in el_types::deps(x.tp) {
+      ct = el_types::with_deps(ct, [on]);
+    }
+    cc = el_ir::replace_var(def.attributes[a]!.value[0] ?? ir::NdNull, 0, x.code);
+    if !e.first_pass {
+      cc = ir::NdSpan { pos: el::pos_at(e, at), inner: cc };
+    }
+    return ex(cc, ct);
   }
   // (`stored_ref_read`: a stored `reference<E>` of a struct-enum reads as `E`.)
   t = el_types::stored_ref_read(e, def.attributes[a]!.typedef[0] ?? ir::TyVoid);

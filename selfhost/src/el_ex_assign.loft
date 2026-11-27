@@ -868,6 +868,15 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
     },
+    // `$` in a struct's own declaration — a field's computed value or default — is the record
+    // (`parse_var`: `Var(0)`, a reference to the struct).
+    SDollar => {
+      if e.context >= 0 && el::def(e, e.context).def_type == el::DT_STRUCT {
+        return ex(ir::NdVar { n: 0 }, ir::TyReference { n: e.context, dep: [] });
+      }
+      el::refuse(e, "an expression form: {syn_kind(e, n)}");
+      ex(ir::NdNull, ir::TyUnknown { n: 0 })
+    },
     _ => {
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })

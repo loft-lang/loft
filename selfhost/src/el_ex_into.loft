@@ -245,7 +245,9 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
       }
     }
   }
+  vars.lit_defaults_at = -1;
   list = object_fields(e, vars, v, d, fields);
+  defaults_at = vars.lit_defaults_at;
   vars.demote_var = -1;
   vars.rebuild_attempt = false;
   if list == null {
@@ -419,7 +421,9 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               _ => {}
             }
           }
-          if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
+          // (An omitted field's default is replayed as it stands: `parse_object_field` stages
+          // only what the literal writes.)
+          if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } && !(defaults_at >= 0 && op#index >= defaults_at) {
             reads = false;
             for w in viewers {
               if el_ir::reads_var(args[-1], w) {
@@ -1297,6 +1301,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       _ => {}
     }
   }
+  vars.lit_defaults_at = len(list);
   if !e.first_pass {
     for a in def.attributes {
       if a.constant || found.contains(a.name) {
@@ -2040,7 +2045,8 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
       _ => {}
     }
   }
-  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { at.value[0]! } else { el_ex_object::to_default(e, ft) };
+  // (`replace_record_ref`: a stored default reading `$` reads the record built here.)
+  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { el_ir::replace_var(at.value[0]!, 0, r) } else { el_ex_object::to_default(e, ft) };
   if base == 0 {
     return [el_ex_object::set_field(e, d, a, r, val)];
   }
