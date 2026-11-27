@@ -100,6 +100,14 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
     },
     _ => {}
   }
+  // A text to a record or a struct enum (`"{…}" as Mix`): interned into a store of its own
+  // (`cast_allocates`), `OpCastVectorFromText(text, <the target's known type>)` — on the second
+  // pass; the first leaves the text as it was, as the vector cast does.
+  ptd = match to { TyReference { n: prn } => if el::def(e, prn).def_type == el::DT_STRUCT { prn } else { -1 }, TyEnum { n: pen, is_ref: pir } => if pir { pen } else { -1 }, _ => -1 };
+  if ptd >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    prt = if el::def(e, ptd).def_type == el::DT_ENUM { ir::TyEnum { n: ptd, is_ref: true, dep: [] } } else { ir::TyReference { n: ptd, dep: [] } };
+    return ex(if e.first_pass { x.code } else { el_ir::cl(e, "OpCastVectorFromText", [x.code, ir::NdInt { n: el::def(e, ptd).known_type }]) }, prt);
+  }
   match to {
     TyOptional { inner } => {
       src = el_types::base(x.tp);
