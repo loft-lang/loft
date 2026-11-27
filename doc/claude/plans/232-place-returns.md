@@ -151,11 +151,12 @@ emit byte-for-byte what it does now: the phase gates below prove it.
 | Item | What | Verify (goes red if done wrong) | Effort |
 |---|---|---|---|
 | **0** | The silent lost writes (a defect on main, fixed whatever the ruling): `first(s).hp = 3`, `s.first().hp -= 10` and `hurt(s.first(), 10)` get `lost-write` | **Done** on `tuxedo-pr2657-next`: `loft-suite rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft`, which fails on the build without it (0 reports, 4 with it); every corpus program's warnings otherwise unchanged | S |
-| **A** | The spec as cells: the table above, one cell per row under `@FR-B-RefType` (or Q6's rule), each with its place-spelling twin as the control, written before any compiler edit and marked expected-to-fail | the twins pass today, and each `-> &T` cell fails for the reason named (refused) | XS |
+| **A** | The spec as cells: the table above, one cell per row under `@FR-B-RefType` (or Q6's rule), each with its place-spelling twin as the control, written before any compiler edit and marked expected-to-fail | the twins pass today, and each `-> &T` cell fails for the reason named (refused); cells for a generic, an interface method and a fn-ref type included (Q7) | XS |
 | **B1** | Parse a return `&`, and refuse a `-> &T` whose places name no parameter, or more than one lifetime (Q4) | B1 refusal cells (a local, a fresh value, a literal, two parameters' places) fail without the callee check, and the accepted branch cells (one parameter, several containers) pass; every other program's IR byte-identical (`introspect_diff.sh`, both writers) | S |
 | **B2** | A `-> &T` call in place positions: an argument, a field write, a method chain | A's cells for those rows pass on both backends, leak- and strict-checked; byte-identical elsewhere | M |
 | **B3** | Binds: `e = first(s)` as a view, `e = &first(s)` as a link, the dependency mapped onto the argument, and the reshape refusals and materialisation reaching it — for a branching body, the union of the containers its return sites reach | A's bind and grow rows; `ownership_drop_gate` on both backends; the poison and stack sweeps; `own_sweep.py` reads CAUGHT with the new arm switched off | M |
 | **B4** | Lints and records: `lost-write` and `double-move` skip a `&` callee, the needless-`&` lint, the store-records reading | a cell per lint proving silence on `-> &T` and the warning kept on `-> T`; the records checker matches the runtime on A's cells | S |
+| **B5** | A fn-ref type `fn(S) -> &E` (Q7): the type names the parameter, assignment checks it, a call through it binds as B3 does; generics and interface methods take B's path per instance and per implementation | A's fn-ref, generic and interface cells on both backends; a capture-place lambda refused | S |
 | **C** | Scalar and text places (`-> &integer`, `-> &text`), after B (Q5, decided): a `RefVar` return on both backends, the text kind fixed per function or twinned per kind | A's scalar and text rows; the C sweep in strict mode on clang | M–MH |
 | **D** | The self-host port mirrors B (and C) | gate E agrees on A's cells; no agreeing program lost | S–M |
 
@@ -166,7 +167,7 @@ emission diff is the parallel run.
 
 Each comes with the recommendation, and with what was measured behind it.
 
-1. **Lift or drop.**  This plan is the lift.  Recommended: the rule, @C77's ruling and a consumer
+1. **Lift or drop.**  **Decided (owner, 2026-11-27): lift** (*"create a plan to lift it"*).  Recommended: the rule, @C77's ruling and a consumer
    all ask for it.  The alternative is a one-line edit taking the exception out of `(F-Ret)`.
 2. **A plain bind `e = first(s)`.**  Recommended: as the place binds, so a VIEW for a record
    (`@FR-B-View`, 90 today with `e = s.enemies[0]`) and a COPY for a scalar or a text (`x = v[1]`
@@ -197,9 +198,13 @@ Each comes with the recommendation, and with what was measured behind it.
    `(B-RefType-OfVar)` (*"a function's return may be `&τ`: the call is the place it returns"*),
    cited at the parse, the bind and the reshape sites, with @C77 amended.  `(F-Ret)`'s exception
    then cites it.
-7. **What may declare one.**  Recommended for B: named functions and methods (`self`).  A
-   fn-ref type `fn(S) -> &E`, an interface method and a generic `-> &T` over a type variable
-   are refused until a program needs them.  A generator's `&` is refused as its parameters are
+7. **What may declare one.**  **Decided (owner, 2026-11-27): all three are accepted.**  Beside
+   named functions and methods: a generic `-> &T` (each instance is a B or a C accessor, held to
+   the one-lifetime check), an interface method (each implementation is checked; the caller
+   trusts the declared signature), and a fn-ref type `fn(S) -> &E`, whose type names the one
+   parameter the place lives in (assignment requires the signatures to match; a lambda that
+   returns a place in its own capture names no parameter and is refused, B1).  Fn-ref types are
+   B's last step (B5).  A generator's `&` stays refused as its parameters are
    (`@FR-G-NoRefParam`).
 
 ## Cross-arc dependencies
