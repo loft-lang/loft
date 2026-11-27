@@ -145,8 +145,9 @@ fn arguments(f: ir::Function) -> vector<integer> {
 
 struct CallAt { f: integer, args: vector<ir::Node> }
 
+// `Value::walk` visits no `Span` itself, only what it wraps: each call once.
 fn total_vector_calls(b: ir::Bundle, n: ir::Node, w: integer, total: vector<boolean>, out: vector<CallAt>) {
-  match scope_fn::unspan(n) {
+  match n {
     NdCall { def_nr, args } => if def_nr != w && (total[def_nr] ?? false) && vector_buffer(b, def_nr) >= 0 {
       out += [CallAt { f: def_nr, args: args }];
     },

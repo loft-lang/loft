@@ -1,0 +1,427 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/forward_result.rs` transcribed (`(R-ForwardResult)`): a returned local bound from
+// a call is built in the return buffer.  `buf = head(…, __ref_N); …; OpClearVector(rb);
+// OpAppendVector(rb, buf, _)` becomes `rb = head(…, rb); …` with `buf` read as `rb`, the delivery
+// pair and the hidden buffer's null guard gone.  Run by `scope_check::check` on the settled body,
+// after `(R-ExitVector)`, as `scopes::check` runs it.
+
+use ir;
+use scope_fn;
+use binds;
+use own;
+use ir_pass_tree;
+
+struct Site {
+  local: integer,
+  buffer: integer,
+  inside: integer,
+  guard: integer,
+  bind: integer,
+  clear: integer
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if x == null { "" } else { x!.name }
+}
+
+// `peel_link()` — through `?`, `&` and `Rewritten`.
+fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  at = scope_fn::base(t);
+  while at is TyRefVar || at is TyRewritten {
+    at = match at { TyRefVar { inner } => scope_fn::base(inner), TyRewritten { inner } => scope_fn::base(inner), _ => at };
+  }
+  at
+}
+
+// port: forward_result.rs fn own_return_buffer — -1 for `None`.
+fn own_return_buffer(d: ir::Definition) -> integer {
+  idx = binds::hidden_return_buffer_attr(d);
+  if idx == null {
+    return -1;
+  }
+  v = binds::var_named(d.variables, d.attributes[idx!]!.name);
+  if v == own::MAX || !scope_fn::is_argument(d.variables, v) {
+    return -1;
+  }
+  v
+}
+
+// port: forward_result.rs fn mentions — `x` as a variable or a `Set` target (`walk` visits no
+// `Span` itself).
+fn mentions(v: ir::Node, x: integer) -> integer {
+  n = 0;
+  match v {
+    NdVar { n: y } => if y == x { n += 1; },
+    NdSet { var } => if var == x { n += 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    n += mentions(c, x);
+  }
+  n
+}
+
+fn count_null_sets(v: ir::Node, x: integer) -> integer {
+  n = 0;
+  match v {
+    NdSet { var, inner } => if var == x && scope_fn::unspan(inner) is NdNull { n += 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    n += count_null_sets(c, x);
+  }
+  n
+}
+
+fn count_frees(b: ir::Bundle, v: ir::Node, h: integer) -> integer {
+  n = 0;
+  match v {
+    NdCall { def_nr, args } => if def_name(b, def_nr) == "OpFreeRef" && len(args) == 1 && is_var(args[0]!, h) { n += 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    n += count_frees(b, c, h);
+  }
+  n
+}
+
+fn is_var(v: ir::Node, x: integer) -> boolean {
+  match scope_fn::unspan(v) { NdVar { n } => n == x, _ => false }
+}
+
+fn call_args(b: ir::Bundle, v: ir::Node, nm: text) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr < len(b.data.definitions) && def_name(b, def_nr) == nm { args } else { null },
+    _ => null
+  }
+}
+
+fn sets_var(v: ir::Node, x: integer) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdSet { var } => if var == x { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if sets_var(c, x) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: forward_result.rs fn is_null_guard — `if OpRefIsNull(h) { h = null } else null`.
+fn is_null_guard(b: ir::Bundle, v: ir::Node, h: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdIf { cond, t } => {
+      a = call_args(b, cond, "OpRefIsNull");
+      a != null && len(a!) > 0 && is_var(a![0]!, h) && sets_var(t, h)
+    },
+    _ => false
+  }
+}
+
+// port: forward_result.rs fn admit — the site, or null (a block that holds no candidate, or one
+// that declines).
+fn admit(b: ir::Bundle, ops: vector<ir::Node>, code: ir::Node, f: ir::Function, rb: integer) -> Site? {
+  clear = -1;
+  k = 0;
+  while k + 1 < len(ops) {
+    ca = call_args(b, ops[k]!, "OpClearVector");
+    aa = call_args(b, ops[k + 1]!, "OpAppendVector");
+    if ca != null && len(ca!) > 0 && is_var(ca![0]!, rb) && aa != null && len(aa!) > 1 && is_var(aa![0]!, rb) && scope_fn::unspan(aa![1]!) is NdVar {
+      clear = k;
+      break;
+    }
+    k += 1;
+  }
+  if clear < 0 {
+    return null;
+  }
+  local = match scope_fn::unspan((call_args(b, ops[clear + 1]!, "OpAppendVector") ?? [])[1] ?? ir::NdNull) { NdVar { n } => n, _ => -1 };
+  if local < 0 {
+    return null;
+  }
+  bind = -1;
+  j = clear - 1;
+  while j >= 0 {
+    match scope_fn::unspan(ops[j]!) {
+      NdSet { var } => if var == local {
+        bind = j;
+      },
+      _ => {}
+    }
+    if bind >= 0 {
+      break;
+    }
+    j -= 1;
+  }
+  if bind < 0 {
+    return null;
+  }
+  fnr = -1;
+  args: vector<ir::Node> = [];
+  match scope_fn::unspan(ops[bind]!) {
+    NdSet { inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr, args: a } => {
+        fnr = def_nr;
+        args = a;
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  if fnr < 0 || len(args) == 0 {
+    return null;
+  }
+  h = match scope_fn::unspan(args[len(args) - 1]!) { NdVar { n } => n, _ => -1 };
+  if h < 0 {
+    return null;
+  }
+  callee = b.data.definitions[fnr]!;
+  if !binds::is_loft_defined(callee) || (binds::hidden_return_buffer_attr(callee) ?? -1) != len(args) - 1 || own::returns_borrowed_view(callee) || !(peel_link(callee.returned[0] ?? ir::TyVoid) is TyVector) {
+    return null;
+  }
+  if !scope_fn::name(f, h).starts_with("__ref_") {
+    return null;
+  }
+  for x in [local, h] {
+    if scope_fn::is_argument(f, x) || scope_fn::is_captured(f, x) {
+      return null;
+    }
+  }
+  if !(peel_link(scope_fn::tp(f, local)) is TyVector) {
+    return null;
+  }
+  for a in args[0..len(args) - 1] {
+    if mentions(a, rb) > 0 {
+      return null;
+    }
+  }
+  for o in ops[bind + 1..clear] {
+    if mentions(o, rb) > 0 || sets_var(o, local) {
+      return null;
+    }
+  }
+  for o in ops[clear + 2..] {
+    if mentions(o, local) > 0 {
+      return null;
+    }
+  }
+  inside = 0;
+  for o in ops[bind..clear + 2] {
+    inside += mentions(o, local);
+  }
+  guard = -1;
+  g = bind - 1;
+  while g >= 0 {
+    if is_null_guard(b, ops[g]!, h) {
+      guard = g;
+      break;
+    }
+    g -= 1;
+  }
+  guard_mentions = if guard >= 0 { mentions(ops[guard]!, h) } else { 0 };
+  guard_nulls = if guard >= 0 { count_null_sets(ops[guard]!, h) } else { 0 };
+  allowed = count_null_sets(code, h) + count_frees(b, code, h) + 1 + guard_mentions - guard_nulls;
+  if mentions(code, h) != allowed {
+    return null;
+  }
+  Site { local: local, buffer: h, inside: inside, guard: guard, bind: bind, clear: clear }
+}
+
+// port: forward_result.rs fn find — every statement list, a block's or a loop's, in walk order.
+fn find(b: ir::Bundle, v: ir::Node, code: ir::Node, f: ir::Function, rb: integer, out: vector<Site>) {
+  match v {
+    NdBlock { block } => {
+      s = admit(b, block[0].operators, code, f, rb);
+      if s != null {
+        out += [s!];
+      }
+    },
+    NdLoop { block } => {
+      s = admit(b, block[0].operators, code, f, rb);
+      if s != null {
+        out += [s!];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    find(b, c, code, f, rb, out);
+  }
+}
+
+// port: forward_result.rs fn is_site
+fn is_site(ops: vector<ir::Node>, site: Site, rb: integer) -> boolean {
+  if site.bind >= len(ops) || site.clear >= len(ops) {
+    return false;
+  }
+  bind_ok = match scope_fn::unspan(ops[site.bind]!) {
+    NdSet { var, inner } => var == site.local && match scope_fn::unspan(inner) {
+      NdCall { args } => len(args) > 0 && is_var(args[len(args) - 1]!, site.buffer),
+      _ => false
+    },
+    _ => false
+  };
+  clear_ok = match scope_fn::unspan(ops[site.clear]!) {
+    NdCall { args } => len(args) > 0 && is_var(args[0]!, rb),
+    _ => false
+  };
+  bind_ok && clear_ok
+}
+
+fn rename(n: ir::Node, from: integer, to: integer) -> ir::Node {
+  match n {
+    NdVar { n: y } => if y == from { return ir::NdVar { n: to }; },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  nk: vector<ir::Node> = [];
+  for c in kids {
+    r = rename(c, from, to);
+    nk += [r];
+  }
+  ir_pass_tree::with_children(n, nk)
+}
+
+// The statement list of an admitted site rewritten.
+fn applied(ops: vector<ir::Node>, site: Site, rb: integer) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    i = o#index;
+    if i == site.clear || i == site.clear + 1 || i == site.guard {
+      continue;
+    }
+    if i == site.bind {
+      // The call keeps its span; its last argument is the return buffer.
+      rhs = match scope_fn::unspan(o) { NdSet { inner } => inner, _ => o };
+      call = with_last_arg(rhs, rb);
+      out += [scope_fn::v_set(rb, call)];
+      continue;
+    }
+    if i > site.bind && i < site.clear {
+      r = rename(o, site.local, rb);
+      out += [r];
+      continue;
+    }
+    out += [o];
+  }
+  out
+}
+
+// `call` (under its spans) with its last argument `Var(rb)`.
+fn with_last_arg(call: ir::Node, rb: integer) -> ir::Node {
+  match call {
+    NdSpan { pos, inner } => {
+      r = with_last_arg(inner, rb);
+      return ir::NdSpan { pos: pos, inner: r };
+    },
+    NdCall { def_nr, args } => {
+      nargs: vector<ir::Node> = [];
+      for a in args {
+        if a#index == len(args) - 1 {
+          nargs += [ir::NdVar { n: rb }];
+        } else {
+          nargs += [a];
+        }
+      }
+      return ir::NdCall { def_nr: def_nr, args: nargs };
+    },
+    _ => {}
+  }
+  call
+}
+
+struct Done { v: boolean }
+
+// port: forward_result.rs fn apply — the first statement list that is the site, rewritten.
+fn apply(n: ir::Node, site: Site, rb: integer, done: Done) -> ir::Node {
+  if done.v {
+    return n;
+  }
+  match n {
+    NdBlock { block } => if is_site(block[0].operators, site, rb) {
+      done.v = true;
+      ops = applied(block[0].operators, site, rb);
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0], ops)] };
+    },
+    NdLoop { block } => if is_site(block[0].operators, site, rb) {
+      done.v = true;
+      ops = applied(block[0].operators, site, rb);
+      return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0], ops)] };
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  nk: vector<ir::Node> = [];
+  for c in kids {
+    r = apply(c, site, rb, done);
+    nk += [r];
+  }
+  ir_pass_tree::with_children(n, nk)
+}
+
+fn has_par_or_yield(n: ir::Node) -> boolean {
+  if n is NdParallel || n is NdYield {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if has_par_or_yield(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: forward_result.rs fn rewrite
+pub fn rewrite(b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function) -> ir::Node {
+  if (env_variable("LOFT_NO_FORWARD_RESULT") ?? "0") != "0" {
+    return code;
+  }
+  def = b.data.definitions[d_nr]!;
+  if def.def_type != 1 || !binds::is_loft_defined(def) || !(peel_link(def.returned[0] ?? ir::TyVoid) is TyVector) {
+    return code;
+  }
+  rb = own_return_buffer(def);
+  if rb < 0 || has_par_or_yield(code) {
+    return code;
+  }
+  sites: vector<Site> = [];
+  find(b, code, code, f, rb, sites);
+  locals: vector<integer> = [];
+  for s in sites {
+    if !scope_fn::has(locals, s.local) {
+      locals += [s.local];
+    }
+  }
+  locals.sort();
+  out = code;
+  for local in locals {
+    inside = 0;
+    for s in sites {
+      if s.local == local {
+        inside += s.inside;
+      }
+    }
+    if mentions(out, local) != inside + count_null_sets(out, local) {
+      continue;
+    }
+    for s in sites {
+      if s.local == local {
+        done = Done { v: false };
+        out = apply(out, s, rb, done);
+      }
+    }
+  }
+  out
+}

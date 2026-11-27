@@ -35,6 +35,7 @@ use scope_byte_copy;
 use scope_loop_kernel;
 use scope_view_walk;
 use scope_vec_copy;
+use scope_forward_result;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -203,8 +204,11 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       refused_nrs += [d_nr];
       continue;
     }
+    // `(R-ForwardResult)` — a returned local bound from a call is built in the return buffer
+    // (after `(R-ExitVector)` and `exit_record`, refused above where they would fire).
+    code = scope_forward_result::rewrite(b, d_nr, ph.code, ph.function);
     // `(R-MoveLast)`'s local clause, after `(R-Compact)` (refused above where it would fire).
-    code = scope_take_local::rewrite(b, ph.code, ph.function);
+    code = scope_take_local::rewrite(b, code, ph.function);
     // `(R-BoundedNest)`'s reduction is its loop kernel's call.
     code = scope_loop_kernel::rewrite(b, code);
     // `@FR-R-ByteCopy`.
