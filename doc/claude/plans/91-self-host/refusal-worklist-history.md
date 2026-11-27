@@ -63,3 +63,36 @@ both the refusals and the definitions numbered after the constant.
 a-literal-table-is-built-from-its-constant.loft (SQUARES),
 an-appended-call-result-arrives-from-every-exit.loft, 2240-a-constant-holds-its-declared-type.
 
+
+## The ranking at try dc356f49d (porter tip 075d704de, 2026-11-26)
+
+**Measured at** try dc356f49d (porter tip 075d704de, 2026-11-26): 1634 of 2269 agree, 634
+refused, 0 differ; 2396 refused definitions and 4538 beside a refusal (1453 of them numbers
+only).  Data: `kr-tools/try-dc356f49d/{verdicts,where}.tsv`; re-rank a later try with
+`kr-tools/family.py TRY PATTERN…` (a topic's programs admitted, and those one refusal short).
+
+**The landscape is flat.**  184 refused programs meet one family, 185 two, 265 three or more;
+361 families, 106 of them met by one program.  Clearing families greedily admits 4–5 programs
+per family at first, 51 in the first 15, 69 in the first 20.  So the order below is by TOPIC
+(the families one port clears together), each measured as "admitted once the topic is ported /
+one refusal short of it":
+
+| # | topic | admitted / one short | programs meeting | the families in it (programs) | port site |
+|---|---|---|---|---|---|
+| T1 | a record answered from something other than a literal (was R7) | 10 / 5 | 29 | a function returning a record from something other than a literal (21: `if` 11 defs, `call OpGetRecord` 7, `block match` 5); a `return` of a record that is not a literal (`other` 7, `if` 4, `block EnumUnitLit` 4); a value block answering a record | el_expressions.loft:827, el_ex_null.loft:3261 |
+| T2 | `par` workers and loops of a non-scalar | 7 / 1 | 11 | a `par` worker answering TyOptional (10 defs), TyVector, TyEnum; a `par` loop over TyTuple, TyOptional | el_par.loft:99, :273 |
+| T3 | tuples | 28 / 30 | 119 | 93 refusal kinds: a member of a boxed tuple that is no plain scalar, text or record (18); a tuple member of this subject: TyTuple (18); a vector of tuples with a member of this kind (16); a tuple with a text member that is no literal or variable (15); a boxed tuple answered by something other than a tuple literal (24 programs over 7 tails) | el_ex_tuple.loft:138, :526, el_expressions.loft:341 |
+| T4 | links: `&` and `reference<…>` (was R5) | 19 / 19 | 81 | a `&` reference to something other than a scalar or a vector place (25); a `&` argument that is not a local (12); a link re-pointed at a place of another type | el_ex_vector.loft:1599 |
+| T5 | lambdas and captures | 18 / 12 | 85 | a lambda that captures a local of its function (17); a lambda answering a record or a collection beside a shared capture (9); a short lambda with no `fn(…)` its position expects | — |
+| T6 | generics (was R4) | 21 / 13 | 70 | a type with arguments, keys, a limit or a member (18: `Tree`, `Bag`, `B` 9 defs each, `Wrap` 8); a generic instance at text whose body holds an answer other than a parameter (12 hidden); an operator on a type variable its bounds do not declare | el_types.loft:685 |
+| T7 | a vector answered from a tail (was R3) | 7 / 6 | 43 | a function returning a vector from this tail (25: `null` 18 defs, `block Append Vector` 8, `an owned local` 8, `block block` 6); a `return` with a value of this type (22); a function returning a keyed collection (8) | el_ex_deliver.loft:606, :657, :712 |
+| T8 | MEASURED: no family of its own, a second refusal another one causes (§ T8) | — | 57 | a call that is not of a function by its bare name: a local of type TyUnknown (80 defs); a call returning a heap value: TyUnknown (49 defs) | el_ex_object.loft:1848, el_ex_call.loft:1990 |
+| T9 | record literals (was R8) | 3 / 16 | 83 | a literal of something other than a declared struct (25 programs, 63 defs); a struct field of this type (26); a field the struct does not declare (18); a value struct or a struct template (16) | el_ex_into.loft:101, el_ex_object.loft:432 |
+| — | a vector match over this element type (was R6) | — | 7 | 43 defs: a narrow integer element, TyTuple, TyOptional | el_ex_match.loft:1412 |
+| R9 | the definitions a refused construct never registers (tester) | — | 157 | 1689 Rust-only and 108 port-only definitions; 1453 beside by numbers only (2339 at 635b29b75) | per site, below |
+| R10 | the 32-bit regime's lowering | — | 0 | built (d067d87a8) | el_definitions.loft:92 |
+
+**Recommended order:** T1 and T2 first: the most programs admitted per refusal kind, and T1 is
+the porter's current topic.  Then T3, tuples, as ONE topic: by far the most programs met (119)
+and the most admitted (28, and 30 more one refusal short), but 93 kinds, so it is cut into its
+families and each try measured.  T8 is not a lever: its refusals follow from others (§ T8), so it leaves the ranking.
