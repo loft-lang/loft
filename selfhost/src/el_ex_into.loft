@@ -2109,7 +2109,14 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
     }
   }
   // (`replace_record_ref`: a stored default reading `$` reads the record built here.)
-  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { el_ir::replace_var(at.value[0]!, 0, r) } else { el_ex_object::to_default(e, ft) };
+  // Assigned per arm rather than as an `if` value: a call that may answer either of two
+  // parameters, as an `if`-expression arm, leaked its record on both backends (loft#2660).
+  val = ir::NdNull;
+  if !((at.value[0] ?? ir::NdNull) is NdNull) {
+    val = el_ir::replace_var(at.value[0]!, 0, r);
+  } else {
+    val = el_ex_object::to_default(e, ft);
+  }
   if base == 0 {
     return [el_ex_object::set_field(e, d, a, r, val)];
   }
