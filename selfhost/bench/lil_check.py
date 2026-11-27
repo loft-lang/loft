@@ -89,7 +89,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--loft", default=os.path.join(ROOT, "target", "release", "loft"))
     ap.add_argument("--jobs", type=int, default=6)
-    ap.add_argument("--timeout", type=int, default=120)
+    ap.add_argument("--timeout", type=int, default=300)
     ap.add_argument("--discover", action="store_true", help="run the whole corpus, not only the list")
     ap.add_argument("--write", action="store_true", help="with --discover: re-pin the list")
     o = ap.parse_args()

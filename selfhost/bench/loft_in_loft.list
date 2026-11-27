@@ -525,6 +525,7 @@ tests/scripts/a-forgotten-amp-in-a-walk-warns-walk-or-write.loft
 tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft
 tests/scripts/a-frame-never-pushes-past-the-room-its-entry-made.loft
 tests/scripts/a-fresh-copy-into-a-minted-slot-needs-no-prefill.loft
+tests/scripts/a-function-of-many-record-temporaries-compiles-in-seconds.loft
 tests/scripts/a-grid-index-inside-its-rows-and-stride-is-read-plainly.loft
 tests/scripts/a-hash-of-plain-entries-copies-whole.loft
 tests/scripts/a-hash-table-has-a-power-of-two-bucket-count.loft
