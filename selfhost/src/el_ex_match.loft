@@ -40,6 +40,14 @@ pub struct MArm {
   pub tp: ir::TypeT
 }
 
+// A tuple match arm: its member tests, its guard, the bindings a guard keeps apart from the body.
+pub struct TArm {
+  pub cond: ir::Node?,
+  pub guard: ir::Node?,
+  pub binds: vector<ir::Node>,
+  pub code: ir::Node
+}
+
 // `Parser::parse_match` for a scalar subject (`parse_scalar_match`) and a plain enum's: the
 // subject held in `_match_subj_N`; each arm's patterns read into a condition — a literal compared
 // with `==`, a range `lo <= s && s < hi`, alternatives or-ed, a variant's ordinal against the
@@ -836,9 +844,11 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
 // port: control.rs parse_tuple_match
 // A match on a tuple: the subject held in `_match_tuple_N`, each arm `_` or a tuple pattern whose
 // members are and-ed conditions on the subject's members — `_` asks nothing, a variant of a
-// struct-enum member tests its ordinal (`variant_arm` over `TupleGet`) — chained from the last
-// arm back, ending in a wildcard arm's code or the result's null.  A guard, alternatives, a
-// binding and any other member pattern are refused by name.
+// struct-enum member tests its ordinal (`variant_arm` over `TupleGet`), a literal compares the
+// member (`call_op("==")` at the member's type), a lower-case name binds a scalar or text member
+// (`pattern_binding`'s `name#N`, set ahead of the body in a `tuple_binding` block, or ahead of a
+// guard) — chained from the last arm back, ending in a wildcard arm's code or the result's null.
+// Alternatives, a binding of another heap member and any other member pattern are refused by name.
 pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>, at_bind: boolean) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_tuple_match");
@@ -847,20 +857,18 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
   tmp = el_vars::create_unique(vars, "match_tuple", x.tp);
   el_vars::set_defined(vars, tmp);
   result = ir::TyVoid;
-  out: vector<MArm> = [];
+  out: vector<TArm> = [];
   wild_seen = false;
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if guard != null {
-          el::refuse(e, "a tuple match arm with a guard");
-          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-        }
         if len(pats) != 1 {
           el::refuse(e, "a tuple match arm with alternatives");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
         cond: ir::Node? = null;
+        tnames: vector<el_vars::VarName> = [];
+        tbinds: vector<ir::Node> = [];
         match e.p.nodes[pats[0]!] {
           PWild => {},
           PTuple { elems: pes } => {
@@ -873,6 +881,44 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
                 continue;
               }
               et = elems[pe#index]!;
+              tget = ir::NdTupleGet { var: tmp, idx: pe#index };
+              match e.p.nodes[pe] {
+                PLit { e: tle } => {
+                  if tle == null || struct_enum_of(e, et) >= 0 {
+                    el::refuse(e, "a tuple pattern literal on a member of this type: {type_kind(et)}");
+                    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+                  }
+                  // (`-` then a number is that number negated, a literal — not the expression
+                  // `-127` reads as elsewhere.)
+                  tlx = el_ex_assign::expression(e, vars, tle!);
+                  match e.p.nodes[tle!] {
+                    SUnary { op: tno, e: tne } => {
+                      if tno == "-" && tne != null && (e.p.nodes[tne!] is SInt || e.p.nodes[tne!] is SLong || e.p.nodes[tne!] is SFloat) {
+                        tin = el_ex_assign::expression(e, vars, tne!);
+                        tneg = match el_ir::unspan(tin.code) { NdInt { n: tnv } => ir::NdInt { n: -tnv }, NdLong { n: tnv } => ir::NdLong { n: -(tnv ?? 0) }, NdFloat { f: tnv } => ir::NdFloat { f: -tnv }, _ => ir::NdNull };
+                        if !(tneg is NdNull) {
+                          tlx = ex(tneg, tin.tp);
+                        }
+                      }
+                    },
+                    _ => {}
+                  }
+                  tle_c = el_ex_null::builtin_op(e, vars, "==", ex(tget, et), tlx);
+                  cond = if cond == null { tle_c.code } else { el_ir::v_if(cond!, tle_c.code, ir::NdBoolean { b: false }) };
+                  continue;
+                },
+                _ => {}
+              }
+              tbn = el_ex_pattern::rename_of(e, pe);
+              if tbn != "" && struct_enum_of(e, et) < 0 {
+                if !el_ex_call::scalar(el_types::base(et)) && !(el_types::base(et) is TyText) {
+                  el::refuse(e, "a tuple pattern binding of a member of this type: {type_kind(et)}");
+                  return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+                }
+                tbv = pattern_bind(vars, tbn, et, tnames);
+                tbinds += [el_ir::v_set(tbv, tget)];
+                continue;
+              }
               sd = struct_enum_of(e, et);
               if sd < 0 {
                 el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
@@ -892,15 +938,35 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
         }
+        // `tuple-arm ::= tuple-pattern [ guard ] '=>' expression`: the guard read after the
+        // pattern, its bindings in scope; the bindings then stay apart from the body, for the
+        // chain to run them ahead of the guard (`chain_pattern_arms`).
+        tg: ir::Node? = null;
+        if guard != null {
+          tgx = el_ex_assign::expression(e, vars, guard!);
+          if !e.first_pass && !(tgx.tp is TyBoolean) {
+            el::refuse(e, "a match guard that is not a boolean: {type_kind(tgx.tp)}");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          tg = tgx.code;
+        }
         expected = if unsettled(result) { ir::TyUnknown { n: 0 } } else { el_ex_null::arm_expectation(result) };
         b = el_ex_pattern::arm_body(e, vars, body, expected);
+        for tal in rev(tnames) {
+          el_vars::restore_name(vars, tal.name, tal.nr);
+        }
+        if len(tbinds) > 0 && tg == null {
+          b.code = el_ir::v_block(tbinds + [b.code], b.tp, "tuple_binding");
+        }
         if arm_settles(result, b.tp) {
           result = b.tp;
         }
         result = join_fn_arm(result, b);
         result = join_int_arm(e, vars, result, b);
-        out += [MArm { cond: cond, code: b.code, tp: b.tp }];
-        if cond == null {
+        out += [TArm { cond: cond, guard: tg, binds: if tg == null { [] } else { tbinds }, code: b.code }];
+        // (An arm that only binds matches everything, but is no wildcard: the arms after it
+        // are still read, as Rust's loop reads them; nor is a guarded one.)
+        if cond == null && len(tbinds) == 0 && tg == null {
           wild_seen = true;
           break;
         }
@@ -929,8 +995,19 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
     }
     chain = fb!;
   }
+  // `chain_pattern_arms`: a guarded arm with tests is `guarded_arm`'s `if (if <tests>
+  // <bindings; guard> else false) <body> else <rest>`; one without tests binds in a `match_arm`
+  // block around `if <guard> <body> else <rest>`.
   for a in rev(out) {
-    chain = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, chain) };
+    if a.guard == null {
+      chain = if a.cond == null { a.code } else { el_ir::v_if(a.cond!, a.code, chain) };
+    } else if a.cond != null {
+      gc = if len(a.binds) == 0 { a.guard! } else { el_ir::v_block(a.binds + [a.guard!], ir::TyBoolean, "match_guard") };
+      chain = el_ir::v_if(el_ir::v_if(a.cond!, gc, ir::NdBoolean { b: false }), a.code, chain);
+    } else {
+      gd = el_ir::v_if(a.guard!, a.code, chain);
+      chain = if len(a.binds) == 0 { gd } else { el_ir::v_block(a.binds + [gd], result, "match_arm") };
+    }
   }
   ex(el_ir::v_block([el_ir::v_set(tmp, x.code), chain], result, "tuple_match"), result)
 }
