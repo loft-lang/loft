@@ -85,7 +85,11 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     _ => {}
   }
   match e.p.nodes[n] {
-    SStructLit { name: sn, member, fields: fs, base } => {
+    SStructLit { at: fat, name: sn, member, fields: fs, base } => {
+      // (Declared below: not built on the first pass, `forward_literal`.)
+      if base == null && el_ex_object::forward_literal(e, vars, sn, member, fat) {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
       if (member != "" && !el::use_exists(e, sn)) || base != null {
         el::refuse(e, "a qualified struct literal or an update");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });

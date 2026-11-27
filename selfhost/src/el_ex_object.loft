@@ -485,6 +485,14 @@ pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vect
 // not built: its `{ … }` is skipped unread, and a name no definition holds yet leaves a stub
 // (`DefType::Unknown`) the declaration adopts in place, keeping its number.  True when handled.
 pub fn forward_literal(e: el::El, vars: el_vars::Vars, name: text, member: text, at: integer) -> boolean {
+  // (A qualified variant `Sh::Sq { … }` whose enum is declared below: not built on the first
+  // pass either; the stub is the VARIANT's name, which its declaration adopts.)
+  if e.first_pass && member != "" && name != "" && el::def_nr(e, name) < 0 && !el::use_exists(e, name) && el_vars::var(vars, name) < 0 {
+    if el::def_nr(e, member) < 0 && !el::pending_import_names(e, member) && el::any_source_nr(e, member) < 0 {
+      e.speculative += [el::add_def(e, member, el::pos_at(e, at), el::DT_UNKNOWN)];
+    }
+    return true;
+  }
   if !e.first_pass || member != "" || name == "" || el_vars::var(vars, name) >= 0 {
     return false;
   }
