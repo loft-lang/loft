@@ -51,7 +51,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       why = ph.why;
     }
     if why == "" {
-      why = settled_rewrites(b, ph.code, ph.function);
+      why = settled_rewrites(b, d, ph.code, ph.function);
     }
     if why != "" {
       if all_reasons {
@@ -62,7 +62,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
           }
         }
         all += ph.whys;
-        r = settled_rewrites(b, ph.code, ph.function);
+        r = settled_rewrites(b, d, ph.code, ph.function);
         if r != "" {
           all += [r];
         }
@@ -184,7 +184,7 @@ fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
 // bound), `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
 // `compact`, `take_local`, `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`,
 // `slice_text`, `slice_into`.
-fn settled_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
+fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
   // `lastuse_reclaim` — a store built in the body scope that is dead before another one is
   // built there (`reclaim_free_intent`) is freed early: it needs two such stores.
@@ -206,7 +206,8 @@ fn settled_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
       note(w, "stored_refs::keep_placed_results: a call result placed in a holder's store");
     }
   }
-  record_triggers(b, code, f, w);
+  hidden: vector<text> = [for a in d.attributes if a.hidden { a.name }];
+  record_triggers(b, code, f, hidden, w);
   settled_triggers(b, code, false, w);
   w.why
 }
@@ -272,7 +273,7 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
 // parameter's collection), `literal_append` (a bound literal copied into an element),
 // `rebind_place` (`x = f(x, …)` through a hidden record buffer), `copy_view` (a record copied
 // from a variable or a join of variables).
-fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, w: Trigger) {
+fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<text>, w: Trigger) {
   match n {
     NdCall { def_nr, args } => {
       nm = scope_args::def_name(b, def_nr);
@@ -297,14 +298,24 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, w: Trigger) {
           NdVar { n: x } => if scope_fn::name(f, x).starts_with("_elm_") {
             note(w, "literal_append::rewrite: a bound literal copied into an element");
           },
+          NdCall { def_nr: g, args: ga } => {
+            src = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
+            host = if len(ga) > 0 { match scope_fn::unspan(ga[0]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };
+            if scope_args::def_name(b, g) == "OpGetField" && src >= 0 && !scope_fn::is_argument(f, src) && scope_fn::is_record(scope_fn::tp(f, src)) && host >= 0 && scope_fn::is_argument(f, host) && hidden.contains(scope_fn::name(f, host)) {
+              note(w, "exit_record::rewrite: a local record copied into its field of the return buffer");
+            }
+          },
           _ => {}
         }
       }
     },
-    NdSet { var: t, inner } => if scope_fn::is_record(scope_fn::tp(f, t)) && !scope_fn::is_argument(f, t) {
+    NdBlock { block } => if block[0].name == "materialized_view_return" {
+      note(w, "return_field::rewrite: a field of a local returned through the buffer");
+    },
+    NdSet { var: t, inner } => if scope_fn::is_record(scope_fn::tp(f, t)) {
       match scope_fn::unspan(inner) {
-        NdVar => note(w, "copy_view::rewrite: a record copied from a variable"),
-        NdIf => note(w, "copy_view::rewrite: a record copied from a join"),
+        NdVar => if !scope_fn::is_argument(f, t) { note(w, "copy_view::rewrite: a record copied from a variable"); },
+        NdIf => if !scope_fn::is_argument(f, t) { note(w, "copy_view::rewrite: a record copied from a join"); },
         NdCall { def_nr, args } => {
           d = b.data.definitions[def_nr];
           if d != null && binds::hidden_return_buffer_attr(d!) != null {
@@ -322,7 +333,7 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, w: Trigger) {
     _ => {}
   }
   for c in scope_fn::children(n) {
-    record_triggers(b, c, f, w);
+    record_triggers(b, c, f, hidden, w);
   }
 }
 

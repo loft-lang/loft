@@ -17,6 +17,7 @@ use own;
 use scope_args;
 use scope_witness;
 use scope_backings;
+use scope_buffers;
 use opt_names;
 
 pub struct Phase {
@@ -140,16 +141,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     s.var_order += [c];
   }
   code = scope_scan::scan(s, b, orig_code, function);
-  // `reuse_record_buffers` — a caller buffer an inner-scoped local adopts may be minted once
-  // per call site; refused where a candidate exists.
-  for wb in s.witness_buffer {
-    for av in wb.items {
-      x = function.variables[av];
-      if x != null && x!.caller_hidden_buf && len(scope_fn::deps(function, av)) == 0 && own::heap_def_nr(scope_fn::tp(function, av)) != null {
-        scope_scan::refuse(s, "buffers::reuse_record_buffers: a call buffer an inner-scoped local adopts");
-      }
-    }
-  }
+
   // Each insert below goes at the head of the body block, the last one inserted first.
   head: vector<ir::Node> = [];
   for c in slot_cells {
@@ -180,8 +172,8 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   if len(head) > 0 {
     code = prepend_body(code, head);
   }
-  // `lazy_buffer_mints` acts on `__ref_N` VECTOR buffers, whose bindings `scan_set` refuses;
-  // `reuse_record_buffers` is refused above where it has a candidate.
+  code = scope_buffers::reuse_record_buffers(s, b, code, function);
+  // `lazy_buffer_mints` acts on `__ref_N` VECTOR buffers, whose bindings `scan_set` refuses.
   for v in s.var_scope {
     if v >= 0 {
       function.variables[v#index].scope = v;

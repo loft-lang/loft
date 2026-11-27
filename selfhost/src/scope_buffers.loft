@@ -3,12 +3,15 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @PLN91 — the part of `src/scopes/buffers.rs` a record binding asks: the calls at the value
-// positions of a branch, and the call a diverging `??` block delivers.  `reuse_record_buffers`
-// is refused by the phase where it has a candidate; `lazy_buffer_mints` acts on vector buffers,
-// whose bindings refuse.
+// positions of a branch, the call a diverging `??` block delivers, and `reuse_record_buffers`.
+// `lazy_buffer_mints` acts on vector buffers, whose bindings refuse.
 
 use ir;
+use own;
+use binds;
 use scope_fn;
+use scope_scan;
+use scope_args;
 
 // port: buffers.rs fn tail_calls — the calls at the VALUE positions of a branch.
 pub fn tail_calls(v: ir::Node) -> vector<ir::Node> {
@@ -50,4 +53,408 @@ pub fn coalesce_tail_calls(v: ir::Node) -> vector<ir::Node> {
     }
   }
   []
+}
+
+// port: buffers.rs fn reuse_record_buffers — `@FR-R-Reuse`: a call's hidden RECORD buffer an
+// inner-scoped local adopts (`witness_buffer`) is minted once per activation and refilled,
+// minted lazily in front of its uses (`@FR-O-LazyBuffer`).  `code` is the body with its head
+// inits; answers the rewritten body.
+pub fn reuse_record_buffers(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  ops: vector<ir::Node> = [];
+  match code {
+    NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: reuse_record_buffers(s, b, inner, f) }; },
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return code; }
+  }
+  guarded: vector<integer> = [];
+  for wb in s.witness_buffer {
+    for av in wb.items {
+      if !scope_fn::has(guarded, av) {
+        guarded += [av];
+      }
+    }
+  }
+  if len(guarded) == 0 {
+    return code;
+  }
+  guarded = sort_ints(guarded);
+  reassigned: vector<integer> = [for v in s.multi_assigned if !scope_fn::has(s.null_led_first, v) { v }];
+  for c in s.split_count {
+    copy = c#index;
+    orig = scope_scan::get(s.split_from, copy);
+    if c >= 2 && orig >= 0 && !scope_fn::has(s.null_led_first, orig) && !scope_fn::has(reassigned, copy) {
+      reassigned += [copy];
+    }
+  }
+  frees = free_ops(b);
+  lazy_av: vector<integer> = [];
+  lazy_guard: vector<ir::Node> = [];
+  for av in guarded {
+    x = f.variables[av];
+    if x == null || !x!.caller_hidden_buf || len(scope_fn::deps(f, av)) > 0 {
+      continue;
+    }
+    td = own::heap_def_nr(scope_fn::tp(f, av));
+    if td == null {
+      continue;
+    }
+    known = b.data.definitions[td!]!.known_type;
+    if known == 65535 {
+      continue;
+    }
+    if buffer_call_uses(b, ops, av) != 1 {
+      continue;
+    }
+    fed: vector<integer> = [];
+    for wb in s.witness_buffer {
+      if scope_fn::has(wb.items, av) {
+        fed += [wb.v];
+      }
+    }
+    skip = false;
+    for v in fed {
+      y = f.variables[v];
+      if scope_fn::has(reassigned, v) && !(y != null && y!.buffer_witnessed) {
+        skip = true;
+      }
+    }
+    if skip {
+      continue;
+    }
+    // `amp_rebound_locals` — a result local handed to a `&` heap parameter its callee may
+    // rebind (`parser::callee_param_reassigns`, not transcribed).
+    for v in fed {
+      if handed_to_amp(s, ops, v) {
+        scope_scan::refuse(s, "buffers::amp_rebound_locals: a pooled buffer's result local handed to a `&` parameter");
+      }
+    }
+    for v in fed {
+      if scope_fn::owner_witness(f, v) >= 0 || scope_scan::get(s.owner_witness, v) >= 0 {
+        skip = true;
+      }
+      for op in ops {
+        if frees_unguarded(b, op, v, av) {
+          skip = true;
+        }
+      }
+    }
+    if skip || null_init_at(ops, av) < 0 {
+      continue;
+    }
+    mint = ir::NdCall { def_nr: s.ops.database, args: [ir::NdVar { n: av }, ir::NdInt { n: known }] };
+    release = if releases_what_it_held(b, scope_fn::tp(f, av)) {
+      ir::NdCall { def_nr: scope_fn::def_nr(b, "OpClear"), args: [ir::NdVar { n: av }, ir::NdInt { n: known + 32768 }] }
+    } else {
+      ir::NdNull
+    };
+    f.variables[av].lazy_buffer = true;
+    lazy_av += [av];
+    lazy_guard += [ir::NdIf { cond: ir::NdCall { def_nr: scope_fn::def_nr(b, "OpRefIsNull"), args: [ir::NdVar { n: av }] }, t: ir::NdInsert { items: [mint] }, f: release }];
+  }
+  for g in lazy_guard {
+    ops = insert_before_uses(ops, lazy_av[g#index]!, g, frees);
+  }
+  match code {
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => code
+  }
+}
+
+fn sort_ints(v: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [for x in v { x }];
+  out.sort();
+  out
+}
+
+// A `Var(v)` handed as `OpCreateStack(Var(v))` to any call: the superset of
+// `amp_rebound_locals`.
+fn handed_to_amp(s: scope_scan::Scopes, ops: vector<ir::Node>, v: integer) -> boolean {
+  for op in ops {
+    if amp_walk(s, op, v) {
+      return true;
+    }
+  }
+  false
+}
+
+fn amp_walk(s: scope_scan::Scopes, n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => if def_nr == s.ops.create_stack && len(args) == 1 {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: x } => if x == v { return true; },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    if amp_walk(s, c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: buffers.rs fn free_ops
+fn free_ops(b: ir::Bundle) -> vector<integer> {
+  out: vector<integer> = [];
+  for nm in ["OpFreeRef", "OpFreeRefIfDistinct", "OpFreeRefOrHandUp", "OpFreeRefTag", "OpStoreTag", "OpDistinctStore"] {
+    d = scope_fn::def_nr(b, nm);
+    if d >= 0 {
+      out += [d];
+    }
+  }
+  out
+}
+
+// port: buffers.rs fn null_init_at — -1 for none.
+fn null_init_at(ops: vector<ir::Node>, av: integer) -> integer {
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdSet { var, inner } => if var == av && inner is NdNull { return op#index; },
+      _ => {}
+    }
+  }
+  -1
+}
+
+// port: buffers.rs fn releases_what_it_held
+fn releases_what_it_held(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyReference { n } => {
+      for a in b.data.definitions[n]!.attributes {
+        if !is_scalar(a.typedef[0] ?? ir::TyVoid) {
+          return true;
+        }
+      }
+      false
+    },
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+// port: data.rs fn is_scalar
+fn is_scalar(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyInteger => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+// port: buffers.rs fn buffer_call_uses — the loft calls handed `av` as an argument.
+fn buffer_call_uses(b: ir::Bundle, ops: vector<ir::Node>, av: integer) -> integer {
+  k = 0;
+  for op in ops {
+    k += call_uses(b, op, av);
+  }
+  k
+}
+
+fn call_uses(b: ir::Bundle, n: ir::Node, av: integer) -> integer {
+  k = 0;
+  match n {
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr];
+      if d != null && binds::is_loft_defined(d!) {
+        for a in args {
+          if match scope_fn::unspan(a) { NdVar { n: x } => x == av, _ => false } {
+            k += 1;
+            break;
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    k += call_uses(b, c, av);
+  }
+  k
+}
+
+fn is_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) { NdVar { n: x } => x == v, _ => false }
+}
+
+// port: buffers.rs fn frees_unguarded
+fn frees_unguarded(b: ir::Bundle, op: ir::Node, local: integer, buffer: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      first_is_local = len(args) > 0 && is_var(args[0]!, local);
+      if first_is_local && nm == "OpFreeRef" {
+        return true;
+      }
+      if first_is_local && nm == "OpFreeRefIfDistinct" {
+        return !(len(args) > 1 && is_var(args[1]!, buffer));
+      }
+      for a in args {
+        if frees_unguarded(b, a, local, buffer) {
+          return true;
+        }
+      }
+      false
+    },
+    NdIf { cond, t, f } => {
+      asks = match scope_fn::unspan(cond) {
+        NdCall { def_nr, args } => {
+          hit_l = false;
+          hit_b = false;
+          for a in args {
+            if is_var(a, local) { hit_l = true; }
+            if is_var(a, buffer) { hit_b = true; }
+          }
+          scope_args::def_name(b, def_nr) == "OpDistinctStore" && hit_l && hit_b
+        },
+        _ => false
+      };
+      (!asks && frees_unguarded(b, t, local, buffer)) || frees_unguarded(b, f, local, buffer)
+    },
+    NdBlock { block } => any_unguarded(b, block[0].operators, local, buffer),
+    NdLoop { block } => any_unguarded(b, block[0].operators, local, buffer),
+    NdInsert { items } => any_unguarded(b, items, local, buffer),
+    NdSet { inner } => frees_unguarded(b, inner, local, buffer),
+    NdReturn { inner } => frees_unguarded(b, inner, local, buffer),
+    NdDrop { inner } => frees_unguarded(b, inner, local, buffer),
+    _ => false
+  }
+}
+
+fn any_unguarded(b: ir::Bundle, ops: vector<ir::Node>, local: integer, buffer: integer) -> boolean {
+  for o in ops {
+    if frees_unguarded(b, o, local, buffer) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: buffers.rs fn names_outside_free
+fn names_outside_free(v: ir::Node, av: integer, frees: vector<integer>) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdVar { n: x } => { return x == av; },
+    NdCall { def_nr } => if scope_fn::has(frees, def_nr) { return false; },
+    NdSet { var, inner } => if var == av && scope_fn::unspan(inner) is NdNull { return false; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if names_outside_free(c, av, frees) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Placed {
+  before: boolean,
+  node: ir::Node
+}
+
+fn with_ops(bl: ir::Block, ops: vector<ir::Node>) -> ir::Block {
+  ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }
+}
+
+// Re-wrap `n` in the spans `orig` had.
+fn respan(orig: ir::Node, n: ir::Node) -> ir::Node {
+  match orig {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: respan(inner, n) },
+    _ => n
+  }
+}
+
+// port: buffers.rs fn insert_before_uses — `guard` in front of every statement that uses `av`,
+// on the innermost statement list that holds the use.
+fn insert_before_uses(ops: vector<ir::Node>, av: integer, guard: ir::Node, frees: vector<integer>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for op in ops {
+    p = place_stmt(op, av, guard, frees);
+    if p.before {
+      out += [guard];
+    }
+    out += [p.node];
+  }
+  out
+}
+
+fn place_stmt(op: ir::Node, av: integer, guard: ir::Node, frees: vector<integer>) -> Placed {
+  u = scope_fn::unspan(op);
+  match u {
+    NdBlock { block } => { return Placed { before: false, node: respan(op, ir::NdBlock { block: [with_ops(block[0], insert_before_uses(block[0].operators, av, guard, frees))] }) }; },
+    NdLoop { block } => { return Placed { before: false, node: respan(op, ir::NdLoop { block: [with_ops(block[0], insert_before_uses(block[0].operators, av, guard, frees))] }) }; },
+    NdInsert { items } => { return Placed { before: false, node: respan(op, ir::NdInsert { items: insert_before_uses(items, av, guard, frees) }) }; },
+    NdIf { cond, t, f } => {
+      p = place_in_if(cond, t, f, av, guard, frees);
+      return Placed { before: p.before, node: respan(op, p.node) };
+    },
+    NdSet { var, inner } => if var != av {
+      iu = scope_fn::unspan(inner);
+      match iu {
+        NdIf { cond, t, f } => {
+          p = place_in_if(cond, t, f, av, guard, frees);
+          return Placed { before: p.before, node: respan(op, ir::NdSet { var: var, inner: respan(inner, p.node) }) };
+        },
+        NdBlock { block } => {
+          nb = ir::NdBlock { block: [with_ops(block[0], insert_before_uses(block[0].operators, av, guard, frees))] };
+          return Placed { before: false, node: respan(op, ir::NdSet { var: var, inner: respan(inner, nb) }) };
+        },
+        _ => { return Placed { before: names_outside_free(iu, av, frees), node: op }; }
+      }
+    },
+    NdReturn { inner } => {
+      iu = scope_fn::unspan(inner);
+      match iu {
+        NdIf { cond, t, f } => {
+          p = place_in_if(cond, t, f, av, guard, frees);
+          return Placed { before: p.before, node: respan(op, ir::NdReturn { inner: respan(inner, p.node) }) };
+        },
+        NdBlock { block } => {
+          nb = ir::NdBlock { block: [with_ops(block[0], insert_before_uses(block[0].operators, av, guard, frees))] };
+          return Placed { before: false, node: respan(op, ir::NdReturn { inner: respan(inner, nb) }) };
+        },
+        _ => { return Placed { before: names_outside_free(iu, av, frees), node: op }; }
+      }
+    },
+    _ => {}
+  }
+  Placed { before: names_outside_free(u, av, frees), node: op }
+}
+
+// port: buffers.rs fn place_in_if — answers whether the guard goes in front of the whole `if`.
+fn place_in_if(cond: ir::Node, t: ir::Node, f: ir::Node, av: integer, guard: ir::Node, frees: vector<integer>) -> Placed {
+  if names_outside_free(cond, av, frees) {
+    return Placed { before: true, node: ir::NdIf { cond: cond, t: t, f: f } };
+  }
+  bare = false;
+  arms: vector<ir::Node> = [];
+  for arm in [t, f] {
+    au = scope_fn::unspan(arm);
+    match au {
+      NdBlock { block } => { arms += [respan(arm, ir::NdBlock { block: [with_ops(block[0], insert_before_uses(block[0].operators, av, guard, frees))] })]; },
+      NdInsert { items } => { arms += [respan(arm, ir::NdInsert { items: insert_before_uses(items, av, guard, frees) })]; },
+      NdIf { cond: ic, t: it, f: ie } => {
+        p = place_in_if(ic, it, ie, av, guard, frees);
+        if p.before {
+          bare = true;
+        }
+        arms += [respan(arm, p.node)];
+      },
+      _ => {
+        if names_outside_free(au, av, frees) {
+          bare = true;
+        }
+        arms += [arm];
+      }
+    }
+  }
+  Placed { before: bare, node: ir::NdIf { cond: cond, t: arms[0]!, f: arms[1]! } }
 }
