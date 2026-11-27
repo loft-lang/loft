@@ -301,6 +301,8 @@ pub(crate) const VAR_COPY_BOUND: u32 = 60;
 pub(crate) const VAR_BUFFER_WITNESSED: u32 = 61;
 /// loft#2034 — `const` before the type; the literal hoist's alias gate reads it.
 pub(crate) const VAR_VALUE_CONST: u32 = 62;
+/// @PLN91 `Function::is_arm_consumed`, per variable.
+pub(crate) const VAR_ARM_CONSUMED: u32 = 63;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -359,6 +361,7 @@ pub(crate) const DEF_RETURNED_FACT: u32 = 192; // @PLN187 text: where the declar
 pub(crate) const DEF_NO_PREFILL: u32 = 196; // @FR-R-CompleteWrite text: `NoPrefill::encode`
 pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
 pub(crate) const DEF_WIDTH32: u32 = 208; // @PLN204 the body is under the 32-bit regime
+pub(crate) const DEF_VALUE_STRUCT: u32 = 209; // @PLN91 a `value struct` (`Data::is_value_struct`)
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -1724,6 +1727,7 @@ mod tests {
         assert_eq!(pos(ids.variable, "scope"), VAR_SCOPE);
         assert_eq!(pos(ids.variable, "buffer_witnessed"), VAR_BUFFER_WITNESSED);
         assert_eq!(pos(ids.variable, "value_const"), VAR_VALUE_CONST);
+        assert_eq!(pos(ids.variable, "arm_consumed"), VAR_ARM_CONSUMED);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);
@@ -1788,6 +1792,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "op_hot"), DEF_OP_HOT);
         assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
         assert_eq!(pos(ids.definition, "width32"), DEF_WIDTH32);
+        assert_eq!(pos(ids.definition, "value_struct"), DEF_VALUE_STRUCT);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

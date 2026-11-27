@@ -428,6 +428,9 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
     for i in 0..defs.len(stores) {
         let dr = defs.get(i, stores);
         width32.push(dr.field_bool(stores, ds::DEF_WIDTH32));
+        if dr.field_bool(stores, ds::DEF_VALUE_STRUCT) {
+            data.value_structs.insert(i);
+        }
         data.definitions.push(read_definition(stores, dr, bodies));
     }
     data.restore_body_width32(&width32);
@@ -889,8 +892,12 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let file = parent.field_str(stores, base + ds::FN_FILE).to_string();
     let vars_vec = parent.field_recvec(base + ds::FN_VARIABLES, ds::VARIABLE_STRIDE);
     let mut vars = Vec::with_capacity(vars_vec.len(stores) as usize);
+    let mut arm_consumed = Vec::new();
     for i in 0..vars_vec.len(stores) {
         let vr = vars_vec.get(i, stores);
+        if vr.field_bool(stores, ds::VAR_ARM_CONSUMED) {
+            arm_consumed.push(i as u16);
+        }
         vars.push(RestoredVar {
             name: vr.field_str(stores, ds::VAR_NAME).to_string(),
             type_def: read_type_child(stores, vr.field_recvec(ds::VAR_TYPE_DEF, ds::TYPET_STRIDE)),
@@ -927,7 +934,11 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
         })
         .collect();
     let inline_refs = read_dep_list(stores, parent, base + ds::FN_INLINE_REFS);
-    Function::from_snapshot(&name, &file, vars, names, inline_refs)
+    let mut f = Function::from_snapshot(&name, &file, vars, names, inline_refs);
+    for v in arm_consumed {
+        f.set_arm_consumed(v);
+    }
+    f
 }
 
 /// Read a `vector<integer>` (field `off` of `slot`) as a `Vec<u32>`.

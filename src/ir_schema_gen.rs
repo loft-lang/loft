@@ -708,6 +708,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t77, "copy_bound", t4);
     db.field(t77, "buffer_witnessed", t4);
     db.field(t77, "value_const", t4);
+    db.field(t77, "arm_consumed", t4);
     db.field(t77, "owner_witness", 0);
     db.field(t77, "rebind_orig", 0);
     db.field(t77, "scope", 0);
@@ -778,6 +779,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "op_cold", t4);
     db.field(t80, "no_prefill", t5);
     db.field(t80, "width32", t4);
+    db.field(t80, "value_struct", t4);
     let t134 = db.vector(t76);
     let _ = t134; // may be unused
     let t135 = db.vector(t79);

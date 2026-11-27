@@ -398,6 +398,7 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
         let v = f.snapshot_var(i);
         let r = vars.push(stores);
         write_var_snapshot(stores, &r, &v);
+        r.set_field_bool(stores, ds::VAR_ARM_CONSUMED, f.is_arm_consumed(i as u16));
     }
     // names: name -> var_nr.  Store order is irrelevant — the reader collects
     // into a HashMap and the JSON oracle re-sorts on emit.
@@ -416,8 +417,15 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
 
 /// Write one native `Definition` into the already-allocated record `r` (the
 /// 23-field store subset — the same set the @PLAN28 codec serialises).
-fn write_definition(stores: &mut Stores, r: &Record, d: &Definition, width32: bool) {
+fn write_definition(
+    stores: &mut Stores,
+    r: &Record,
+    d: &Definition,
+    width32: bool,
+    value_struct: bool,
+) {
     r.set_field_bool(stores, ds::DEF_WIDTH32, width32); // @PLN204
+    r.set_field_bool(stores, ds::DEF_VALUE_STRUCT, value_struct); // @PLN91
     r.set_field_str(stores, ds::DEF_NAME, &d.name);
     r.set_field_int(stores, ds::DEF_SOURCE, i64::from(d.source));
     r.set_field_int(stores, ds::DEF_DEF_TYPE, def_type_code(&d.def_type));
@@ -532,7 +540,13 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
     let defs = r.field_recvec(ds::DATA_DEFINITIONS, ds::DEFINITION_STRIDE);
     for (nr, d) in data.definitions.iter().enumerate() {
         let dr = defs.push(stores);
-        write_definition(stores, &dr, d, data.body_width32(nr as u32));
+        write_definition(
+            stores,
+            &dr,
+            d,
+            data.body_width32(nr as u32),
+            data.is_value_struct(nr as u32),
+        );
     }
     // The import tables: `rebuild_indices` reconstructs `def_names` under each
     // definition's OWN source and then REPLAYS these, so an image without them
