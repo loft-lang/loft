@@ -2423,16 +2423,20 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
     // Refused, but the tuple's record, `vector<(…)>` and `main_vector<(…)>` are registered
     // first, as Rust's `vector_def` registers them for any element: every definition after them
     // keeps Rust's number.
-    rn = el_types::type_key_name(e, t);
+    // (`parse_item`'s variant join, member by member: a variant's record is its enum's —
+    // `[(Circle { r: 1.5 }, "a")]` is a `vector<(Shape, text)>`.)
+    jelems = [for m in elems { if match el_types::without_deps(m) { TyReference { n } => el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent >= 0, _ => false } { ir::TyEnum { n: match el_types::without_deps(m) { TyReference { n } => el::def(e, n).parent, _ => -1 }, is_ref: true, dep: [] } } else { m } }];
+    jt = ir::TyTuple { elems: jelems };
+    rn = el_types::type_key_name(e, jt);
     // (A narrow, nullable or enum member has no `type_key_name`: Rust names the vector from each
     // member's `Type::name` all the same — `vector<(integer(0, 255), integer, Hue)>` — so where
     // every member is one Rust spells so, `key_name` names it; any other member mints nothing.)
-    if rn == "" && el_types::nameable_members(e, elems) {
-      rn = el_types::key_name(e, t);
+    if rn == "" && el_types::nameable_members(e, jelems) {
+      rn = el_types::key_name(e, jt);
     }
     if rn != "" && el_schema::wants_vector_def(e, rn) {
-      rtd = el_types::tuple_def(e, elems, pos);
-      el_schema::make_vector_def(e, t, rn, pos, true);
+      rtd = el_types::tuple_def(e, jelems, pos);
+      el_schema::make_vector_def(e, jt, rn, pos, true);
       rvd = el::def_nr(e, "vector<{rn}>");
       if rvd >= 0 && rtd >= 0 {
         e.b.data.definitions[rvd].parent = rtd;
