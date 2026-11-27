@@ -1,0 +1,200 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/discharge_into.rs` transcribed (`@FR-R-DischargeInto`): a text discharge that
+// assigns a local is read straight into that local.  `w = v[i] ?? d` in statement position
+// lowers to `{t = <read>; if t is not null then w = t else w = d}` and a `free t` after it; `w`
+// can hold the read as well: `w = <read>; if w is null then w = d`.  Exact when `w` appears in
+// neither the read nor the default, and the temporary is used nowhere else: its one assignment,
+// the test, the arm that moves it, and its free.
+
+use ir;
+use scope_fn;
+use lower;
+use ir_pass_tree;
+
+struct Ops {
+  conv_bool_from_text: integer,
+  free_text: integer,
+  not: integer
+}
+
+// `Var(var)` or `Set(var, _)` anywhere in `v`.
+fn mentions(v: ir::Node, var: integer) -> boolean {
+  match v {
+    NdVar { n } => if n == var { return true; },
+    NdSet { var: x } => if x == var { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    if mentions(c, var) {
+      return true;
+    }
+  }
+  false
+}
+
+// How often `v` names `var` at all — reads, assignments and the frees that take it.
+fn uses(v: ir::Node, var: integer) -> integer {
+  n = match v {
+    NdVar { n: x } => if x == var { 1 } else { 0 },
+    NdSet { var: x } => if x == var { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(v) {
+    n += uses(c, var);
+  }
+  n
+}
+
+// The parts of `{t = read; if conv(t) then w = t else w = d}`: `t`, `w`, the read, `d`.
+struct Found {
+  tmp: integer,
+  target: integer,
+  read: ir::Node,
+  dflt: ir::Node
+}
+
+fn discharge_into(ops: Ops, node_v: ir::Node) -> Found? {
+  blk = match scope_fn::unspan(node_v) { NdBlock { block } => block[0]!, _ => return null };
+  if blk.name != "ncc" {
+    return null;
+  }
+  st = [for o in blk.operators if !(o is NdLine) { o }];
+  if len(st) != 2 {
+    return null;
+  }
+  tmp = 0;
+  read = ir::NdNull;
+  match st[0]! {
+    NdSet { var, inner } => { tmp = var; read = inner; },
+    _ => return null
+  }
+  test = ir::NdNull;
+  then_arm = ir::NdNull;
+  else_arm = ir::NdNull;
+  match st[1]! {
+    NdIf { cond, t, f } => { test = cond; then_arm = t; else_arm = f; },
+    _ => return null
+  }
+  if !ir_pass_tree::is_call(test, ops.conv_bool_from_text) {
+    return null;
+  }
+  cargs = ir_pass_tree::args_of(test);
+  target = 0;
+  moved = ir::NdNull;
+  match scope_fn::unspan(then_arm) {
+    NdSet { var, inner } => { target = var; moved = inner; },
+    _ => return null
+  }
+  target2 = 0;
+  dflt = ir::NdNull;
+  match scope_fn::unspan(else_arm) {
+    NdSet { var, inner } => { target2 = var; dflt = inner; },
+    _ => return null
+  }
+  if len(cargs) == 1 && (ir_pass_tree::var_of(cargs[0]!) ?? -1) == tmp && (ir_pass_tree::var_of(moved) ?? -1) == tmp
+    && target == target2 && target != tmp && !mentions(read, target) && !mentions(dflt, target) {
+    Found { tmp: tmp, target: target, read: read, dflt: dflt }
+  } else {
+    null
+  }
+}
+
+// Is `node_v` the statement `free t`?
+fn frees(ops: Ops, node_v: ir::Node, tmp: integer) -> boolean {
+  a = ir_pass_tree::args_of(node_v);
+  ir_pass_tree::is_call(node_v, ops.free_text) && len(a) == 1 && (ir_pass_tree::var_of(a[0]!) ?? -1) == tmp
+}
+
+// `n`'s block under its spans with `ops` as its operators (`unspan_mut`).
+fn replace_under_spans(n: ir::Node, ops: vector<ir::Node>) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_under_spans(inner, ops) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ops)] },
+    _ => n
+  }
+}
+
+struct Count { n: integer }
+
+// port: discharge_into.rs fn rewrite_in — children first, then the statements of a block or loop.
+fn rewrite_in(ops: Ops, code: ir::Node, node: ir::Node, c: Count) -> ir::Node {
+  kids = scope_fn::children(node);
+  if len(kids) == 0 {
+    return node;
+  }
+  n2 = ir_pass_tree::with_children(node, [for k in kids { rewrite_in(ops, code, k, c) }]);
+  bl = match n2 { NdBlock { block } => block[0]!, NdLoop { block } => block[0]!, _ => return n2 };
+  st: vector<ir::Node> = [for o in bl.operators { o }];
+  at = 0;
+  changed = false;
+  while at < len(st) {
+    fm = discharge_into(ops, st[at]!);
+    if fm == null {
+      at += 1;
+      continue;
+    }
+    fd = fm!;
+    // The free of the temporary is the next statement that names it.
+    free_at = -1;
+    for k in at + 1..len(st) {
+      if free_at < 0 && mentions(st[k]!, fd.tmp) {
+        free_at = if frees(ops, st[k]!, fd.tmp) { k } else { -2 };
+      }
+    }
+    // Its assignment, the test, the moving arm and the free: nothing else may name it.
+    if free_at < 0 || uses(code, fd.tmp) != 4 {
+      at += 1;
+      continue;
+    }
+    st = [for o in st if o#index != free_at { o }];
+    is_null = ir::NdCall { def_nr: ops.not, args: [ir::NdCall { def_nr: ops.conv_bool_from_text, args: [ir::NdVar { n: fd.target }] }] };
+    st[at] = replace_under_spans(st[at]!, [
+      ir::NdSet { var: fd.target, inner: fd.read },
+      ir::NdIf { cond: is_null, t: ir::NdSet { var: fd.target, inner: fd.dflt }, f: ir::NdNull }
+    ]);
+    changed = true;
+    c.n += 1;
+    at += 1;
+  }
+  if !changed {
+    return n2;
+  }
+  match n2 {
+    NdLoop => ir::NdLoop { block: [ir_pass_tree::with_operators(bl, st)] },
+    _ => ir::NdBlock { block: [ir_pass_tree::with_operators(bl, st)] }
+  }
+}
+
+// port: discharge_into.rs fn rewrite_program — every admitted text discharge read straight into
+// its local; answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_DISCHARGE_INTO") ?? "0") != "0" {
+    return 0;
+  }
+  ops = Ops {
+    conv_bool_from_text: lower::find(b, "OpConvBoolFromText") ?? -1,
+    free_text: lower::find(b, "OpFreeText") ?? -1,
+    not: lower::find(b, "OpNot") ?? -1
+  };
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || !ir_pass_tree::has_block(d.code[0]!, "ncc") {
+      continue;
+    }
+    d_nr = d#index;
+    c = Count { n: 0 };
+    snapshot = d.code[0]!;
+    code = rewrite_in(ops, snapshot, snapshot, c);
+    if c.n > 0 {
+      if (env_variable("LOFT_TRACE_DISCHARGE_INTO") ?? "0") != "0" {
+        eprintln("discharge-into: {d.name} — {c.n} read(s) straight into their local");
+      }
+      b.data.definitions[d_nr].code = [code];
+      ir_pass_tree::relayout(b, d_nr);
+      total += c.n;
+    }
+  }
+  total
+}
