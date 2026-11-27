@@ -90,11 +90,21 @@ def one(loft, defs, scoped, std, path, tmp, env, i):
     mine = own_definitions([l for l in lines if not l.startswith("unscoped: ")])
     want = own_definitions(o.stdout.splitlines())
     fns = {}
+    reuse_refused = next((r for r in unscoped.values() if "pure_reuse" in r), None)
     for name in sorted(set(mine) | set(want)):
         # A repeated name carries a `#N` suffix (`own_definitions`); a name may hold `#` of its
         # own (`t_18Circle#Tri#integer_tag`), so the whole name is looked up first.
         base = name if name in unscoped else re.sub(r"#\d+$", "", name)
-        if base in unscoped:
+        # Definitions the pass makes or renames after its loop, which only Rust's image holds
+        # where the loft pass refused what decides them: a drop cascade
+        # `prune_empty_cascades` retired (`<name>_retired`) is the refused `<name>`, and a
+        # `shared_call::variant` (`<callee>__given_<f>`) is made for a caller `pure_reuse`
+        # refused.
+        if name not in mine and base.endswith("_retired") and base[: -len("_retired")] in unscoped:
+            fns[name] = ("unscoped", unscoped[base[: -len("_retired")]])
+        elif name not in mine and "__given_" in base and reuse_refused is not None:
+            fns[name] = ("unscoped", "shared_call::variant: made for a caller pure_reuse refused")
+        elif base in unscoped:
             fns[name] = ("unscoped", unscoped[base])
         elif mine.get(name) == want.get(name):
             fns[name] = ("agree", "")
