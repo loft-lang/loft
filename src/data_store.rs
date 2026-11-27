@@ -305,6 +305,10 @@ pub(crate) const VAR_VALUE_CONST: u32 = 62;
 pub(crate) const VAR_ARM_CONSUMED: u32 = 63;
 /// @PLN91 `Function::was_loop_var`, per variable: the scope pass reads it.
 pub(crate) const VAR_WAS_LOOP_VAR: u32 = 64;
+/// @PLN91 `Function::is_place_buffer` and `Function::is_ref_home` (`@FR-H-RefHome`), per
+/// variable: the scope pass reads both.
+pub(crate) const VAR_PLACE_BUFFER: u32 = 65;
+pub(crate) const VAR_REF_HOME: u32 = 66;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -322,7 +326,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 216; // @PLN204 — +8 for width32; loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left
+pub(crate) const DEFINITION_STRIDE: u32 = 216; // @PLN204 — +8 for width32; loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left; @PLN91 — ref_evacuations in the 4 the bools left, which move up by 4
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -346,14 +350,14 @@ pub(crate) const DEF_FIELD_GROUPS: u32 = 160; // vector<LinkedFieldGroup>
 pub(crate) const DEF_SYNTHETIC: u32 = 164; // Option<&str>; "" = None
 pub(crate) const DEF_CAP: u32 = 168; // @PLN86 the group#right call-gate link; "" = unlinked
 pub(crate) const DEF_SUPERSEDED: u32 = 172; // @PLN102 arc C #superseded "Y"; "" = not superseded
-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 200;
-pub(crate) const DEF_PUB_VISIBLE: u32 = 201;
-pub(crate) const DEF_NULL_SAFE: u32 = 202; // @PLN46 W2 #null_safe; false = unannotated
-pub(crate) const DEF_BUILTIN: u32 = 203; // @PLN165 arc E #builtin; false = an ordinary body
-pub(crate) const DEF_OPERATOR_FORM: u32 = 204; // @PLN182 written `operator`; false = a plain `fn`
-pub(crate) const DEF_RETURNED_CONST: u32 = 205; // @FR-Const-Foreign `-> const T`; false = writable
-pub(crate) const DEF_OP_HOT: u32 = 206; // `#hot` — an operator's first-class priority (`Data::op_code`)
-pub(crate) const DEF_OP_COLD: u32 = 207; // `#cold` — its last-class priority; neither = normal
+pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 204;
+pub(crate) const DEF_PUB_VISIBLE: u32 = 205;
+pub(crate) const DEF_NULL_SAFE: u32 = 206; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 207; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_OPERATOR_FORM: u32 = 208; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_RETURNED_CONST: u32 = 209; // @FR-Const-Foreign `-> const T`; false = writable
+pub(crate) const DEF_OP_HOT: u32 = 210; // `#hot` — an operator's first-class priority (`Data::op_code`)
+pub(crate) const DEF_OP_COLD: u32 = 211; // `#cold` — its last-class priority; neither = normal
 pub(crate) const DEF_NATIVE_ANSWER_TP: u32 = 96; // loft#2227 a #native heap answer's copy-out type id
 pub(crate) const DEF_C_SYMBOL: u32 = 176; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 180; // @PLN24 the declared C signature; "" = none
@@ -362,8 +366,10 @@ pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not
 pub(crate) const DEF_RETURNED_FACT: u32 = 192; // @PLN187 text: where the declared result names an alias
 pub(crate) const DEF_NO_PREFILL: u32 = 196; // @FR-R-CompleteWrite text: `NoPrefill::encode`
 pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
-pub(crate) const DEF_WIDTH32: u32 = 208; // @PLN204 the body is under the 32-bit regime
-pub(crate) const DEF_VALUE_STRUCT: u32 = 209; // @PLN91 a `value struct` (`Data::is_value_struct`)
+pub(crate) const DEF_WIDTH32: u32 = 212; // @PLN204 the body is under the 32-bit regime
+pub(crate) const DEF_VALUE_STRUCT: u32 = 213; // @PLN91 a `value struct` (`Data::is_value_struct`)
+/// @PLN91 `Function::ref_evacuations` (`@FR-H-RefHome`), flattened: holder, field, owner, type.
+pub(crate) const DEF_REF_EVACUATIONS: u32 = 200;
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -1731,6 +1737,8 @@ mod tests {
         assert_eq!(pos(ids.variable, "value_const"), VAR_VALUE_CONST);
         assert_eq!(pos(ids.variable, "arm_consumed"), VAR_ARM_CONSUMED);
         assert_eq!(pos(ids.variable, "was_loop_var"), VAR_WAS_LOOP_VAR);
+        assert_eq!(pos(ids.variable, "place_buffer"), VAR_PLACE_BUFFER);
+        assert_eq!(pos(ids.variable, "ref_home"), VAR_REF_HOME);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);
@@ -1796,6 +1804,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
         assert_eq!(pos(ids.definition, "width32"), DEF_WIDTH32);
         assert_eq!(pos(ids.definition, "value_struct"), DEF_VALUE_STRUCT);
+        assert_eq!(pos(ids.definition, "ref_evacuations"), DEF_REF_EVACUATIONS);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

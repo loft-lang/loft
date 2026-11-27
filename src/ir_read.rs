@@ -741,7 +741,15 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
     let synthetic_s = r.field_str(stores, ds::DEF_SYNTHETIC);
     Definition {
         bound_holder: false,
-        variables: read_function(stores, r, ds::DEF_VARIABLES),
+        variables: {
+            let mut f = read_function(stores, r, ds::DEF_VARIABLES);
+            // @PLN91 `Function::ref_evacuations`, four integers each.
+            let evs = read_dep_list(stores, r, ds::DEF_REF_EVACUATIONS);
+            for e in evs.chunks_exact(4) {
+                f.add_ref_evacuation(e[0], e[1], e[2], e[3]);
+            }
+            f
+        },
         attributes,
         attr_names,
         // codegen-derived: recomputed by the compile pass on load.
@@ -894,6 +902,8 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let mut vars = Vec::with_capacity(vars_vec.len(stores) as usize);
     let mut arm_consumed = Vec::new();
     let mut loop_vars = Vec::new();
+    let mut place_buffers = Vec::new();
+    let mut ref_homes = Vec::new();
     for i in 0..vars_vec.len(stores) {
         let vr = vars_vec.get(i, stores);
         if vr.field_bool(stores, ds::VAR_ARM_CONSUMED) {
@@ -901,6 +911,12 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
         }
         if vr.field_bool(stores, ds::VAR_WAS_LOOP_VAR) {
             loop_vars.push(i as u16);
+        }
+        if vr.field_bool(stores, ds::VAR_PLACE_BUFFER) {
+            place_buffers.push(i as u16);
+        }
+        if vr.field_bool(stores, ds::VAR_REF_HOME) {
+            ref_homes.push(i as u16);
         }
         vars.push(RestoredVar {
             name: vr.field_str(stores, ds::VAR_NAME).to_string(),
@@ -944,6 +960,12 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     }
     for v in loop_vars {
         f.served_as_loop_var(v);
+    }
+    for v in place_buffers {
+        f.mark_place_buffer(v);
+    }
+    for v in ref_homes {
+        f.mark_ref_home(v);
     }
     f
 }

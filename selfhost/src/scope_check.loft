@@ -50,6 +50,7 @@ use scope_compact;
 use scope_host_store;
 use scope_host_result;
 use scope_rebind_place;
+use scope_stored_refs;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -194,11 +195,9 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     }
     // Plan-57 cluster I-a — a vector store confined to a block is registered at that block on
     // a rescan, and its null-init relocated into it.
-    stores_acted = false;
     if why == "" {
       confined = scope_confinement::store_confinement(ph.code, ph.function, ops.free_ref, ops.get_field);
       if len(confined) > 0 {
-        stores_acted = true;
         cmap: vector<integer> = [];
         for c in confined {
           scope_scan::put(cmap, c.vdb, c.block);
@@ -217,16 +216,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     // Plan-57 last-use freeing — null-init relocation and early free.
     if why == "" {
       drop_bearing = scope_last_use::drop_bearing_stores(b, ph.function);
-      if len(scope_last_use::reclaim_free_intent(ph.code, ph.function, ops.database, ops.get_field, ops.free_ref, drop_bearing).owning) > 0 {
-        stores_acted = true;
-      }
       ph.code = scope_last_use::lastuse_reclaim(ph.code, ph.function, ops.database, ops.get_field, ops.free_ref, drop_bearing, ops.free_if_distinct);
-    }
-    // `Function::is_ref_home` (`@FR-H-RefHome`, the parser's mark of a store a stored reference
-    // names) is not in the image, and both store passes above read it.
-    store_why = if stores_acted && stored_reference(b, orig_code) { "last_use::reclaim_safe / confinement::store_confinement: a stored reference's home (Function::is_ref_home, not in the image)" } else { "" };
-    if why == "" {
-      why = store_why;
     }
     // `const_fn::rewrite` (`@FR-R-Const`): a literal-bodied function's body is copied from its
     // twin, and a call of one whose result is only read answers a view of the constant.
@@ -252,9 +242,6 @@ pub fn check(b: ir::Bundle) -> vector<text> {
           }
         }
         all += ph.whys;
-        if store_why != "" {
-          all += [store_why];
-        }
         r = settled_rewrites(b, d, ph.code, ph.function);
         if r != "" {
           all += [r];
@@ -268,9 +255,13 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       refused_nrs += [d_nr];
       continue;
     }
-    // `(R-ForwardResult)` — a returned local bound from a call is built in the return buffer
-    // (after `(R-ExitVector)` and `exit_record`, refused above where they would fire).
-    code = scope_forward_result::rewrite(b, d_nr, ph.code, ph.function);
+    // `@FR-H-RefHome` — the frees of a placed call result go (before `place_result`,
+    // `(R-ExitVector)` and `exit_record`, refused above where they would fire).
+    code = scope_stored_refs::keep_placed_results(b, ph.code, ph.function);
+    // `@FR-H-RefHome` — a copied-out home's record is evacuated before each free of its owner.
+    code = scope_stored_refs::insert_evacuations(b, code, d.ref_evacuations);
+    // `(R-ForwardResult)` — a returned local bound from a call is built in the return buffer.
+    code = scope_forward_result::rewrite(b, d_nr, code, ph.function);
     // `@FR-R-MoveLast`'s host clause, then `(R-LiteralAppend)`.  A literal it would place
     // where a stored reference may name the store refuses (`is_ref_named`, not in the image).
     lh = scope_literal_host::refusal(b, d, code, ph.function);
@@ -459,11 +450,6 @@ fn join_rewrites(f: ir::Function) -> text {
 // are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
-  for x in f.variables {
-    if x.name.starts_with("__place") && scope_fn::is_record(x.type_def[0] ?? ir::TyVoid) {
-      note(w, "stored_refs::keep_placed_results: a call result placed in a holder's store");
-    }
-  }
   hidden: vector<text> = [for a in d.attributes if a.hidden { a.name }];
   // `(R-ExitVector)` — a local vector's wrapper (`__vdb_N`) is claimed in the hidden RECORD
   // return buffer's store where the exit literal copies it in (`exit_vector::rewrite`).
@@ -490,28 +476,12 @@ fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Fun
 }
 
 // The settled-IR record rewrites, each refused where its trigger is in the body:
-// `insert_evacuations` (a stored reference), `place_result` (an element appended to a
-// parameter's collection), `literal_append` (a bound literal copied into an element).
-// `rebind_place` and `copy_view` are transcribed.
+// `place_result` (an element appended to a parameter's collection) and `exit_record`.
+// `insert_evacuations`, `literal_append`, `rebind_place` and `copy_view` are transcribed.
 fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<text>, w: Trigger) {
   match n {
     NdCall { def_nr, args } => {
       nm = scope_args::def_name(b, def_nr);
-      // A reference to a record of a LOCAL stored somewhere: the local's frees may need the
-      // record copied out first (`ref_evacuations`, the parser's fact, not in the image).
-      if nm == "OpSetDbRef" && len(args) == 3 {
-        r = root_var(b, args[2]!);
-        holder = root_var(b, args[0]!);
-        // …and an element of a LOCAL vector stored through a PARAMETER's reference, which
-        // outlives the frame (`@FR-H-RefHome`: the element is copied out of its home first).
-        er = element_root(b, args[2]!);
-        vector_home = er >= 0 && !scope_fn::is_argument(f, er) && scope_fn::base(scope_fn::tp(f, er)) is TyVector && holder >= 0 && scope_fn::is_argument(f, holder);
-        // …and so is a record of a LOCAL keyed collection (`h.r = s[1]`).
-        keyed_home = r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_keyed(scope_fn::tp(f, r)) && holder >= 0 && scope_fn::is_argument(f, holder);
-        if (r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_record(scope_fn::tp(f, r))) || vector_home || keyed_home {
-          note(w, "stored_refs::insert_evacuations: a reference to a local's record stored");
-        }
-      }
       // `place_result` (both clauses) stores a call's record by copying it, or its one heap
       // field, into an appended element (`_elm_N`) or a field of one (`literal_append`, the
       // literal clause, is transcribed).
@@ -571,21 +541,6 @@ fn root_var(b: ir::Bundle, n: ir::Node) -> integer {
   }
 }
 
-// An `OpSetDbRef` anywhere in `n`: a reference stored into a record (`@FR-H-RefHome`'s homes are
-// marked off such stores).
-fn stored_reference(b: ir::Bundle, n: ir::Node) -> boolean {
-  match n {
-    NdCall { def_nr } => if scope_args::def_name(b, def_nr) == "OpSetDbRef" { return true; },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    if stored_reference(b, c) {
-      return true;
-    }
-  }
-  false
-}
-
 // `@FR-R-Const` — the functions with a constant twin `__const_<name>`
 // (`Definition::literal_const`, read off the twin the parser made, `synthetic == "literal_const"`).
 fn const_twins(b: ir::Bundle) -> vector<boolean> {
@@ -610,18 +565,6 @@ fn calls_const(n: ir::Node, twins: vector<boolean>) -> boolean {
     }
   }
   false
-}
-
-// The vector an element reference (`OpVectorRef(v, …)`) is taken out of, -1 for none.
-fn element_root(b: ir::Bundle, n: ir::Node) -> integer {
-  match scope_fn::unspan(n) {
-    NdCall { def_nr, args } => if scope_args::def_name(b, def_nr).starts_with("OpVectorRef") && len(args) > 0 {
-      match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 }
-    } else {
-      -1
-    },
-    _ => -1
-  }
 }
 
 // The variables `OpDatabase(Var(v), …)` builds anywhere in `n`.

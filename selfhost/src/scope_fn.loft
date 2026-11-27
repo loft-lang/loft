@@ -61,6 +61,28 @@ pub fn was_loop_var(f: ir::Function, v: integer) -> boolean {
   if x == null { false } else { x.was_loop_var }
 }
 
+// port: variables/mod.rs fn is_ref_home — `@FR-H-RefHome`, a store a stored reference names.
+pub fn is_ref_home(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.ref_home }
+}
+
+// port: variables/mod.rs fn has_ref_home
+pub fn has_ref_home(f: ir::Function) -> boolean {
+  for x in f.variables {
+    if x.ref_home {
+      return true;
+    }
+  }
+  false
+}
+
+// port: variables/mod.rs fn is_place_buffer — a buffer a placed call result is claimed in.
+pub fn is_place_buffer(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.place_buffer }
+}
+
 // port: variables/mod.rs fn var — the variable `nm` names in the names map, -1 for none.
 pub fn var(f: ir::Function, nm: text) -> integer {
   for n in f.names {
@@ -396,6 +418,8 @@ fn copy_var(v: ir::Variable) -> ir::Variable {
   n.scope = v.scope;
   n.arm_consumed = v.arm_consumed;
   n.was_loop_var = v.was_loop_var;
+  n.place_buffer = v.place_buffer;
+  n.ref_home = v.ref_home;
   n
 }
 
