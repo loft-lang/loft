@@ -51,7 +51,7 @@ writes with `&mut` … in its `&` spelling"*, which a `fn first(&mut self) -> &m
 | a `const` parameter's place, written | refused at compile time | — | refused |
 | a temporary root: `e = &mk().enemies[0]` | refused at compile time | — | refused |
 | a temporary root, passed: `hurt(mk().enemies[0], 10)` | the write goes into a fresh value: nothing the caller reaches is lost, and `lost-write` rightly stays silent | — | the same |
-| one of two places: `if c { &a.x } else { &b.y }` | refused (`&` only as the whole right side) | — | see Q4 |
+| one of two places: `if c { &a.x } else { &b.y }` | refused (`&` only as the whole right side) | — | refused (Q4, decided) |
 
 The two **no warning** rows were a defect on main (phase 0, fixed apart from the lift): a write
 into a call result's field was lost with no warning, and so was a METHOD accessor's result handed
@@ -146,7 +146,7 @@ emit byte-for-byte what it does now: the phase gates below prove it.
 |---|---|---|---|
 | **0** | The silent lost writes (a defect on main, fixed whatever the ruling): `first(s).hp = 3`, `s.first().hp -= 10` and `hurt(s.first(), 10)` get `lost-write` | **Done** on `tuxedo-pr2657-next`: `loft-suite rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft`, which fails on the build without it (0 reports, 4 with it); every corpus program's warnings otherwise unchanged | S |
 | **A** | The spec as cells: the table above, one cell per row under `@FR-B-RefType` (or Q6's rule), each with its place-spelling twin as the control, written before any compiler edit and marked expected-to-fail | the twins pass today, and each `-> &T` cell fails for the reason named (refused) | XS |
-| **B1** | Parse a return `&`, and refuse a `-> &T` that names no parameter | B1 refusal cells (a local, a fresh value, a literal) fail without the callee check; every other program's IR byte-identical (`introspect_diff.sh`, both writers) | S |
+| **B1** | Parse a return `&`, and refuse a `-> &T` that names no parameter or may name two (Q4) | B1 refusal cells (a local, a fresh value, a literal, one of two parameters) fail without the callee check; every other program's IR byte-identical (`introspect_diff.sh`, both writers) | S |
 | **B2** | A `-> &T` call in place positions: an argument, a field write, a method chain | A's cells for those rows pass on both backends, leak- and strict-checked; byte-identical elsewhere | M |
 | **B3** | Binds: `e = first(s)` as a view, `e = &first(s)` as a link, the dependency mapped onto the argument, and the reshape refusals and materialisation reaching it | A's bind and grow rows; `ownership_drop_gate` on both backends; the poison and stack sweeps; `own_sweep.py` reads CAUGHT with the new arm switched off | M |
 | **B4** | Lints and records: `lost-write` and `double-move` skip a `&` callee, the needless-`&` lint, the store-records reading | a cell per lint proving silence on `-> &T` and the warning kept on `-> T`; the records checker matches the runtime on A's cells | S |
@@ -170,8 +170,10 @@ Each comes with the recommendation, and with what was measured behind it.
    refused (as `&mk().enemies[0]` is), and the plain bind and the argument answer as
    `mk().enemies[0]` does: a write into it loses nothing the caller can reach.  No new rule.
 4. **One of two places** (`fn pick(a: State, b: State, c: boolean) -> &Enemy { if c { a.e[0] }
-   else { b.e[0] } }`).  Recommended: refused in B, since a local `&` cannot choose between two
-   places either.  Lift it later, with dependencies on both arguments, when a program asks.
+   else { b.e[0] } }`).  **Decided (owner, 2026-11-27): refused.**  A `-> &T` body returns a
+   place rooted in ONE parameter, refused at compile time otherwise (phase B1), since a local `&`
+   cannot choose between two places either.  The two-place variant is a feature of its own, to be
+   investigated later if a program needs it.
 5. **Scalar and text places (phase C).**  Recommended: build B first and C only when a consumer
    asks.  dryopea's case is records, and C carries the new emission plus the text-link kind.
 6. **The rule's home.**  Recommended: a return clause in `formal/binding.md` beside
