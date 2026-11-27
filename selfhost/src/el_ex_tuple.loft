@@ -709,6 +709,20 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
         rroot = place_root(e, x.code);
         return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, rsd).known_type }]), el_types::with_deps(mt, if rroot >= 0 { [rroot] } else { [] }));
       }
+      // A vector member of an element is its field the same way, a view of the vector's local.
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && mt is TyVector {
+        vuw = unbox_cursor(e, vars, td, x.code);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        vmi = match mt { TyVector { inner: vmn } => vmn, _ => ir::TyVoid };
+        vmnm = el_types::elem_name(e, vmi);
+        vmk = if vmnm == "" { -1 } else { el_ex_base::vector_store(e, vmi, vmnm) };
+        if vmk >= 0 {
+          vroot = place_root(e, x.code);
+          return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: vmk }]), el_types::with_deps(mt, if vroot >= 0 { [vroot] } else { [] }));
+        }
+      }
       // A narrow member of an element is read at its width (`OpGetByte`, `OpGetShortRaw`).
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && match mt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {
         nw = unbox_cursor(e, vars, td, x.code);

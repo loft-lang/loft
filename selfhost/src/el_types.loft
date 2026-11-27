@@ -907,6 +907,10 @@ pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text 
     if m == "" {
       m = match t { TyTuple { elems: ie } => { isp = tuple_spelling_e(e, ie, ", "); if isp == "" { "" } else { "({isp})" } }, _ => "" };
     }
+    // A vector member as its type is named (`vector<integer>`).
+    if m == "" {
+      m = match t { TyVector { inner: vi } => { vn = elem_name(e, vi); if vn == "" { "" } else { "vector<{vn}>" } }, _ => "" };
+    }
     if m == "" {
       return "";
     }
