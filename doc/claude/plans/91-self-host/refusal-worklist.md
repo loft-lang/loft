@@ -206,25 +206,12 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
   struct (121), a drop helper (90), a tuple record (84).
 `np/shift.py` and `np/verify.py` (the tester's scratch tools) rank them from the saved IR.
 
-**Rust-only types (open).**  41 at loft30-gate d22b037ac (vectors, tuple records, type
-instances; Rust-only definitions 270), one to four per program.  What each open group needs:
-- the wrapper field-fill `check_vector` on the SECOND pass — iterator element vectors
-  (`vector<iterator>`, four programs) and a nullable vector element's plain vector (923's
-  `vector<vector<Ent>>`, parent `Ent`): Rust's `check_vector` at the
-  wrapper's field fill (`typedef.rs` `fill_database`, the `main_vector<iterator<…>>` place) on
-  the SECOND pass; the port fills that wrapper on the first pass only, where an iterator field
-  has no content type (`c = -1`), so it refuses before its `check_vector` arm.  Giving it the
-  `iterator` definition's known type (Rust's `vector_element_type`) panics: the port's own type
-  table has no entry at that index (`e.b.types[content] is null`) — the standard library's
-  `iterator` row is not carried in the port's schema, which this group needs first.  Measured:
-  the std image's `iterator` definition (447) carries `known_type = 101` while the port starts with
-  100 types and no `iterator` row.  Cause (front/elab.loft, `el::load_base`): the standard
-  library's DEFINITIONS are copied from the program's own Rust image (`upto`), its TYPES from the
-  empty program's (`types_upto` = 100) — so a std definition whose row Rust minted for THIS program
-  (`iterator` → 101) arrives carrying Rust's answer, a row the port's table does not have.  The
-  fix is two-sided: `load_base` resets a std definition's `known_type` at or past `types_upto`
-  (the base carries no program-specific result), and the port mints the `iterator` row on demand
-  where Rust's stores do (the first stored iterator), before the wrapper fill's `check_vector`.
+**Rust-only types (open).**  38 at loft30-gate fee317776 (vectors, tuple records, type
+instances; Rust-only definitions 267), one to four per program.  What each open group needs:
+- iterator element vectors: DONE (23e4ed95e: the base carries no program-specific row;
+  fee317776: a generator handle is stored as its `DbRef` row, so a `vector<iterator<T>>` field
+  has content and names `vector<iterator>`).  Open in that family: a nullable vector element's
+  plain vector at the wrapper fill (923's `vector<vector<Ent>>`, parent `Ent`).
 - the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
