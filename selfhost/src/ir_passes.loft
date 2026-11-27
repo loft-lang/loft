@@ -13,6 +13,7 @@ use ir_leaf_inline;
 use ir_tail_self;
 use ir_zero_count;
 use ir_exp_pow;
+use ir_ctor_literal;
 use ir_forward_walk;
 use ir_same_read;
 use ir_self_replace;
@@ -51,6 +52,8 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   ir_zero_count::rewrite_program(b);
   // `@FR-R-ExpPow` — `pow(E, x)` is `exp(x)`.
   ir_exp_pow::rewrite_program(b);
+  // `@FR-R-CtorLiteral` — a constructor's call is its literal.
+  ir_ctor_literal::rewrite_program(b);
   // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
   ir_forward_walk::rewrite_program(b);
   // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
