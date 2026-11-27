@@ -269,9 +269,12 @@ pub fn first_vector_bind(e: el::El, vars: el_vars::Vars, v: integer, t: ir::Type
       nm = el_types::elem_name(e, inner);
       // (`Data::vector_def` makes the definitions only: the store types are numbered where
       // the program first uses them, after the structs.)
-      if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+      if nm != "" && el_schema::wants_vector_def(e, nm) {
         el_schema::make_vector_def(e, inner, nm, el::pos_at(e, el_ex_pattern::statement_end(e, at)), true, narrow_early: false);
       }
+      // (A tuple element, which `elem_name` names none of: `z = zip(a, b)` binding a
+      // `vector<(integer, text)>` makes its record, `vector<(…)>` and `main_vector<(…)>`.)
+      el_schema::tuple_wrapper(e, el_types::without_deps(inner), el::pos_at(e, el_ex_pattern::statement_end(e, at)));
     },
     _ => {}
   }
@@ -362,21 +365,32 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: 
     return ex(ir::NdNull, ir::TyVoid);
   }
   cel = el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_n, dep: [v] });
+  ops = vec_copy_ops(e, vars, v, x.code, elm, rec, opt_param);
+  if ops == null {
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // (`insert_new`: the element borrows the store minted for the copy, as the local does.)
+  match ops![1] ?? ir::NdNull { NdSet { inner: oi } => { match oi { NdCall { args: oa } => { match oa[0] ?? ir::NdNull { NdVar { n: odb } => { el_vars::depend(vars, cel, odb); }, _ => {} } }, _ => {} } }, _ => {} }
+  ex(ir::NdInsert { items: ops! }, ir::TyVoid)
+}
+
+// `lower_vec_copy_bind`'s copy: a store of the local's own minted (`__vdb_N`), the local set to its
+// vector, the source appended in (`OpAppendVector`, a nullable parameter's whole replace).  The
+// local borrows the new store.  Read by the whole-vector bind and a boxed tuple's destructure.
+pub fn vec_copy_ops(e: el::El, vars: el_vars::Vars, v: integer, src: ir::Node, elm: ir::TypeT, rec: integer, replace: boolean = false) -> vector<ir::Node>? {
   rows = vector_rows(e, elm, 0, true);
   if rows == null {
-    return ex(ir::NdNull, ir::TyVoid);
+    return null;
   }
   r = rows!;
   db = el_vars::work_vec_db(vars, ir::TyReference { n: r.main_def, dep: [] });
-  // (`insert_new`: the element and the local both borrow the store minted for the copy.)
-  el_vars::depend(vars, cel, db);
   el_vars::depend(vars, v, db);
-  ex(ir::NdInsert { items: [
+  [
     el_ir::cl(e, "OpDatabase", [ir::NdVar { n: db }, ir::NdInt { n: r.main_known }]),
     el_ir::v_set(v, el_ir::cl(e, "OpGetField", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: wrapper_row(e, r) }])),
     el_ir::cl(e, "OpSetInt4", [ir::NdVar { n: db }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]),
-    el_ir::cl(e, if opt_param { "OpReplaceVector" } else { "OpAppendVector" }, [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }])
-  ] }, ir::TyVoid)
+    el_ir::cl(e, if replace { "OpReplaceVector" } else { "OpAppendVector" }, [ir::NdVar { n: v }, src, ir::NdInt { n: rec }])
+  ]
 }
 
 // `jo_copy_borrowed_arm_yield` (@PLN85 match_return): an enum arm that YIELDS a borrowed vector

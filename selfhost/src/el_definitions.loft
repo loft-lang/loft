@@ -47,6 +47,8 @@ pub fn boxed_tuple_return(e: el::El, t: ir::TypeT) -> ir::TypeT {
 }
 
 pub fn elab_file(e: el::El, file: integer) {
+  // `parse_file_body`'s `start_def`: the first definition this pass of this file makes.
+  start_def = len(e.b.data.definitions);
   // (`Parser::lambda_counters` is cleared as each pass parses the file.)
   e.lambda_roots = [];
   e.lambda_next = [];
@@ -69,7 +71,7 @@ pub fn elab_file(e: el::El, file: integer) {
   // The end of `parse_file`: the definitions this pass declared take their store types, then
   // the variant dispatch (`enum_fn`).  The standard library's image already holds what its own
   // parse made there.
-  el_schema::fill_all(e);
+  el_schema::fill_all(e, start_def);
   if !e.default {
     el_dispatch::enum_fn(e);
   }
@@ -220,17 +222,64 @@ fn use_decl(e: el::El, it: integer, package: boolean) {
     },
     _ => { return; }
   }
+  // (Refused, but read as Rust reads it — a package module's `use` loads its sibling — so the
+  // definitions it brings register as Rust's do: register, then refuse.)
   if package {
     el::refuse(e, "a `#package` file in a `use`");
-    return;
   }
   if own {
     el::refuse(e, "a `use self::` of a package's own module");
     return;
   }
-  if package_root(e.file) != "" {
-    el::refuse(e, "a `use` inside a package (its manifest resolves it)");
-    return;
+  // Inside a package, `Parser::lib_path`'s roads in its order (`@C173`): the package's own NAME
+  // is its `[library] entry` (`probe_own_package`); a name the governing lock pins is that
+  // version's registry install (`resolve_pinned`).  The steps between them — a `--lib`
+  // directory, a `{ path = … }` dependency, a module beside the file — are not carried, so
+  // where one of them could answer first the `use` stays refused.
+  root = package_root(e.file);
+  // loft#976 (`bind_own_module`): inside a package, a bare `use <module>` that is neither the
+  // package's own name nor a declared dependency binds the package's own `<module>.loft`, keyed
+  // `<pkg>::<module>`; the short name stays a qualifier for it (an alias, a name of its own in
+  // the table — so the next library's source number is one further on, as Rust's).
+  pkg = if root != "" { toml_unquote(toml_raw("{root}/loft.toml", "[package]", 0, "name")) } else { "" };
+  if pkg != "" && lib != pkg && toml_raw("{root}/loft.toml", "[dependencies]", 0, lib) == "" {
+    own_mod = own_module_file(e, lib, root);
+    if own_mod != "" {
+      key = "{pkg}::{lib}";
+      if !el::use_exists(e, key) {
+        load_library(e, key, if alias != "" { alias } else { lib }, own_mod);
+      } else if !el::use_exists(e, lib) || alias != "" {
+        el::use_alias(e, if alias != "" { alias } else { lib }, el::get_source(e, key));
+      }
+      if !el::use_exists(e, key) {
+        return;
+      }
+      ksrc = el::get_source(e, key);
+      if e.loading.contains(ksrc) {
+        el::refuse(e, "a cyclic `use`");
+        return;
+      }
+      kimports: vector<el::ImportName> = [];
+      for kn in names {
+        match e.p.nodes[kn] {
+          SImport { name: kin, alias: kbind } => { kimports += [el::ImportName { name: kin, bind: if kbind == "" { kin } else { kbind } }]; },
+          _ => {}
+        }
+      }
+      e.pending += [el::PendingImport { for_source: e.source, lib_source: ksrc, star: star, names: kimports, public: public }];
+      return;
+    }
+  }
+  if root != "" && !el::use_exists(e, lib) {
+    own_entry = package_lib_path(e, lib, root);
+    if own_entry == "" {
+      el::refuse(e, "a `use` inside a package (its manifest resolves it)");
+      return;
+    }
+    load_library(e, lib, alias, own_entry);
+    if !el::use_exists(e, lib) {
+      return;
+    }
   }
   if !el::use_exists(e, lib) {
     f = lib_path(e, lib);
@@ -273,7 +322,6 @@ fn load_library(e: el::El, id: text, alias: text, f: text) {
   }
   if has_package_directive(p, file_items(p, tree!)) {
     el::refuse(e, "a `#package` file in a `use`");
-    return;
   }
   // A copy (a record update), not `keep_p = e.p`: a struct field's plain bind views its place,
   // which the library's tree is about to overwrite (`@FR-B-View`).
@@ -446,6 +494,501 @@ fn apply_pending_imports(e: el::El) {
   }
 }
 
+// One `key = value` line of the TOML file at `path`: the raw value (quotes kept, trimmed) of the
+// first `key` in a section named `section` (`[package]`, or `[[package]]` with `at` the index of
+// the block among those of that name), "" where there is none.  Only the shapes a manifest and a
+// lock are written in: one key per line, `#` comments, no multi-line values.
+fn toml_raw(path: text, section: text, at: integer, key: text) -> text {
+  cur = "";
+  block = -1;
+  for raw in (file(path).content() ?? "").split('\n') {
+    ln = raw.trim();
+    if starts_with(ln, "[") {
+      cur = ln;
+      if cur == section {
+        block += 1;
+      }
+      continue;
+    }
+    eq = ln.find("=");
+    if cur == section && block == at && eq != null && !starts_with(ln, "#") && ln[..eq!].trim() == key {
+      return ln[eq! + 1..].trim();
+    }
+  }
+  ""
+}
+
+// A raw TOML string value without its quotes ("" for no quoted string).
+fn toml_unquote(v: text) -> text {
+  q = v.find("\"");
+  if q == null {
+    return "";
+  }
+  rest = v[q! + 1..];
+  r = rest.find("\"");
+  if r == null { "" } else { rest[..r!] }
+}
+
+// `manifest::inline_field`: one `field = "…"` of an inline-table dependency value, "".
+fn inline_field(v: text, field: text) -> text {
+  body = v.trim();
+  if starts_with(body, "{{") {
+    body = body[1..];
+  }
+  if body.ends_with("}}") {
+    body = body[..len(body) - 1];
+  }
+  for part in body.split(',') {
+    eq = part.find("=");
+    if eq != null && part[..eq!].trim() == field {
+      return toml_unquote(part[eq! + 1..]);
+    }
+  }
+  ""
+}
+
+// `Parser::probe_own_package`: the entry file of the package at `root` when its manifest's
+// `[package] name` is `id`, where that file exists; else "".
+// `Parser::own_module_path`: the package's own `<id>.loft` beside the file, in its `lib/`, or in
+// the package's `src/`; "" where none is.
+fn own_module_file(e: el::El, id: text, root: text) -> text {
+  cur_dir = script_dir(e.file);
+  if cur_dir == "" {
+    return "";
+  }
+  for c in ["{cur_dir}/{id}.loft", "{cur_dir}/lib/{id}.loft", "{root}/src/{id}.loft"] {
+    if exists(c) {
+      return c;
+    }
+  }
+  ""
+}
+
+fn own_package_entry(root: text, id: text) -> text {
+  if toml_unquote(toml_raw("{root}/loft.toml", "[package]", 0, "name")) != id {
+    return "";
+  }
+  package_entry(root, id)
+}
+
+// `Parser::lib_path_manifest_resolve`'s entry: the package directory `dir`'s `[library] entry`,
+// else `src/<id>.loft` (`id` as the caller names the directory), where that file exists; else "".
+fn package_entry(dir: text, id: text) -> text {
+  entry = toml_unquote(toml_raw("{dir}/loft.toml", "[library]", 0, "entry"));
+  f = if entry != "" { "{dir}/{entry}" } else { "{dir}/src/{id}.loft" };
+  if exists(f) { f } else { "" }
+}
+
+// `Parser::probe_flag_lib_dirs`: the first `--lib` directory (`LOFT_ELAB_LIB`, in order) that
+// answers `id` — its flat `<dir>/<id>.loft`, else the package there (`lib_path_manifest`); "".
+fn flag_lib_entry(id: text) -> text {
+  for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
+    if dir != "" {
+      if exists("{dir}/{id}.loft") {
+        return "{dir}/{id}.loft";
+      }
+      pe = manifest_entry_in(dir, id);
+      if pe != "" {
+        return pe;
+      }
+    }
+  }
+  ""
+}
+
+// `Parser::lib_path_manifest_resolve`: the entry of package `id` found in `dir` — `dir` itself
+// when it is that package (its last name is `id` and it holds a manifest, #408), else
+// `<dir>/<id>` — where that directory and its entry exist; "".
+fn manifest_entry_in(dir: text, id: text) -> text {
+  last = if script_dir(dir) == "" { dir } else { dir[len(script_dir(dir)) + 1..] };
+  pkg = if last == id && exists("{dir}/loft.toml") { dir } else { "{dir}/{id}" };
+  if !exists(pkg) {
+    return "";
+  }
+  package_entry(pkg, id)
+}
+
+// `Parser::lib_path` for a `use` in a file inside the package at `root`, in its order (`@C173`):
+// the package's own name; a `--lib` directory (unless a module sits beside the file); a
+// `{ path = … }` dependency of the nearest manifest, then of the program's root manifest
+// (`probe_manifest_path_dep`, `probe_root_path_dep`); then, for a name the governing lock pins,
+// a module beside the file or that version's registry install (`resolve_pinned`); for any other
+// name the directory probes and the flat module beside the file.  Every candidate inside the
+// package passes the dependency-shadow guard (`blocked`).  "" where nothing answers, and where
+// a road this port does not carry could (`LOFT_LIB`, an installed package, an auto-install or
+// the registry cache's newest version) — the `use` is then refused.
+fn package_lib_path(e: el::El, id: text, root: text) -> text {
+  cur_dir = script_dir(e.file);
+  base_dir = tests_base_dir(cur_dir);
+  prog = if e.entry != "" { e.entry } else { e.file };
+  f = own_package_entry(root, id);
+  if f == "" && !exists("{beside_dir(e.file)}/{id}.loft") {
+    f = flag_lib_entry(id);
+  }
+  if f == "" {
+    f = path_dep_entry(root, id);
+  }
+  if f == "" && package_root(prog) != "" {
+    f = path_dep_entry(package_root(prog), id);
+  }
+  if shadowed(f, id, root) {
+    f = "";
+  }
+  if lock_pin_in_force(e, id) != "" {
+    beside = "{beside_dir(e.file)}/{id}.loft";
+    if f == "" && exists(beside) && !shadowed(beside, id, root) {
+      f = beside;
+    }
+    if f == "" {
+      f = pinned_entry(e, id);
+    }
+    return f;
+  }
+  if f != "" {
+    return f;
+  }
+  c = if exists("lib/{id}.loft") { "lib/{id}.loft" } else { "{id}.loft" };
+  if !exists(c) && cur_dir != "" {
+    c = "{cur_dir}/lib/{id}.loft";
+  }
+  if !exists(c) && base_dir != "" {
+    c = "{base_dir}/lib/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if !exists(c) {
+    sib = sibling_file(script_dir(root), id);
+    if sib != "" {
+      c = sib;
+    }
+  }
+  if !exists(c) && len(e.file) >= 5 {
+    c = "{e.file[..len(e.file) - 5]}/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  dirs = program_lib_dirs(prog);
+  if !exists(c) {
+    for l in dirs {
+      if !exists(c) && exists("{l}/{id}.loft") {
+        c = "{l}/{id}.loft";
+      }
+    }
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if !exists(c) {
+    for l in dirs {
+      if !exists(c) {
+        pe = manifest_entry_in(l, id);
+        if pe != "" {
+          c = pe;
+        }
+      }
+    }
+  }
+  if !exists(c) && ((env_variable("LOFT_LIB") ?? "") != "" || exists("{home_dir()}/.loft/lib/{id}") || exists("{home_dir()}/.loft/lib/{id}.loft")) {
+    return "";
+  }
+  if !exists(c) && cur_dir != "" {
+    c = "{cur_dir}/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if !exists(c) && registry_has(id) {
+    return "";
+  }
+  if !exists(c) && base_dir != "" {
+    c = "{base_dir}/{id}.loft";
+  }
+  if shadowed(c, id, root) {
+    c = "";
+  }
+  if exists(c) { c } else { "" }
+}
+
+// `Parser::probe_manifest_path_dep` at the manifest in `dir`: where it declares `id` as a
+// `{ path = … }` dependency, that package's `[library] entry`, else `src/<id>.loft`; "".
+fn path_dep_entry(dir: text, id: text) -> text {
+  rel = inline_field(toml_raw("{dir}/loft.toml", "[dependencies]", 0, id), "path");
+  if rel == "" {
+    return "";
+  }
+  pkg = "{dir}/{rel}";
+  entry = toml_unquote(toml_raw("{pkg}/loft.toml", "[library]", 0, "entry"));
+  file = if entry != "" { "{pkg}/{entry}" } else { "{pkg}/src/{id}.loft" };
+  if exists(file) { file } else { "" }
+}
+
+// `lib_path`'s dependency-shadow guard (`blocked`): a candidate inside the package at `root` is
+// refused for a name its manifest declares as a dependency — that name must resolve as the
+// dependency, never as a same-named file of the package — unless it lies inside the directory
+// a `{ path = … }` declaration of it names (loft#963).
+fn shadowed(cand: text, id: text, root: text) -> boolean {
+  if cand == "" || toml_raw("{root}/loft.toml", "[dependencies]", 0, id) == "" {
+    return false;
+  }
+  c = absolute(cand);
+  rel = inline_field(toml_raw("{root}/loft.toml", "[dependencies]", 0, id), "path");
+  if rel != "" && starts_with(c, "{absolute("{root}/{rel}")}/") {
+    return false;
+  }
+  starts_with(c, "{absolute(root)}/")
+}
+
+// A path as one space to compare in: relative to the working directory made absolute, `.` and
+// `..` steps folded (`plain_canonical`, without following links).
+fn absolute(p: text) -> text {
+  full = if starts_with(p, "/") { p } else { "{env_variable("PWD") ?? ""}/{p}" };
+  parts: vector<text> = [];
+  for seg in full.split('/') {
+    if seg == "" || seg == "." {
+      continue;
+    }
+    if seg == ".." {
+      if len(parts) > 0 {
+        parts = parts[..len(parts) - 1];
+      }
+      continue;
+    }
+    parts += [seg];
+  }
+  "/{join(parts, "/")}"
+}
+
+// `Parser::find_sibling_file`: package `id` beside the package, `<parent>/<id>/src/<id>.loft`,
+// else a flat `<parent>/<id>.loft`; "".
+fn sibling_file(parent: text, id: text) -> text {
+  if parent == "" {
+    return "";
+  }
+  if exists("{parent}/{id}/src/{id}.loft") {
+    return "{parent}/{id}/src/{id}.loft";
+  }
+  if exists("{parent}/{id}.loft") { "{parent}/{id}.loft" } else { "" }
+}
+
+// The run's `lib_dirs` (main.rs): the `--lib` directories, then, from the program's own manifest
+// (`add_package_paths`), its source directory — the `[library] entry`'s directory, else `src`
+// (`Manifest::source_dir`) — and the package's parent where it declares dependencies.
+fn program_lib_dirs(prog: text) -> vector<text> {
+  out: vector<text> = [];
+  for d in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
+    if d != "" {
+      out += [d];
+    }
+  }
+  pr = package_root(prog);
+  if pr == "" {
+    return out;
+  }
+  entry = toml_unquote(toml_raw("{pr}/loft.toml", "[library]", 0, "entry"));
+  sd = if entry == "" { "src" } else { script_dir(entry) };
+  out += [if sd == "" { pr } else { "{pr}/{sd}" }];
+  if toml_has_keys("{pr}/loft.toml", "[dependencies]") && script_dir(pr) != "" {
+    out += [script_dir(pr)];
+  }
+  out
+}
+
+// Whether the TOML file at `path` has a `key = value` line in section `section`.
+fn toml_has_keys(path: text, section: text) -> boolean {
+  cur = "";
+  for raw in (file(path).content() ?? "").split('\n') {
+    ln = raw.trim();
+    if starts_with(ln, "[") {
+      cur = ln;
+    } else if cur == section && ln.find("=") != null && !starts_with(ln, "#") {
+      return true;
+    }
+  }
+  false
+}
+
+// `LOFT_HOME`, else `HOME` (`registry_index::cache_dir`'s home).
+fn home_dir() -> text {
+  h = env_variable("LOFT_HOME") ?? "";
+  if h == "" { env_variable("HOME") ?? "." } else { h }
+}
+
+// Whether the registry cache holds any version of `id` (`<home>/.loft/registry/<id>-<v>`), which
+// Rust's `probe_cache_newest` / `probe_auto_install` would answer and this port does not.
+fn registry_has(id: text) -> boolean {
+  for ent in file("{home_dir()}/.loft/registry").files() {
+    if starts_with(file_name_of(ent.path), "{id}-") {
+      return true;
+    }
+  }
+  false
+}
+
+// The last name of a path.
+fn file_name_of(p: text) -> text {
+  d = script_dir(p);
+  if d == "" { p } else { p[len(d) + 1..] }
+}
+
+// `Parser::beside_dir`: the importing file's directory, `.` for a file named without one.
+fn beside_dir(f: text) -> text {
+  d = script_dir(f);
+  if d == "" { "." } else { d }
+}
+
+// `resolution_scope::resolution_scope(..).governing_lock()`: the lock that decides the program's
+// registry versions — a `<program>.lock` beside it (`PinnedScript`), else its package root's
+// `loft.lock` (`Package`); "" in `Bare` scope, where nothing does.  Answered for the PROGRAM
+// (`Parser::program_entry`), never for the file that says `use`.
+fn governing_lock(e: el::El) -> text {
+  prog = if e.entry != "" { e.entry } else { e.file };
+  if exists("{prog}.lock") {
+    return "{prog}.lock";
+  }
+  root = package_root(prog);
+  if root == "" { "" } else { "{root}/loft.lock" }
+}
+
+// `ResolutionScope::pinned_version`: the version the governing lock records for `id`, "".
+fn pinned_version(e: el::El, id: text) -> text {
+  lock = governing_lock(e);
+  if lock == "" || !exists(lock) {
+    return "";
+  }
+  b = 0;
+  while true {
+    name = toml_raw(lock, "[[package]]", b, "name");
+    if name == "" {
+      return "";
+    }
+    if toml_unquote(name) == id {
+      return toml_unquote(toml_raw(lock, "[[package]]", b, "version"));
+    }
+    b += 1;
+  }
+  ""
+}
+
+// `manifest::extract_version_req` of `id`'s `[dependencies]` value in the manifest of the
+// package holding `f` ("" for none: no package, no declaration, or a declaration with no range).
+fn declared_range(f: text, id: text) -> text {
+  root = package_root(f);
+  if root == "" {
+    return "";
+  }
+  v = toml_raw("{root}/loft.toml", "[dependencies]", 0, id);
+  if starts_with(v, "{{") { inline_field(v, "version") } else { toml_unquote(v) }
+}
+
+// `Parser::lock_pin_in_force`: the pinned version while every declaration in force still
+// accepts it (`install::constraint_for` answers the pin) — the program root's range
+// (`root_dep_constraint`) and that of the package whose file says `use` (`declaring_range`).
+fn lock_pin_in_force(e: el::El, id: text) -> text {
+  pinned = pinned_version(e, id);
+  if pinned == "" {
+    return "";
+  }
+  root_range = declared_range(if e.entry != "" { e.entry } else { e.file }, id);
+  here_range = declared_range(e.file, id);
+  if (root_range == "" || satisfies(pinned, root_range)) && (here_range == "" || satisfies(pinned, here_range)) { pinned } else { "" }
+}
+
+// `Parser::probe_governing_lock` + `resolve_registry_installed`: the entry of the registry install
+// of the version the lock pins (`registry_index::extract_dir`: `<home>/.loft/registry/<id>-<v>`,
+// `<home>` = `LOFT_HOME`, else `HOME`), where it is installed; else "".  Rust's later legs
+// (`probe_auto_install`, `probe_cache_newest`) are not carried: they install or pick the newest.
+fn pinned_entry(e: el::El, id: text) -> text {
+  version = lock_pin_in_force(e, id);
+  if version == "" {
+    return "";
+  }
+  package_entry("{home_dir()}/.loft/registry/{id}-{version}", "{id}-{version}")
+}
+
+// `registry_index::compare_semver`'s parts: major, minor and patch (a patch's `-…` suffix
+// dropped), an unparseable part read as 0.
+fn semver_parts(v: text) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  for p in v.split('.') {
+    if i < 3 {
+      t = if i == 2 && p.find("-") != null { p[..p.find("-")!] } else { p };
+      out += [(t as integer?) ?? 0];
+    }
+    i += 1;
+  }
+  while len(out) < 3 {
+    out += [0];
+  }
+  out
+}
+
+// `registry_index::compare_semver`: -1, 0 or 1.
+fn semver_cmp(a: text, b: text) -> integer {
+  pa = semver_parts(a);
+  pb = semver_parts(b);
+  for i in 0..3 {
+    if pa[i] < pb[i] {
+      return -1;
+    }
+    if pa[i] > pb[i] {
+      return 1;
+    }
+  }
+  0
+}
+
+// `registry_index::satisfies`: whether `version` meets `constraint` — empty or `*`, a comma list
+// (every part), `^x.y[.z]` and `~x.y[.z]` (both `[x.y.z, x.(y+1).0)`), `>=`, `>`, `<=`, `<`,
+// `=`, and a bare version (exact).
+fn satisfies(version: text, constraint: text) -> boolean {
+  c = constraint.trim();
+  if c == "" || c == "*" {
+    return true;
+  }
+  if c.find(",") != null {
+    for part in c.split(',') {
+      if !satisfies(version, part.trim()) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if starts_with(c, "^") || starts_with(c, "~") {
+    ps: vector<integer> = [];
+    for p in c[1..].split('.') {
+      n = p as integer?;
+      if n != null {
+        ps += [n!];
+      }
+    }
+    if len(ps) < 2 {
+      return false;
+    }
+    lo = "{ps[0]}.{ps[1]}.{if len(ps) > 2 { ps[2] } else { 0 }}";
+    hi = "{ps[0]}.{ps[1] + 1}.0";
+    return semver_cmp(version, lo) >= 0 && semver_cmp(version, hi) < 0;
+  }
+  if starts_with(c, ">=") {
+    return semver_cmp(version, c[2..].trim()) >= 0;
+  }
+  if starts_with(c, ">") {
+    return semver_cmp(version, c[1..].trim()) > 0;
+  }
+  if starts_with(c, "<=") {
+    return semver_cmp(version, c[2..].trim()) <= 0;
+  }
+  if starts_with(c, "<") {
+    return semver_cmp(version, c[1..].trim()) < 0;
+  }
+  if starts_with(c, "=") {
+    return version == c[1..].trim();
+  }
+  version == c
+}
+
 // The directory holding a `loft.toml` at or above `f`'s, or "".
 fn package_root(f: text) -> text {
   d = script_dir(f);
@@ -490,15 +1033,12 @@ fn lib_path(e: el::El, id: text) -> text {
   if !exists(f) && len(e.file) >= 5 {
     f = "{e.file[..len(e.file) - 5]}/{id}.loft";
   }
-  // `--lib` directories (the gate passes a program's `@ARGS` ones as `LOFT_ELAB_LIB`), flat; a
-  // package there is resolved by its manifest.
-  for dir in (env_variable("LOFT_ELAB_LIB") ?? "").split(':') {
-    if dir != "" && !exists(f) {
-      if exists("{dir}/{id}.loft") {
-        f = "{dir}/{id}.loft";
-      } else if exists("{dir}/{id}/loft.toml") {
-        return "";
-      }
+  // `--lib` directories (the gate passes a program's `@ARGS` ones as `LOFT_ELAB_LIB`): flat, or a
+  // package there by its manifest (`probe_flag_lib_dirs`).
+  if !exists(f) {
+    fl = flag_lib_entry(id);
+    if fl != "" {
+      f = fl;
     }
   }
   if !exists(f) && (len(env_variable("LOFT_LIB")) > 0 || exists("{env_variable("HOME")}/.loft/lib/{id}")) {
@@ -547,8 +1087,10 @@ fn publish(e: el::El, it: integer, before: integer) {
     _ => ""
   };
   if nm != "" {
+    // (The stub adopted may be another file's — a module this one imports constructed the type
+    // above it, loft#797 — and keeps that file's source: it is published all the same.)
     t = el::source_nr(e, e.source, nm);
-    if t >= 0 && el::def(e, t).source == e.source && el::def(e, t).def_type != el::DT_UNKNOWN {
+    if t >= 0 && el::def(e, t).source != el::STD_SOURCE && el::def(e, t).def_type != el::DT_UNKNOWN {
       e.b.data.definitions[t].pub_visible = true;
     }
   }
@@ -607,6 +1149,7 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
       el::set_returned(e, td, ir::TyReference { n: td, dep: [] });
       saved_tv = e.type_vars;
       bound = true;
+      params: vector<integer> = [];
       for tv in tvars {
         match e.p.nodes[tv] {
           STVar { name: tvn, bounds: tvb } => {
@@ -615,12 +1158,18 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
               bound = false;
             } else {
               e.type_vars += [el::TypeVar { spelling: tvn, holder: th }];
+              params += [th];
             }
           },
           _ => {}
         }
       }
       e.b.data.definitions[td].def_type = el::DT_TYPE_TEMPLATE;
+      // `bind_type_header`: the variables in HEADER order, which an instance's arguments bind
+      // by position — recorded only when every one of them bound.
+      if len(params) == len(tvars) {
+        e.b.data.definitions[td].type_params = params;
+      }
       if bound {
         parse_fields(e, td, fields);
       }
@@ -632,8 +1181,10 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   nt = el::name_tok(e, at, name);
   d = if e.first_pass && el::prelude_shadowed(e, name) { -1 } else { el::def_nr(e, name) };
   if e.first_pass {
-    // A stub this file claimed for the name (`claim_declared_type_names`) is adopted.
-    if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
+    // A stub this file claimed for the name (`claim_declared_type_names`) is adopted — and so is
+    // one a module this file imports left by constructing the type above it (loft#797,
+    // loft#801: the stub keeps its number and its source).
+    if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source != el::STD_SOURCE {
       e.b.data.definitions[d].def_type = el::DT_STRUCT;
       e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
       e.adopted += [d];
@@ -664,9 +1215,12 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
     match e.p.nodes[f] {
       SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
         tn = field_type_node(e, mods);
-        if lexeme || tn == null {
+        if tn == null {
           el::refuse(e, "a struct field with a modifier, a default or a capture");
           continue;
+        }
+        if lexeme && !e.lexeme_fields.contains("{d}:{fname}") {
+          e.lexeme_fields += ["{d}:{fname}"];
         }
         t = el_types::parse_type(e, tn!);
         if t == null {
@@ -679,6 +1233,19 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           // replay, so it is hoisted into a function of its own, `n___dflt_<Struct>_<field>`,
           // minted here on the first pass and re-read into it on the second; the stored default
           // is the call (`default_value_fn`).  A template's field is not hoisted.
+          // (A default reading `$` that no construction site can replay — anything but plain
+          // arithmetic over the record's fields — is a function OF THE RECORD in Rust,
+          // `t_<n><S>___dflt_<S>_<field>` (its `self` is `$`): registered here on the first pass,
+          // the default itself not carried.)
+          if e.first_pass && reads_dollar(e, fi!) && dollar_hoists(e, fi!, t!) && len(e.type_vars) == 0 {
+            sn = el::def(e, d).name;
+            mname = "t_{len(sn)}{sn}___dflt_{sn}_{fname}";
+            if el::def_nr(e, mname) < 0 {
+              mat = match e.p.nodes[fi!] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => leftmost_token(e, fi!) };
+              md = el::add_def(e, mname, el::pos_at(e, mat), el::DT_FUNCTION);
+              el::set_returned(e, md, t!);
+            }
+          }
           if hoists_default(e, fi!, t!) && len(e.type_vars) == 0 {
             dv = hoisted_default(e, "__dflt_{el::def(e, d).name}_{fname}", tn!, fi!);
           } else {
@@ -690,10 +1257,35 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         }
         if !e.first_pass {
           // The second pass converts the default to the field (`set_attr_value`).
-          if dv != null {
-            for a in el::def(e, d).attributes {
-              if a.name == fname {
+          cvx = field_computed(e, mods);
+          ivx = field_init_expr(e, mods);
+          if ivx != null {
+            dv = computed_value(e, ivx!, t!);
+            if dv == null {
+              el::refuse(e, "an init field's expression of this kind");
+              continue;
+            }
+          }
+          if cvx != null {
+            dv = computed_value(e, cvx!, t!);
+            if dv == null {
+              el::refuse(e, "a computed field's expression of this kind");
+              continue;
+            }
+          }
+          for a in el::def(e, d).attributes {
+            if a.name == fname {
+              if cvx != null {
+                e.b.data.definitions[d].attributes[a#index].constant = true;
+              }
+              if ivx != null {
+                e.b.data.definitions[d].attributes[a#index].init = true;
+              }
+              if dv != null {
                 e.b.data.definitions[d].attributes[a#index].value = [dv!];
+              }
+              if field_value_const(e, mods) {
+                e.b.data.definitions[d].attributes[a#index].value_const = true;
               }
             }
           }
@@ -724,6 +1316,14 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         // computed is write-once, and the image says so (`Attribute::const_field`) for the
         // passes and backends that read it.  A computed (virtual) field is refused above.
         a.const_field = fixed;
+        a.value_const = field_value_const(e, mods);
+        // (A computed field holds no slot: its value is its expression, read on the second pass.)
+        if field_computed(e, mods) != null {
+          a.constant = true;
+        }
+        if field_init_expr(e, mods) != null {
+          a.init = true;
+        }
         a.fact = alias_fact(e, tn!);
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
         if tp is TyInteger {
@@ -745,22 +1345,96 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
 }
 
 // A field declaration's one type, when it is nothing but a type and maybe a `= default`.
+// (A `const` item beside the type — `v: const vector<integer>` — is `parse_field`'s
+// `value_const`, read by `field_value_const`; any other item is not carried.  The type's
+// `group#right` capability links (`hp: integer stats#update`) are `parse_field_links`', kept on
+// the parser for the sandbox's admission walk (`member_access`), none of them in the image.)
 fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
-  if len(mods) != 1 {
+  ty: integer? = null;
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldType { tp } => {
+        if ty != null {
+          return null;
+        }
+        ty = tp;
+      },
+      SFieldMod { kind } => {
+        if kind != "const" && kind != "computed" && kind != "virtual" && kind != "init" {
+          return null;
+        }
+      },
+      _ => {
+        return null;
+      }
+    }
+  }
+  ty
+}
+
+// The expression of a `computed(…)` / `virtual(…)` field (`parse_field_default`'s
+// `is_computed`), or null.
+fn field_computed(e: el::El, mods: vector<integer>) -> integer? {
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldMod { kind, a } => if kind == "computed" || kind == "virtual" { return a; },
+      _ => {}
+    }
+  }
+  null
+}
+
+// The expression of an `init(…)` field (`parse_field_default`'s `is_init`: the attribute's
+// `init`, its value replayed at each construction as a stored default is), or null.
+fn field_init_expr(e: el::El, mods: vector<integer>) -> integer? {
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldMod { kind, a } => if kind == "init" { return a; },
+      _ => {}
+    }
+  }
+  null
+}
+
+// `parse_field_default`'s computed value: the expression read with `$` the record being declared
+// (`Var(0)`, `parse_var`), converted to the field's type; stored as the field's value, which a
+// read replays with the receiver in `$`'s place (`replace_record_ref`).
+fn computed_value(e: el::El, cx: integer, ft: ir::TypeT) -> ir::Node? {
+  vars = el_vars::new_vars("__default", e.file);
+  for pad in 0..e.dflt_vars {
+    el_vars::add_variable(vars, "__dflt_slot_{pad}", ir::TyVoid);
+  }
+  if len(vars.vars) == 0 {
+    el_vars::add_variable(vars, "$", ir::TyReference { n: e.context, dep: [] });
+  }
+  x = el_ex_assign::expression(e, vars, cx);
+  if el_types::is_unknown(x.tp) {
     return null;
   }
-  match e.p.nodes[mods[0]] {
-    SFieldType { tp, caps } => if len(caps) == 0 { tp } else { null },
-    _ => null
+  el_convert::convert(e, vars, x.code, x.tp, el_types::base(ft), false)
+}
+
+fn field_value_const(e: el::El, mods: vector<integer>) -> boolean {
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldMod { kind } => if kind == "const" { return true; },
+      _ => {}
+    }
   }
+  false
 }
 
 // The `= default` of a field declaration, or null.
 fn field_init_node(e: el::El, mods: vector<integer>) -> integer? {
-  match e.p.nodes[mods[0] ?? 0] {
-    SFieldType { init } => init,
-    _ => null
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldType { init } => {
+        return init;
+      },
+      _ => {}
+    }
   }
+  null
 }
 
 // `default_replayable_in_place`, read off the syntax for the kinds carried: a vector literal for
@@ -772,6 +1446,30 @@ fn hoists_default(e: el::El, init: integer, t: ir::TypeT) -> boolean {
   }
   if e.p.nodes[init] is SVecLit && t is TyVector {
     return true;
+  }
+  // (A tuple default that builds a value — a member with a text hole, a branch, a match, a call
+  // answering the tuple — is hoisted; a tuple of plain values is replayed in place.)
+  if el_types::base(t) is TyTuple && (builds_tuple_member(e, init) || e.p.nodes[init] is SCall || e.p.nodes[init] is SIf || e.p.nodes[init] is SMatch) {
+    return true;
+  }
+  // (A `??` holds its subject in a temporary, which no construction site can replay: Rust
+  // hoists it — `e: u8 = (early(12) as u8?) ?? 0`.)
+  if has_coalesce(e, init) {
+    return true;
+  }
+  // (`takes_checked_narrow`: a nullable narrow integer field — `u8?`, `i32?` — takes its default
+  // through the checked narrowing, which only a function of its own carries; any value but
+  // `null`, a literal included.  An `integer?` field narrows nothing.)
+  match t {
+    TyOptional { inner: ni } => match el_types::base(ni) {
+      TyInteger { spec: nsp } => {
+        if (el_types::narrow_width(nsp) > 0 || nsp.forced_size != 0 || el_types::elem_name(e, el_types::base(ni)) != "integer") && !(e.p.nodes[init] is SNull) {
+          return true;
+        }
+      },
+      _ => {}
+    },
+    _ => {}
   }
   if t is TyText {
     return match e.p.nodes[init] { SString { parts } => len([for p in parts if e.p.nodes[p] is SHole { 1 }]) > 0, _ => false };
@@ -800,6 +1498,73 @@ fn names_any(e: el::El, n: integer, names: vector<text>) -> boolean {
   false
 }
 
+// The first token of an expression: a binary's left operand, a member's object, down to `$`.
+fn leftmost_token(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SDollar { at } => at,
+    SBin { l } => leftmost_token(e, l),
+    // (A unary operator is its own first token: `-100` stands at its `-`.)
+    SUnary { at: ua } => ua,
+    SMember { e: me } => if me != null { leftmost_token(e, me!) } else { el_ex_null::node_start(e, n) },
+    _ => el_ex_null::node_start(e, n)
+  }
+}
+
+// Does a `$`-reading default build a value no construction site replays in place?  A text
+// (other than a field read), a vector, a record literal, a branch, a match or a `??` does; plain
+// arithmetic, a scalar call (`len($.name)`) and a tuple of plain values (`($.n, 2)`) do not.
+fn dollar_hoists(e: el::El, init: integer, t: ir::TypeT) -> boolean {
+  if builds_value(e, init) || has_coalesce(e, init) {
+    return true;
+  }
+  el_types::base(t) is TyText && !(e.p.nodes[init] is SMember || e.p.nodes[init] is SName || e.p.nodes[init] is SDollar)
+}
+
+// A tuple literal one of whose members builds a value (`("v{k}", k)`).
+fn builds_tuple_member(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    STupleLit { at: _ } => {
+      for c in el_length::children(e, n) {
+        if builds_value(e, c) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+fn builds_value(e: el::El, n: integer) -> boolean {
+  if e.p.nodes[n] is SIf || e.p.nodes[n] is SMatch || e.p.nodes[n] is SVecLit || e.p.nodes[n] is SStructLit || e.p.nodes[n] is SComprehension || e.p.nodes[n] is SBlock {
+    return true;
+  }
+  // (A text with a hole builds one; a plain text literal is a constant.)
+  match e.p.nodes[n] {
+    SString { parts } => { if len([for p in parts if e.p.nodes[p] is SHole { 1 }]) > 0 { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if builds_value(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn has_coalesce(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SBin { op: cop } => { if cop == "??" { return true; } },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if has_coalesce(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
 fn reads_dollar(e: el::El, n: integer) -> boolean {
   if e.p.nodes[n] is SDollar {
     return true;
@@ -822,7 +1587,7 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
     e.dflt_vars += 1;
   }
   // (An `if` or a `match` default stands at its keyword.)
-  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => el_ex_null::node_start(e, init) };
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, STupleLit { at: ta } => ta, _ => leftmost_token(e, init) };
   // (The default is no statement of a block in Rust, so it carries no line marker: the
   // synthetic statement stands at token 0, which gives none.)
   e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
@@ -841,7 +1606,7 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
         match el_types::parse_type(e, tn) {
           TyVector { inner: vin } => {
             vnm = el_types::elem_name(e, vin);
-            if vnm != "" && el::def_nr(e, "main_vector<{vnm}>") < 0 {
+            if vnm != "" && el_schema::wants_vector_def(e, vnm) {
               el_schema::make_vector_def(e, vin, vnm, el::pos_at(e, el_ex_base::closing_bracket(e, lat)), true);
             }
           },
@@ -965,7 +1730,8 @@ fn field_default_value(e: el::El, init: integer, ft: ir::TypeT) -> ir::Node? {
   }
   if !plain || (slot && !unit_variant) {
     el::refuse(e, "a field default of this kind: {el_ex_base::type_kind(x.tp)}");
-    return null;
+    // (The first pass still registers the field: a refused default is no reason to drop it.)
+    return if e.first_pass { ir::NdNull } else { null };
   }
   if e.first_pass {
     return x.code;
@@ -1185,17 +1951,17 @@ fn parse_typedef(e: el::El, at: integer, name: text, tp: integer?, size: integer
 
 // `enum Name { Variant ({ fields })?, … }`                           Parser::parse_enum
 fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, variants: vector<integer>) {
-  if len(tvars) > 0 {
-    el::refuse(e, "an enum template");
-  }
   nt = el::name_tok(e, at, name);
+  // A template's header is read before its definition is made, so the enum and its holders sit
+  // at the token after the header (`parse_type_var_header`).
+  dpos = el::pos_at(e, if len(tvars) > 0 { header_end(e, nt) + 1 } else { nt + 1 });
   d = el::def_nr(e, name);
   if d < 0 {
-    d = el::add_def(e, name, el::pos_at(e, nt + 1), el::DT_ENUM);
+    d = el::add_def(e, name, dpos, el::DT_ENUM);
   } else if e.first_pass && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
     // A forward reference's stub is adopted (`note_stub_adopted`).
     e.b.data.definitions[d].def_type = el::DT_ENUM;
-    e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
+    e.b.data.definitions[d].position = dpos;
     e.adopted += [d];
   } else if e.first_pass {
     el::refuse(e, "an enum over an existing name");
@@ -1204,10 +1970,57 @@ fn parse_enum(e: el::El, at: integer, name: text, tvars: vector<integer>, varian
   if e.first_pass {
     el::set_returned(e, d, ir::TyEnum { n: d, is_ref: false, dep: [] });
   }
+  // `D-Template` (`bind_type_header`): an enum with a header is a template, its variants read
+  // over the placeholders.  Registered as Rust registers it, then refused: its instances are
+  // minted where a type names them (`el_types::instance_def`).
+  saved_tv = e.type_vars;
+  if len(tvars) > 0 {
+    params: vector<integer> = [];
+    for tv in tvars {
+      match e.p.nodes[tv] {
+        STVar { name: tvn, bounds: tvb } => {
+          th = header_var(e, tvn, tvb, dpos);
+          if th >= 0 {
+            e.type_vars += [el::TypeVar { spelling: tvn, holder: th }];
+            params += [th];
+          }
+        },
+        _ => {}
+      }
+    }
+    if e.first_pass {
+      e.b.data.definitions[d].def_type = el::DT_TYPE_TEMPLATE;
+      if len(params) == len(tvars) {
+        e.b.data.definitions[d].type_params = params;
+      }
+    }
+  }
   parse_enum_values(e, d, variants);
   if e.first_pass {
     el::complete_definition(e, d);
   }
+  e.type_vars = saved_tv;
+  if len(tvars) > 0 {
+    el::refuse(e, "an enum template");
+  }
+}
+
+// The token closing the type-variable header that opens after name token `nt` (its `>`).
+fn header_end(e: el::El, nt: integer) -> integer {
+  hd = nt + 1;
+  depth = 0;
+  while hd < len(e.p.src) {
+    if e.p.src[hd] is Lt {
+      depth += 1;
+    } else if e.p.src[hd] is Gt {
+      depth -= 1;
+      if depth == 0 {
+        return hd;
+      }
+    }
+    hd += 1;
+  }
+  hd
 }
 
 // The variants, in order: each a definition whose parent is the enum.   parse_enum_values
@@ -1223,7 +2036,17 @@ fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
       SVariant { at, name, fields } => {
         v = -1;
         if e.first_pass {
-          v = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_ENUM_VALUE);
+          // A stub a construction above the enum left for the name (`B { v: n }`, loft#1046) is
+          // adopted in place, keeping its number, as a struct adopts one.
+          ex0 = el::def_nr(e, name);
+          if ex0 >= 0 && el::def(e, ex0).def_type == el::DT_UNKNOWN && el::def(e, ex0).source != el::STD_SOURCE && (el::def(e, ex0).returned[0] ?? ir::TyUnknown { n: 0 }) is TyUnknown {
+            v = ex0;
+            e.b.data.definitions[v].def_type = el::DT_ENUM_VALUE;
+            e.b.data.definitions[v].position = el::pos_at(e, at + 1);
+            e.adopted += [v];
+          } else {
+            v = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_ENUM_VALUE);
+          }
           e.b.data.definitions[v].parent = d;
         } else {
           v = el::variant_of(e, d, name);
@@ -1274,6 +2097,36 @@ fn enum_attribute(e: el::El, d: integer, name: text, tp: ir::TypeT, nr: integer)
 }
 
 
+// Does a body hand one of `names` back as it stands — a bare name ending the body, a branch or a
+// `match` arm there, or a `return` of one?
+fn tail_names_one_of(e: el::El, n: integer, names: vector<text>) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: tn, member: tm } => tm == "" && names.contains(tn),
+    SBlock { stmts } => len(stmts) > 0 && tail_names_one_of(e, stmts[-1]!, names),
+    SStmt { e: se, semi } => !semi && se != null && tail_names_one_of(e, se!, names),
+    SIf { then: it, other: io } => tail_names_one_of(e, it, names) || (io != null && tail_names_one_of(e, io!, names)),
+    SMatch { arms } => len([for a in arms if match e.p.nodes[a] { SArm { body: ab } => ab != null && tail_names_one_of(e, ab!, names), _ => false } { 1 }]) > 0,
+    _ => false
+  }
+}
+
+// A type in an interface member's signature: `Self.<Name>` is the interface's associated type
+// (`<Interface>.<Name>`, registered above); anything else as any type is read.
+fn iface_type(e: el::El, d: integer, tn: integer) -> ir::TypeT? {
+  match e.p.nodes[tn] {
+    STy { name: sn, assoc: sm } => {
+      if sn == "Self" && sm != "" && d >= 0 {
+        ad = el::def_nr(e, "{el::def(e, d).name}.{sm}");
+        if ad >= 0 {
+          return ir::TyReference { n: ad, dep: [] };
+        }
+      }
+    },
+    _ => {}
+  }
+  el_types::parse_type(e, tn)
+}
+
 // `interface Name { member… }`                                     Parser::parse_interface
 fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>, end: integer) {
   nt = el::name_tok(e, at, name);
@@ -1291,7 +2144,29 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
   }
   for m in members {
     match e.p.nodes[m] {
-      SIType { at: mat, name: aname } => {
+      SIType { at: mat, name: aname, bounds: abounds } => {
+        // Refused, but registered first as Rust's `parse_interface` makes it: `<Interface>.<Name>`,
+        // a struct answering itself, the interface its parent, at the token after its bounds.
+        if e.first_pass && d >= 0 {
+          an = "{el::def(e, d).name}.{aname}";
+          if el::def_nr(e, an) < 0 {
+            apos = el::pos_at(e, mat + 2 + if len(abounds) > 0 { 2 * len(abounds) } else { 0 });
+            ad = el::add_def(e, an, apos, el::DT_STRUCT);
+            el::set_returned(e, ad, ir::TyReference { n: ad, dep: [] });
+            e.b.data.definitions[ad].parent = d;
+            // (A bounded associated type carries its bounds' method stubs, as a bounded type
+            // variable does: `t_14Source.Rows#g1_width` for `type Rows: Cursor`.)
+            for ab in abounds {
+              abd = el::def_nr(e, ab);
+              if abd >= 0 && el::def(e, abd).def_type == el::DT_INTERFACE {
+                e.b.data.definitions[ad].bounds += [abd];
+              }
+            }
+            if len(el::def(e, ad).bounds) > 0 {
+              _ = bound_stubs(e, ad, apos);
+            }
+          }
+        }
         el::refuse(e, "an interface's associated type");
       },
       SIFn { kind, name: method, params, ret, end: mend } => {
@@ -1307,7 +2182,7 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
                   el::refuse(e, "an interface method parameter with a `&`, a default, a capability or no type");
                   return;
                 }
-                pt = el_types::parse_type(e, tp ?? 0);
+                pt = iface_type(e, d, tp ?? 0);
                 if pt == null {
                   return;
                 }
@@ -1320,7 +2195,7 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
           }
           rt: ir::TypeT = ir::TyVoid;
           if ret != null {
-            r = el_types::parse_type(e, ret ?? 0);
+            r = iface_type(e, d, ret ?? 0);
             if r == null {
               return;
             }
@@ -1600,7 +2475,24 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           // (A scalar, a text or a tuple default is replayed at each call, reading the earlier
           // arguments in place: Rust hoists none of those.)
           heap_default = !el_convert::plain_scalar(el_types::base(t!)) && !(el_types::base(t!) is TyText) && !(el_types::base(t!) is TyTuple) && !(el_types::base(t!) is TyEnum && match el_types::base(t!) { TyEnum { is_ref } => !is_ref, _ => false });
-          if d == null && heap_default && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
+          // (…and so is a nullable narrow parameter's, which the checked narrowing hoists
+          // whatever it reads: `a: u8? = b + 1`.)
+          // (A method's default is named by its owner — `__dflt_<S>_<fn>_<param>` — and is a method
+          // itself where it reads `self`, `t_<n><S>___dflt_…`: registered bare beside the refusal.)
+          if d == null && method && (heap_default || hoists_default(e, init!, t!)) && e.first_pass && tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 {
+            own = match el_types::base(arguments[0].typedef) { TyReference { n: on } => el::def(e, on).name, TyEnum { n: on } => el::def(e, on).name, _ => "" };
+            if own != "" {
+              // (Only a default that reads `self` takes it, as a method; any other is a plain
+              // function under its owner's name: `n___dflt_S_method_t` for `t: N = Void`.)
+              mn = if names_any(e, init!, ["self"]) { "t_{len(own)}{own}___dflt_{own}_{name}_{an}" } else { "n___dflt_{own}_{name}_{an}" };
+              if el::def_nr(e, mn) < 0 {
+                mat2 = match e.p.nodes[init!] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, STupleLit { at: ta } => ta, _ => leftmost_token(e, init!) };
+                mdd = el::add_def(e, mn, el::pos_at(e, mat2), el::DT_FUNCTION);
+                el::set_returned(e, mdd, t!);
+              }
+            }
+          }
+          if d == null && (heap_default || hoists_default(e, init!, t!)) && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
             _ = hoisted_default(e, "__dflt_{name}_{an}", tp!, init!);
           }
           // (A default refused — the refusal stands — still leaves the function registered,
@@ -1858,6 +2750,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       seeds = el_cell::flip(e, vars);
     }
     vars.start_ret_deps = el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid);
+    e.self_view_tail = !e.first_pass && body != null && tail_names_one_of(e, body!, [for ta in arguments { ta.name }]);
     // (The return buffer the first pass held back from the result is named before the body.)
     if !e.first_pass && e.owed_buffer.contains(e.context) {
       oba = el_ex_base::attr_nr(el::def(e, e.context), "__retbuf");
@@ -1974,6 +2867,12 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // pass then finds no constant, its definition kept.  That pass-1 view is not carried:
     // refused by name, so no later definition is numbered one lower.
     if len(params) == 0 && len(tvars) == 0 && ends_in_repeat_literal(e, body!) {
+      // (Its twin is registered on the first pass as Rust's is — the definition kept although
+      // the second pass finds no constant in it — the function itself refused.)
+      if e.first_pass && !starts_with(name, "__dflt_") && el::def_nr(e, "__const_{el::def(e, e.context).name}") < 0 {
+        rcd = el::add_def(e, "__const_{el::def(e, e.context).name}", el::def(e, e.context).position, el::DT_CONSTANT);
+        e.b.data.definitions[rcd].returned = el::def(e, e.context).returned;
+      }
       el::refuse(e, "a function of no parameters whose body ends in a repeat literal (its pass-1 constant twin)");
     }
     // (A hoisted default is an internal function, `Definition::is_internal`: it gets no twin.)
@@ -2300,12 +3199,16 @@ pub fn interface_method_name(name: text) -> text {
 }
 
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
-// `reserve_late_return_buffers` (between the passes): a lambda answering a record, a struct
-// enum or a vector takes its hidden `__retbuf` now, typed as its result came out of the first
+// `reserve_late_return_buffers` (between the passes): a function — a lambda above all —
+// answering a record, a struct enum or a vector that has no buffer yet takes its hidden
+// `__retbuf` now, typed as its result came out of the first
 // pass — borrows included — its variable after the first pass's.
 pub fn reserve_late_return_buffers(e: el::El) {
   for d in e.b.data.definitions {
-    if d.def_type != el::DT_FUNCTION || d.source != e.source || !starts_with(d.name, "n___lambda_") || el_ir::is_null(d.code[0] ?? ir::NdNull) {
+    // (Any function of the program, not a lambda only: one whose result named a record
+    // declared below it — `fn mk(n) -> X { … }` before `struct X` — was the stub's `Unknown` at
+    // its signature, so it gets its buffer here, once the stub resolved.)
+    if d.def_type != el::DT_FUNCTION || d.source != e.source || !(starts_with(d.name, "n_") || starts_with(d.name, "t_")) || el_ir::is_null(d.code[0] ?? ir::NdNull) {
       continue;
     }
     // A `τ?` result's buffer is `τ`'s, the borrows the first pass merged kept.
@@ -2367,8 +3270,10 @@ pub fn fn_key(e: el::El, name: text, arguments: vector<Argument>) -> text {
   // instance keys on its template, and its member slot is the template's (`method_family`):
   // not carried, refused by name.
   if td.instance_of >= 0 {
+    // Refused, but keyed as Rust keys it — on the template, `t_4Grid_at` — so the method and
+    // its instances register as Rust's do (register, then refuse).
     el::refuse(e, "a method receiver that is a generic instance");
-    return "";
+    td = el::def(e, td.instance_of);
   }
   // The standard library's types come with the image, their members included; a library's
   // take the program's methods as its own types do.
@@ -2408,6 +3313,11 @@ pub fn add_fn(e: el::El, key: text, name: text, arguments: vector<Argument>, pos
   if len(arguments) > 0 && arguments[0].name == "self" {
     t = arguments[0].typedef;
     tn = el_ex_base::type_def_nr(e, match t { TyRefVar { inner } => inner, _ => t });
+    // (`method_family`: a method on a generic instance takes its member on the TEMPLATE —
+    // `at: fn t_4Grid_at` on `Grid`, not on `Grid<T>`.)
+    if tn >= 0 && el::def(e, tn).instance_of >= 0 {
+      tn = el::def(e, tn).instance_of;
+    }
     if tn >= 0 {
       for a in el::def(e, tn).attributes {
         if a.name == name {

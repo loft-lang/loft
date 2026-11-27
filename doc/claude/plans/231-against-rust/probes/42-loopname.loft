@@ -1,0 +1,9 @@
+// @PLN231 R11 probe — two loops in one function reuse a variable name at two types (loft#915)
+// Expect on both backends: t=6
+struct A { x: integer }
+fn main() {
+  t = 0;
+  for e in [A { x: 1 }, A { x: 2 }] { t += e.x; }
+  for e in ["a", "bc"] { t += len(e); }
+  println("t={t}");
+}

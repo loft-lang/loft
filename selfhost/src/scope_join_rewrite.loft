@@ -1,0 +1,221 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/join_rewrite.rs` `write_out_joined_copies` transcribed: a JOIN copied
+// into a container (`OpCopyRecord(<branch>, dest, tp)`) gives every bare minting call arm the
+// owner block the parser gives it in a view-typed join (`{ __ref_N = call; __ref_N }`), before
+// any analysis reads the function.  The copy that HANDS a release over (into a place a
+// droppable-owning container reaches, or an appended element of a droppable type) is written
+// out per arm in Rust; it needs a type with a drop cascade, refused here by name.
+
+use ir;
+use own;
+use binds;
+use scope_fn;
+use scope_args;
+use opt_names;
+
+pub struct Rewritten {
+  pub code: ir::Node,
+  pub why: text
+}
+
+JOIN_ARM_OWNER = "join-arm-owner";
+
+// port: join_rewrite.rs fn write_out_joined_copies
+pub fn write_out_joined_copies(b: ir::Bundle, code: ir::Node, f: ir::Function) -> Rewritten {
+  r = Rewritten { code: code, why: "" };
+  copy_d = scope_fn::def_nr(b, "OpCopyRecord");
+  if copy_d < 0 {
+    return r;
+  }
+  r.code = visit(b, r, code, copy_d, f);
+  r
+}
+
+fn rebuild(n: ir::Node, kids: vector<ir::Node>) -> ir::Node {
+  match n {
+    NdSpan { pos } => ir::NdSpan { pos: pos, inner: kids[0]! },
+    NdCall { def_nr } => ir::NdCall { def_nr: def_nr, args: kids },
+    NdCallRef { var } => ir::NdCallRef { var: var, args: kids },
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: kids, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: kids, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert => ir::NdInsert { items: kids },
+    NdTuple => ir::NdTuple { items: kids },
+    NdSet { var } => ir::NdSet { var: var, inner: kids[0]! },
+    NdReturn => ir::NdReturn { inner: kids[0]! },
+    NdDrop => ir::NdDrop { inner: kids[0]! },
+    NdYield => ir::NdYield { inner: kids[0]! },
+    NdIf => ir::NdIf { cond: kids[0]!, t: kids[1]!, f: kids[2]! },
+    NdIter { var } => ir::NdIter { var: var, create: kids[0]!, next: kids[1]!, init: kids[2]! },
+    NdTuplePut { var, idx } => ir::NdTuplePut { var: var, idx: idx, inner: kids[0]! },
+    NdParallel => ir::NdParallel { arms: kids },
+    _ => n
+  }
+}
+
+// Children first, then the node (`for_each_child_mut` before the copy test).
+fn visit(b: ir::Bundle, r: Rewritten, n: ir::Node, copy_d: integer, f: ir::Function) -> ir::Node {
+  out: vector<ir::Node> = [for c in scope_fn::children(n) { visit(b, r, c, copy_d, f) }];
+  node = if len(out) > 0 { rebuild(n, out) } else { n };
+  match node {
+    NdSpan { pos, inner } => {
+      match inner {
+        NdCall => { return ir::NdSpan { pos: pos, inner: copy_site(b, r, inner, copy_d, f) }; },
+        _ => { return node; }
+      }
+    },
+    NdCall => { return copy_site(b, r, node, copy_d, f); },
+    _ => { return node; }
+  }
+}
+
+fn copy_site(b: ir::Bundle, r: Rewritten, node: ir::Node, copy_d: integer, f: ir::Function) -> ir::Node {
+  match node {
+    NdCall { def_nr, args } => {
+      if def_nr != copy_d || len(args) != 3 || !scope_args::is_value_branch(args[0]!) || !writable(args[0]!) {
+        return node;
+      }
+      match scope_fn::unspan(args[2]!) {
+        NdInt { n: tp } => if (tp / 32768) % 2 == 1 { return node; },
+        _ => {}
+      }
+      if copy_hands_off(b, args[1]!, f) || appends_to_element(b, args[1]!, f) {
+        if r.why == "" {
+          r.why = "join_rewrite::write_out_joined_copies: a join copied into a droppable container (handoff::copy_hands_off)";
+        }
+        return node;
+      }
+      // No release to hand over, but the store a bare call arm mints still needs an owner.
+      ir::NdCall { def_nr: copy_d, args: [own_calls(b, args[0]!, f), args[1]!, args[2]!] }
+    },
+    _ => node
+  }
+}
+
+// port: join_rewrite.rs fn writable
+fn writable(tail: ir::Node) -> boolean {
+  match scope_fn::unspan(tail) {
+    NdVar => true,
+    NdCall => true,
+    NdIf { t, f } => writable(t) && writable(f),
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name == JOIN_ARM_OWNER || bl.name == "Object" {
+        return true;
+      }
+      r = scope_fn::base(bl.result[0] ?? ir::TyVoid);
+      k = len(bl.operators);
+      !(r is TyVoid) && !(r is TyNull) && k > 0 && writable(bl.operators[k - 1]!)
+    },
+    NdInsert { items } => len(items) > 0 && writable(items[len(items) - 1]!),
+    _ => false
+  }
+}
+
+// A record type (through `base()`), or a vector's element record, with a drop cascade: the
+// stand-in for `Data::type_owns_droppable_anywhere`, whose types synthesize one.
+fn droppable(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  bt = scope_fn::base(t);
+  d = own::heap_def_nr(bt);
+  if d != null {
+    return opt_names::drop_cascade_nr(b, d!) != opt_names::NONE;
+  }
+  match bt {
+    TyVector { inner } => droppable(b, inner),
+    _ => false
+  }
+}
+
+// port: handoff.rs fn copy_hands_off
+fn copy_hands_off(b: ir::Bundle, dest: ir::Node, f: ir::Function) -> boolean {
+  cur = dest;
+  while true {
+    match scope_fn::unspan(cur) {
+      NdCall { def_nr, args } => {
+        nm = scope_args::def_name(b, def_nr);
+        if nm != "OpGetField" && nm != "OpGetVector" && nm != "OpVectorRef" || len(args) == 0 {
+          return false;
+        }
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: cv } => { return droppable(b, scope_fn::tp(f, cv)); },
+          _ => { cur = args[0]!; }
+        }
+      },
+      _ => { return false; }
+    }
+  }
+  false
+}
+
+// port: handoff.rs fn appends_to_element
+fn appends_to_element(b: ir::Bundle, dest: ir::Node, f: ir::Function) -> boolean {
+  match scope_fn::unspan(dest) {
+    NdVar { n: dv } => scope_fn::name(f, dv).starts_with("_elm_") && droppable(b, scope_fn::tp(f, dv)),
+    _ => false
+  }
+}
+
+// `JoinCopy::owned` — the owner block for a bare minting call, or null.
+fn owned(b: ir::Bundle, node: ir::Node, f: ir::Function) -> ir::Node? {
+  match scope_fn::unspan(node) {
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr]!;
+      if !binds::is_loft_defined(d) || !scope_fn::is_record(d.returned[0] ?? ir::TyVoid) {
+        return null;
+      }
+      for a in args {
+        match scope_fn::unspan(a) {
+          NdVar { n: v } => {
+            x = f.variables[v];
+            if x != null && x!.caller_hidden_buf {
+              return ir::NdBlock { block: [ir::Block { name: JOIN_ARM_OWNER, operators: [scope_fn::v_set(v, node), ir::NdVar { n: v }], result: [scope_fn::tp(f, v)], scope: 0, var_size: 0 }] };
+            }
+          },
+          _ => {}
+        }
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+// `JoinCopy::own_calls` — every bare minting call arm of the join its owner block.
+fn own_calls(b: ir::Bundle, node: ir::Node, f: ir::Function) -> ir::Node {
+  o = owned(b, node, f);
+  if o != null {
+    return o!;
+  }
+  match node {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: own_calls(b, inner, f) },
+    NdIf { cond, t, f: e } => ir::NdIf { cond: cond, t: own_calls(b, t, f), f: own_calls(b, e, f) },
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if bl.name == JOIN_ARM_OWNER || k == 0 {
+        return node;
+      }
+      ops = bl.operators;
+      ops[k - 1] = own_calls(b, ops[k - 1]!, f);
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return node;
+      }
+      ops = items;
+      ops[k - 1] = own_calls(b, ops[k - 1]!, f);
+      ir::NdInsert { items: ops }
+    },
+    _ => node
+  }
+}

@@ -3754,6 +3754,32 @@ pub(crate) fn callee_param_rebinds_owned(
     merged
 }
 
+/// Whether the operator `name` writes the record or collection its FIRST argument names: a
+/// field set, a push, a record build, a vector's or a keyed collection's write.  The one list
+/// of them, read by `find_field_written_vars` and by the `lost-write` lint's field-write
+/// clause (`use_analysis::scan_lost_temp_writes`).
+pub(crate) fn writes_its_first_argument(name: &str) -> bool {
+    name.starts_with("OpSet")
+        || name.starts_with("OpPush")
+        || name == "OpNewRecord"
+        || name == "OpAppendCopy"
+        || name == "OpAppendVector"
+        || name == "OpClearVector"
+        || name == "OpClearKeyed"
+        || name == "OpSetKeyed"
+        // @P320: keyed-remove `coll[key] = null` → `OpHashRemove(coll, …)`;
+        // mirror the find_written_vars set so a keyed remove inside a
+        // `for … in &coll` loop also counts as a mutation.
+        || name == "OpHashRemove"
+        || name == "OpInsertVector"
+        || name == "OpRemoveVector"
+        // Delivers into its FIRST arg (`vector_replace(&r, &other, tp)`) — the NRVO
+        // return buffer. Today every emit site also writes that slot another way
+        // (a `__retbuf = call(…)` Set, or the BlockTail path's `OpClearVector`), so
+        // the omission is masked INCIDENTALLY rather than by design.
+        || name == "OpReplaceVector"
+}
+
 /// Like `find_written_vars` but only collects variables that are FIELD-written
 /// (OpSet*, OpCopyRecord, OpNewRecord first-arg).  Excludes plain `Value::Set`
 /// which includes loop-iterator advance — that's not a user-initiated mutation.
@@ -3769,25 +3795,7 @@ pub(crate) fn find_field_written_vars(
     match code {
         Value::Call(fn_nr, args) => {
             let def = data.def(*fn_nr);
-            let first_arg_write = def.name().starts_with("OpSet")
-                || def.name().starts_with("OpPush")
-                || def.name() == "OpNewRecord"
-                || def.name() == "OpAppendCopy"
-                || def.name() == "OpAppendVector"
-                || def.name() == "OpClearVector"
-                || def.name() == "OpClearKeyed"
-                || def.name() == "OpSetKeyed"
-                // @P320: keyed-remove `coll[key] = null` → `OpHashRemove(coll, …)`;
-                // mirror the find_written_vars set so a keyed remove inside a
-                // `for … in &coll` loop also counts as a mutation.
-                || def.name() == "OpHashRemove"
-                || def.name() == "OpInsertVector"
-                || def.name() == "OpRemoveVector"
-                // Delivers into its FIRST arg (`vector_replace(&r, &other, tp)`) — the NRVO
-                // return buffer. Today every emit site also writes that slot another way
-                // (a `__retbuf = call(…)` Set, or the BlockTail path's `OpClearVector`), so
-                // the omission is masked INCIDENTALLY rather than by design.
-                || def.name() == "OpReplaceVector";
+            let first_arg_write = writes_its_first_argument(def.name());
             // OpRemove(state_var, data, on, tp) — a walk's `x#remove` — removes from the walked
             // collection `data` (arg[1]), as OpCopyRecord writes its destination.
             let second_arg_write = matches!(def.name(), "OpCopyRecord" | "OpRemove");

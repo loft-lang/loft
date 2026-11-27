@@ -212,10 +212,11 @@ pub fn tables(b: ir::Bundle, img: ir::RunImage) {
   shared: vector<integer> = [];
   for n in img.natives {
     nr = -1;
+    // The definition whose `native` is the symbol (`run_image_shared`): the symbol leads with
+    // the library's label, so it is no definition's name.
     if n.starts_with("loft_shared_") && !n.contains("#") {
-      name = n[12..];
       for d in b.data.definitions {
-        if d.name == name && nr < 0 {
+        if d.native == n && nr < 0 {
           nr = d#index;
         }
       }

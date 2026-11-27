@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the IR passes `compile::close_program` runs after the scope pass, transcribed one by
+// one (doc/claude/plans/91-self-host/scope-pass-port.md step 4).  Each pass runs over the whole
+// program in Rust's order; a pass not transcribed yet runs as no pass, and the passes gate
+// (`selfhost/bench/passes_survey.py`) shows each definition it would have changed as a
+// difference.
+use ir;
+use ir_arg_copy;
+use ir_value_record;
+use ir_leaf_inline;
+use ir_tail_self;
+use ir_zero_count;
+use ir_exp_pow;
+use ir_forward_walk;
+use ir_same_read;
+use ir_self_replace;
+use ir_in_range;
+use ir_single_use;
+use ir_discharge_into;
+use ir_fill_loop;
+use ir_keyed_entry;
+use ir_elem_first;
+use ir_text_len;
+use ir_loop_buffer;
+use ir_complete_write;
+use ir_loop_record;
+use ir_lift_reuse;
+
+// `close_program`'s passes over `b`, in order.  Answers the functions a pass refuses by name.
+pub fn close_program(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  // Transcribed passes are called here, in `close_program`'s order: sync_capture_ownership,
+  // ledger_sites, arg_copy, value_record, leaf_inline, tail_self, zero_count, exp_pow,
+  // ctor_literal, forward_walk, same_read, self_replace, in_range, single_use, discharge_into,
+  // fill_loop, keyed_entry, elem_first, text_len, loop_buffer, complete_write, loop_record,
+  // lift_reuse.
+  // `@FR-F-ParamText` — a store-viewing text argument keeps its copy only where the call can
+  // write a store.
+  ir_arg_copy::rewrite_program(b);
+  // `@FR-R-ValueRecord`, `@FR-R-ValueLocal` — a small record that only travels between loft
+  // functions is carried as a tuple.
+  refused += ir_value_record::rewrite_program(b);
+  // `@FR-R-InlineLeaf` (with `R-MaskRange`, `R-SingleUse`, `R-ScaleFold` inside the inlined
+  // bodies) — after the value records, so a leaf it inlines is final.
+  ir_leaf_inline::rewrite_program(b);
+  // `@FR-R-TailSelf` — a self-call in tail position of a function is a jump to its entry.
+  refused += ir_tail_self::rewrite_program(b);
+  // `@FR-R-ZeroCount` — a character count compared with zero reads the byte count.
+  ir_zero_count::rewrite_program(b);
+  // `@FR-R-ExpPow` — `pow(E, x)` is `exp(x)`.
+  ir_exp_pow::rewrite_program(b);
+  // `@FR-R-ForwardWalk` — a vector walk the body cannot resize as a counted loop.
+  ir_forward_walk::rewrite_program(b);
+  // `@FR-R-SameRead` — a discharged read a statement spells twice, read once.
+  ir_same_read::rewrite_program(b);
+  // `@FR-R-SelfReplace` — a vector delivered into the buffer it already is, dropped.
+  ir_self_replace::rewrite_program(b);
+  // `@FR-R-InRange` — a record element its loop proves in range, read without a discharge.
+  ir_in_range::rewrite_program(b);
+  // `@FR-R-SingleUse`'s statement clause — a comprehension's element temporary.
+  ir_single_use::rewrite_program(b);
+  // `@FR-R-DischargeInto` — a text discharge read straight into the local it assigns.
+  ir_discharge_into::rewrite_program(b);
+  // `@FR-R-PushFill`'s fill form — a counted loop that pushes one invariant onto a vector
+  // variable is one fill of its tail.
+  ir_fill_loop::rewrite_program(b);
+  // `@FR-R-KeyedEntry` — a keyed insert written into the entry its key names.
+  ir_keyed_entry::rewrite_program(b);
+  // `@FR-R-ElemFirst` — a literal-built vector appended once as a record field is built in the
+  // appended element.
+  refused += ir_elem_first::rewrite_program(b);
+  // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written.
+  ir_text_len::rewrite_program(b);
+  // `@FR-R-LoopBuffer` — a vector local declared `[]` inside a loop keeps its store and its
+  // vector across the passes.  LAST of the rewrites: it leaves every buffer another rule owns.
+  ir_loop_buffer::rewrite_program(b);
+  // `@FR-R-CompleteWrite` — a copy into a field of an element its literal just minted is flagged
+  // fresh.
+  ir_complete_write::rewrite_program(b);
+  // `@FR-R-LoopRecord` — a record local minted by a literal inside a loop keeps its store
+  // across the passes.
+  ir_loop_record::rewrite_program(b);
+  // `@FR-R-LiftReuse` — the scalar lifts of different top-level statements share their
+  // variables.  Last: it renumbers variables the passes above name.
+  ir_lift_reuse::rewrite_program(b);
+  refused
+}
+
+// The host's `Definition::native` marks of `closed` carried into `b`: the bridge symbol a native
+// library build exports, set between the scope pass and `close_program` (`native_adopt`), so a
+// scoped image does not hold it.  The passes gate hands it over (`selfhost/compare/passed.loft`).
+pub fn carry_native(b: ir::Bundle, closed: ir::Bundle) {
+  for d in b.data.definitions {
+    p = closed.data.definitions[d#index];
+    if p != null && p.name == d.name && p.native != d.native {
+      b.data.definitions[d#index].native = p.native;
+    }
+  }
+}

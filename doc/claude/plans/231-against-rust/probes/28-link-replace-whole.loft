@@ -1,0 +1,7 @@
+// @PLN231 R10 probe — a whole-value replace through a link to an element
+// Expect on both backends: 7 / 50
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy>, name: text }
+fn hurt(e: Enemy, d: integer) { e.hp -= d; }
+fn mk() -> State { State { enemies: [Enemy { hp: 100 }, Enemy { hp: 50 }], name: "s" } }
+fn main() { s = mk(); e = &s.enemies[0]; e = Enemy { hp: 7 }; println("{s.enemies[0].hp} / {s.enemies[1].hp}"); }

@@ -1,0 +1,376 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/text_len.rs` transcribed (`@FR-R-TextLen`): a loop counts a text's length once,
+// until the text is written.
+//
+//   while i < len(t) { … }     →   m = -1;
+//                                  while { if m < 0 { m = len(t) }; i < m } { …; t += x; m = -1; … }
+//
+// For a text VARIABLE `t` that borrows from nothing and does not escape the function, every
+// `len(t)` in a loop reads a memo instead: the count is made before the innermost statement that
+// reads it, when the memo is clear, and every statement that may write `t` clears the memo after
+// it.  The memo is cleared before each entry to the outermost loop that reads `len(t)`.  A
+// function that yields or runs arms in parallel is left alone.
+
+use ir;
+use scope_fn;
+use lower;
+use cgen_types;
+use opt_non_sentinel;
+use ir_pass_tree;
+
+struct Ops {
+  // `OpLengthText` and the stdlib method `len(self: text)`: the two spellings of a count.
+  op_len: integer,
+  method_len: integer,
+  lt: integer,
+  int_tp: ir::TypeT,
+  // The function body's scope, which a memo is declared in.
+  scope: integer,
+  // Per candidate text (`cands[k]`), the text variables it borrows from (`deps[k]`, a list).
+  cands: vector<integer>,
+  deps: vector<Deps>
+}
+
+struct Deps { d: vector<integer> }
+
+// The memo of each memoised text: `texts` ascending (a `BTreeMap`), `vars` beside it.
+struct Memo {
+  texts: vector<integer>,
+  vars: vector<integer>
+}
+
+fn memo_of(memo: Memo, t: integer) -> integer {
+  for x in memo.texts {
+    if x == t {
+      return memo.vars[x#index]!;
+    }
+  }
+  -1
+}
+
+// `pure_reuse::text_write_target` (scope_pure.loft holds a private copy): the operand an operator
+// writes a text or a store through, -1 for none.
+fn text_write_target(nm: text) -> integer {
+  for t in ["OpAppendText", "OpAppendStackText", "OpAppendCharacter", "OpAppendStackCharacter", "OpAppendTextBytes", "OpClearText", "OpClearStackText", "OpClearVector", "OpSetTextReplace", "OpFormatText", "OpFormatStackText", "OpFormatInt", "OpFormatStackInt", "OpFormatFloat", "OpFormatStackFloat", "OpFormatSingle", "OpFormatStackSingle", "OpFormatDatabase", "OpFormatStackDatabase", "OpPutRef", "OpPutText", "OpPutInt", "OpPutFloat", "OpPutSingle", "OpPutBool", "OpPutCharacter", "OpPutEnum", "OpPutNarrow"] {
+    if nm == t {
+      return 0;
+    }
+  }
+  // `pure_reuse::write_target`
+  if nm == "OpCopyRecord" {
+    return 1;
+  }
+  if nm.starts_with("OpSet") || nm == "OpDatabase" || nm == "OpPreAllocVector" || nm == "OpAppendVector" || nm == "OpAppendCopy" || nm == "OpNewRecord" || nm == "OpFinishRecord" || nm == "OpSliceVector" || nm == "OpSliceView" || nm.starts_with("OpPush") {
+    return 0;
+  }
+  -1
+}
+
+// `BTreeSet::insert`: `x` added to the ascending set `s` where it is not in it yet.
+fn set_insert(s: vector<integer>, x: integer) {
+  if s.contains(x) {
+    return;
+  }
+  s += [x];
+  k = len(s) - 1;
+  while k > 0 && s[k - 1]! > s[k]! {
+    tmp = s[k - 1]!;
+    s[k - 1] = s[k]!;
+    s[k] = tmp;
+    k -= 1;
+  }
+}
+
+// The text variable a node counts, when it is a count of one of `cands`; -1 otherwise.
+fn count_of(v: ir::Node, ops: Ops, cands: vector<integer>) -> integer {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => {
+      if (def_nr == ops.op_len || def_nr == ops.method_len) && len(args) == 1 {
+        t = ir_pass_tree::var_of(args[0]!);
+        if t != null && cands.contains(t!) {
+          return t!;
+        }
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// The texts of `cands` that `v` counts anywhere.
+fn counted(v: ir::Node, ops: Ops, cands: vector<integer>, out: vector<integer>) {
+  t = count_of(v, ops, cands);
+  if t >= 0 {
+    set_insert(out, t);
+  }
+  for c in scope_fn::children(v) {
+    counted(c, ops, cands, out);
+  }
+}
+
+fn stops(v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  u is NdBlock || u is NdLoop || u is NdInsert
+}
+
+// The texts of `memo` a statement may write ITSELF — a rebind, an operator whose written-text
+// operand names it, a release — outside the statement lists nested in it.
+fn written(b: ir::Bundle, v: ir::Node, ops: Ops, memo: Memo, out: vector<integer>) {
+  x = -1;
+  match scope_fn::unspan(v) {
+    NdSet { var } => { x = var; },
+    NdCall { def_nr, args } => {
+      name = ir_pass_tree::def_name(b, def_nr);
+      k = text_write_target(name);
+      if k < 0 && name.starts_with("OpFree") {
+        k = 0;
+      }
+      if k >= 0 && k < len(args) {
+        x = ir_pass_tree::var_of(args[k]!) ?? -1;
+      }
+    },
+    NdBlock => return,
+    NdLoop => return,
+    NdInsert => return,
+    _ => {}
+  }
+  if x >= 0 {
+    // A write to `x` writes every memoised text that is `x` or borrows from it.
+    for t in memo.texts {
+      if t == x || deps_of(ops, t).contains(x) {
+        set_insert(out, t);
+      }
+    }
+  }
+  for c in scope_fn::children(v) {
+    written(b, c, ops, memo, out);
+  }
+}
+
+fn deps_of(ops: Ops, t: integer) -> vector<integer> {
+  for c in ops.cands {
+    if c == t {
+      return ops.deps[c#index]!.d;
+    }
+  }
+  []
+}
+
+// The texts of `cands` a statement counts ITSELF: outside the statement lists nested in it.
+fn counted_direct(v: ir::Node, ops: Ops, cands: vector<integer>, out: vector<integer>) {
+  t = count_of(v, ops, cands);
+  if t >= 0 {
+    set_insert(out, t);
+    return;
+  }
+  if stops(v) {
+    return;
+  }
+  for c in scope_fn::children(v) {
+    counted_direct(c, ops, cands, out);
+  }
+}
+
+// Every count a statement makes itself (as `counted_direct`) becomes a read of its memo.
+fn replace_direct(v: ir::Node, ops: Ops, memo: Memo) -> ir::Node {
+  t = count_of(v, ops, memo.texts);
+  if t >= 0 {
+    return ir::NdVar { n: memo_of(memo, t) };
+  }
+  if stops(v) {
+    return v;
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { replace_direct(c, ops, memo) }])
+}
+
+// Rewrite the statement lists nested in `v` (not `v` itself).
+fn nested_lists(b: ir::Bundle, v: ir::Node, ops: Ops, memo: Memo) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: nested_lists(b, inner, ops, memo) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, statements(b, block[0]!.operators, ops, memo))] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, statements(b, block[0]!.operators, ops, memo))] },
+    NdInsert { items } => ir::NdInsert { items: statements(b, items, ops, memo) },
+    _ => {
+      kids = scope_fn::children(v);
+      if len(kids) == 0 {
+        return v;
+      }
+      ir_pass_tree::with_children(v, [for c in kids { nested_lists(b, c, ops, memo) }])
+    }
+  }
+}
+
+// One statement list inside a memoised loop: its nested lists first, then each statement's own
+// counts filled before it, and the memo of each text it may write cleared after it.
+fn statements(b: ir::Bundle, list: vector<ir::Node>, ops: Ops, memo: Memo) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for s0 in list {
+    s = nested_lists(b, s0, ops, memo);
+    reads: vector<integer> = [];
+    counted_direct(s, ops, memo.texts, reads);
+    writes: vector<integer> = [];
+    written(b, s, ops, memo, writes);
+    s = replace_direct(s, ops, memo);
+    for t in reads {
+      m = memo_of(memo, t);
+      out += [ir::NdIf {
+        cond: ir::NdCall { def_nr: ops.lt, args: [ir::NdVar { n: m }, ir::NdInt { n: 0 }] },
+        t: ir::NdSet { var: m, inner: ir::NdCall { def_nr: ops.op_len, args: [ir::NdVar { n: t }] } },
+        f: ir::NdNull
+      }];
+    }
+    out += [s];
+    for t in writes {
+      out += [ir::NdSet { var: memo_of(memo, t), inner: ir::NdInt { n: -1 } }];
+    }
+  }
+  out
+}
+
+// Find the outermost loops in the statement list `list` (and in the lists below the ones that
+// are not loops) and memoise the counts each makes.
+fn loops_in(b: ir::Bundle, list: vector<ir::Node>, f: ir::Function, ops: Ops) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for s in list {
+    match scope_fn::unspan(s) {
+      NdLoop => {
+        texts: vector<integer> = [];
+        counted(s, ops, ops.cands, texts);
+        if len(texts) == 0 {
+          out += [s];
+          continue;
+        }
+        memo = Memo { texts: texts, vars: [] };
+        for _ in texts {
+          memo.vars += [ir_pass_tree::add_unique(f, "len", ops.int_tp, ops.scope)];
+        }
+        if (env_variable("LOFT_TRACE_TEXT_LEN") ?? "") != "" {
+          eprintln("text_len: {f.name} counts {[for t in texts { scope_fn::name(f, t) }].join(", ")} once per write");
+        }
+        k = len(memo.vars);
+        while k > 0 {
+          k -= 1;
+          out += [ir::NdSet { var: memo.vars[k]!, inner: ir::NdInt { n: -1 } }];
+        }
+        out += [loop_statements(b, s, ops, memo)];
+      },
+      _ => { out += [lists_below(b, s, f, ops)]; }
+    }
+  }
+  out
+}
+
+// The loop under `s`'s spans with its statements memoised.
+fn loop_statements(b: ir::Bundle, s: ir::Node, ops: Ops, memo: Memo) -> ir::Node {
+  match s {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: loop_statements(b, inner, ops, memo) },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, statements(b, block[0]!.operators, ops, memo))] },
+    _ => s
+  }
+}
+
+fn lists_below(b: ir::Bundle, v: ir::Node, f: ir::Function, ops: Ops) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: lists_below(b, inner, f, ops) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, loops_in(b, block[0]!.operators, f, ops))] },
+    NdInsert { items } => ir::NdInsert { items: loops_in(b, items, f, ops) },
+    _ => {
+      kids = scope_fn::children(v);
+      if len(kids) == 0 {
+        return v;
+      }
+      ir_pass_tree::with_children(v, [for c in kids { lists_below(b, c, f, ops) }])
+    }
+  }
+}
+
+fn any_loop(n: ir::Node) -> boolean {
+  if n is NdLoop {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if any_loop(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn yields_or_par(n: ir::Node) -> boolean {
+  if n is NdYield || n is NdParallel {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if yields_or_par(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_text(f: ir::Function, v: integer) -> boolean {
+  cgen_types::base(scope_fn::tp(f, v)) is TyText
+}
+
+// port: text_len.rs fn rewrite_program — the text counts of every loop of every function
+// memoised.
+pub fn rewrite_program(b: ir::Bundle) {
+  if (env_variable("LOFT_NO_TEXT_LEN") ?? "") != "" {
+    return;
+  }
+  method_len = lower::find(b, "t_4text_len") ?? -1;
+  op_len = lower::find(b, "OpLengthText") ?? -1;
+  lt = lower::find(b, "OpLtInt") ?? -1;
+  if op_len < 0 || lt < 0 {
+    return;
+  }
+  int_tp = b.data.definitions[op_len]!.returned[0] ?? ir::TyVoid;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) {
+      continue;
+    }
+    code = d.code[0]!;
+    if !any_loop(code) || yields_or_par(code) {
+      continue;
+    }
+    f = d.variables;
+    // The candidates: text variables that borrow from nothing and do not escape.
+    escaped: vector<boolean> = [for _ in f.variables { false }];
+    opt_non_sentinel::collect_escapes(b, code, escaped);
+    ops = Ops { op_len: op_len, method_len: method_len, lt: lt, int_tp: int_tp, scope: 0, cands: [], deps: [] };
+    for v in 0..scope_fn::count(f) {
+      dl = [for x in scope_fn::deps(f, v) if x != v { x }];
+      ok = is_text(f, v) && !(escaped[v] ?? false);
+      for x in dl {
+        if !is_text(f, x) || (escaped[x] ?? false) {
+          ok = false;
+        }
+      }
+      if ok {
+        ops.cands += [v];
+        ops.deps += [Deps { d: dl }];
+      }
+    }
+    if len(ops.cands) == 0 {
+      continue;
+    }
+    texts: vector<integer> = [];
+    counted(code, ops, ops.cands, texts);
+    if len(texts) == 0 {
+      continue;
+    }
+    ops.scope = match code { NdBlock { block } => block[0]!.scope, _ => 0 };
+    d_nr = d#index;
+    nc = lists_below(b, code, f, ops);
+    b.data.definitions[d_nr].code = [nc];
+    // The memos are locals the scope pass never saw: the function's live intervals and slots
+    // are computed again.
+    ir_pass_tree::relayout(b, d_nr);
+  }
+}

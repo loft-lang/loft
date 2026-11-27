@@ -68,6 +68,8 @@ pub struct VView {
   pub root_f: integer,
   pub ptp: integer,
   pub fld: integer,
+  // The viewed field's type of an `Elem` leaf (`LeafSource::Elem::tp`), read by the IR pass.
+  pub tp: integer,
 }
 
 // The program's value-record answer (`ValueRecords`).  Per definition: the layout key of an

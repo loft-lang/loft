@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — the optimisation layer: what the C does with this (b_fused)
+// Read with: loft --native-emit out.c <file>, then n_work__fr in out.c
+fn work(v: vector<integer>) -> vector<integer> { [for x in v if x % 2 == 0 { x * 10 }] }
+fn main() { v = [1, 2, 3, 4, 5, 6]; println("{work(v)}"); }

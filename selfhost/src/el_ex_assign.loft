@@ -774,7 +774,7 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     SBin { at, op, l, r } => el_ex_call::binary(e, vars, at, op, l, r),
     SUnary { op, e: ue } => el_ex_vector::unary(e, vars, op, ue),
     SIf { cond, then, other } => el_ex_null::if_expr(e, vars, cond, then, other, if n == vars.expect_node { el_types::without_deps(vars.expect) } else { ir::TyVoid }),
-    SStructLit { name, member, fields, base } => el_ex_object::object_expr(e, vars, name, member, fields, base),
+    SStructLit { at: sla, name, member, fields, base } => if base == null && el_ex_object::forward_literal(e, vars, name, member, sla) { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { el_ex_object::object_expr(e, vars, name, member, fields, base) },
     SFor { at: _ } => el_ex_loop::for_expr(e, vars, n),
     SWhile { cond, body } => el_ex_pattern::while_expr(e, vars, cond, body),
     SMatch { subject, arms } => el_ex_match::match_expr(e, vars, subject, arms, node: n),
@@ -792,9 +792,26 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     // An empty `[]` with no element type yet answers `parse_vector`'s untyped marker
     // (`Insert([Null])`), which the position it is converted to builds (`empty_literal_to`).
     SVecLit { items } => {
-      kl = if len(items) == 0 { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
+      // (An empty `[]` where a keyed collection is expected is that collection, empty.)
+      kl = if len(items) == 0 && !(vars.expect_node == n && keyed_kind(vars.expect)) { null } else { el_ex_vector::keyed_tail_literal(e, vars, n) };
+      // A non-empty literal whose position expects a KEYED collection, which `keyed_tail_literal`
+      // still does not build (a nullable tail result): Rust reads it as that collection
+      // (`parse_vector`'s keyed arm) and registers no vector for it, so it is refused before it
+      // is read as a vector — read, it minted a `vector<E>` / `main_vector<E>` Rust never has.
+      kres = if e.context >= 0 { el::def(e, e.context).returned[0] ?? ir::TyVoid } else { ir::TyVoid };
+      if kl == null && len(items) > 0 && ((vars.expect_node == n && keyed_kind(el_types::base(vars.expect))) || (keyed_kind(el_types::base(kres)) && el_ex_deliver::tail_syntax(e, vars.body) == n)) {
+        el::refuse(e, "a vector literal answered as a keyed collection");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
       // (A tail literal is checked at the result's element, `@FR-T-Chk-Vec`.)
       tail_elem = if vars.expect_node == n { match el_types::base(vars.expect) { TyVector { inner } => inner, _ => ir::TyUnknown { n: 0 } } } else { ir::TyUnknown { n: 0 } };
+      // (…and the function's own tail, read against its declared result as Rust's `expected` is
+      // the result while the body's tail is parsed: `-> vector<(float, integer)> { [(1, 2)] }`.)
+      // (A tuple element only: a record tail keeps its element temp bare, as Rust's does —
+      // try f39279d66.)
+      if el_types::is_unknown(tail_elem) && el_ex_deliver::tail_syntax(e, vars.body) == n {
+        tail_elem = match el_types::base(kres) { TyVector { inner } => if (el_types::base(inner) is TyTuple) || (el_types::base(inner) is TyVector) { inner } else { ir::TyUnknown { n: 0 } }, _ => ir::TyUnknown { n: 0 } };
+      }
       // `parse_vector`'s `vector_def`: an empty `[]` whose element the position expects registers
       // that element's `vector<…>` and `main_vector<…>` where it stands, on the first pass, as a
       // literal with items does (a match arm's `_ => []` under the function's `-> vector<E>`).
@@ -808,6 +825,12 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           }
           el_schema::make_vector_def(e, tail_elem, enm, el::pos_at(e, eat), true, narrow_early: false);
         }
+      }
+      // (The empty tail beside early returns is built into its own store, `empty_literal_to`.)
+      if kl == null && len(items) == 0 && vars.empty_tail == n && !el_types::is_unknown(tail_elem) {
+        vars.empty_tail = -1;
+        etv = ir::TyVector { inner: tail_elem, dep: [] };
+        return ex(el_ex_pattern::empty_literal_to(e, vars, etv), etv);
       }
       if kl != null { kl! } else if len(items) == 0 { ex(ir::NdInsert { items: [ir::NdNull] }, ir::TyUnknown { n: 0 }) } else if !el_types::is_unknown(tail_elem) { el_ex_pattern::vector_value(e, vars, n, elem: tail_elem).x } else { el_ex_pattern::vector_value(e, vars, n, hinted: vars.bare_literal != n).x }
     },
@@ -838,9 +861,18 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
       if vpd >= 0 {
         vpt = if el::def(e, vpd).def_type == el::DT_STRUCT { ir::TyReference { n: vpd, dep: [] } } else { el_types::without_deps(el::def(e, vpd).returned[0] ?? ir::TyUnknown { n: 0 }) };
         vpn = el_types::elem_name(e, vpt);
-        if vpn != "" && el::def_nr(e, "main_vector<{vpn}>") < 0 {
-          el_schema::make_vector_def(e, vpt, vpn, el::pos_at(e, el_ex_object::past_call(e, vpa)), true);
+        if vpn != "" && el_schema::wants_vector_def(e, vpn) {
+          el_schema::make_vector_def(e, vpt, vpn, el::pos_at(e, el::past_call(e, vpa)), true);
         }
+      }
+      el::refuse(e, "an expression form: {syn_kind(e, n)}");
+      ex(ir::NdNull, ir::TyUnknown { n: 0 })
+    },
+    // `$` in a struct's own declaration — a field's computed value or default — is the record
+    // (`parse_var`: `Var(0)`, a reference to the struct).
+    SDollar => {
+      if e.context >= 0 && el::def(e, e.context).def_type == el::DT_STRUCT {
+        return ex(ir::NdVar { n: 0 }, ir::TyReference { n: e.context, dep: [] });
       }
       el::refuse(e, "an expression form: {syn_kind(e, n)}");
       ex(ir::NdNull, ir::TyUnknown { n: 0 })
@@ -1070,6 +1102,18 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
       b = append_place(e, vars, tin!);
       bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
       td = match el_types::base(bt) { TyReference { n: tn } => if starts_with(el::def(e, tn).name, "__tuple<") { tn } else { -1 }, _ => -1 };
+      // (…and so is a member of an ELEMENT of a vector of tuples, `y[0].1`: the element is its
+      // `__tuple<…>` record in the vector's store, the member a field read rooted at the vector.)
+      if td < 0 && e.p.nodes[tin!] is SIndex {
+        match el_types::base(bt) {
+          TyTuple { elems: tge } => {
+            if index >= 0 && index < len(tge) {
+              return AppendPlace { root: b.root, tp: tge[index]! };
+            }
+          },
+          _ => {}
+        }
+      }
       if td < 0 || index < 0 || index >= len(el::def(e, td).attributes) {
         return AppendPlace { root: -1, tp: ir::TyVoid };
       }
@@ -1103,7 +1147,262 @@ fn repoint_place(e: el::El, code: ir::Node) -> ir::Node? {
   }
 }
 
+// Is keyed field read `n` (`OpGetField(b, pos, kt)`) one of two or more keyed fields of its struct
+// over the same record — a group sharing its records (`origin_is_group_member`)?
+fn keyed_group_member(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { args } => {
+      if len(args) != 3 {
+        return false;
+      }
+      r = place_root(e, el_ir::unspan(args[0]!));
+      sd = if r >= 0 { struct_ref(e, el_types::base(el_vars::tp(vars, r))) } else { -1 };
+      if sd < 0 {
+        return false;
+      }
+      pos = match el_ir::unspan(args[1]!) { NdInt { n: pn } => pn, _ => -1 };
+      me = -1;
+      for a in el::def(e, sd).attributes {
+        if el_schema::field_position(e, el::def(e, sd).known_type, a.name) == pos {
+          me = el_types::keyed_elem(el_types::base(a.typedef[0] ?? ir::TyVoid));
+        }
+      }
+      if me < 0 {
+        return false;
+      }
+      n_same = 0;
+      for a in el::def(e, sd).attributes {
+        at = el_types::base(a.typedef[0] ?? ir::TyVoid);
+        if keyed_kind(at) && el_types::keyed_elem(at) == me {
+          n_same += 1;
+        }
+      }
+      n_same > 1
+    },
+    _ => false
+  }
+}
+
+// `assign_keyed_rebind` for a CALL of a loft function answering a collection: replaced into the
+// local (`v = null; OpReplaceKeyed(call, v, type)`), the call's store freed after where it gives
+// it away, a record or collection argument's store protected around it.  Read by the plain bind
+// and by a declared keyed local (`dn: hash<H[k]>? = mk(5)`).
+pub fn keyed_call_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, kcur: ir::TypeT, kg: vector<ir::Node>) -> Ex {
+  cd = match el_ir::unspan(x.code) { NdCall { def_nr: cdn } => cdn, _ => -1 };
+
+  plain_args = true;
+  for ca in el::def(e, cd).attributes {
+    cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
+    if !(is_scalar(cb) || cb is TyText) {
+      plain_args = false;
+    }
+  }
+  // A call handed the bound local itself (`a = grow(a, 7)`, `protectable_ref_args`): the
+  // local's store protected from the call's frees while it runs, then replaced into.
+  self_only = !plain_args && match el_ir::unspan(x.code) {
+    NdCall { args: sa } => {
+      ok = true;
+      for sx in sa {
+        sxt = match el_ir::unspan(sx) { NdVar { n: sxv } => el_types::base(el_vars::tp(vars, sxv)), _ => ir::TyVoid };
+        heap_arg = !(sxt is TyVoid) && !(is_scalar(sxt) || sxt is TyText);
+        if heap_arg && el_ir::unspan(sx) != ir::NdVar { n: v } {
+          ok = false;
+        }
+        if !(el_ir::unspan(sx) is NdVar) && !(el_ir::unspan(sx) is NdInt) && !(el_ir::unspan(sx) is NdText) && el_ir::reads_var(sx, v) {
+          ok = false;
+        }
+      }
+      ok && el_ir::reads_var(x.code, v)
+    },
+    _ => false
+  };
+  pd = el::def_nr(e, "n_protect_store_frees");
+  ud = el::def_nr(e, "n_unprotect_store_frees");
+  if self_only && pd >= 0 && ud >= 0 && el_ex_link::gives_away_its_store(e, x.code) {
+    el_vars::drop_use(vars, v);
+    kt = el_schema::keyed_type(e, el_types::base(kcur));
+    // (A captured local's guard sits in the replace's destination, as for a join.)
+    sdest = ir::NdVar { n: v };
+    scond = el_ex_tuple::cap_rebind_cond(e, vars, v);
+    if scond != null {
+      vars.cap_guard_done = true;
+      sdest = el_ir::v_block([el_ir::v_if(scond!, ir::NdInsert { items: [el_ex_tuple::cap_detach(e, vars, v), el_ir::v_set(v, ir::NdNull)] }, ir::NdNull), ir::NdVar { n: v }], el_types::with_deps(el_types::base(kcur), [v]), "keyed rebind");
+    }
+    sitems = kg + [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: v }] }, el_ir::cl(e, "OpReplaceKeyed", [x.code, sdest, ir::NdInt { n: kt + 32768 }]), ir::NdCall { def_nr: ud, args: [ir::NdVar { n: v }] }];
+    // (The store the closure still holds was protected under the local before the detach:
+    // released from the protection through the record.)
+    if scond != null {
+      for cs in vars.cap_slots {
+        if cs.var == v {
+          cw = ir::NdVar { n: cs.clos };
+          live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [cw]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [cw]));
+          sitems += [el_ir::v_if(live, ir::NdCall { def_nr: ud, args: [el_ir::cl(e, "OpGetDbRef", [cw, ir::NdInt { n: cs.pos }])] }, ir::NdNull)];
+        }
+      }
+    }
+    return ex(ir::NdInsert { items: sitems }, ir::TyVoid);
+  }
+  if plain_args && el_ex_link::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
+    el_vars::drop_use(vars, v);
+    kt = el_schema::keyed_type(e, el_types::base(kcur));
+    return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
+  }
+  // loft#1140 (`assign_keyed_rebind`, keyed-bind-call-with-heap-args.md): a loft call handed
+  // a record or a collection.  The source-free bit is `call_return_frees_source` (the
+  // callee hands back no caller store, or the bracket covers every argument), and where it
+  // is set the argument stores are protected from the replace's free while it runs
+  // (`protectable_ref_args`, the @P290 bracket) — less a slot the value itself binds to a
+  // value (`bound_to_a_value_in`: a vector literal's `_vec_N`).  The local borrows nothing.
+  // (A call handed the local itself takes this form too where the self-only arm above,
+  // a callee that gives its store away, did not apply: `a = add(a, x)` with `add`
+  // answering its parameter.)
+  if !plain_args && pd >= 0 && ud >= 0 && !starts_with(el::def(e, cd).name, "Op") && el_ex_tuple::cap_rebind_cond(e, vars, v) == null {
+    // (`is_struct_returning_call`: only a loft function with a body sets the bit.)
+    ksr = el_ex_bind::struct_returning_call(e, x.code);
+    el_vars::drop_use(vars, v);
+    kt = el_schema::keyed_type(e, el_types::base(kcur));
+    kdefs = own::new_defs();
+    frees = ksr && binds::call_return_frees_source(e.b, own::ops_of(e.b), e.context, kdefs, x.code);
+    guarded: vector<integer> = [];
+    if frees {
+      inner: vector<integer> = [];
+      el_ex_bind::bound_to_a_value_in(x.code, inner);
+      for gs in binds::protectable_ref_args(e.b, kdefs, x.code).slots {
+        if !inner.contains(gs) {
+          guarded += [gs];
+        }
+      }
+    }
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+    kseq = kg;
+    if !el_ir::reads_var(x.code, v) {
+      kseq += [el_ir::v_set(v, ir::NdNull)];
+    }
+    for gs in guarded {
+      kseq += [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: gs }] }];
+    }
+    kseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if frees { kt + 32768 } else { kt } }])];
+    for gs in guarded {
+      kseq += [ir::NdCall { def_nr: ud, args: [ir::NdVar { n: gs }] }];
+    }
+    return ex(ir::NdInsert { items: kseq }, ir::TyVoid);
+  }
+  // A keyed FIELD of a record (through its fields): the field's collection replaced
+  // into the local, which is its own copy.
+  // A NESTED projection (`m.inn.h`, a field of an element) is a view of its root instead
+  // (`@FR-B-View-Depth`): bound as the read, borrowing the root.
+  direct = match el_ir::unspan(x.code) { NdCall { args: ga } => len(ga) > 0 && el_ir::unspan(ga[0]) is NdVar, _ => false };
+  if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 && !direct {
+    el_vars::drop_use(vars, v);
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), [place_root(e, el_ir::unspan(x.code))]));
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
+  if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 {
+    el_vars::drop_use(vars, v);
+    // (The local holds its own copy: it borrows nothing of the source.)
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+    kt = el_schema::keyed_type(e, el_types::base(kcur));
+    return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+  }
+  el::refuse(e, "a keyed local bound from something other than a local");
+  return ex(ir::NdNull, ir::TyVoid);
+}
+
+// `assign_keyed_rebind` for a JOIN (an `if`, or a `??`'s `ncc` block): copied into the local as a
+// whole — the source-free bit set where an arm is a call that may free its source, every other
+// arm's stores protected around the copy.  Null where no such join is read.
+fn keyed_join_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, kcur: ir::TypeT, kg: vector<ir::Node>) -> Ex? {
+  // loft#1154 (`join_source_frees`): any other join is replaced in as a whole.  Where an
+  // arm is a call that may free its source, the source-free bit is set and every arm's
+  // stores are protected (the freeing call's `protectable_ref_args`, every other arm's
+  // `view_root_slots`); an arm that names no slot leaves the bit off and no bracket.
+  jpd = el::def_nr(e, "n_protect_store_frees");
+  jud = el::def_nr(e, "n_unprotect_store_frees");
+  if jpd >= 0 && jud >= 0 && el_ex_tuple::cap_rebind_cond(e, vars, v) == null {
+    jarms: vector<ir::Node> = [];
+    el_ex_bind::join_arms(e, x.code, jarms);
+    if len(jarms) >= 2 {
+      el_vars::drop_use(vars, v);
+      jkt = el_schema::keyed_type(e, el_types::base(kcur));
+      jdefs = own::new_defs();
+      jops = own::ops_of(e.b);
+      jw: vector<integer> = [];
+      jfree = false;
+      jok = true;
+      for ja in jarms {
+        if el_ex_bind::struct_returning_call(e, ja) && binds::call_return_frees_source(e.b, jops, e.context, jdefs, ja) {
+          jfree = true;
+          jw += binds::protectable_ref_args(e.b, jdefs, ja).slots;
+          continue;
+        }
+        jvs: vector<integer> = [];
+        if !own::view_root_slots(e.b, ja, jvs) {
+          jok = false;
+        }
+        jw += jvs;
+      }
+      jfrees = jok && jfree;
+      jg: vector<integer> = [];
+      if jfrees {
+        jinner: vector<integer> = [];
+        el_ex_bind::bound_to_a_value_in(x.code, jinner);
+        for gs in jw {
+          if !jinner.contains(gs) {
+            jg += [gs];
+          }
+        }
+      }
+      el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+      jseq = kg;
+      if !el_ir::reads_var(x.code, v) {
+        jseq += [el_ir::v_set(v, ir::NdNull)];
+      }
+      for gs in jg {
+        jseq += [ir::NdCall { def_nr: jpd, args: [ir::NdVar { n: gs }] }];
+      }
+      jseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if jfrees { jkt + 32768 } else { jkt } }])];
+      for gs in jg {
+        jseq += [ir::NdCall { def_nr: jud, args: [ir::NdVar { n: gs }] }];
+      }
+      return ex(ir::NdInsert { items: jseq }, ir::TyVoid);
+    }
+  }
+  null
+}
+
+// `rebind_param_through_link` (`@FR-F-ParamRebind`, `@FR-O-Complete`): `set` writes link `v`,
+// which names ONE plain record or struct-enum parameter.  A value that is no plain place read
+// (`OpCreateStack`, `OpVarRef`, `OpGetField`, `OpGetVector`, `OpVectorRef`) takes that parameter's
+// rebind witness; where the value reads neither the link nor the parameter, what the parameter
+// named is freed first (`OpFreeRefIfDistinct`).  Second pass only; `LOFT_NO_LINK_PARAM_REBIND`.
+fn link_param_rebind(e: el::El, vars: el_vars::Vars, v: integer, set: ir::Node) -> ir::Node {
+  if e.first_pass || (env_variable("LOFT_NO_LINK_PARAM_REBIND") ?? "") != "" {
+    return set;
+  }
+  lpar = match el_vars::tp(vars, v) { TyRefVar { inner: lpi } => if len(el_types::deps(lpi)) == 1 { el_types::deps(lpi)[0]! } else { -1 }, _ => -1 };
+  if lpar < 0 || lpar >= len(vars.vars) || !vars.vars[lpar].argument || el_types::base(el_vars::tp(vars, lpar)) is TyRefVar || el_vars::is_compiler_generated(vars, lpar) || hidden_param(e, vars, lpar) {
+    return set;
+  }
+  pb = el_types::base(el_vars::tp(vars, lpar));
+  if struct_ref(e, pb) < 0 && !el_convert::struct_enum(pb) {
+    return set;
+  }
+  rhs = match set { NdSet { inner } => inner, _ => return set };
+  for pr in ["OpCreateStack", "OpVarRef", "OpGetField", "OpGetVector", "OpVectorRef"] {
+    if calls(e, el_ir::unspan(rhs), pr) {
+      return set;
+    }
+  }
+  reads = el_ir::reads_var(rhs, v) || el_ir::reads_var(rhs, lpar);
+  orig = el_vars::rebind_witness(vars, lpar);
+  if reads {
+    return set;
+  }
+  ir::NdInsert { items: [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: lpar }, ir::NdVar { n: orig }]), set] }
+}
+
 fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean, op: text, target: integer, rhs: integer?) -> Ex {
+  via_link = -1;
   el_ex_name::capture_target_placeholder(e, vars, target);
   // (A shared record capture written whole by a literal: built into the record it points at.)
   if rhs != null {
@@ -1133,6 +1432,23 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     if pl.root >= 0 && (coll || el_types::base(pl.tp) is TyText) {
       el_vars::mark_user_appended(vars, pl.root, "parse_assign_inner");
     }
+  }
+  // (A write through a link to a keyed field (`a = &b.h; a += [R {…}]`) is the field's: `+=`
+  // reads as `b.h += …`; any other write through it is not carried.)
+  match e.p.nodes[target] {
+    SName { name: fln, member: flm } => {
+      flv = if flm == "" { el_vars::var(vars, fln) } else { -1 };
+      fli = if flv >= 0 { el_vars::field_link_at(vars, flv) } else { -1 };
+      if fli >= 0 && !(rhs != null && el_ex_bind::is_link(e, rhs!)) {
+        if op != "+=" || (vars.field_link_syn[fli] ?? -1) < 0 {
+          el::refuse(e, "a write through a link to a keyed field other than `+=`");
+          return ex(ir::NdNull, ir::TyVoid);
+        }
+        target = vars.field_link_syn[fli]!;
+        via_link = flv;
+      }
+    },
+    _ => {}
   }
   // loft#1205 (`@FR-E-Asgn-Discharge`): `n[i]? += 1` — the `?` is peeled to the element it
   // reads, the compound written through that place (bound once where its index has an effect),
@@ -1246,7 +1562,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           el_schema::vector_type(e, el::def(e, kel).known_type);
         }
       }
-      kops = el_ex_vector::keyed_items(e, vars, kfrv, rhs!, fd: kfd, fnr: kfo);
+      kops = el_ex_vector::keyed_items(e, vars, kfrv, rhs!, fd: kfd, fnr: kfo, link: via_link);
       if kops == null {
         return ex(ir::NdNull, ir::TyVoid);
       }
@@ -1787,14 +2103,17 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     x = expression(e, vars, rhs!);
     cur = match el_vars::tp(vars, v) { TyRefVar { inner } => inner, _ => ir::TyVoid };
     to = match x.tp { TyRefVar { inner } => inner, _ => ir::TyVoid };
-    if !e.first_pass && !el_types::is_equal(e, el_types::without_deps(cur), el_types::without_deps(to)) {
+    // (A link to a record re-pointed at the record's out-of-line CHILD — `cur = &cur.next`, the
+    // field `N?` — names the child's record, absent where none: the link keeps its type.)
+    child = calls(e, el_ir::unspan(x.code), "OpRefFromChildRec") && match x.tp { TyOptional { inner: ci } => struct_ref(e, el_types::base(ci)) >= 0 && struct_ref(e, el_types::base(ci)) == struct_ref(e, el_types::base(cur)), _ => false };
+    if !e.first_pass && !child && !el_types::is_equal(e, el_types::without_deps(cur), el_types::without_deps(to)) {
       refuse_known(e, x.tp, "a link re-pointed at a place of another type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
     if x.tp is TyRefVar {
       el_vars::set_var_type(vars, v, x.tp);
     }
-    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+    return ex(link_param_rebind(e, vars, v, el_ir::v_set(v, x.code)), ir::TyVoid);
   }
   // port: expressions.rs assign_refvar_reference — a whole value written through a `&` link to a
   // record or a struct enum (`@FR-B-Ref-Write`).  A bare variable other than the link itself, or a
@@ -1833,7 +2152,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       // (`convert`'s link arm: a `null` written through the link is the record's null, the
       // reference sentinel — `slot = null` on a `&Tree?` empties the place it names.)
       wv = if x.tp is TyNull { el_ir::cl(e, "OpNullRefSentinel", []) } else { x.code };
-      return ex(if e.first_pass { ir::NdNull } else { el_ir::v_set(v, wv) }, ir::TyVoid);
+      return ex(if e.first_pass { ir::NdNull } else { link_param_rebind(e, vars, v, el_ir::v_set(v, wv)) }, ir::TyVoid);
     }
     rec_tp = if is_senum { ir::TyEnum { n: link_rd, is_ref: true, dep: [] } } else { ir::TyReference { n: link_rd, dep: [] } };
     tmp = el_vars::work_ref(vars, rec_tp);
@@ -1848,7 +2167,7 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       el_ir::cl(e, "OpCopyRecord", [x.code, ir::NdVar { n: tmp }, ir::NdInt { n: kt }]),
       ir::NdVar { n: tmp }
     ], el_types::with_deps(rec_tp, [tmp]), "materialized_amp_field");
-    return ex(el_ir::v_set(v, copy), ir::TyVoid);
+    return ex(link_param_rebind(e, vars, v, el_ir::v_set(v, copy)), ir::TyVoid);
   }
   // `@FR-B-Ref-Write` for a vector: a literal written through a `&vector` link replaces the
   // contents in the vector's own store — cleared, then the literal appended as `+=` appends it.
@@ -2337,6 +2656,25 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     el_vars::drop_use(vars, v);
     return ex(ir::NdInsert { items: [] }, ir::TyVoid);
   }
+  // A `&` of a keyed place (`a = &h`) binds its VIEW, typed as borrowing the place — no copy
+  // (`@FR-B-Ref-Uniform`; `(B-Copy)` is a plain bind's).
+  if keyed_kind(kcur) && !(kcur is TyRefVar) && el_ex_bind::is_link(e, rhs!) && keyed_kind(x.tp) && len(el_types::deps(x.tp)) > 0 {
+    el_vars::set_var_type(vars, v, x.tp);
+    // (Only where the field is a member of a GROUP — another keyed collection of the struct over
+    // the same record, which shares its records — does a write through the link go to the field
+    // (`origin_is_group_member`); otherwise the link is the collection's own view.)
+    if calls(e, el_ir::unspan(x.code), "OpGetField") && keyed_group_member(e, vars, x.code) {
+      fsyn = match e.p.nodes[rhs!] { SUnary { e: fo } => fo ?? -1, _ => -1 };
+      fl = el_vars::field_link_at(vars, v);
+      if fl < 0 {
+        vars.field_links += [v];
+        vars.field_link_syn += [fsyn];
+      } else {
+        vars.field_link_syn[fl] = fsyn;
+      }
+    }
+    return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+  }
   kg: vector<ir::Node> = [];
   if !e.first_pass && keyed_kind(kcur) && !(kcur is TyRefVar) && keyed_kind(x.tp) && !(x.code is NdInsert) && !(x.code is NdNull) {
     // (`(B-Copy)` for the keyed kinds, recorded at the replace as `lower_vec_copy_bind` records a
@@ -2358,123 +2696,8 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       // the same way, the call's store freed after (the type's 32768 bit).
       // (A record or collection argument is bracketed against its store's free while the
       // call runs — `protectable_ref_args` — which is not carried: refused below.)
-      NdCall { def_nr: cd } => {
-        plain_args = true;
-        for ca in el::def(e, cd).attributes {
-          cb = el_types::base(ca.typedef[0] ?? ir::TyVoid);
-          if !(is_scalar(cb) || cb is TyText) {
-            plain_args = false;
-          }
-        }
-        // A call handed the bound local itself (`a = grow(a, 7)`, `protectable_ref_args`): the
-        // local's store protected from the call's frees while it runs, then replaced into.
-        self_only = !plain_args && match el_ir::unspan(x.code) {
-          NdCall { args: sa } => {
-            ok = true;
-            for sx in sa {
-              sxt = match el_ir::unspan(sx) { NdVar { n: sxv } => el_types::base(el_vars::tp(vars, sxv)), _ => ir::TyVoid };
-              heap_arg = !(sxt is TyVoid) && !(is_scalar(sxt) || sxt is TyText);
-              if heap_arg && el_ir::unspan(sx) != ir::NdVar { n: v } {
-                ok = false;
-              }
-              if !(el_ir::unspan(sx) is NdVar) && !(el_ir::unspan(sx) is NdInt) && !(el_ir::unspan(sx) is NdText) && el_ir::reads_var(sx, v) {
-                ok = false;
-              }
-            }
-            ok && el_ir::reads_var(x.code, v)
-          },
-          _ => false
-        };
-        pd = el::def_nr(e, "n_protect_store_frees");
-        ud = el::def_nr(e, "n_unprotect_store_frees");
-        if self_only && pd >= 0 && ud >= 0 && el_ex_link::gives_away_its_store(e, x.code) {
-          el_vars::drop_use(vars, v);
-          kt = el_schema::keyed_type(e, el_types::base(kcur));
-          // (A captured local's guard sits in the replace's destination, as for a join.)
-          sdest = ir::NdVar { n: v };
-          scond = el_ex_tuple::cap_rebind_cond(e, vars, v);
-          if scond != null {
-            vars.cap_guard_done = true;
-            sdest = el_ir::v_block([el_ir::v_if(scond!, ir::NdInsert { items: [el_ex_tuple::cap_detach(e, vars, v), el_ir::v_set(v, ir::NdNull)] }, ir::NdNull), ir::NdVar { n: v }], el_types::with_deps(el_types::base(kcur), [v]), "keyed rebind");
-          }
-          sitems = kg + [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: v }] }, el_ir::cl(e, "OpReplaceKeyed", [x.code, sdest, ir::NdInt { n: kt + 32768 }]), ir::NdCall { def_nr: ud, args: [ir::NdVar { n: v }] }];
-          // (The store the closure still holds was protected under the local before the detach:
-          // released from the protection through the record.)
-          if scond != null {
-            for cs in vars.cap_slots {
-              if cs.var == v {
-                cw = ir::NdVar { n: cs.clos };
-                live = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [cw]), ir::NdBoolean { b: false }, el_ir::cl(e, "OpConvBoolFromRef", [cw]));
-                sitems += [el_ir::v_if(live, ir::NdCall { def_nr: ud, args: [el_ir::cl(e, "OpGetDbRef", [cw, ir::NdInt { n: cs.pos }])] }, ir::NdNull)];
-              }
-            }
-          }
-          return ex(ir::NdInsert { items: sitems }, ir::TyVoid);
-        }
-        if plain_args && el_ex_link::gives_away_its_store(e, x.code) && len(el_types::deps(x.tp)) == 0 {
-          el_vars::drop_use(vars, v);
-          kt = el_schema::keyed_type(e, el_types::base(kcur));
-          return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt + 32768 }])] }, ir::TyVoid);
-        }
-        // loft#1140 (`assign_keyed_rebind`, keyed-bind-call-with-heap-args.md): a loft call handed
-        // a record or a collection.  The source-free bit is `call_return_frees_source` (the
-        // callee hands back no caller store, or the bracket covers every argument), and where it
-        // is set the argument stores are protected from the replace's free while it runs
-        // (`protectable_ref_args`, the @P290 bracket) — less a slot the value itself binds to a
-        // value (`bound_to_a_value_in`: a vector literal's `_vec_N`).  The local borrows nothing.
-        // (A call handed the local itself takes this form too where the self-only arm above,
-        // a callee that gives its store away, did not apply: `a = add(a, x)` with `add`
-        // answering its parameter.)
-        if !plain_args && pd >= 0 && ud >= 0 && !starts_with(el::def(e, cd).name, "Op") && el_ex_tuple::cap_rebind_cond(e, vars, v) == null {
-          // (`is_struct_returning_call`: only a loft function with a body sets the bit.)
-          ksr = el_ex_bind::struct_returning_call(e, x.code);
-          el_vars::drop_use(vars, v);
-          kt = el_schema::keyed_type(e, el_types::base(kcur));
-          kdefs = own::new_defs();
-          frees = ksr && binds::call_return_frees_source(e.b, own::ops_of(e.b), e.context, kdefs, x.code);
-          guarded: vector<integer> = [];
-          if frees {
-            inner: vector<integer> = [];
-            el_ex_bind::bound_to_a_value_in(x.code, inner);
-            for gs in binds::protectable_ref_args(e.b, kdefs, x.code).slots {
-              if !inner.contains(gs) {
-                guarded += [gs];
-              }
-            }
-          }
-          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
-          kseq = kg;
-          if !el_ir::reads_var(x.code, v) {
-            kseq += [el_ir::v_set(v, ir::NdNull)];
-          }
-          for gs in guarded {
-            kseq += [ir::NdCall { def_nr: pd, args: [ir::NdVar { n: gs }] }];
-          }
-          kseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if frees { kt + 32768 } else { kt } }])];
-          for gs in guarded {
-            kseq += [ir::NdCall { def_nr: ud, args: [ir::NdVar { n: gs }] }];
-          }
-          return ex(ir::NdInsert { items: kseq }, ir::TyVoid);
-        }
-        // A keyed FIELD of a record (through its fields): the field's collection replaced
-        // into the local, which is its own copy.
-        // A NESTED projection (`m.inn.h`, a field of an element) is a view of its root instead
-        // (`@FR-B-View-Depth`): bound as the read, borrowing the root.
-        direct = match el_ir::unspan(x.code) { NdCall { args: ga } => len(ga) > 0 && el_ir::unspan(ga[0]) is NdVar, _ => false };
-        if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 && !direct {
-          el_vars::drop_use(vars, v);
-          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), [place_root(e, el_ir::unspan(x.code))]));
-          return ex(el_ir::v_set(v, x.code), ir::TyVoid);
-        }
-        if el::def(e, cd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0 {
-          el_vars::drop_use(vars, v);
-          // (The local holds its own copy: it borrows nothing of the source.)
-          el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
-          kt = el_schema::keyed_type(e, el_types::base(kcur));
-          return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
-        }
-        el::refuse(e, "a keyed local bound from something other than a local");
-        return ex(ir::NdNull, ir::TyVoid);
+      NdCall { def_nr: _ } => {
+        return keyed_call_copy(e, vars, v, x, kcur, kg);
       },
       // An `if` whose arms each answer a keyed local: whichever it answers is replaced in.
       NdIf { cond: _, t: kt_arm, f: kf_arm } => {
@@ -2495,65 +2718,21 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           }
           return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
         }
-        // loft#1154 (`join_source_frees`): any other join is replaced in as a whole.  Where an
-        // arm is a call that may free its source, the source-free bit is set and every arm's
-        // stores are protected (the freeing call's `protectable_ref_args`, every other arm's
-        // `view_root_slots`); an arm that names no slot leaves the bit off and no bracket.
-        jpd = el::def_nr(e, "n_protect_store_frees");
-        jud = el::def_nr(e, "n_unprotect_store_frees");
-        if jpd >= 0 && jud >= 0 && el_ex_tuple::cap_rebind_cond(e, vars, v) == null {
-          jarms: vector<ir::Node> = [];
-          el_ex_bind::join_arms(e, x.code, jarms);
-          if len(jarms) >= 2 {
-            el_vars::drop_use(vars, v);
-            jkt = el_schema::keyed_type(e, el_types::base(kcur));
-            jdefs = own::new_defs();
-            jops = own::ops_of(e.b);
-            jw: vector<integer> = [];
-            jfree = false;
-            jok = true;
-            for ja in jarms {
-              if el_ex_bind::struct_returning_call(e, ja) && binds::call_return_frees_source(e.b, jops, e.context, jdefs, ja) {
-                jfree = true;
-                jw += binds::protectable_ref_args(e.b, jdefs, ja).slots;
-                continue;
-              }
-              jvs: vector<integer> = [];
-              if !own::view_root_slots(e.b, ja, jvs) {
-                jok = false;
-              }
-              jw += jvs;
-            }
-            jfrees = jok && jfree;
-            jg: vector<integer> = [];
-            if jfrees {
-              jinner: vector<integer> = [];
-              el_ex_bind::bound_to_a_value_in(x.code, jinner);
-              for gs in jw {
-                if !jinner.contains(gs) {
-                  jg += [gs];
-                }
-              }
-            }
-            el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
-            jseq = kg;
-            if !el_ir::reads_var(x.code, v) {
-              jseq += [el_ir::v_set(v, ir::NdNull)];
-            }
-            for gs in jg {
-              jseq += [ir::NdCall { def_nr: jpd, args: [ir::NdVar { n: gs }] }];
-            }
-            jseq += [el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: if jfrees { jkt + 32768 } else { jkt } }])];
-            for gs in jg {
-              jseq += [ir::NdCall { def_nr: jud, args: [ir::NdVar { n: gs }] }];
-            }
-            return ex(ir::NdInsert { items: jseq }, ir::TyVoid);
-          }
+        jcopy = keyed_join_copy(e, vars, v, x, kcur, kg);
+        if jcopy != null {
+          return jcopy!;
         }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
       },
       _ => {
+        // (A `??`'s `ncc` block — `h = pick(c) ?? [R {…}]` — is such a join.)
+        if match el_ir::unspan(x.code) { NdBlock { block: nb } => nb[0].name == "ncc", _ => false } {
+          ncopy = keyed_join_copy(e, vars, v, x, kcur, kg);
+          if ncopy != null {
+            return ncopy!;
+          }
+        }
         el::refuse(e, "a keyed local bound from something other than a local");
         return ex(ir::NdNull, ir::TyVoid);
       }

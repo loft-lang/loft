@@ -94,10 +94,30 @@ fn synth_cascades(e: el::El, h: Hook) {
       }
     }
   }
-  if !any_hook(e, h) && !captures {
+  // `Data::any_generator_member` (loft#1585): a generator handle held by a record, a variant or a
+  // vector is released by its container although the program declares no hook.
+  generators = false;
+  if !h.forward {
+    for d in e.b.data.definitions {
+      if d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE || d.def_type == el::DT_VECTOR {
+        for a in d.attributes {
+          if el_types::holds_generator(e, a.typedef[0] ?? ir::TyVoid, []) {
+            generators = true;
+          }
+        }
+        if el_types::holds_generator(e, d.returned[0] ?? ir::TyVoid, []) {
+          generators = true;
+        }
+      }
+    }
+  }
+  if !any_hook(e, h) && !captures && !generators {
     return;
   }
   targets: vector<integer> = [];
+  // (Types whose members this port cannot release: refused by name, their cascades still
+  // declared as Rust declares every one, their bodies not filled.)
+  unfilled: vector<integer> = [];
   for d in e.b.data.definitions {
     t = d#index;
     if el::source_nr(e, d.source, cascade_name(e, t, h)) >= 0 {
@@ -106,24 +126,67 @@ fn synth_cascades(e: el::El, h: Hook) {
     wanted = false;
     if d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE {
       if d.known_type != el::NO_TYPE {
-        // (A refused shape still leaves the hooks armed: Rust arms at the parse's end whatever
-        // the program holds, and a refused program's definitions are compared too.)
+        // (A refused shape — a keyed collection, an iterator, a tuple or an owner slot holding a
+        // droppable — is refused by name, but its cascade is declared all the same: Rust's
+        // `wanted` counts those members (`cascade_keyed`, …), and stopping the pass here left
+        // every cascade of the program Rust-only.)
         if !refused_shapes(e, t, h) {
-          if !h.forward {
-            arm_drop_marks(e, h);
-          }
-          return;
+          unfilled += [t];
         }
-        wanted = len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0 || (!h.forward && len(cascade_shared_vectors(e, t, h)) > 0) || (!h.forward && len(cascade_captures(e, t)) > 0) || (!h.forward && len(cascade_fn_fields(e, t)) > 0);
+        // (…and so does a record holding one in a field — `main_vector<iterator<integer>>` — its
+        // body not filled.)
+        if !h.forward && generators && !unfilled.contains(t) && len([for ga in d.attributes if el_types::holds_generator(e, ga.typedef[0] ?? ir::TyVoid, []) { 1 }]) > 0 && len(cascade_fields(e, t, h)) == 0 && len(cascade_vectors(e, t, h)) == 0 {
+          unfilled += [t];
+        }
+        wanted = unfilled.contains(t) || len(cascade_fields(e, t, h)) > 0 || len(cascade_vectors(e, t, h)) > 0 || (!h.forward && len(cascade_shared_vectors(e, t, h)) > 0) || (!h.forward && len(cascade_captures(e, t)) > 0) || (!h.forward && len(cascade_fn_fields(e, t)) > 0);
       }
     } else if d.def_type == el::DT_ENUM {
       // An enum releases through whichever variant it holds.
       wanted = len(cascade_variants(e, t, h)) > 0;
     } else if d.def_type == el::DT_VECTOR {
       wanted = collection_element(e, t, h) >= 0;
+      // (A vector of generator handles releases each (`any_generator_member`): declared, its
+      // body not filled.)
+      if !wanted && generators && !h.forward && el_types::holds_generator(e, d.returned[0] ?? ir::TyVoid, []) {
+        wanted = true;
+        unfilled += [t];
+      }
+    } else if d.def_type == el::DT_TYPE && generators && d.name == "iterator" {
+      // The standard library's `type iterator`: its cascade frees the handle a slot holds.  Not
+      // carried: declared, its body not filled.
+      wanted = true;
+      unfilled += [t];
     }
     if wanted {
       targets += [t];
+    }
+  }
+  // `keyed_generator_types` (loft#1601): the frames walk `__frames_<keyed>` of each KEYED
+  // collection type whose records hold a generator — met in any definition's fields or any
+  // function's variables — declared ahead of the cascades that call it.  Not carried: declared
+  // with its `self`, its body not filled.
+  if generators {
+    seen: vector<text> = [];
+    for d in e.b.data.definitions {
+      kts: vector<ir::TypeT> = [for a in d.attributes { a.typedef[0] ?? ir::TyVoid }];
+      if d.def_type == el::DT_FUNCTION {
+        kts += [for v in d.variables.variables { v.type_def[0] ?? ir::TyVoid }];
+      }
+      for kt in kts {
+        kb = el_types::without_deps(el_types::base(kt));
+        keyed = kb is TyHash || kb is TySorted || kb is TyIndex || kb is TyRadix || kb is TyTrie;
+        if keyed && el_types::holds_generator(e, kt, []) {
+          wn = "__frames_{el_types::key_name(e, kb)}";
+          if !seen.contains(wn) {
+            seen += [wn];
+            if el::def_nr(e, wn) < 0 {
+              w = el::add_def(e, wn, el::pos_at(e, len(e.p.src) - 1), el::DT_FUNCTION);
+              el::set_returned(e, w, ir::TyVoid);
+              e.b.data.definitions[w].attributes += [el::attribute("self", kb)];
+            }
+          }
+        }
+      }
     }
   }
   made: vector<integer> = [];
@@ -139,7 +202,9 @@ fn synth_cascades(e: el::El, h: Hook) {
     made += [c];
   }
   for t in targets {
-    fill(e, t, made[t#index] ?? -1, h);
+    if !unfilled.contains(t) {
+      fill(e, t, made[t#index] ?? -1, h);
+    }
   }
   // After the cascades exist: the bracket goes around the outermost release.
   if !h.forward {
@@ -226,8 +291,11 @@ fn cascade_name(e: el::El, t: integer, h: Hook) -> text {
 
 
 // `drop_cascade_nr`: what dropping a value of `t` calls — its cascade, or its hook.
+// (`Data::drop_cascade_nr`: in the type's source first, as its hook is, `hook_of`.)
 fn target(e: el::El, t: integer, h: Hook) -> integer {
-  c = el::def_nr(e, cascade_name(e, t, h));
+  key = cascade_name(e, t, h);
+  own = el::source_nr(e, el::def(e, t).source, key);
+  c = if own >= 0 { own } else { el::def_nr(e, key) };
   if c >= 0 { c } else { el_types::hook_of(e, t, h.own) }
 }
 

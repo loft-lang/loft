@@ -1,0 +1,526 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/value_record.rs` transcribed (`@FR-R-ValueRecord`, `@FR-R-ValueLocal`): a
+// small record of scalars that only travels between loft functions is carried as a TUPLE — a
+// function returning one builds `(a, b, c)` where it filled its `__retbuf`, a local bound from
+// such a call is a tuple read by `TupleGet`, and a by-value parameter of such a record is
+// received as one.  The admission is `opt::value_records::value_records_twinned`'s
+// (`opt_vr::plan_twinned`); this pass narrows it to the shapes it can rewrite (`ir_vr_plan`) and
+// rewrites them (`ir_vr_rewrite`).  A site that still wants a RECORD keeps calling the record
+// form, and a TWIN `<f>_tuple` returns the tuple to the carriers.  A `pub` function is first
+// split (`<f>_in`, `(R-Escape)`).
+//
+// `LOFT_NO_IR_VALUE_RECORD=1` is the switch.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use opt_names;
+use opt_writes;
+use own;
+use opt_vr;
+use opt_vr_layout;
+use opt_vr_leaves;
+use ir_pass_tree;
+use ir_vr_shape;
+use ir_vr_plan;
+use ir_vr_rewrite;
+use lower;
+
+const SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  ir_pass_tree::def_name(b, d)
+}
+
+// ---- `(R-Escape)`: the internal copies -----------------------------------------------------
+
+fn def_named(b: ir::Bundle, name: text) -> boolean {
+  for d in b.data.definitions {
+    if d.name == name {
+      return true;
+    }
+  }
+  false
+}
+
+// port: value_record.rs fn add_copy — a copy of function `d` named `<d>_<suffix>`: no `pub`
+// API, no native symbol.
+fn add_copy(b: ir::Bundle, d: integer, suffix: text, why: text) -> integer {
+  base = b.data.definitions[d]!.name;
+  name = "{base}_{suffix}";
+  n = 1;
+  while def_named(b, name) {
+    n += 1;
+    name = "{base}_{suffix}{n}";
+  }
+  t = len(b.data.definitions);
+  b.data.definitions += [b.data.definitions[d]!];
+  b.data.definitions[t].name = name;
+  b.data.definitions[t].parent = 4294967295;
+  b.data.definitions[t].pub_visible = false;
+  b.data.definitions[t].native = "";
+  b.data.definitions[t].synthetic = why;
+  t
+}
+
+// port: value_record.rs fn redirect_calls
+fn redirect_calls(n: ir::Node, to: vector<integer>) -> ir::Node {
+  kids = scope_fn::children(n);
+  m = n;
+  match n {
+    NdCall { def_nr, args } => {
+      t = ir_vr_rewrite::twin_of(to, def_nr);
+      if t >= 0 {
+        m = ir::NdCall { def_nr: t, args: args };
+      }
+    },
+    _ => {}
+  }
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { redirect_calls(c, to) }])
+}
+
+fn calls_any(n: ir::Node, to: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr } => if ir_vr_rewrite::twin_of(to, def_nr) >= 0 { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls_any(c, to) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: value_record.rs fn split_public — every `pub` function the analysis admits is split:
+// the API keeps its record, every loft call reaches an internal copy `<f>_in`.
+fn split_public(b: ir::Bundle, vr: opt_vr_layout::ValueRecords) -> boolean {
+  public: vector<integer> = [];
+  for k in vr.fns {
+    if k >= 0 {
+      ir_vr_shape::add(public, k#index);
+    }
+  }
+  for p in vr.params {
+    ir_vr_shape::add(public, p.d);
+  }
+  public = [for d in public if b.data.definitions[d]!.pub_visible && b.data.definitions[d]!.native == "" && b.data.definitions[d]!.def_type == 1 { d }];
+  public.sort();
+  if len(public) == 0 {
+    return false;
+  }
+  to: vector<integer> = [];
+  for d in public {
+    to += [d, add_copy(b, d, "in", "the internal copy of a pub function (R-Escape)")];
+  }
+  for def in b.data.definitions {
+    if def.def_type != 1 || len(def.code) == 0 || !calls_any(def.code[0]!, to) {
+      continue;
+    }
+    b.data.definitions[def#index].code = [redirect_calls(def.code[0]!, to)];
+  }
+  true
+}
+
+// ---- Declines ------------------------------------------------------------------------------
+
+fn returned_record(d: ir::Definition) -> integer {
+  match cgen_types::base(opt_names::peel_link(d.returned[0] ?? ir::TyVoid)) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+// port: value_record.rs fn answers_a_parameter — does `d` answer a record that may be one of
+// its visible parameters WHOLE?
+pub fn answers_a_parameter(d: ir::Definition) -> boolean {
+  record = returned_record(d);
+  if record < 0 || (env_variable("LOFT_NO_VALUE_PARAM_DECLINE") ?? "") != "" {
+    return false;
+  }
+  for a in ir_vr_plan::depend(d.returned[0] ?? ir::TyVoid) {
+    at = d.attributes[a];
+    if at != null && !at.hidden {
+      r = match cgen_types::base(opt_names::peel_link(at.typedef[0] ?? ir::TyVoid)) { TyReference { n } => n, _ => -1 };
+      if r == record {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// port: value_record.rs fn value_param_answer
+fn value_param_answer(b: ir::Bundle, d: integer) -> boolean {
+  def = b.data.definitions[d]!;
+  record = returned_record(def);
+  record >= 0 && b.data.definitions[record]!.value_struct && answers_a_parameter(def)
+}
+
+fn any_drop_hook(b: ir::Bundle) -> boolean {
+  for d in b.data.definitions {
+    if d.def_type == 1 && d.name.ends_with("_OpDrop") {
+      return true;
+    }
+  }
+  false
+}
+
+// ---- `World::lendable` ---------------------------------------------------------------------
+
+// `yields_sub_place`: does `x` evaluate to a SUB-RECORD of variable `a`?
+fn rooted(x: ir::Node, a: integer, get_field: integer) -> boolean {
+  match scope_fn::unspan(x) {
+    NdVar { n } => n == a,
+    NdCall { def_nr, args } => def_nr == get_field && len(args) > 0 && rooted(args[0]!, a, get_field),
+    _ => false
+  }
+}
+
+fn yields_sub_place(x: ir::Node, a: integer, get_field: integer) -> boolean {
+  match scope_fn::unspan(x) {
+    NdCall { def_nr, args } => def_nr == get_field && len(args) > 0 && rooted(args[0]!, a, get_field),
+    NdIf { t, f } => yields_sub_place(t, a, get_field) || yields_sub_place(f, a, get_field),
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      len(ops) > 0 && yields_sub_place(ops[len(ops) - 1]!, a, get_field)
+    },
+    _ => false
+  }
+}
+
+// `mentions` as `param_read_only` reads it: a bare `Var(a)` anywhere.
+fn has_var(n: ir::Node, a: integer) -> boolean {
+  scope_fn::reads_var(n, a)
+}
+
+struct Ro {
+  ok: boolean,
+}
+
+fn ro_walk(b: ir::Bundle, body: ir::Node, n: ir::Node, a: integer, lent: vector<integer>, view_of: integer, depth: integer, get_field: integer, s: Ro) {
+  if !s.ok {
+    return;
+  }
+  match n {
+    NdSet { var: v, inner: x } => {
+      if v == a && view_of >= 0 && yields_sub_place(x, view_of, get_field) {
+        // the view's own bind of the root's sub-record
+      } else if v == a {
+        s.ok = false;
+      } else if yields_sub_place(x, a, get_field) {
+        if depth >= 4 || !param_read_only(b, body, v, lent, a, depth + 1, get_field) {
+          s.ok = false;
+        }
+      }
+    },
+    NdTuplePut { var: v } => if v == a { s.ok = false; },
+    NdCallRef { args } => {
+      for x in args {
+        if has_var(x, a) {
+          s.ok = false;
+        }
+      }
+    },
+    NdCall { def_nr: op, args } => {
+      if op >= 0 && op < len(b.data.definitions) {
+        def = b.data.definitions[op]!;
+        name = def.name;
+        for x in args {
+          i = x#index;
+          writes_into = (name.starts_with("OpSet") && i == 0) || (name == "OpCopyRecord" && i == 1);
+          is_a = ir_vr_shape::is_var(x, a);
+          if writes_into && has_var(x, a) {
+            s.ok = false;
+          } else if !name.starts_with("Op") && has_var(x, a) {
+            p = def.attributes[i];
+            shares = p == null || match cgen_types::base(p.typedef[0] ?? ir::TyVoid) { TyReference => true, TyRefVar => true, _ => false };
+            if shares && ir_vr_plan::triple_get(lent, op, i) < 0 {
+              s.ok = false;
+            }
+          } else if name == "OpSetDbRef" && i == 2 && (yields_sub_place(x, a, get_field) || (view_of >= 0 && is_a)) {
+            s.ok = false;
+          } else if is_a && view_of < 0 {
+            read = SCALAR_GETTERS.contains(name) || name == "OpGetField" || name == "OpConvBoolFromRef" || name == "OpRefIsNull" || name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpClear" || (name == "OpCopyRecord" && i == 0);
+            if !read && !name.starts_with("Op") {
+              p2 = def.attributes[i];
+              read = p2 != null && !(cgen_types::base(p2.typedef[0] ?? ir::TyVoid) is TyRefVar);
+            }
+            if !read {
+              s.ok = false;
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  if !s.ok {
+    return;
+  }
+  for c in scope_fn::children(n) {
+    ro_walk(b, body, c, a, lent, view_of, depth, get_field, s);
+    if !s.ok {
+      return;
+    }
+  }
+}
+
+// port: value_record.rs fn param_read_only, with the lent set (`[d, i, rec, …]`) — does `body`
+// only READ record parameter `a`?  `view_of` the root a view's bind projects, -1 none.
+fn param_read_only(b: ir::Bundle, body: ir::Node, a: integer, lent: vector<integer>, view_of: integer, depth: integer, get_field: integer) -> boolean {
+  s = Ro { ok: true };
+  ro_walk(b, body, body, a, lent, view_of, depth, get_field, s);
+  s.ok
+}
+
+// port: value_record.rs fn lendable_params — the plain record PARAMETERS a carrier can be LENT
+// to as a record: no `&`, no tuple, only read by the callee, its result not depending on them.
+// `[d, i, rec, …]`.
+fn lendable_params(b: ir::Bundle) -> vector<integer> {
+  get_field = lower::find(b, "OpGetField") ?? -1;
+  out: vector<integer> = [];
+  for def in b.data.definitions {
+    if def.def_type != 1 || len(def.code) == 0 || (def.code[0]! is NdNull) {
+      continue;
+    }
+    for a in def.attributes {
+      t = a.typedef[0] ?? ir::TyVoid;
+      rec = match cgen_types::base(t) { TyReference { n } => n, _ => continue };
+      if t is TyOptional {
+        continue;
+      }
+      p = ir_vr_plan::var_named(def.variables, a.name);
+      if !a.hidden && p >= 0 && !scope_fn::has(ir_vr_plan::depend(def.returned[0] ?? ir::TyVoid), p) {
+        out += [def#index, a#index, rec];
+      }
+    }
+  }
+  while true {
+    before = len(out);
+    kept: vector<integer> = [];
+    i = 0;
+    while i + 2 < len(out) {
+      d = out[i]!;
+      def = b.data.definitions[d]!;
+      p = ir_vr_plan::var_named(def.variables, def.attributes[out[i + 1]!]!.name);
+      if param_read_only(b, def.code[0]!, p, out, -1, 0, get_field) {
+        kept += [d, out[i + 1]!, out[i + 2]!];
+      }
+      i += 3;
+    }
+    out = kept;
+    if len(out) == before {
+      break;
+    }
+  }
+  out
+}
+
+// ---- The pass ------------------------------------------------------------------------------
+
+fn fnref_arms(vr: opt_vr_layout::ValueRecords) -> vector<integer> {
+  out: vector<integer> = [];
+  for s in vr.sites {
+    for a in s.arms {
+      ir_vr_shape::add(out, a);
+    }
+  }
+  out
+}
+
+fn has_cand(w: ir_vr_plan::World, d: integer) -> boolean {
+  ir_vr_plan::cand(w, d) >= 0
+}
+
+// One function's plan, kept for the rewrite.
+struct Planned {
+  f: integer,
+  plan: ir_vr_plan::Plan,
+}
+
+// port: value_record.rs fn rewrite_program — every admitted function, parameter and call site
+// rewritten; answers the functions it refuses by name.
+pub fn rewrite_program(b: ir::Bundle) -> vector<text> {
+  refused: vector<text> = [];
+  if (env_variable("LOFT_NO_IR_VALUE_RECORD") ?? "0") != "0" || b.open_world {
+    return refused;
+  }
+  vr = opt_vr::plan_twinned(b, opt_writes::new_writes(b), own::ops_of(b));
+  if split_public(b, vr) {
+    vr = opt_vr::plan_twinned(b, opt_writes::new_writes(b), own::ops_of(b));
+  }
+  any_fn = false;
+  for k in vr.fns {
+    if k >= 0 {
+      any_fn = true;
+    }
+  }
+  if !any_fn && len(vr.params) == 0 {
+    return refused;
+  }
+  w = ir_vr_plan::World { ops: ir_vr_shape::new_ops(b), layouts: [], cands: [], params: [], lendable: lendable_params(b), vl_d: [], vl: [], oops: own::ops_of(b) };
+  arms = fnref_arms(vr);
+  hooks = any_drop_hook(b);
+  for tp in vr.fns {
+    d = tp#index;
+    if tp < 0 {
+      continue;
+    }
+    if scope_fn::has(arms, d) {
+      continue;
+    }
+    if hooks && opt_vr_leaves::owns_droppable(b, b.data.definitions[d]!.returned[0] ?? ir::TyVoid) {
+      continue;
+    }
+    if value_param_answer(b, d) {
+      continue;
+    }
+    sh = ir_vr_plan::callee_shape(b, w, vr, d, tp);
+    if sh.ok {
+      w.cands += [sh.callee];
+    }
+  }
+  for p in vr.params {
+    if scope_fn::has(arms, p.d) {
+      continue;
+    }
+    key = ir_vr_plan::param_shape(b, w, p.d, p.idx, p.key);
+    if key >= 0 {
+      w.params += [p.d, p.idx, key];
+    }
+  }
+  functions: vector<integer> = [];
+  for def in b.data.definitions {
+    if def.def_type == 1 && len(def.code) > 0 && !(def.code[0]! is NdNull) {
+      functions += [def#index];
+    }
+  }
+  // ADMISSION, a fixpoint that only removes.
+  while true {
+    v = ir_vr_plan::Verdict { bad_fns: [], bad_params: [], called: [], owed: [] };
+    for f in functions {
+      ir_vr_plan::plan_into(b, w, vr, f, has_cand(w, f), v);
+    }
+    for c in w.cands {
+      if !scope_fn::has(v.called, c.d) {
+        ir_vr_shape::add(v.bad_fns, c.d);
+      }
+    }
+    i = 0;
+    while i + 2 < len(w.params) {
+      if !scope_fn::has(v.called, w.params[i]!) {
+        v.bad_params += [w.params[i]!, w.params[i + 1]!];
+      }
+      i += 3;
+    }
+    if len(v.bad_fns) == 0 && len(v.bad_params) == 0 {
+      break;
+    }
+    w.cands = [for c in w.cands if !scope_fn::has(v.bad_fns, c.d) { c }];
+    kept: vector<integer> = [];
+    i = 0;
+    while i + 2 < len(w.params) {
+      if !pair_in(v.bad_params, w.params[i]!, w.params[i + 1]!) {
+        kept += [w.params[i]!, w.params[i + 1]!, w.params[i + 2]!];
+      }
+      i += 3;
+    }
+    w.params = kept;
+    if len(w.cands) == 0 && len(w.params) == 0 {
+      return refused;
+    }
+  }
+  // TWINS, a fixpoint that only grows.
+  twinned: vector<integer> = [];
+  plans: vector<Planned> = [];
+  twin_plans: vector<Planned> = [];
+  while true {
+    plans = [];
+    twin_plans = [];
+    v = ir_vr_plan::Verdict { bad_fns: [], bad_params: [], called: [], owed: [] };
+    for f in functions {
+      tuple = has_cand(w, f) && !scope_fn::has(twinned, f);
+      plans += [Planned { f: f, plan: ir_vr_plan::plan_into(b, w, vr, f, tuple, v) }];
+      if scope_fn::has(twinned, f) {
+        twin_plans += [Planned { f: f, plan: ir_vr_plan::plan_into(b, w, vr, f, true, v) }];
+      }
+    }
+    before = len(twinned);
+    for o in v.owed {
+      ir_vr_shape::add(twinned, o);
+    }
+    if len(twinned) == before {
+      break;
+    }
+  }
+  // The twins, cloned from the untouched bodies.
+  twins: vector<integer> = [];
+  sorted = [for t in twinned { t }];
+  sorted.sort();
+  for d in sorted {
+    t = add_copy(b, d, "tuple", "the tuple twin of a small-record return (@PLN180)");
+    twins += [d, t];
+    ps = [for x in w.params { x }];
+    i = 0;
+    while i + 2 < len(ps) {
+      if ps[i]! == d {
+        w.params += [t, ps[i + 1]!, ps[i + 2]!];
+      }
+      i += 3;
+    }
+    ls = [for x in w.lendable { x }];
+    i = 0;
+    while i + 2 < len(ls) {
+      if ls[i]! == d {
+        w.lendable += [t, ls[i + 1]!, ls[i + 2]!];
+      }
+      i += 3;
+    }
+  }
+  touched: vector<integer> = [];
+  for c in w.cands {
+    tw = ir_vr_rewrite::twin_of(twins, c.d);
+    target = if tw >= 0 { tw } else { c.d };
+    ir_vr_rewrite::rewrite_callee(b, w, twins, target, c);
+    ir_vr_shape::add(touched, target);
+  }
+  for p in plans {
+    if len(p.plan.carriers) == 0 && !p.plan.reads_at_call {
+      continue;
+    }
+    ir_vr_rewrite::rewrite_function(b, w, twins, p.f, p.plan);
+    ir_vr_shape::add(touched, p.f);
+  }
+  for p in twin_plans {
+    tw = ir_vr_rewrite::twin_of(twins, p.f);
+    ir_vr_rewrite::rewrite_function(b, w, twins, tw, p.plan);
+    ir_vr_shape::add(touched, tw);
+  }
+  touched.sort();
+  trace = (env_variable("LOFT_TRACE_IR_VALUEREC") ?? "") != "";
+  for d in touched {
+    if trace {
+      eprintln("[ir-valuerec] rewritten {def_name(b, d)}");
+    }
+    ir_pass_tree::relayout(b, d);
+  }
+  refused
+}
+
+fn pair_in(v: vector<integer>, a: integer, b2: integer) -> boolean {
+  i = 0;
+  while i + 1 < len(v) {
+    if v[i]! == a && v[i + 1]! == b2 {
+      return true;
+    }
+    i += 2;
+  }
+  false
+}
+

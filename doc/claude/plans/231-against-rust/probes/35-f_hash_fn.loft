@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — filter over a hash, with a typed fn
+// Expect on both backends: refused: filter: first argument must be a vector
+struct E { k: text, v: integer }
+fn main() { h: hash<E[k]> = [E { k: "a", v: 1 }, E { k: "b", v: 2 }]; println("{len(filter(h, fn(e: E) -> boolean { e.v > 1 }))}"); }

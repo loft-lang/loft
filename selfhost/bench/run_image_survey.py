@@ -40,6 +40,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import baseline  # noqa: E402  one baseline format for every survey
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "front"))
+import elab_gate  # noqa: E402  the front layer takes gate E's library directories
 
 
 def proc(cmd, env, timeout, cwd=None):
@@ -99,6 +101,13 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     if len(stem) > 150:
         stem = stem[-120:] + "_" + hashlib.sha1(stem.encode()).hexdigest()[:12]
     img = f[:-5] + ".run" if test else os.path.join(tmp, stem + ".run")
+    if front_std and not test:
+        # The front layer runs what gate E elaborated, so both front ends see the libraries gate E
+        # gives them: the `--lib` directories of the program's own `@ARGS` line.  A blanket
+        # `tests/lib` would let a trigger (`Disp-Trigger`) load a package into Rust's image that
+        # the loft elaborator was never shown.
+        with open(f, encoding="utf-8", errors="replace") as fh:
+            libargs = tuple(a for d in elab_gate.lib_dirs(fh.read()) for a in ("--lib", d))
     rc, _, err = proc([loft, *libargs, "--emit-run-image", img, f], env, timeout, cwd=src_dir)
     if rc != 0:
         return f, "noimage", err.strip().splitlines()[-1:] or [""]
@@ -132,6 +141,9 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
         # The loft scope pass lays out no frame for one of its functions yet.
         # By its reason: the function it was met in (`n_main: …`) is the program's own.
         return f, "unscoped", [(err2.strip().splitlines() or [""])[0][len("unscoped: "):].split(": ", 1)[-1][:100]]
+    if front_std and rc2 == 6:
+        # An IR pass (`ir_passes.loft`) cannot carry one of its functions yet.
+        return f, "unpassed", [(err2.strip().splitlines() or [""])[0][len("unpassed: "):].split(": ", 1)[-1][:100]]
     if "stopped: not carried by the bytecode writer in loft" in err2:
         return f, "unwritten", [""]
     m = re.search(r"stopped: not carried: ([^\n]+)", err2)
@@ -145,7 +157,10 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
     if got != want:
         if STORE_REPORT.sub("", got) == STORE_REPORT.sub("", want):
             return f, "stores", [""]
-        return f, "differ", [""]
+        a, b = want.splitlines(), got.splitlines()
+        k = next((i for i in range(min(len(a), len(b))) if a[i] != b[i]), min(len(a), len(b)))
+        return f, "differ", [f"line {k}: {(a[k] if k < len(a) else '(end)')[:60]!r} / {(b[k] if k < len(b) else '(end)')[:60]!r}"
+                             + (f" (stderr: {err2.strip().splitlines()[-1][:80]})" if err2.strip() else "")]
     leaked = [int(m.group(1)) if m else 0
               for m in (re.search(r"(\d+) stores not freed at program exit", e) for e in (err, err2))]
     if leaked[0] != leaked[1]:
@@ -172,7 +187,7 @@ def main():
                     help="run from the loft FRONT END's own definitions (run_front.loft): elaborated, "
                          "scoped by the loft scope pass, written and run in loft")
     ap.add_argument("--show", action="append", default=[],
-                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage, refused, unscoped; repeatable)")
+                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage, refused, unscoped, unpassed; repeatable)")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write this layer's block of BASELINE")
     o = ap.parse_args()
@@ -196,13 +211,15 @@ def main():
         # The front runner holds the elaborator beside the writer and the runner: its optimised
         # build needs more than the 9 GB the C compiler is allowed here (`virtual memory
         # exhausted`), so it is a development build — a measurement, not what ships.
-        p = subprocess.run([loft, "--native-c", *([] if o.front else ["--ship"]), "--out", out,
+        # `LOFT_RUNNER_BIN`: a runner already built from this tree (the build is minutes).
+        prebuilt = os.environ.get("LOFT_RUNNER_BIN")
+        p = subprocess.CompletedProcess([], 0, "", "") if prebuilt else subprocess.run([loft, "--native-c", *([] if o.front else ["--ship"]), "--out", out,
                             "--lib", os.path.join(root, "selfhost", "src"),
                             "--lib", os.path.join(root, "selfhost", "crt", "src"),
                             os.path.join(root, "selfhost", "bench",
                                          "run_front.loft" if o.front else "run_image_run.loft")],
                            capture_output=True, text=True, env=env, timeout=1800)
-        runner = os.path.join(out, "run_front" if o.front else "run_image_run")
+        runner = prebuilt or os.path.join(out, "run_front" if o.front else "run_image_run")
         if not os.path.exists(runner):
             sys.exit(f"the runner did not build:\n{p.stderr[-2000:]}")
         # Absolute: each program runs from its own directory, where a path relative to the
@@ -242,11 +259,11 @@ def main():
                 results[name] = verdict
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{name}\t{what[0]}")
-                if verdict in ("stopped", "unscoped"):
-                    ops[("unscoped: " + what[0]) if verdict == "unscoped" else what[0]] += 1
+                if verdict in ("stopped", "unscoped", "unpassed"):
+                    ops[(verdict + ": " + what[0]) if verdict != "stopped" else what[0]] += 1
         print(f"{counts['agree']} of {len(jobs)} programs agree; " +
               ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "unwritten", "differ", "fault", "noimage", "refused",
-                                          "unscoped") if counts[k]))
+                                          "unscoped", "unpassed") if counts[k]))
         for line in sorted(shown):
             print(line)
         if ops:

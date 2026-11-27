@@ -333,7 +333,7 @@ either states is a claim: run the guard or repro it cites before repeating it ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
 [COROUTINE.md](doc/claude/COROUTINE.md) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
 [SUBJECTS.md](doc/claude/SUBJECTS.md) the axes loft chose on, each rationale and how it is verified ·
-`tests/comparisons/*.loft` the comparison pages as programs · [bars/](doc/claude/bars/README.md):
+`tests/comparisons/*.loft` the comparison pages as programs · [VS_RUST.md](doc/claude/VS_RUST.md) where loft stands against Rust, each claim with its check · [bars/](doc/claude/bars/README.md):
 [OCAML_BAR.md](doc/claude/bars/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/bars/LUA_BAR.md) expressiveness probes (reports).
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) · [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) IR/opcodes ·

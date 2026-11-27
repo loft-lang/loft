@@ -1,0 +1,336 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/drops.rs` transcribed for record locals (scope-pass-port.md step 2): the
+// hook a record's release runs, the release a reassignment owes for the record it displaces, and
+// the in-place rebuild.  A record type WITH a cascade is refused by the phase
+// (`pre_scan_refusals`), so `drop_hook` answers none for every record the scan carries; where it
+// would answer one anyway the function is refused here by name.  The vector arms
+// (`vector_rebind_release`, `vector_call_rebind`, `promoted_vector_refill`) are carried for a
+// vector whose element has no collection cascade, where each releases nothing but the displaced
+// backings' stores; a vector of droppable elements is refused by the phase, and where its
+// release is reached anyway, here by name.  `adopted_backing_detach` acts on a frame's own
+// closure records, which the phase refuses.
+
+use ir;
+use own;
+use scope_fn;
+use scope_scan;
+use scope_backings;
+use opt_names;
+
+// port: drops.rs fn drop_hook — the scope-end hook `v`'s type declares, as a guarded call on
+// `v`, or null.
+pub fn drop_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> ir::Node? {
+  t = scope_fn::base(scope_fn::tp(f, v));
+  nr = opt_names::NONE;
+  match t {
+    TyReference { n } => { nr = opt_names::drop_cascade_nr(b, n); },
+    TyEnum { n, is_ref } => if is_ref { nr = opt_names::drop_cascade_nr(b, n); },
+    // `@FR-H-Drop` / D-heap-13 — a collection's own cascade (`collection_def_nr`), run over the
+    // binding a return buffer delivered to, and only where there is one.
+    TyVector { inner } => {
+      cnr = collection_cascade_nr(s, b, inner);
+      if cnr == opt_names::NONE {
+        return null;
+      }
+      subject = delivered_binding(f, v);
+      if subject < 0 {
+        return null;
+      }
+      scope_scan::refuse(s, "drops::drop_hook: a vector of droppable elements (handoff, collection_handoffs)");
+      live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: subject }] };
+      return ir::NdIf { cond: live, t: ir::NdCall { def_nr: cnr, args: [ir::NdVar { n: subject }] }, f: ir::NdNull };
+    },
+    _ => {
+      if scope_fn::is_keyed(t) {
+        scope_scan::refuse(s, "drops::drop_hook: a keyed collection's generator walk");
+      }
+      return null;
+    }
+  }
+  if nr == opt_names::NONE {
+    return null;
+  }
+  // The phase refuses every record type with a cascade; reaching one here is a type it did not
+  // see (a temp's), refused by name.
+  scope_scan::refuse(s, "drops::drop_hook: a record type with a drop cascade");
+  live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] };
+  ir::NdIf { cond: live, t: ir::NdCall { def_nr: nr, args: [ir::NdVar { n: v }] }, f: ir::NdNull }
+}
+
+// port: drops.rs fn scope_end_drop — the hook unless a move-copy took it; guarded on the
+// per-path hand-off flag.
+pub fn scope_end_drop(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> ir::Node? {
+  if scope_fn::has(s.drop_transferred, v) {
+    return null;
+  }
+  d = drop_hook(s, b, f, v);
+  if d == null {
+    return null;
+  }
+  flag = scope_scan::get(s.handed_off, v);
+  if flag >= 0 {
+    return ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: d! };
+  }
+  d
+}
+
+// port: drops.rs fn scope_end_hook — `arm_dropped` is the per-arm hook placement of a returned
+// join, empty for the returns this transcription carries.
+pub fn scope_end_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, arm_dropped: vector<integer>) -> ir::Node? {
+  if scope_fn::has(arm_dropped, v) {
+    return null;
+  }
+  scope_end_drop(s, b, f, v)
+}
+
+// port: drops.rs fn lift_viewer_guard, applied: `inner` runs only where `v` names the store of
+// none of the lift temps it views.
+pub fn lift_viewer_guard(s: scope_scan::Scopes, v: integer, inner: ir::Node) -> ir::Node {
+  out = inner;
+  for l in scope_scan::list_of(s.lift_viewers, v) {
+    if l != v {
+      out = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: l }] }, t: out, f: ir::NdNull };
+    }
+  }
+  out
+}
+
+// `call("OpFreeRef", v)`
+pub fn free_ref(s: scope_scan::Scopes, v: integer) -> ir::Node {
+  ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: v }] }
+}
+
+// The `(before, after)` pair a displacing statement is wrapped in; `none` for none.
+pub struct PrePost {
+  pub some: boolean,
+  pub pre: vector<ir::Node>,
+  pub post: vector<ir::Node>,
+  // `promoted_vector_refill`'s third answer: the release waits for the statement's end.
+  pub waits: boolean
+}
+
+pub fn no_pre_post() -> PrePost {
+  PrePost { some: false, pre: [], post: [], waits: false }
+}
+
+// port: free_vars.rs fn is_promoted_ret_buffer / handoff.rs fn promoted_ret_buffer — a local
+// renamed onto the function's hidden return buffer.
+pub fn is_promoted_ret_buffer(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  nm = scope_fn::name(f, v);
+  if nm == "__retbuf" {
+    return false;
+  }
+  d = b.data.definitions[s.d_nr]!;
+  for a in d.attributes {
+    if a.name == nm {
+      return a.hidden;
+    }
+  }
+  false
+}
+
+// port: drops.rs fn displaced_drop — the snapshot and release of the droppable record `v`
+// displaces.  Without a cascade there is nothing to release; with one the function is refused.
+pub fn displaced_drop(s: scope_scan::Scopes, b: ir::Bundle, v: integer, rhs_owned: boolean, f: ir::Function) -> PrePost {
+  depth = scope_scan::get(s.owned_refs, v);
+  owned_here = depth >= 0 && (depth == len(s.loops) || rhs_owned);
+  if !owned_here
+    || (scope_fn::is_argument(f, v) && !is_promoted_ret_buffer(s, b, f, v))
+    || scope_fn::is_captured(f, v)
+    || !scope_fn::proxy_says_owned(f, v)
+    || scope_fn::has(s.drop_transferred, v)
+    || scope_scan::get(s.owner_witness, v) >= 0 {
+    return no_pre_post();
+  }
+  d = own::heap_def_nr(scope_fn::tp(f, v));
+  if d == null || opt_names::drop_cascade_nr(b, d!) == opt_names::NONE {
+    return no_pre_post();
+  }
+  scope_scan::refuse(s, "drops::displaced_drop: a droppable record displaced");
+  no_pre_post()
+}
+
+// port: drops.rs fn in_place_rebuild — `OpDatabase(v, tp)` on a local already in scope (also
+// behind the promoted buffer's `if <kept> { null } else { … }` guard) owns what it builds.
+pub fn in_place_rebuild(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, f: ir::Function) -> PrePost {
+  st = scope_fn::unspan(stmt);
+  match st {
+    NdIf { t, f: rebuilt } => if scope_fn::unspan(t) is NdNull { st = scope_fn::unspan(rebuilt); },
+    _ => {}
+  }
+  ov = -1;
+  match st {
+    NdCall { def_nr, args } => {
+      if def_nr != s.ops.database || len(args) == 0 {
+        return no_pre_post();
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n } => { ov = n; },
+        _ => { return no_pre_post(); }
+      }
+    },
+    _ => { return no_pre_post(); }
+  }
+  v = scope_scan::mapped(s, ov);
+  if !scope_scan::in_scope(s, v) || scope_fn::has(s.prefix_released, v) {
+    return no_pre_post();
+  }
+  // A construction OWNS what it builds, on every iteration.
+  ops = displaced_drop(s, b, v, true, f);
+  if scope_scan::get(s.var_scope, v) == s.scope {
+    scope_scan::set_remove(s.drop_transferred, v);
+  }
+  if scope_fn::is_record(scope_fn::tp(f, v)) {
+    scope_scan::put(s.owned_refs, v, len(s.loops));
+  }
+  flag = scope_scan::get(s.handed_off, v);
+  if flag >= 0 {
+    ops.some = true;
+    ops.post += [scope_fn::v_set(flag, ir::NdBoolean { b: false })];
+  }
+  ops
+}
+
+// port: data.rs fn collection_def_nr, then `drop_cascade_nr`: the cascade of the `vector<T>`
+// definition of element type `elem` — matched by the element type the definition was minted for
+// (`vector_def` keys it by that type's name) among the vector definitions with a cascade.
+pub fn collection_cascade_nr(s: scope_scan::Scopes, b: ir::Bundle, elem: ir::TypeT) -> integer {
+  want = scope_fn::without_deps(elem);
+  for d in s.ops.vec_cascades {
+    match b.data.definitions[d]!.returned[0] ?? ir::TyVoid {
+      TyVector { inner } => if scope_fn::without_deps(inner) == want {
+        return opt_names::drop_cascade_nr(b, d);
+      },
+      _ => {}
+    }
+  }
+  opt_names::NONE
+}
+
+// The collection cascade of vector-typed `v`'s element, `NONE` for none or a non-vector.
+fn vector_cascade_nr(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> integer {
+  match scope_fn::base(scope_fn::tp(f, v)) {
+    TyVector { inner } => collection_cascade_nr(s, b, inner),
+    _ => opt_names::NONE
+  }
+}
+
+// port: drops.rs fn delivered_binding — the one vector local whose type borrows return buffer
+// `buffer` (`__ref…`), -1 unless there is exactly one.
+pub fn delivered_binding(f: ir::Function, buffer: integer) -> integer {
+  if !scope_fn::name(f, buffer).starts_with("__ref") {
+    return -1;
+  }
+  found = -1;
+  for x in 0..scope_fn::count(f) {
+    if x == buffer || !(scope_fn::base(scope_fn::tp(f, x)) is TyVector) || !scope_fn::has(scope_fn::deps(f, x), buffer) {
+      continue;
+    }
+    if found >= 0 {
+      return -1;
+    }
+    found = x;
+  }
+  found
+}
+
+// port: drops.rs fn vector_rebind_release — `@FR-H-Drop`, the reassignment clause for a VECTOR
+// local: the literal backings a rebind of `v` displaces, each released through its hook, freed
+// and set to the sentinel.  Empty where the statement is no such rebind.
+pub fn vector_rebind_release(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, f: ir::Function) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  ov = -1;
+  rhs = ir::NdNull;
+  match scope_fn::unspan(stmt) {
+    NdSet { var, inner } => {
+      ov = var;
+      rhs = inner;
+    },
+    _ => { return out; }
+  }
+  v = scope_scan::mapped(s, ov);
+  if !scope_scan::in_scope(s, v) || !(scope_fn::base(scope_fn::tp(f, v)) is TyVector)
+    || scope_fn::is_argument(f, v) || scope_fn::is_captured(f, v) || scope_fn::is_compiler_generated(f, v) {
+    return out;
+  }
+  if !scope_scan::list_has_key(s.vector_backings, ov) {
+    return out;
+  }
+  new_backing = scope_backings::literal_backing_of(rhs, f, s.ops.get_field);
+  for c in scope_scan::list_of(s.vector_backings, ov) {
+    if c == new_backing || !scope_scan::in_scope(s, c) {
+      continue;
+    }
+    release = scope_end_drop(s, b, f, c);
+    if release == null {
+      continue;
+    }
+    out += [release!];
+    out += [free_ref(s, c)];
+    out += [scope_fn::v_set(c, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  }
+  out
+}
+
+// port: drops.rs fn vector_call_rebind — `@FR-H-Drop` for a vector local that may hold a CALL's
+// result: the displaced temp and its release around the statement.  A vector whose element has
+// no cascade answers none; one with a cascade is refused by the phase, and here by name.
+pub fn vector_call_rebind(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, f: ir::Function) -> PrePost {
+  ov = match scope_fn::unspan(stmt) { NdSet { var } => var, _ => -1 };
+  if ov < 0 {
+    return no_pre_post();
+  }
+  v = scope_scan::mapped(s, ov);
+  if !(scope_fn::base(scope_fn::tp(f, v)) is TyVector) {
+    return no_pre_post();
+  }
+  nr = vector_cascade_nr(s, b, f, v);
+  if nr == opt_names::NONE || scope_fn::is_captured(f, v) || scope_fn::is_compiler_generated(f, v) {
+    return no_pre_post();
+  }
+  if scope_fn::is_argument(f, v) || !scope_scan::in_scope(s, v) {
+    return no_pre_post();
+  }
+  if len(scope_scan::list_of(s.vector_call_buffers, ov)) == 0 {
+    return no_pre_post();
+  }
+  scope_scan::refuse(s, "drops::vector_call_rebind: a vector of droppable elements rebound from a call");
+  no_pre_post()
+}
+
+// port: drops.rs fn promoted_vector_refill — `@FR-H-Drop` for a vector local promoted onto the
+// RETURN BUFFER: the snapshot of the elements a refill displaces.  The first statement to reach
+// the buffer displaces nothing; a vector whose element has no cascade answers none.  `waits` is
+// set where the statement is a clear its literal fills after.
+pub fn promoted_vector_refill(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, f: ir::Function) -> PrePost {
+  v = -1;
+  match scope_fn::unspan(stmt) {
+    NdSet { var } => { v = scope_scan::mapped(s, var); },
+    NdCall { def_nr, args } => if def_nr == s.ops.clear_vector && len(args) > 0 {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n } => { v = n; },
+        _ => { return no_pre_post(); }
+      }
+    },
+    _ => {}
+  }
+  if v < 0 || !(scope_fn::base(scope_fn::tp(f, v)) is TyVector) {
+    return no_pre_post();
+  }
+  if !scope_fn::is_argument(f, v) || !is_promoted_ret_buffer(s, b, f, v) {
+    return no_pre_post();
+  }
+  nr = vector_cascade_nr(s, b, f, v);
+  if nr == opt_names::NONE {
+    return no_pre_post();
+  }
+  if !scope_fn::has(s.promoted_filled, v) {
+    s.promoted_filled += [v];
+    return no_pre_post();
+  }
+  scope_scan::refuse(s, "drops::promoted_vector_refill: a promoted vector of droppable elements refilled");
+  no_pre_post()
+}

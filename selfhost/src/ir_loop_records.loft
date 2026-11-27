@@ -1,0 +1,1145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/loop_records.rs` transcribed (`@FR-R-LoopRecord`'s analysis): the record
+// locals a loop builds afresh on every pass, with the coverage question `@FR-R-CompleteWrite`
+// asks (`group_covers_type`) and `opt::ret_adopt::complete_writes`, which reads it.
+//
+// Rust keys a fresh-field copy and a refill zero by node ADDRESS; here a fresh-field copy is the
+// copy node itself (compared whole) and a zero is its block's pre-order number and its index in
+// that block's statements.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use own;
+use binds;
+use types;
+use opt_writes;
+use opt_vr_layout;
+use ir_pass_tree;
+
+pub const NONE = 65535;
+COPY_FRESH_DEST = 16384;
+COPY_TP_MASK = 16383;
+
+SCALAR_GETTERS = ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetShort", "OpGetShortRaw", "OpGetShortFull", "OpGetByte", "OpGetByteNullable", "OpGetSingle", "OpGetFloat", "OpGetBoolean", "OpGetCharacter", "OpGetEnum"];
+IN_PLACE_SET_OPS = ["OpSetBoolean", "OpSetInt", "OpSetInt4", "OpSetInt4Raw", "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort", "OpSetShortRaw", "OpSetEnum"];
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  ir_pass_tree::def_name(b, d)
+}
+
+fn in_list(list: vector<text>, name: text) -> boolean {
+  for x in list {
+    if x == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn has(list: vector<integer>, x: integer) -> boolean {
+  for l in list {
+    if l == x {
+      return true;
+    }
+  }
+  false
+}
+
+// `call_named`: the arguments of a call of `name` under any spans; null for any other node.
+pub fn call_named(b: ir::Bundle, v: ir::Node, name: text) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr >= 0 && def_nr < len(b.data.definitions) && b.data.definitions[def_nr]!.name == name { args } else { null },
+    _ => null,
+  }
+}
+
+fn arg_var(args: vector<ir::Node>, i: integer) -> integer {
+  if i >= len(args) {
+    return -1;
+  }
+  match scope_fn::unspan(args[i]!) {
+    NdVar { n } => n,
+    _ => -1,
+  }
+}
+
+fn arg_int(args: vector<ir::Node>, i: integer) -> integer? {
+  if i >= len(args) {
+    return null;
+  }
+  match scope_fn::unspan(args[i]!) {
+    NdInt { n } => n,
+    _ => null,
+  }
+}
+
+// Does any `Var(target)` stand in `n`?
+fn names_target(n: ir::Node, target: integer) -> boolean {
+  match n {
+    NdVar { n: u } => if u == target { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if names_target(k, target) {
+      return true;
+    }
+  }
+  false
+}
+
+fn struct_fields(b: ir::Bundle, t: integer) -> vector<ir::DbField> {
+  if t < 0 || t >= len(b.types) {
+    return [];
+  }
+  match b.types[t]!.parts[0] ?? ir::PtBase {
+    PtStruct { fields } => fields,
+    PtEnumValue { fields } => fields,
+    _ => [],
+  }
+}
+
+fn size(b: ir::Bundle, t: integer) -> integer {
+  if t < 0 || t >= len(b.types) { 0 } else { b.types[t]!.size }
+}
+
+fn is_vector_tp(b: ir::Bundle, t: integer) -> boolean {
+  t >= 0 && t < len(b.types) && ((b.types[t]!.parts[0] ?? ir::PtBase) is PtVector)
+}
+
+fn owns_heap(b: ir::Bundle, t: integer) -> boolean {
+  types::owns_heap(b.types, t)
+}
+
+// ---- `@FR-R-CompleteWrite`'s coverage ------------------------------------------------------
+
+// A write map: positions and the widest write at each.
+struct Writes {
+  pos: vector<integer>,
+  width: vector<integer>,
+}
+
+fn note_write(w: Writes, pos: integer, width: integer) {
+  for p in w.pos {
+    if p == pos {
+      if width > w.width[p#index]! {
+        w.width[p#index] = width;
+      }
+      return;
+    }
+  }
+  w.pos += [pos];
+  w.width += [width];
+}
+
+fn written_at(w: Writes, pos: integer) -> integer {
+  for p in w.pos {
+    if p == pos {
+      return w.width[p#index]!;
+    }
+  }
+  -1
+}
+
+// port: loop_records.rs fn set_width.
+fn set_width(name: text) -> integer {
+  if name == "OpSetBoolean" || name == "OpSetByte" || name == "OpSetByteNullable" || name == "OpSetEnum" {
+    1
+  } else if name == "OpSetShort" || name == "OpSetShortRaw" {
+    2
+  } else if name == "OpSetInt4" || name == "OpSetInt4Raw" || name == "OpSetSingle" || name == "OpSetCharacter" || name == "OpSetText" || name == "OpSetTextReplace" || name == "OpSetRef" {
+    4
+  } else if name == "OpSetInt" || name == "OpSetFloat" {
+    8
+  } else if name == "OpSetDbRef" {
+    12
+  } else {
+    0
+  }
+}
+
+// port: loop_records.rs fn variant_union — the fields of every variant, one per position; null
+// where two variants put fields of different widths at one position.
+fn variant_union(b: ir::Bundle, values: vector<ir::EnumPair>) -> vector<ir::DbField>? {
+  out: vector<ir::DbField> = [];
+  for vp in values {
+    vt = vp.nr;
+    if vt < 0 || vt >= len(b.types) || !((b.types[vt]!.parts[0] ?? ir::PtBase) is PtEnumValue) {
+      continue;
+    }
+    for f in struct_fields(b, vt) {
+      found = -1;
+      for u in out {
+        if found < 0 && u.position == f.position {
+          found = u#index;
+        }
+      }
+      if found >= 0 {
+        if size(b, out[found]!.content) != size(b, f.content) {
+          return null;
+        }
+      } else {
+        out += [f];
+      }
+    }
+  }
+  out
+}
+
+// port: loop_records.rs fn whole_copy_covers.
+fn whole_copy_covers(b: ir::Bundle, args: vector<ir::Node>, tp: integer) -> boolean {
+  n = arg_int(args, 2) ?? -1;
+  fresh_same = n >= 0 && n <= 65535 && (n & COPY_FRESH_DEST) != 0 && (n & COPY_TP_MASK) == tp;
+  fresh_same || !owns_heap(b, tp)
+}
+
+// port: loop_records.rs fn leaves_written.
+fn leaves_written(b: ir::Bundle, w: Writes, base: integer, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) || !((b.types[tp]!.parts[0] ?? ir::PtBase) is PtStruct) {
+    return false;
+  }
+  fields = struct_fields(b, tp);
+  if len(fields) == 0 {
+    return false;
+  }
+  for f in fields {
+    at = base + f.position;
+    if at > 65535 {
+      at = 65535;
+    }
+    if !(written_at(w, at) >= size(b, f.content) || leaves_written(b, w, at, f.content)) {
+      return false;
+    }
+  }
+  true
+}
+
+fn contains_node(list: vector<ir::Node>, n: ir::Node) -> boolean {
+  for x in list {
+    if x == n {
+      return true;
+    }
+  }
+  false
+}
+
+// port: loop_records.rs fn group_covers_type — do the statements following `at` in `ops` cover
+// every field position of `tp` with contiguous writes on `target`?  `fresh` holds the
+// fresh-field copies (`CompleteWrites::fresh_fields`).
+pub fn group_covers_type(b: ir::Bundle, ops: vector<ir::Node>, at: integer, target: integer, tp: integer, fresh: vector<ir::Node>) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  fields: vector<ir::DbField> = match b.types[tp]!.parts[0] ?? ir::PtBase {
+    PtStruct { fields } => fields,
+    PtEnumValue { fields } => fields,
+    PtEnum { values } => variant_union(b, values) ?? return false,
+    _ => return false,
+  };
+  if len(fields) == 0 {
+    return false;
+  }
+  written = Writes { pos: [], width: [] };
+  mem_field: vector<integer> = [];
+  mem_writes: vector<Writes> = [];
+  for i in at..len(ops) {
+    stmt = ops[i]!;
+    u = scope_fn::unspan(stmt);
+    stop = false;
+    match u {
+      NdLine { n: _ } => {},
+      NdSet { var: x, inner: rhs } => {
+        if x != target && !names_target(rhs, target) {
+          continue;
+        }
+        g = call_named(b, rhs, "OpGetField");
+        if g != null && arg_var(g!, 0) == target {
+          continue;
+        }
+        stop = true;
+      },
+      NdIf { cond, t: then, f: els } => {
+        cargs = call_named(b, els, "OpCopyRecord");
+        tb = match scope_fn::unspan(then) { NdBlock { block } => block[0]!.operators, _ => [] };
+        if !names_target(cond, target) && cargs != null && arg_var(cargs!, 1) == target && (scope_fn::unspan(then) is NdBlock) {
+          return whole_copy_covers(b, cargs!, tp) && group_covers_type(b, tb, 0, target, tp, fresh);
+        }
+        stop = true;
+      },
+      NdCall { def_nr, args } => {
+        if def_nr < 0 || def_nr >= len(b.data.definitions) {
+          stop = true;
+        } else {
+          name = def_name(b, def_nr);
+          if name == "OpCopyRecord" && arg_var(args, 1) == target {
+            return whole_copy_covers(b, args, tp);
+          }
+          fa = if name == "OpCopyRecord" && len(args) > 1 { call_named(b, args[1]!, "OpGetField") } else { null };
+          if fa != null && arg_var(fa!, 0) == target {
+            off = arg_int(fa!, 1);
+            n = arg_int(args, 2);
+            if off == null || n == null || off! < 0 || off! > 65535 || n! < 0 || n! > 65535 {
+              break;
+            }
+            sub = n! & COPY_TP_MASK;
+            fd = -1;
+            for x in fields {
+              if fd < 0 && x.position == off! {
+                fd = x#index;
+              }
+            }
+            if fd < 0 || fields[fd]!.content != sub || ((n! & COPY_FRESH_DEST) == 0 && !contains_node(fresh, u)) || (owns_heap(b, sub) && (n! & COPY_FRESH_DEST) == 0) {
+              break;
+            }
+            note_write(written, off!, 65535);
+          } else if name.starts_with("OpSet") && arg_var(args, 0) == target && arg_int(args, 1) != null && arg_int(args, 1)! >= 0 && arg_int(args, 1)! <= 65535 {
+            note_write(written, arg_int(args, 1)!, set_width(name));
+          } else {
+            mf = if name.starts_with("OpSet") && len(args) > 0 { call_named(b, args[0]!, "OpGetField") } else { null };
+            off = if mf != null && arg_var(mf!, 0) == target { arg_int(mf!, 1) } else { null };
+            m = arg_int(args, 1);
+            if off != null && off! >= 0 && off! <= 65535 && m != null && m! >= 0 && m! <= 65535 {
+              at_m = -1;
+              for x in mem_field {
+                if x == off! {
+                  at_m = x#index;
+                }
+              }
+              if at_m < 0 {
+                mem_field += [off!];
+                mem_writes += [Writes { pos: [], width: [] }];
+                at_m = len(mem_field) - 1;
+              }
+              note_write(mem_writes[at_m]!, m!, set_width(name));
+            } else {
+              stop = true;
+            }
+          }
+        }
+      },
+      _ => { stop = true; },
+    }
+    if stop {
+      break;
+    }
+  }
+  for f in fields {
+    if written_at(written, f.position) >= size(b, f.content) && written_at(written, f.position) >= 0 {
+      continue;
+    }
+    if leaves_written(b, written, f.position, f.content) {
+      continue;
+    }
+    ok = false;
+    for x in mem_field {
+      if x == f.position {
+        sf = struct_fields(b, f.content);
+        if f.content >= 0 && f.content < len(b.types) && ((b.types[f.content]!.parts[0] ?? ir::PtBase) is PtStruct) && len(sf) > 0 {
+          all = true;
+          for y in sf {
+            wa = written_at(mem_writes[x#index]!, y.position);
+            if wa < 0 || wa < size(b, y.content) {
+              all = false;
+            }
+          }
+          ok = all;
+        }
+      }
+    }
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// ---- `complete_writes` ---------------------------------------------------------------------
+
+// What `complete_writes` admitted: the locals whose every mint heads a covering group, the
+// element types whose every `OpNewRecord` does, and the fresh-field copies.
+pub struct CompleteWrites {
+  pub db_vars: vector<integer>,
+  pub mint_tps: vector<integer>,
+  pub fresh: vector<ir::Node>,
+}
+
+// port: ret_adopt.rs fn field_chain_root — the variable a field chain is rooted at (-1 none),
+// and whether it IS that variable.
+fn chain_root(b: ir::Bundle, v: ir::Node, whole: vector<boolean>) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => {
+      whole[0] = true;
+      return n;
+    },
+    _ => {}
+  }
+  a = call_named(b, v, "OpGetField") ?? return -1;
+  if len(a) == 0 {
+    return -1;
+  }
+  r = chain_root(b, a[0]!, whole);
+  whole[0] = false;
+  r
+}
+
+// port: ret_adopt.rs fn fresh_field_copy — a record copy into a field reached from `target`,
+// not flagged FRESH: the copy node (`NdNull` none).
+fn fresh_field_copy(b: ir::Bundle, stmt: ir::Node, target: integer) -> ir::Node {
+  args = call_named(b, stmt, "OpCopyRecord") ?? return ir::NdNull;
+  if len(args) < 3 {
+    return ir::NdNull;
+  }
+  whole = [false];
+  root = chain_root(b, args[1]!, whole);
+  raw = match scope_fn::unspan(args[2]!) { NdInt { n } => n, _ => return ir::NdNull };
+  if raw < 0 || raw > 65535 {
+    return ir::NdNull;
+  }
+  if root == target && root >= 0 && !whole[0]! && (raw & COPY_FRESH_DEST) == 0 { scope_fn::unspan(stmt) } else { ir::NdNull }
+}
+
+// port: ret_adopt.rs fn collect_fresh_fields.
+fn collect_fresh_fields(b: ir::Bundle, ops: vector<ir::Node>, at: integer, target: integer, out: vector<ir::Node>) {
+  for i in at..len(ops) {
+    stmt = ops[i]!;
+    c = fresh_field_copy(b, stmt, target);
+    if !(c is NdNull) {
+      out += [c];
+    } else {
+      fa = call_named(b, stmt, "OpFinishRecord");
+      if fa != null && arg_var(fa!, 1) == target {
+        return;
+      }
+    }
+  }
+}
+
+// port: ret_adopt.rs fn guarded_mint — `if <test of v> null else OpDatabase(v, tp)`: `[v, tp]`,
+// `[]` none.
+fn guarded_mint(b: ir::Bundle, stmt: ir::Node) -> vector<integer> {
+  match scope_fn::unspan(stmt) {
+    NdIf { cond, t, f } => {
+      if !(scope_fn::unspan(t) is NdNull) {
+        return [];
+      }
+      args = call_named(b, f, "OpDatabase") ?? return [];
+      v = arg_var(args, 0);
+      tp = arg_int(args, 1);
+      if v < 0 || tp == null || tp! < 0 || tp! > 65535 {
+        return [];
+      }
+      if other_var(cond, v) {
+        return [];
+      }
+      [v, tp!]
+    },
+    _ => [],
+  }
+}
+
+fn other_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: u } => if u != v { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if other_var(k, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: ret_adopt.rs fn call_pair_covers.
+fn call_pair_covers(b: ir::Bundle, ops: vector<ir::Node>, at: integer, target: integer, tp: integer, depth: integer) -> boolean {
+  rest: vector<ir::Node> = [];
+  for i in at..len(ops) {
+    if !(scope_fn::unspan(ops[i]!) is NdLine) {
+      rest += [ops[i]!];
+      if len(rest) == 2 {
+        break;
+      }
+    }
+  }
+  if len(rest) < 1 {
+    return false;
+  }
+  r = -1;
+  f = -1;
+  fargs: vector<ir::Node> = [];
+  match scope_fn::unspan(rest[0]!) {
+    NdSet { var, inner } => {
+      match scope_fn::unspan(inner) {
+        NdCall { def_nr, args } => {
+          r = var;
+          f = def_nr;
+          fargs = args;
+        },
+        _ => return false,
+      }
+    },
+    _ => return false,
+  }
+  if f < 0 || f >= len(b.data.definitions) {
+    return false;
+  }
+  rb = binds::hidden_return_buffer_attr(b.data.definitions[f]!) ?? return false;
+  for a in fargs {
+    if a#index == rb {
+      if arg_var(fargs, rb) != target {
+        return false;
+      }
+    } else if names_target(a, target) {
+      return false;
+    }
+  }
+  if len(rest) < 2 {
+    return false;
+  }
+  match scope_fn::unspan(rest[1]!) {
+    NdIf { cond, t: copy, f: other } => {
+      ds = call_named(b, cond, "OpDistinctStore");
+      cp = call_named(b, copy, "OpCopyRecord");
+      if ds == null || cp == null || arg_var(ds!, 0) != r || arg_var(ds!, 1) != target || arg_var(cp!, 0) != r || arg_var(cp!, 1) != target {
+        return false;
+      }
+      n = arg_int(cp!, 2) ?? -1;
+      fresh = n >= 0 && n <= 65535 && (n & COPY_FRESH_DEST) != 0 && (n & COPY_TP_MASK) == tp;
+      fresh && (scope_fn::unspan(other) is NdNull) && buffer_complete(b, f, depth)
+    },
+    _ => false,
+  }
+}
+
+// port: ret_adopt.rs fn buffer_complete — does `f` write every field of the return buffer it is
+// handed before it answers it?  A recursive chain answers no past two levels.
+fn buffer_complete(b: ir::Bundle, f: integer, depth: integer) -> boolean {
+  def = b.data.definitions[f]!;
+  ai = binds::hidden_return_buffer_attr(def) ?? return false;
+  nm = def.attributes[ai]!.name;
+  rb = NONE;
+  for x in def.variables.names {
+    if x.name == nm {
+      rb = x.nr;
+    }
+  }
+  if depth >= 2 {
+    return false;
+  }
+  if !has(complete_writes(b, f, depth + 1).db_vars, rb) {
+    return false;
+  }
+  if !ir_pass_tree::has_body(def) {
+    return true;
+  }
+  !returns_unminted(b, def.code[0]!, rb)
+}
+
+fn returns_unminted(b: ir::Bundle, n: ir::Node, rb: integer) -> boolean {
+  match n {
+    NdBlock { block } => {
+      minted = false;
+      for op in block[0]!.operators {
+        gm = guarded_mint(b, op);
+        da = call_named(b, op, "OpDatabase");
+        if (len(gm) > 0 && gm[0]! == rb) || (da != null && arg_var(da!, 0) == rb) {
+          minted = true;
+        }
+        match scope_fn::unspan(op) {
+          NdReturn { inner } => if (match scope_fn::unspan(inner) { NdVar { n: u } => u == rb, _ => false }) && !minted { return true; },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if returns_unminted(b, k, rb) {
+      return true;
+    }
+  }
+  false
+}
+
+// Per-key counts (`HashMap<u16, u32>`).
+struct Counts {
+  keys: vector<integer>,
+  n: vector<integer>,
+}
+
+fn bump(c: Counts, k: integer) {
+  for x in c.keys {
+    if x == k {
+      c.n[x#index] = c.n[x#index]! + 1;
+      return;
+    }
+  }
+  c.keys += [k];
+  c.n += [1];
+}
+
+fn count_of(c: Counts, k: integer) -> integer {
+  for x in c.keys {
+    if x == k {
+      return c.n[x#index]!;
+    }
+  }
+  0
+}
+
+// port: ret_adopt.rs fn mint_site_counts.
+fn mint_sites(b: ir::Bundle, n: ir::Node, db: Counts, mint: Counts) {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) {
+        name = def_name(b, def_nr);
+        if name == "OpDatabase" {
+          v = arg_var(args, 0);
+          if v >= 0 {
+            bump(db, v);
+          }
+        } else if name == "OpNewRecord" {
+          t = arg_int(args, 1);
+          if t != null && t! >= 0 && t! <= 65535 {
+            bump(mint, t!);
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    mint_sites(b, k, db, mint);
+  }
+}
+
+struct CwScan {
+  out: CompleteWrites,
+  db_declined: vector<integer>,
+  mint_declined: vector<integer>,
+  db_covered: Counts,
+  mint_covered: Counts,
+  depth: integer,
+}
+
+// port: ret_adopt.rs fn complete_writes — the literal groups whose write set is COMPLETE.
+pub fn complete_writes(b: ir::Bundle, d: integer, depth: integer) -> CompleteWrites {
+  def = b.data.definitions[d]!;
+  s = CwScan { out: CompleteWrites { db_vars: [], mint_tps: [], fresh: [] }, db_declined: [], mint_declined: [], db_covered: Counts { keys: [], n: [] }, mint_covered: Counts { keys: [], n: [] }, depth: depth };
+  if !ir_pass_tree::has_body(def) {
+    return s.out;
+  }
+  body = def.code[0]!;
+  db_sites = Counts { keys: [], n: [] };
+  m_sites = Counts { keys: [], n: [] };
+  mint_sites(b, body, db_sites, m_sites);
+  cw_walk(b, body, s);
+  db_vars: vector<integer> = [];
+  for v in s.out.db_vars {
+    if !has(s.db_declined, v) && count_of(s.db_covered, v) == count_of(db_sites, v) && !has(db_vars, v) {
+      db_vars += [v];
+    }
+  }
+  mint_tps: vector<integer> = [];
+  for t in s.out.mint_tps {
+    if !has(s.mint_declined, t) && count_of(s.mint_covered, t) == count_of(m_sites, t) && !has(mint_tps, t) {
+      mint_tps += [t];
+    }
+  }
+  CompleteWrites { db_vars: db_vars, mint_tps: mint_tps, fresh: s.out.fresh }
+}
+
+fn cw_walk(b: ir::Bundle, n: ir::Node, s: CwScan) {
+  ops: vector<ir::Node> = match n {
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    _ => [],
+  };
+  for stmt in ops {
+    i = stmt#index;
+    match scope_fn::unspan(stmt) {
+      NdCall { def_nr, args } => {
+        if def_nr >= 0 && def_nr < len(b.data.definitions) && def_name(b, def_nr) == "OpDatabase" {
+          v = arg_var(args, 0);
+          tp = arg_int(args, 1);
+          if v >= 0 && tp != null {
+            if tp! < 0 || tp! > 65535 {
+              s.db_declined += [v];
+            } else if group_covers_type(b, ops, i + 1, v, tp!, s.out.fresh) {
+              s.out.db_vars += [v];
+              bump(s.db_covered, v);
+            } else {
+              s.db_declined += [v];
+            }
+          }
+        }
+      },
+      NdIf { cond: _ } => {
+        gm = guarded_mint(b, stmt);
+        if len(gm) > 0 {
+          v = gm[0]!;
+          if group_covers_type(b, ops, i + 1, v, gm[1]!, s.out.fresh) {
+            s.out.db_vars += [v];
+            bump(s.db_covered, v);
+          } else {
+            s.db_declined += [v];
+          }
+        }
+      },
+      NdSet { var: e, inner } => {
+        match scope_fn::unspan(inner) {
+          NdCall { def_nr, args: cargs } => {
+            if def_nr >= 0 && def_nr < len(b.data.definitions) && def_name(b, def_nr) == "OpNewRecord" {
+              collect_fresh_fields(b, ops, i + 1, e, s.out.fresh);
+              ptp = arg_int(cargs, 1);
+              if ptp != null && ptp! >= 0 && ptp! <= 65535 {
+                fi = arg_int(cargs, 2);
+                fld = if fi != null && fi! >= 0 && fi! <= 65535 { fi! } else { NONE };
+                etp = if fld == NONE { content(b, ptp!) } else { content(b, field_type(b, ptp!, fld)) };
+                if etp != NONE && (group_covers_type(b, ops, i + 1, e, etp, s.out.fresh) || call_pair_covers(b, ops, i + 1, e, etp, s.depth)) {
+                  s.out.mint_tps += [ptp!];
+                  bump(s.mint_covered, ptp!);
+                } else {
+                  s.mint_declined += [ptp!];
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  for k in scope_fn::children(n) {
+    cw_walk(b, k, s);
+  }
+}
+
+fn content(b: ir::Bundle, t: integer) -> integer {
+  if t < 0 || t >= len(b.types) {
+    return NONE;
+  }
+  match b.types[t]!.parts[0] ?? ir::PtBase {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content } => content,
+    PtSorted { content } => content,
+    PtIndex { content } => content,
+    PtHash { content } => content,
+    PtRadix { content } => content,
+    PtTrie { content } => content,
+    _ => NONE,
+  }
+}
+
+fn field_type(b: ir::Bundle, t: integer, fld: integer) -> integer {
+  fs = struct_fields(b, t);
+  if fld < 0 || fld >= len(fs) { NONE } else { fs[fld]!.content }
+}
+
+// ---- the loop records ----------------------------------------------------------------------
+
+// One admitted loop record (`LoopRecord`).
+pub struct LoopRecord {
+  pub v: integer,
+  pub loop_scope: integer,
+  pub decl_block: integer,
+  pub refill: boolean,
+}
+
+// port: loop_records.rs fn vector_field_offsets.
+pub fn vector_field_offsets(b: ir::Bundle, tp: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if tp < 0 || tp >= len(b.types) || !((b.types[tp]!.parts[0] ?? ir::PtBase) is PtStruct) {
+    return out;
+  }
+  for f in struct_fields(b, tp) {
+    if is_vector_tp(b, f.content) {
+      out += [f.position];
+    }
+  }
+  out
+}
+
+// port: loop_records.rs fn vector_field_numbers.
+fn vector_field_numbers(b: ir::Bundle, tp: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if tp < 0 || tp >= len(b.types) || !((b.types[tp]!.parts[0] ?? ir::PtBase) is PtStruct) {
+    return out;
+  }
+  for f in struct_fields(b, tp) {
+    if is_vector_tp(b, f.content) {
+      out += [f#index];
+    }
+  }
+  out
+}
+
+// port: loop_records.rs fn refillable_plain.
+fn refillable_plain(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) || !((b.types[tp]!.parts[0] ?? ir::PtBase) is PtStruct) {
+    return false;
+  }
+  fields = struct_fields(b, tp);
+  if len(fields) == 0 {
+    return false;
+  }
+  for f in fields {
+    if !owns_heap(b, f.content) {
+      continue;
+    }
+    ok = match b.types[f.content]!.parts[0] ?? ir::PtBase {
+      PtVector { content: e } => !owns_heap(b, e),
+      _ => false,
+    };
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// port: loop_records.rs fn mint_type_of — the type `buf`'s first `OpDatabase(buf, tp)` names, -1.
+fn mint_type_of(b: ir::Bundle, n: ir::Node, buf: integer) -> integer {
+  a = call_named(b, n, "OpDatabase");
+  if a != null && len(a!) == 2 && arg_var(a!, 0) == buf {
+    match a![1]! {
+      NdInt { n: t } => return if t >= 0 && t <= 65535 { t } else { -1 },
+      _ => {}
+    }
+  }
+  for k in scope_fn::children(n) {
+    t = mint_type_of(b, k, buf);
+    if t >= 0 {
+      return t;
+    }
+  }
+  -1
+}
+
+// The refill clause's zeros: `blk * 100000 + index` keys.
+struct Zeros {
+  keys: vector<integer>,
+  ok: boolean,
+  mints: integer,
+  blk: integer,
+}
+
+// port: loop_records.rs fn loop_record_zeros — every mint of `v` heads a literal group that
+// writes every field of `tp`, and every zero of a vector field of `v` is one of those groups'.
+fn loop_record_zeros(b: ir::Bundle, body: ir::Node, v: integer, tp: integer) -> vector<integer>? {
+  offs = vector_field_offsets(b, tp);
+  z = Zeros { keys: [], ok: true, mints: 0, blk: 0 };
+  zeros_walk(b, body, v, tp, offs, z);
+  z.blk = 0;
+  owned_walk(b, body, v, offs, z, -1);
+  if z.ok && z.mints > 0 && len(z.keys) == z.mints * len(offs) { z.keys } else { null }
+}
+
+fn zeros_walk(b: ir::Bundle, n: ir::Node, v: integer, tp: integer, offs: vector<integer>, z: Zeros) {
+  match n {
+    NdBlock { block } => {
+      blk = z.blk;
+      z.blk += 1;
+      ops = block[0]!.operators;
+      for stmt in ops {
+        i = stmt#index;
+        match scope_fn::unspan(stmt) {
+          NdCall { def_nr, args } => {
+            if def_nr < 0 || def_nr >= len(b.data.definitions) || !(def_name(b, def_nr) == "OpDatabase" || def_name(b, def_nr) == "OpDatabaseNP") || arg_var(args, 0) != v {
+              continue;
+            }
+            z.mints += 1;
+            if (arg_int(args, 1) ?? -1) != tp || !group_covers_type(b, ops, i + 1, v, tp, []) {
+              z.ok = false;
+              continue;
+            }
+            for j in i + 1..len(ops) {
+              g = scope_fn::unspan(ops[j]!);
+              gd = -1;
+              gargs: vector<ir::Node> = [];
+              match g {
+                NdCall { def_nr: x, args: y } => {
+                  gd = x;
+                  gargs = y;
+                },
+                _ => {}
+              }
+              if gd < 0 {
+                if g is NdLine {
+                  continue;
+                }
+                break;
+              }
+              if gd >= len(b.data.definitions) || !def_name(b, gd).starts_with("OpSet") {
+                break;
+              }
+              if def_name(b, gd) == "OpSetInt4" && len(gargs) == 3 && arg_var(gargs, 0) == v && (gargs[1]! is NdInt) && (arg_int(gargs, 2) ?? -1) == 0 {
+                off = match gargs[1]! { NdInt { n: o } => o, _ => -1 };
+                if has(offs, off) {
+                  key = blk * 100000 + j;
+                  if !has(z.keys, key) {
+                    z.keys += [key];
+                  }
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    zeros_walk(b, k, v, tp, offs, z);
+  }
+}
+
+// Every vector-field write of `v` must be one of the zeros: `key` is `n`'s own when it is a
+// block's statement (under its spans), -1 otherwise.
+fn owned_walk(b: ir::Bundle, n: ir::Node, v: integer, offs: vector<integer>, z: Zeros, key: integer) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && def_nr < len(b.data.definitions) && def_name(b, def_nr).starts_with("OpSet") && arg_var(args, 0) == v && has(offs, arg_int(args, 1) ?? -1) && !has(z.keys, key) {
+        z.ok = false;
+      }
+    },
+    _ => {}
+  }
+  match u {
+    NdBlock { block } => {
+      blk = z.blk;
+      z.blk += 1;
+      for op in block[0]!.operators {
+        owned_walk(b, op, v, offs, z, blk * 100000 + op#index);
+      }
+    },
+    _ => {
+      for k in scope_fn::children(u) {
+        owned_walk(b, k, v, offs, z, -1);
+      }
+    },
+  }
+}
+
+fn yields_or_parallel(n: ir::Node) -> boolean {
+  if n is NdYield || n is NdParallel {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if yields_or_parallel(k) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Decls {
+  recs: vector<LoopRecord>,
+}
+
+fn decl_walk(b: ir::Bundle, f: ir::Function, v: ir::Node, ls: integer, bs: integer, nest: boolean, out: Decls) {
+  n = scope_fn::unspan(v);
+  match n {
+    NdSet { var, inner } => {
+      if (scope_fn::unspan(inner) is NdNull) && ls >= 0 && bs >= 0 {
+        x = f.variables[var]!;
+        t = x.type_def[0] ?? ir::TyVoid;
+        rd = match opt_vr_layout::peel_link(t) { TyReference { n: r } => r, _ => -1 };
+        seen = false;
+        for r in out.recs {
+          if r.v == var {
+            seen = true;
+          }
+        }
+        if !seen && !x.name.starts_with("__") && !x.captured && !(t is TyOptional) && rd >= 0 && b.data.definitions[rd]!.def_type == 5 {
+          out.recs += [LoopRecord { v: var, loop_scope: ls, decl_block: bs, refill: !opt_writes::all_scalar_record(b, rd) }];
+        }
+      }
+    },
+    _ => {}
+  }
+  nls = ls;
+  nbs = bs;
+  match n {
+    NdLoop { block } => {
+      lp = block[0]!;
+      if lp.name == "tail_self" {
+      } else if nest && ls >= 0 {
+        nbs = lp.scope;
+      } else {
+        nls = lp.scope;
+        nbs = lp.scope;
+      }
+    },
+    NdBlock { block } => { nbs = block[0]!.scope; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    decl_walk(b, f, k, nls, nbs, nest, out);
+  }
+}
+
+// The facts `check` reads of one candidate.
+struct Check {
+  v: integer,
+  offs: vector<integer>,
+  nrs: vector<integer>,
+  rec_tp: integer,
+  minted: boolean,
+  declined: boolean,
+}
+
+fn is_v(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: w } => w == v,
+    _ => false,
+  }
+}
+
+// port: loop_records.rs fn loop_records' `check` — every mention of `v`, judged by its parent.
+fn check(b: ir::Bundle, node: ir::Node, c: Check) {
+  n = scope_fn::unspan(node);
+  v = c.v;
+  match n {
+    NdVar { n: w } => if w == v {
+      c.declined = true;
+      return;
+    },
+    NdSet { var: w, inner: rhs } => {
+      if w == v {
+        if !(scope_fn::unspan(rhs) is NdNull) {
+          c.declined = true;
+        }
+        return;
+      }
+      if is_v(rhs, v) {
+        c.declined = true;
+        return;
+      }
+    },
+    NdReturn { inner } => if is_v(inner, v) {
+      c.declined = true;
+      return;
+    },
+    NdCall { def_nr: g, args } => {
+      if g >= 0 && g < len(b.data.definitions) {
+        gd = b.data.definitions[g]!;
+        name = gd.name;
+        first = len(args) > 0 && is_v(args[0]!, v);
+        native = !ir_pass_tree::has_body(gd) || gd.rust != "";
+        on_vec_field = false;
+        if native && name != "OpGetField" && len(args) > 0 {
+          ga = call_named(b, args[0]!, "OpGetField");
+          on_vec_field = ga != null && arg_var(ga!, 0) == v && has(c.offs, arg_int(ga!, 1) ?? -1) && arg_int(ga!, 1) != null;
+        }
+        if on_vec_field {
+          for a in args {
+            if a#index > 0 {
+              check(b, a, c);
+            }
+          }
+          return;
+        }
+        if first && native {
+          fld_lit = arg_int(args, 1) != null;
+          ok = false;
+          if name == "OpDatabase" || name == "OpDatabaseNP" {
+            c.minted = true;
+            ok = true;
+          } else if name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpFreeRefTag" {
+            ok = true;
+          } else if name == "OpNewRecord" || name == "OpNewRecordNP" || name == "OpFinishRecord" {
+            at = if name == "OpFinishRecord" { 2 } else { 1 };
+            ok = (arg_int(args, at) ?? -1) == c.rec_tp && arg_int(args, at) != null && has(c.nrs, arg_int(args, at + 1) ?? -1) && arg_int(args, at + 1) != null;
+          } else {
+            ok = fld_lit && (in_list(SCALAR_GETTERS, name) || in_list(IN_PLACE_SET_OPS, name));
+          }
+          if !ok {
+            c.declined = true;
+            return;
+          }
+          for a in args {
+            if a#index > 0 {
+              check(b, a, c);
+            }
+          }
+          return;
+        }
+        if !native {
+          deps = own::depend_of(gd.returned[0] ?? ir::TyVoid);
+          for a in args {
+            if is_v(a, v) && has(deps, a#index) {
+              c.declined = true;
+              return;
+            }
+          }
+          for a in args {
+            if !is_v(a, v) {
+              check(b, a, c);
+            }
+          }
+          return;
+        }
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    check(b, k, c);
+  }
+}
+
+// port: loop_records.rs fn loop_records — the loop records of `d`.
+pub fn loop_records(b: ir::Bundle, d: integer) -> vector<LoopRecord> {
+  out: vector<LoopRecord> = [];
+  def = b.data.definitions[d]!;
+  if !ir_pass_tree::has_body(def) {
+    return out;
+  }
+  body = def.code[0]!;
+  if yields_or_parallel(body) {
+    return out;
+  }
+  f = def.variables;
+  refill_on = (env_variable("LOFT_NO_LOOP_RECORD_REFILL") ?? "0") == "0";
+  nest = (env_variable("LOFT_NO_LOOP_RECORD_NEST") ?? "0") == "0";
+  decls = Decls { recs: [] };
+  decl_walk(b, f, body, -1, -1, nest, decls);
+  for rec in decls.recs {
+    v = rec.v;
+    declined = false;
+    offs: vector<integer> = [];
+    nrs: vector<integer> = [];
+    rec_tp = -1;
+    zeros: vector<integer> = [];
+    if rec.refill {
+      tp = mint_type_of(b, body, v);
+      if tp >= 0 && refill_on && refillable_plain(b, tp) {
+        z = loop_record_zeros(b, body, v, tp);
+        if z != null {
+          zeros = z!;
+          offs = vector_field_offsets(b, tp);
+          nrs = vector_field_numbers(b, tp);
+          rec_tp = tp;
+        } else {
+          declined = true;
+        }
+      } else {
+        declined = true;
+      }
+    }
+    c = Check { v: v, offs: offs, nrs: nrs, rec_tp: rec_tp, minted: false, declined: false };
+    check(b, body, c);
+    if declined || c.declined || !c.minted {
+      continue;
+    }
+    out += [LoopRecord { v: v, loop_scope: rec.loop_scope, decl_block: rec.decl_block, refill: rec.refill && len(zeros) > 0 }];
+  }
+  out
+}

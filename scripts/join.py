@@ -164,8 +164,8 @@ def uncarried(commits, registry, index_env):
     """The commits below a squash point that the squash did NOT carry.
 
     A squash carries the branch's tree only when it squashed that branch; a JOIN's squash
-    carries the commits the join picked, and a join that stopped at a source's `wip`
-    checkpoint left that checkpoint and the run after it out.  So a commit here whose diff
+    carries the commits the join picked: a join leaves a source's `wip` checkpoints out, and
+    an older join left the whole run after one out too.  So a commit here whose diff
     still applies FORWARD, and not in reverse, is not in this tree; and one that applies
     neither way but changes a file such a commit changes builds on it.  Both go back to the
     ordinary ladder (and its WIP rule), instead of being skipped unseen."""
@@ -324,7 +324,6 @@ def cmd_survey(args):
                                      cwd=ROOT).returncode == 0
             commits = git("rev-list", "--reverse", f"{head}..{sha}").split()
             rows = []
-            wip = None
             pending = {}
             if not on_base:
                 # A PRE-SQUASH branch: a squash on the base carried its TREE as of some commit,
@@ -348,17 +347,18 @@ def cmd_survey(args):
                                      "SUBJECT" if s in ours else "CARRIED"})
                 commits = [c for c, _ in below if c in left] + commits[point + 1:]
             for c in commits:
-                if wip:
-                    rows.append({"sha": c, "subject": git("log", "-1", "--format=%s", c).strip(),
-                                 "class": "AFTER-WIP", "files": 0})
-                    continue
                 r = classify(c, registry, env, scheduled, pending)
                 code = r.pop("code", [])
-                # A checkpoint its author has not verified ends what this join takes from the
-                # source: the commits after it may build on it.
+                # A checkpoint its author has not verified is left out, and the source is taken
+                # WITHOUT it: the commits after it are classified as any other (owner,
+                # 2026-11-27: "a branch ending on a wip will be taken, just without the wip
+                # commits").  One that builds on the checkpoint stops `apply` at its conflict,
+                # in plain view, where it is resolved or dropped.
                 if r["class"] in ("NEW", "PARTIAL") and not args.take_wip and re.match(
                         r"(?i)(wip\b|fixup!|squash!)", r["subject"]):
-                    r["class"] = wip = "WIP"
+                    r["class"] = "WIP"
+                    rows.append(r)
+                    continue
                 if r["class"] in ("NEW", "PARTIAL") and r["subject"] in ours:
                     r["class"] = "SUBJECT"
                 elif r["class"] in ("NEW", "PARTIAL") and r["subject"] in squashed:
@@ -377,7 +377,7 @@ def cmd_survey(args):
 
 def print_plan(plan, verbose=False):
     marks = {"NEW": "pick", "PARTIAL": "pick", "HERE": "skip", "DUP": "skip", "DERIVED": "skip",
-             "MERGE": "skip", "SUBJECT": "skip", "SQUASHED": "skip", "WIP": "stop",
+             "MERGE": "skip", "SUBJECT": "skip", "SQUASHED": "skip", "WIP": "skip",
              "AFTER-WIP": "skip", "UNDONE-PAIR": "skip", "CARRIED": "skip"}
     for s in plan["sources"]:
         counts = {}

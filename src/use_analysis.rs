@@ -9560,7 +9560,10 @@ fn copies_a_reachable_place(data: &Data, func: &Function, arg: &Value) -> bool {
         return false;
     };
     let def = data.def(*fn_nr);
-    if !def.name().starts_with("n_") || *def.code() == Value::Null {
+    // A function or a METHOD (`s.first()` is `t_5State_first`): a builtin has no body, so the
+    // `code` test is what leaves those out.
+    if !(def.name().starts_with("n_") || def.name().starts_with("t_")) || *def.code() == Value::Null
+    {
         return false;
     }
     // Deps are variable numbers in the CALLEE's frame, and its parameters come first, so a
@@ -9572,7 +9575,8 @@ fn copies_a_reachable_place(data: &Data, func: &Function, arg: &Value) -> bool {
     })
 }
 
-/// The call each `__lift_N` temporary holds, with the line of the statement that bound it.
+/// The call each `__lift_N` temporary (and each `__place_N` a compound assignment binds) holds,
+/// with the line of the statement that bound it.
 ///
 /// `scopes::check` lifts an inline call argument into a `__lift_N` it binds to that call one
 /// statement before the call that uses it (`Scopes::new_lift_var`), and reserves the slot with a
@@ -9591,7 +9595,9 @@ fn lifted_call_results(
         if let Value::Line(l) = n {
             line = Some(*l);
         } else if let Value::Set(v, rhs) = n
-            && func.name(*v).starts_with("__lift_")
+            // `__place_N` is a compound assignment's place, bound once (`s.first().hp -= 10`):
+            // bound to a call, it is that call's result as a `__lift_N` is.
+            && (func.name(*v).starts_with("__lift_") || func.name(*v).starts_with("__place_"))
             && let Value::Call(d, _) = rhs.unspan()
             && !data.def(*d).name().starts_with("Op")
         {
@@ -9684,6 +9690,29 @@ pub fn warn_lost_temp_writes(
             let (line, col) = at
                 .as_ref()
                 .map_or((def.position.line, 0), |p| (p.line, p.pos));
+            if callee == u32::MAX {
+                diags.add_at_coded(
+                    crate::diagnostics::Level::Warning,
+                    Some("lost-write"),
+                    "this writes into the value RETURNED by a call — a temporary that is freed at \
+                     the end of this statement, so the write is LOST. Returning a struct hands \
+                     back a COPY; write the element itself, or bind the result and read it back.",
+                    file,
+                    line,
+                    col,
+                );
+                diags.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: "write the element itself instead of a call that returns it".to_string(),
+                    condition: Some(
+                        "the write is meant to reach what the call read it from".to_string(),
+                    ),
+                    edit: None,
+                    concept: "reference",
+                    concept_ref: "@F21",
+                });
+                continue;
+            }
             let callee_def = data.def(callee);
             let fn_name = callee_def.original_name();
             let param_name = callee_def.variables.name(param);
@@ -9723,8 +9752,23 @@ pub fn warn_lost_temp_writes(
     }
 }
 
+/// The variable a written place is projected from: `v` itself, or the base of a field or
+/// element read of it (`OpGet*`'s first argument), at any depth.  `None` for anything else —
+/// a place reached through a call or a literal is not a variable's, and the lint stays silent
+/// on what it cannot name (it is an under-approximation, `warn_lost_temp_writes`).
+fn projected_base(data: &Data, place: &Value) -> Option<u16> {
+    match place.unspan() {
+        Value::Var(v) => Some(*v),
+        Value::Call(op, args) if data.def(*op).name().starts_with("OpGet") => {
+            projected_base(data, args.first()?)
+        }
+        _ => None,
+    }
+}
+
 /// Walk `node` for calls whose argument at a write-through parameter is a `__lift_N`
-/// temporary. Collects `(callee, parameter var, position)`.
+/// temporary, and for writes into such a temporary itself. Collects `(callee, parameter
+/// var, position)`; a direct write is `(u32::MAX, the temporary, position)`.
 fn scan_lost_temp_writes(
     data: &Data,
     func: &Function,
@@ -9735,6 +9779,24 @@ fn scan_lost_temp_writes(
     out: &mut Vec<(u32, u16, Option<Position>)>,
 ) {
     let here = node.span_pos().or(at);
+    // A WRITE into the call result itself — `first(s).hp = 3`, `s.first().hp -= 10` — is the
+    // same loss with no callee in between: the operator writes the `__lift_N` copy, which is
+    // freed at the end of the statement.  The same two facts: the write (an operator that
+    // writes its first argument, read through any projection of the copy) and a copy of a
+    // place the caller can reach.  Reported as `u32::MAX` for the callee.
+    if let Value::Call(op, args) = node
+        && crate::parser::writes_its_first_argument(data.def(*op).name())
+        && let Some(target) = args.first()
+        && let Some(v) = projected_base(data, target)
+        && let Some((rhs, lift_at)) = lifted.get(&v)
+        && copies_a_reachable_place(data, func, rhs)
+    {
+        out.push((
+            u32::MAX,
+            v,
+            node.span_pos().or(lift_at.as_ref()).or(at).copied(),
+        ));
+    }
     // Matched on the BARE node, not `unspan()`: `for_each_child` hands a `Span`'s inner
     // value straight back, so unspanning here would match the same call twice — once
     // through its wrapper and once as its own child — and report it twice.

@@ -1251,6 +1251,24 @@ pub fn unqualify_literal(e: el::El, n: integer) {
   }
 }
 
+// The pattern twin: `Color::Red =>`, `Sh::Sq { s } =>` read as the plain variant — the lexer
+// resolves a qualified variant to its name for Rust — in place, through `a | b` alternatives.
+// A qualifier no enum answers yet (declared below, on the first pass) is left for the second.
+pub fn unqualify_pattern(e: el::El, n: integer) {
+  match e.p.nodes[n] {
+    PName { at, name, member, fields, braces } => {
+      if member != "" {
+        v = qualified_variant(e, name, member);
+        if v != "" {
+          e.p.nodes[n] = PName { at: at, name: v, member: "", fields: fields, braces: braces };
+        }
+      }
+    },
+    PAlt { alts } => { for a in alts { unqualify_pattern(e, a); } },
+    _ => {}
+  }
+}
+
 // `literal_into_place` for a record literal written into a PLACE (a field, an element, a keyed
 // slot, a tagged holder), as Rust's trace prints it at the literal's end: on the second pass, and
 // only where the place has a root Rust can name (`projection_root_field_place`: a variable the
@@ -1282,8 +1300,8 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   fields: vector<integer> = [];
   unqualify_literal(e, rhs);
   match e.p.nodes[rhs] {
-    SStructLit { member, fields: fs, base } => {
-      if member != "" || base != null {
+    SStructLit { name: qn, member, fields: fs, base } => {
+      if (member != "" && !el::use_exists(e, qn)) || base != null {
         el::refuse(e, "a qualified struct literal or an update");
         return ex(ir::NdNull, ir::TyVoid);
       }
@@ -2493,7 +2511,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
       match declared! {
         TyVector { inner } => {
           nm = el_types::elem_name(e, inner);
-          if nm != "" && cat > 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+          if nm != "" && cat > 0 && el_schema::wants_vector_def(e, nm) {
             el_schema::make_vector_def(e, inner, nm, el::pos_at(e, cat - 1), true);
           }
         },
@@ -2508,7 +2526,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
         TyVector { inner } => {
           nm = el_types::elem_name(e, inner);
           vs = el_ex_null::node_start(e, rhs!);
-          if nm != "" && vs > 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+          if nm != "" && vs > 0 && el_schema::wants_vector_def(e, nm) {
             el_schema::make_vector_def(e, inner, nm, el::pos_at(e, vs - 1), true, narrow_early: false);
           }
         },
@@ -2624,7 +2642,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
       TyVector { inner } => {
         nm = el_types::elem_name(e, inner);
         iat = match e.p.nodes[rhs!] { SIf { at } => at, SMatch { at } => at, _ => 0 };
-        if nm != "" && iat > 0 && el::def_nr(e, "main_vector<{nm}>") < 0 {
+        if nm != "" && iat > 0 && el_schema::wants_vector_def(e, nm) {
           el_schema::make_vector_def(e, inner, nm, el::pos_at(e, iat - 1), true);
         }
       },
@@ -2719,6 +2737,18 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     el_vars::change_var_type(e, vars, v, el_types::with_deps(declared!, el_types::deps(el_types::base(x.tp))));
   }
   el_vars::drop_use(vars, v);
+  // A declared keyed local bound from a loft function's CALL — dense or `τ?` — is replaced into, as
+  // a plain bind is (`assign_keyed_rebind`'s call arm: `dn = null; OpReplaceKeyed(mk(5), dn, …)`).
+  if !e.first_pass && keyed_kind(el_types::base(declared!)) && !(el_types::base(declared!) is TyVector) && match el_ir::unspan(c!) { NdCall { def_nr: dcd } => starts_with(el::def(e, dcd).name, "n_"), _ => false } {
+    return el_ex_assign::keyed_call_copy(e, vars, v, ex(c!, x.tp), el_vars::tp(vars, v), []);
+  }
+  // A declared keyed local bound from a JOIN of keyed literals or owned locals copies it into a
+  // store of its own (`assign_keyed_rebind`: `v = null; OpReplaceKeyed(join, v, type)`), borrowing
+  // nothing.
+  if !e.first_pass && keyed_kind(el_types::base(declared!)) && !(declared! is TyOptional) && el_ir::unspan(c!) is NdIf && el_expressions::keyed_owned_leaves(e, vars, el_ir::unspan(c!)) {
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+    return ex(ir::NdInsert { items: [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [c!, ir::NdVar { n: v }, ir::NdInt { n: el_schema::keyed_type(e, el_types::without_deps(el_types::base(declared!))) }])] }, ir::TyVoid);
+  }
   // The annotated local is the assignment's store (`narrow_store_checks`, then
   // `guard_declared_range`), as for a plain `=`.
   code = c!;

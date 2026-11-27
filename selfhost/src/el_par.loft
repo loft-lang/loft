@@ -104,7 +104,8 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
   el_vars::set_defined(vars, idx);
   len_var = el_vars::create_unique(vars, "par_len", int_t);
   el_vars::set_defined(vars, len_var);
-  bv = el_vars::add_variable(vars, "_{result}_par{w.loop_nr}", if ret is TyText { ir::TyText { dep: [] } } else { ret });
+  // (A text answer, `text?` alike, borrows nothing of the worker's frame.)
+  bv = el_vars::add_variable(vars, "_{result}_par{w.loop_nr}", if el_types::base(ret) is TyText { el_types::with_deps(ret, []) } else { ret });
   el_vars::set_defined(vars, bv);
   prior = el_vars::var(vars, result);
   el_vars::set_name(vars, result, bv);
@@ -298,7 +299,9 @@ fn lane(ret: ir::TypeT) -> Lane {
     TySingle => return Lane { queue: "n_parallel_queue_narrow", get: "n_parallel_buf_get_single", drop: "n_parallel_buf_drop_narrow", label: " narrow", size: 4 },
     _ => {}
   }
-  match ret {
+  // (`ret_type = declared.base()`: a `τ?` answer rides τ's lane — the `?` is a marker over τ's own
+  // storage, its null in band: a text's null string, a reference's `nullref`, a float's NaN.)
+  match shape {
     TyInteger { spec } => {
       if el_ex_base::byte_width(spec, true) != 8 {
         return none;
@@ -314,14 +317,24 @@ fn lane(ret: ir::TypeT) -> Lane {
     // (`route_ref_queue`, `is_dbref`: a record answer is queued as its reference, the row size
     // unknown to the caller.)
     TyReference { n: _ } => Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 },
-    _ => none
+    // (`is_dbref`: a vector, a keyed collection and a struct enum ride the ref lane too.)
+    TyVector { inner: _ } => Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 },
+    TyEnum { n: _, is_ref } => if is_ref { Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 } } else { none },
+    _ => if el_ex_base::keyed_kind(shape) { Lane { queue: "n_parallel_queue_ref", get: "n_parallel_buf_get_ref", drop: "n_parallel_buf_drop_ref", label: " ref", size: -1 } } else { none }
   }
 }
 
 // `par_elem_size`: the stride of a plain scalar, a text or a record element; -1 for any other.
+// `par_elem_size`: a narrow integer its width (`vector_narrow_width`, 4 included), a function its
+// 4-byte number, a nested vector its handle, any other element its type's store size — a
+// `τ?` element its base's (`type_elm`), no narrow width asked.
 fn element_size(e: el::El, elem: ir::TypeT) -> integer {
   match elem {
-    TyInteger { spec } => if spec.forced_size == 4 { -1 } else { el_ex_base::elem_size(elem) },
+    TyInteger { spec: _ } => el_ex_base::elem_size(elem),
+    TyFunction => 4,
+    // (A tuple element is its record's store size: `(integer, integer)` strides 16.)
+    TyTuple { elems: _ } => if e.first_pass { 4 } else { el_ex_base::element_stride(e, elem) },
+    TyOptional { inner } => if el_ex_base::elem_size(elem) > 0 { el_ex_base::elem_size(elem) } else { element_size(e, inner) },
     TyReference { n: _ } => if e.first_pass { 0 } else { el_ex_base::record_size(e, elem) },
     TyFloat => 8,
     TySingle => 4,

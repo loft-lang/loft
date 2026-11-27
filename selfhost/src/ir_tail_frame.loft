@@ -1,0 +1,482 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/tail_frame.rs` transcribed: `@FR-R-TailSelf`'s PREDICATE — which self-calls sit
+// in tail position (`tail_calls`), and whether the frame can be reused by a jump
+// (`admit_frame_clause`) — read here on the lowered shape the rewrite (`ir_tail_self`) sees.
+// The refusal's text and position are the parser's; this side keeps the clause.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use ir_pass_tree;
+
+pub fn off() -> boolean {
+  (env_variable("LOFT_NO_TAIL_SELF") ?? "0") != "0"
+}
+
+// `declared_params`: the attributes that are not hidden, as variable numbers.
+pub fn declared_params(def: ir::Definition) -> vector<integer> {
+  [for a in def.attributes if !a.hidden { a#index }]
+}
+
+fn var_type(f: ir::Function, v: integer) -> ir::TypeT {
+  x = f.variables[v];
+  if x == null { ir::TyVoid } else { x.type_def[0] ?? ir::TyVoid }
+}
+
+fn var_name(f: ir::Function, v: integer) -> text {
+  x = f.variables[v];
+  if x == null { "" } else { x.name }
+}
+
+// `data::is_scalar`
+pub fn is_scalar(t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    TyInteger => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyBoolean => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+// `data::is_dbref` (of a type as it stands)
+pub fn is_dbref(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference => true,
+    TyVector => true,
+    TySorted => true,
+    TyIndex => true,
+    TyHash => true,
+    TyRadix => true,
+    TyTrie => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+// `data::is_dbref_slot`
+pub fn is_dbref_slot(t: ir::TypeT) -> boolean {
+  is_dbref(t) || t is TyIterator
+}
+
+// `admit_frame_clause`: "" when the frame can be reused by a jump, else the clause refusing it.
+pub fn admit_frame_clause(b: ir::Bundle, f: ir::Function, result: ir::TypeT, code: ir::Node, params: vector<integer>, d: integer) -> text {
+  rb = cgen_types::base(result);
+  delivered = by_value(result) || rb is TyVoid || rb is TyNull || rb is TyText;
+  match rb {
+    TyTuple { elems } => {
+      all = true;
+      for e in elems {
+        if !by_value(e) {
+          all = false;
+        }
+      }
+      if all {
+        delivered = true;
+      }
+    },
+    _ => {}
+  }
+  if !delivered {
+    return "a result the jump cannot deliver";
+  }
+  for x in f.variables {
+    if cgen_types::base(x.type_def[0] ?? ir::TyVoid) is TyRefVar && !x.argument {
+      return "a local that is a `&` reference";
+    }
+  }
+  for call in tail_calls(b, code, d, f) {
+    for p in params {
+      i = p#index;
+      tp = var_type(f, p);
+      if is_scalar(tp) {
+        continue;
+      }
+      arg = call[i];
+      if arg == null {
+        continue;
+      }
+      if is_var(arg!, p) {
+        continue;
+      }
+      if !is_dbref_slot(cgen_types::base(tp)) {
+        return "a text or `&` parameter not passed through as itself";
+      }
+      if !part_of_params(b, arg!, params, code, 0) {
+        return "an argument that makes a value the frame would own";
+      }
+    }
+  }
+  for p in params {
+    tp = var_type(f, p);
+    if is_scalar(tp) || cgen_types::base(tp) is TyRefVar {
+      continue;
+    }
+    if writes_variable(b, code, p) {
+      return "a parameter rebound in the body";
+    }
+  }
+  if blocked(code) {
+    return "a generator, a `parallel` block or a closure in the body";
+  }
+  ""
+}
+
+fn by_value(t: ir::TypeT) -> boolean {
+  is_scalar(t) || is_dbref(cgen_types::base(t))
+}
+
+fn blocked(n: ir::Node) -> boolean {
+  match n {
+    NdYield => return true,
+    NdParallel => return true,
+    NdFnRef => return true,
+    NdFnRefDnr => return true,
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if blocked(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == v,
+    _ => false
+  }
+}
+
+fn sets_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var } => if var == v { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if sets_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `writes_variable`: a `Set` of `v`, or an op that takes it as its destination.
+fn writes_variable(b: ir::Bundle, code: ir::Node, v: integer) -> boolean {
+  sets_var(code, v) || op_writes_variable(b, code, v)
+}
+
+// `op_writes_variable`
+fn op_writes_variable(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      if len(args) > 0 && is_var_raw(args[0]!, v) {
+        name = ir_pass_tree::def_name(b, def_nr);
+        if name.starts_with("OpInit") || name.starts_with("OpDatabase") || name.starts_with("OpFree") || name.starts_with("OpClear") || name.starts_with("OpAppend") || name.starts_with("OpCreate") || name == "OpPutRef" {
+          return true;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if op_writes_variable(b, c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_var_raw(n: ir::Node, v: integer) -> boolean {
+  is_var(n, v)
+}
+
+fn is_null_ref_sentinel(b: ir::Bundle, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => len(args) == 0 && ir_pass_tree::def_name(b, def_nr) == "OpNullRefSentinel",
+    _ => false
+  }
+}
+
+// `part_of_params`: is `arg` a pointer the frame does not own — a parameter, or a part of one?
+fn part_of_params(b: ir::Bundle, arg: ir::Node, params: vector<integer>, code: ir::Node, depth: integer) -> boolean {
+  match scope_fn::unspan(arg) {
+    NdVar { n: q } => {
+      if scope_fn::has(params, q) {
+        return true;
+      }
+      depth < 4 && binds_a_part(b, q, params, code, depth + 1)
+    },
+    NdCall { def_nr, args } => {
+      if len(args) == 0 {
+        return false;
+      }
+      name = ir_pass_tree::def_name(b, def_nr);
+      (name == "OpGetField" || name == "OpGetVector" || name == "OpVectorRef" || name == "OpGetRecord" || name == "OpRefFromChildRec" || name == "OpGetDbRef" || name == "OpGetVectorNullable") && part_of_params(b, args[0]!, params, code, depth)
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      bl.name == "ncr" && len(bl.operators) > 0 && part_of_params(b, bl.operators[len(bl.operators) - 1]!, params, code, depth)
+    },
+    NdIf { t, f } => {
+      sa = is_null_ref_sentinel(b, t);
+      sb = is_null_ref_sentinel(b, f);
+      !(sa && sb) && (sa || part_of_params(b, t, params, code, depth)) && (sb || part_of_params(b, f, params, code, depth))
+    },
+    _ => false
+  }
+}
+
+struct Parts { ok: boolean }
+
+fn parts_walk(b: ir::Bundle, n: ir::Node, q: integer, params: vector<integer>, code: ir::Node, depth: integer, s: Parts) {
+  match n {
+    NdSet { var, inner } => {
+      if var == q && !(scope_fn::unspan(inner) is NdNull) && !part_of_params(b, inner, params, code, depth) {
+        s.ok = false;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    parts_walk(b, c, q, params, code, depth, s);
+  }
+}
+
+// `binds_a_part`
+fn binds_a_part(b: ir::Bundle, q: integer, params: vector<integer>, code: ir::Node, depth: integer) -> boolean {
+  if op_writes_variable(b, code, q) {
+    return false;
+  }
+  s = Parts { ok: true };
+  parts_walk(b, code, q, params, code, depth, s);
+  s.ok
+}
+
+// `is_release`: a free, a clear or a closure drop — or a guard around one.
+pub fn is_release(b: ir::Bundle, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr } => {
+      name = ir_pass_tree::def_name(b, def_nr);
+      name.starts_with("OpFree") || name.starts_with("OpClear") || name == "OpDropFnRef"
+    },
+    NdIf { t, f } => is_release(b, t) && (scope_fn::unspan(f) is NdNull || is_release(b, f)),
+    _ => false
+  }
+}
+
+pub fn is_line(v: ir::Node) -> boolean {
+  scope_fn::unspan(v) is NdLine
+}
+
+// `last_value`: the last operator that is not a line marker, -1 none.
+pub fn last_value(ops: vector<ir::Node>) -> integer {
+  for k in rev(0..len(ops)) {
+    if !is_line(ops[k]!) {
+      return k;
+    }
+  }
+  -1
+}
+
+fn is_delivery_place(x: integer, f: ir::Function) -> boolean {
+  x >= 0 && x < len(f.variables) && var_name(f, x).starts_with("__")
+}
+
+// `delivery`: `[m, j, x]`, empty for none.
+pub fn delivery(b: ir::Bundle, ops: vector<ir::Node>, f: ir::Function, in_value: boolean) -> vector<integer> {
+  j = last_value(ops);
+  if j < 0 {
+    return [];
+  }
+  u = scope_fn::unspan(ops[j]!);
+  e = match u {
+    NdReturn { inner } => scope_fn::unspan(inner),
+    NdVar => if in_value { u } else { return [] },
+    _ => return []
+  };
+  x = match e { NdVar { n } => n, _ => return [] };
+  if !is_delivery_place(x, f) {
+    return [];
+  }
+  m = j;
+  while m > 0 && (is_release(b, ops[m - 1]!) || is_line(ops[m - 1]!)) {
+    m -= 1;
+  }
+  if m == 0 {
+    return [];
+  }
+  m -= 1;
+  if writes_place(ops[m]!, x) { [m, j, x] } else { [] }
+}
+
+// `two_step`: the temporary of a `tmp = E; x = tmp` starting at `ops[i]`, -1 none.
+pub fn two_step(ops: vector<ir::Node>, i: integer, x: integer, f: ir::Function) -> integer {
+  tmp = match scope_fn::unspan(ops[i]!) { NdSet { var } => var, _ => return -1 };
+  if tmp == x || !is_delivery_place(tmp, f) {
+    return -1;
+  }
+  for k in i + 1..len(ops) {
+    if !is_line(ops[k]!) {
+      match scope_fn::unspan(ops[k]!) {
+        NdSet { var: y, inner } => if y == x && is_var(inner, tmp) { return tmp; },
+        _ => {}
+      }
+      return -1;
+    }
+  }
+  -1
+}
+
+// `writes_place`
+pub fn writes_place(v: ir::Node, x: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdSet { var } => var == x,
+    NdIf { t, f } => writes_place(t, x) || writes_place(f, x),
+    NdBlock { block } => {
+      for op in block[0]!.operators {
+        if writes_place(op, x) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// `ret_pattern`: `[k, j]`, empty for none.
+pub fn ret_pattern(b: ir::Bundle, ops: vector<ir::Node>, f: ir::Function) -> vector<integer> {
+  last = last_value(ops);
+  for op in ops {
+    k = op#index;
+    r = match scope_fn::unspan(op) { NdSet { var } => var, _ => continue };
+    if !is_delivery_place(r, f) {
+      continue;
+    }
+    j = k + 1;
+    while j < len(ops) && (is_release(b, ops[j]!) || is_line(ops[j]!)) {
+      j += 1;
+    }
+    if j >= len(ops) {
+      return [];
+    }
+    if is_var_unspanned(ops[j]!, r) && j == last {
+      return [k, j];
+    }
+  }
+  []
+}
+
+fn is_var_unspanned(n: ir::Node, v: integer) -> boolean {
+  is_var(n, v)
+}
+
+// `void_tail`: the last operator of a void body that is not a release, -1 none.
+pub fn void_tail(b: ir::Bundle, ops: vector<ir::Node>) -> integer {
+  for k in rev(0..len(ops)) {
+    if !is_line(ops[k]!) && !is_release(b, ops[k]!) {
+      return k;
+    }
+  }
+  -1
+}
+
+// ---- The finder ------------------------------------------------------------------------------
+
+struct Finder {
+  d: integer,
+  out: vector<vector<ir::Node>>,
+}
+
+// `tail_calls`: the arguments of every self-call in tail position of `code`.
+pub fn tail_calls(b: ir::Bundle, code: ir::Node, d: integer, f: ir::Function) -> vector<vector<ir::Node>> {
+  s = Finder { d: d, out: [] };
+  match scope_fn::unspan(code) {
+    NdBlock { block } => fd_ops(b, f, block[0]!.operators, true, s),
+    NdInsert { items } => fd_ops(b, f, items, true, s),
+    _ => {}
+  }
+  s.out
+}
+
+fn fd_ops(b: ir::Bundle, f: ir::Function, ops: vector<ir::Node>, in_value: boolean, s: Finder) {
+  last = last_value(ops);
+  deliver = delivery(b, ops, f, in_value);
+  pat: vector<integer> = if in_value && len(deliver) == 0 { ret_pattern(b, ops, f) } else { [] };
+  vtail = if in_value { void_tail(b, ops) } else { -1 };
+  for op in ops {
+    i = op#index;
+    if len(deliver) == 3 && i == deliver[0]! {
+      fd_deliver(b, f, op, deliver[2]!, s);
+    } else if len(deliver) == 3 && i == deliver[1]! {
+      // the delivery's own `return x`
+    } else if len(pat) == 2 && i == pat[0]! && scope_fn::unspan(op) is NdSet {
+      match scope_fn::unspan(op) { NdSet { inner } => fd_value(b, f, inner, s), _ => {} }
+    } else if len(pat) == 2 && i == pat[1]! {
+      // the pattern's own `__ret_N`
+    } else if in_value && (i == last || i == vtail) {
+      fd_value(b, f, op, s);
+    } else {
+      fd_statement(b, f, op, s);
+    }
+  }
+}
+
+fn fd_deliver(b: ir::Bundle, f: ir::Function, v: ir::Node, x: integer, s: Finder) {
+  match v {
+    NdSpan { inner } => fd_deliver(b, f, inner, x, s),
+    NdSet { var, inner } => if var == x { fd_value(b, f, inner, s); } else { fd_statement(b, f, v, s); },
+    NdIf { t, f: e } => {
+      fd_deliver(b, f, t, x, s);
+      fd_deliver(b, f, e, x, s);
+    },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      for op in ops {
+        i = op#index;
+        if two_step(ops, i, x, f) >= 0 && scope_fn::unspan(op) is NdSet {
+          match scope_fn::unspan(op) { NdSet { inner } => fd_value(b, f, inner, s), _ => {} }
+        } else if writes_place(op, x) {
+          fd_deliver(b, f, op, x, s);
+        } else {
+          fd_statement(b, f, op, s);
+        }
+      }
+    },
+    _ => fd_statement(b, f, v, s)
+  }
+}
+
+fn fd_value(b: ir::Bundle, f: ir::Function, v: ir::Node, s: Finder) {
+  match v {
+    NdSpan { inner } => fd_value(b, f, inner, s),
+    NdCall { def_nr, args } => if def_nr == s.d { s.out += [args]; } else { fd_statement(b, f, v, s); },
+    NdIf { t, f: e } => {
+      fd_value(b, f, t, s);
+      fd_value(b, f, e, s);
+    },
+    NdBlock { block } => fd_ops(b, f, block[0]!.operators, true, s),
+    NdInsert { items } => fd_ops(b, f, items, true, s),
+    NdReturn { inner } => fd_value(b, f, inner, s),
+    _ => fd_statement(b, f, v, s)
+  }
+}
+
+fn fd_statement(b: ir::Bundle, f: ir::Function, v: ir::Node, s: Finder) {
+  match v {
+    NdSpan { inner } => fd_statement(b, f, inner, s),
+    NdReturn { inner } => fd_value(b, f, inner, s),
+    NdBlock { block } => fd_ops(b, f, block[0]!.operators, false, s),
+    _ => {
+      for c in scope_fn::children(v) {
+        fd_statement(b, f, c, s);
+      }
+    }
+  }
+}

@@ -85,7 +85,11 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     _ => {}
   }
   match e.p.nodes[n] {
-    SStructLit { name: sn, member, fields: fs, base } => {
+    SStructLit { at: fat, name: sn, member, fields: fs, base } => {
+      // (Declared below: not built on the first pass, `forward_literal`.)
+      if base == null && el_ex_object::forward_literal(e, vars, sn, member, fat) {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
       if (member != "" && !el::use_exists(e, sn)) || base != null {
         el::refuse(e, "a qualified struct literal or an update");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -97,7 +101,13 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
     _ => {}
   }
   d = el::qualified_def(e, name, qual);
+  // (A struct declared below its literal: not built on the first pass, `forward_literal`.)
+  lat = match e.p.nodes[n] { SStructLit { at: sat } => sat, _ => -1 };
+  if lat >= 0 && el_ex_object::forward_literal(e, vars, name, qual, lat) {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if !el_ex_object::literal_def(e, d) {
+    _ = el_ex_object::literal_instance(e, vars, d, fields, expected: if v >= 0 { el_vars::tp(vars, v) } else { ir::TyUnknown { n: 0 } });
     el::refuse(e, "a literal of something other than a declared struct");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -191,7 +201,53 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   demote = if e.first_pass { -1 } else { demote_field(e, vars, v, d, fields) };
   vars.demote_var = if demote < 0 { -1 } else { v };
   allocs_mark = len(vars.allocs);
+  // (`parse_object_field` stages a field value WHERE IT IS READ: a record field copied from a
+  // local that may view the record being rebuilt — below — takes its `__ref_N` before any later
+  // field mints one, so the numbers run in field order.  The work refs are minted here, ahead of
+  // the field loop, for the fields whose value is such a local by name.)
+  pre_vars: vector<integer> = [];
+  pre_refs: vector<integer> = [];
+  if !e.first_pass && !el_vars::is_compiler_generated(vars, v) {
+    pviewers = el_ex_copy::store_viewers(vars, v) + [v];
+    // (Only the fields BEFORE the first one that may mint a work ref of its own — a call, a
+    // literal: a stage after it is minted after it anyway, the order already the fields'.)
+    pminting = false;
+    for pf in fields {
+      match e.p.nodes[pf] {
+        SFieldInit { e: pfe0 } => {
+          if pfe0 != null && !(e.p.nodes[pfe0!] is SName || e.p.nodes[pfe0!] is SInt || e.p.nodes[pfe0!] is SFloat || e.p.nodes[pfe0!] is SBool || e.p.nodes[pfe0!] is SText || e.p.nodes[pfe0!] is SNull) {
+            pminting = true;
+          }
+        },
+        _ => {}
+      }
+      if pminting {
+        break;
+      }
+      match e.p.nodes[pf] {
+        SFieldInit { name: pfn, e: pfe } => {
+          if pfe != null {
+            match e.p.nodes[pfe!] {
+              SName { name: pnm, member: pmb } => {
+                pv = if pmb == "" { el_vars::var(vars, pnm) } else { -1 };
+                pa = attr_nr(el::def(e, d), pfn);
+                prec = pa >= 0 && struct_ref(e, el_types::base(el::def(e, d).attributes[pa]!.typedef[0] ?? ir::TyVoid)) >= 0;
+                if pv >= 0 && pv != v && prec && pviewers.contains(pv) && !pre_vars.contains(pv) {
+                  pre_vars += [pv];
+                  pre_refs += [el_vars::work_ref(vars, el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, pv))), [pv]))];
+                }
+              },
+              _ => {}
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  vars.lit_defaults_at = -1;
   list = object_fields(e, vars, v, d, fields);
+  defaults_at = if list == null || vars.lit_defaults_at < 0 { -1 } else { len(list!) - vars.lit_defaults_at };
   vars.demote_var = -1;
   vars.rebuild_attempt = false;
   if list == null {
@@ -332,7 +388,15 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
               // (No `skip_free`: `parse_object_field` marks a staged VIEW only where the staged
               // value is a projection call; a whole local staged is a copy that owns its store.)
-              cvtmp = el_vars::work_ref(vars, cvt);
+              cvtmp = -1;
+              for pvv in pre_vars {
+                if pvv == cvw && cvtmp < 0 {
+                  cvtmp = pre_refs[pvv#index]!;
+                }
+              }
+              if cvtmp < 0 {
+                cvtmp = el_vars::work_ref(vars, cvt);
+              }
               staged += [el_ir::v_set(cvtmp, args[0]!)];
               ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: cvtmp }, args[1]!, args[2]!] };
             }
@@ -357,7 +421,9 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
               _ => {}
             }
           }
-          if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } {
+          // (An omitted field's default is replayed as it stands: `parse_object_field` stages
+          // only what the literal writes.)
+          if starts_with(el::def(e, def_nr).name, "OpSet") && len(args) >= 3 && el_ir::unspan(args[0]) == ir::NdVar { n: v } && !(defaults_at >= 0 && op#index >= defaults_at) {
             reads = false;
             for w in viewers {
               if el_ir::reads_var(args[-1], w) {
@@ -1202,8 +1268,18 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
           return null;
         }
         // R-KeyedEntry: an integer field value that reads the collection its record is written
-        // into is staged in a work variable, where the field is read.
-        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read) {
+        // into — or a local that may view its store (`reads_place`: for a parameter, every other
+        // heap parameter, the caller may hand one store twice) — is staged in a work variable,
+        // where the field is read.
+        kread = !e.first_pass && vars.self_read >= 0 && at is TyInteger && el_ir::reads_var(fc!, vars.self_read);
+        if !e.first_pass && vars.self_read >= 0 && at is TyInteger && !kread {
+          for kw in el_ex_copy::store_viewers(vars, vars.self_read) {
+            if kw != vars.self_read && el_ir::reads_var(fc!, kw) {
+              kread = true;
+            }
+          }
+        }
+        if kread {
           sw = el_vars::work_ref(vars, ir::TyInteger { spec: i32_spec() });
           vars.self_stage += [el_ir::v_set(sw, fc!)];
           fc = ir::NdVar { n: sw };
@@ -1225,6 +1301,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       _ => {}
     }
   }
+  dstart = len(list);
   if !e.first_pass {
     for a in def.attributes {
       if a.constant || found.contains(a.name) {
@@ -1279,6 +1356,8 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       }
     }
   }
+  // (Counted from the END: what the caller places ahead of the list does not move it.)
+  vars.lit_defaults_at = len(list) - dstart;
   list
 }
 
@@ -1611,6 +1690,32 @@ fn plain_child_literal(vars: el_vars::Vars, n: ir::Node, w: integer) -> boolean 
   true
 }
 
+// Does the built literal `n` set one of its out-of-line fields from `field`'s own child
+// (`OpSetChildRec(_, OpRefFromChildRec(field), _)`)?
+fn sets_child_from(e: el::El, n: ir::Node, field: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdCall { def_nr, args } => {
+      if el::def(e, def_nr).name == "OpSetChildRec" && len(args) == 3 {
+        match el_ir::unspan(args[1]!) {
+          NdCall { def_nr: rd, args: ra } => {
+            if el::def(e, rd).name == "OpRefFromChildRec" && len(ra) == 1 && el_ir::unspan(ra[0]!) == field {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in el_ir::children(el_ir::unspan(n)) {
+    if sets_child_from(e, c, field) {
+      return true;
+    }
+  }
+  false
+}
+
 // `out_of_line_set` (`@FR-B-OutOfLine`): the value at `fe` written into the out-of-line field
 // at `field` (content row `kt`, record `sd`).  `null` releases the child (`OpSetChildRec` of the
 // null sentinel); a literal of the record whose values read no record is built IN the child
@@ -1632,6 +1737,14 @@ pub fn out_of_line_set(e: el::El, vars: el_vars::Vars, field: ir::Node, kt: inte
   x = el_ex_assign::expression(e, vars, fe);
   if e.first_pass {
     return ir::NdInsert { items: [] };
+  }
+  // `place_demote` (`@FR-R-Demote`, the place clause): a literal written into this out-of-line
+  // field whose own out-of-line field is given the field's child (`h.next = N { …, next:
+  // h.next }`) moves the old child's payload instead of copying it, behind the place read the
+  // literal hoists first (`#330`) — neither carried: refused by name.
+  if literal && sets_child_from(e, x.code, el_ir::unspan(field)) {
+    el::refuse(e, "an out-of-line field of a literal given the place it is written into (the place demote)");
+    return null;
   }
   if !literal {
     xc = el_ir::unspan(x.code);
@@ -1934,7 +2047,8 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
       _ => {}
     }
   }
-  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { at.value[0]! } else { el_ex_object::to_default(e, ft) };
+  // (`replace_record_ref`: a stored default reading `$` reads the record built here.)
+  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { el_ir::replace_var(at.value[0]!, 0, r) } else { el_ex_object::to_default(e, ft) };
   if base == 0 {
     return [el_ex_object::set_field(e, d, a, r, val)];
   }

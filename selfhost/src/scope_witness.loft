@@ -1,0 +1,488 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/witness.rs` transcribed (doc/claude/plans/91-self-host/scope-pass-port.md
+// step 2): the runtime witnesses a record local's release may need, and the pre-scan analyses
+// that mint them.  `nullable_view_locals` is carried; `owner_witness_locals` (loft#1336) is
+// carried as the question of WHICH locals take a witness, and the function is refused where it
+// names one (the witness's releases are not transcribed), so the owner witness stays empty;
+// `nullable_locals_that_displace` answers none while `τ?` has a return buffer
+// (`LOFT_NO_NULLABLE_RETBUF` unset).
+
+use ir;
+use own;
+use binds;
+use scope_fn;
+use scope_args;
+use scope_scan;
+use scope_backings;
+
+// port: witness.rs fn displaces_owned_through_fresh_callee
+pub fn displaces_owned_through_fresh_callee(b: ir::Bundle, value: ir::Node, v: integer, ov: integer) -> boolean {
+  u = scope_fn::unspan(value);
+  fn_nr = -1;
+  args: vector<ir::Node> = [];
+  match u {
+    NdCall { def_nr, args: a } => {
+      fn_nr = def_nr;
+      args = a;
+    },
+    _ => { return false; }
+  }
+  def = b.data.definitions[fn_nr];
+  if def == null || !binds::return_adopts_fresh_store(def!) {
+    return false;
+  }
+  buf = binds::hidden_return_buffer_attr(def!);
+  if buf == null {
+    return false;
+  }
+  a = args[buf!];
+  if a == null || !names_v(a!, v, ov) {
+    return false;
+  }
+  for x in args {
+    if x#index != buf! && (scope_fn::reads_var(x, v) || scope_fn::reads_var(x, ov)) {
+      return false;
+    }
+  }
+  true
+}
+
+fn names_v(x: ir::Node, v: integer, ov: integer) -> boolean {
+  match scope_fn::unspan(x) {
+    NdVar { n } => n == v || n == ov,
+    _ => false
+  }
+}
+
+// port: witness.rs fn mints_a_store_the_target_does_not_hold
+pub fn mints_a_store_the_target_does_not_hold(b: ir::Bundle, value: ir::Node, v: integer, ov: integer) -> boolean {
+  fn_nr = -1;
+  args: vector<ir::Node> = [];
+  match scope_fn::unspan(value) {
+    NdCall { def_nr, args: a } => {
+      fn_nr = def_nr;
+      args = a;
+    },
+    _ => { return false; }
+  }
+  def = b.data.definitions[fn_nr];
+  if def == null || !binds::is_loft_defined(def!) || !binds::return_adopts_fresh_store(def!) {
+    return false;
+  }
+  buf = binds::hidden_return_buffer_attr(def!);
+  if buf != null {
+    a = args[buf!];
+    if a != null && names_v(a!, v, ov) {
+      return false;
+    }
+  }
+  for x in args {
+    if scope_fn::reads_var(x, v) || scope_fn::reads_var(x, ov) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: use_analysis.rs fn through_null_arm — a tagged slot read seen through its tag.
+pub fn through_null_arm(b: ir::Bundle, n: ir::Node) -> ir::Node {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f } => {
+      if holds_no_store(b, f) {
+        return through_null_arm(b, t);
+      }
+      if holds_no_store(b, t) {
+        return through_null_arm(b, f);
+      }
+      u
+    },
+    _ => u
+  }
+}
+
+fn holds_no_store(b: ir::Bundle, n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr, args } => len(args) == 0 && scope_args::def_name(b, def_nr) == "OpNullRefSentinel",
+    _ => false
+  }
+}
+
+fn nullable_record(t: ir::TypeT) -> boolean {
+  t is TyOptional && scope_fn::is_record(t)
+}
+
+// port: witness.rs fn nullable_view_locals — the nullable record locals a projection binds,
+// marked never-free by the phase.
+pub fn nullable_view_locals(b: ir::Bundle, code: ir::Node, f: ir::Function, projections: vector<integer>) -> vector<integer> {
+  has_candidate = false;
+  for v in 0..scope_fn::count(f) {
+    if nullable_record(scope_fn::tp(f, v)) && !scope_fn::is_argument(f, v) && !scope_fn::is_captured(f, v) {
+      has_candidate = true;
+    }
+  }
+  if !has_candidate {
+    return [];
+  }
+  out: vector<integer> = [];
+  view_walk(b, code, projections, out);
+  [for v in out if v < scope_fn::count(f)
+    && nullable_record(scope_fn::tp(f, v))
+    && !scope_fn::is_argument(f, v)
+    && !scope_fn::is_captured(f, v)
+    && !scope_fn::is_compiler_generated(f, v)
+    && len(scope_fn::deps(f, v)) > 0 { v }]
+}
+
+fn view_walk(b: ir::Bundle, n: ir::Node, projections: vector<integer>, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var: t, inner } => if !scope_fn::has(out, t) {
+      hit = match through_null_arm(b, inner) {
+        NdTupleGet => true,
+        NdCall { def_nr } => scope_fn::has(projections, def_nr),
+        _ => false
+      };
+      if hit {
+        out += [t];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    view_walk(b, c, projections, out);
+  }
+}
+
+// (superseded by `owner_witness_locals`) `owner_witness_locals` (loft#1336) can answer a local only where one of its binds MINTS and
+// another VIEWS — two binds, or one CHOICE whose arms deliver a store a call made into a null
+// buffer (`WitnessSet::MintUnless`).  The first local that could qualify, -1 for none: the
+// phase refuses there, so the owner witness is empty wherever the scan runs.
+pub fn owner_witness_may_fire(code: ir::Node, f: ir::Function) -> integer {
+  counts: vector<integer> = [];
+  choice: vector<integer> = [];
+  witness_count(code, f, counts, choice);
+  for c in counts {
+    v = c#index;
+    if c >= 2 || (c == 1 && scope_fn::has(choice, v)) {
+      return v;
+    }
+  }
+  -1
+}
+
+fn witness_candidate(f: ir::Function, t: integer) -> boolean {
+  t < scope_fn::count(f)
+    && !scope_fn::name(f, t).starts_with("__")
+    && !scope_fn::is_argument(f, t)
+    && !(scope_fn::tp(f, t) is TyRefVar)
+    && own::heap_def_nr(scope_fn::tp(f, t)) != null
+}
+
+fn witness_count(n: ir::Node, f: ir::Function, counts: vector<integer>, choice: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var: t, inner } => if witness_candidate(f, t) {
+      while len(counts) <= t {
+        counts += [0];
+      }
+      counts[t] = counts[t]! + 1;
+      if ends_in_choice(inner) {
+        choice += [t];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    witness_count(c, f, counts, choice);
+  }
+}
+
+// A value whose tail, through blocks and inserts, is an `if`.
+fn ends_in_choice(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf => true,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && ends_in_choice(block[0].operators[k - 1]!)
+    },
+    NdInsert { items } => {
+      k = len(items);
+      k > 0 && ends_in_choice(items[k - 1]!)
+    },
+    _ => false
+  }
+}
+
+// port: witness.rs fn owner_witness_locals — the first local whose assignments MIX ownership
+// (one mints a store of its own, another views), -1 for none.  The capture clauses (a
+// captured local with an owner slot, `reassigned_after_build`) are a closure record's, refused
+// by the phase; a captured candidate is refused here.  `was_loop_var` is not in the image: a
+// candidate that would be witnessed is refused by name rather than read as no loop variable.
+pub fn owner_witness_locals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> integer {
+  minted: vector<integer> = [];
+  viewed: vector<integer> = [];
+  ow_walk(s, b, code, f, minted, viewed);
+  for v in minted {
+    if scope_fn::has(viewed, v) {
+      return v;
+    }
+  }
+  -1
+}
+
+fn ow_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, minted: vector<integer>, viewed: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => if witness_candidate(f, t) {
+      if scope_fn::is_captured(f, t) {
+        scope_scan::refuse(s, "witness::owner_witness_locals: a captured record local (capture_builds::has_owner_slot)");
+      }
+      k = witness_set_kind(s, b, inner, t, t, f);
+      if k == SET_MINT || k == SET_MINT_READING {
+        scope_scan::set_add(minted, t);
+      } else if k == SET_MINT_UNLESS {
+        scope_scan::set_add(minted, t);
+        if len(scope_fn::deps(f, t)) > 0 || is_view_of_storage(s, b, inner, f) {
+          scope_scan::set_add(viewed, t);
+        }
+      } else if is_view_of_storage(s, b, inner, f) {
+        scope_scan::set_add(viewed, t);
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    ow_walk(s, b, c, f, minted, viewed);
+  }
+}
+
+SET_MINT = 1;
+SET_MINT_READING = 2;
+SET_OTHER = 3;
+SET_MINT_UNLESS = 4;
+
+// port: witness.rs fn witness_set_kind — the kind of `WitnessSet` (the `MintUnless` temps are
+// not needed by the question asked here).
+pub fn witness_set_kind(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v: integer, ov: integer, f: ir::Function) -> integer {
+  reads = scope_fn::reads_var(value, v) || scope_fn::reads_var(value, ov);
+  if held_by_compiler_temp(b, value, f) {
+    return SET_OTHER;
+  }
+  u = scope_fn::unspan(value);
+  mints = match u {
+    NdVar { n: src } => src != v && src != ov && src < scope_fn::count(f) && own::heap_def_nr(scope_fn::tp(f, src)) != null,
+    NdCall { def_nr, args } => {
+      if len(args) == 0 && scope_args::def_name(b, def_nr) == "OpNullRefSentinel" {
+        false
+      } else {
+        call_mints(s, b, u)
+      }
+    },
+    NdCallRef => call_mints(s, b, u),
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      into_work_ref = k > 0 && match scope_fn::unspan(block[0].operators[k - 1]!) {
+        NdVar { n: r } => r < scope_fn::count(f) && (scope_fn::name(f, r).starts_with("__ref_") || scope_fn::name(f, r).starts_with("__rref_")),
+        _ => false
+      };
+      !into_work_ref && owned(s, b, u)
+    },
+    NdInsert => owned(s, b, u),
+    _ => false
+  };
+  if !mints {
+    if !reads && choice_delivering_temps(b, value, f) {
+      return SET_MINT_UNLESS;
+    }
+    return SET_OTHER;
+  }
+  if reads { SET_MINT_READING } else { SET_MINT }
+}
+
+fn owned(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node) -> boolean {
+  match scope_scan::ownership(s, b, value) {
+    Owned => true,
+    Unknown => true,
+    _ => false
+  }
+}
+
+fn call_mints(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node) -> boolean {
+  fn_nr = binds::callee_of(b, scope_scan::defs(s, b), value);
+  if fn_nr != null {
+    d = b.data.definitions[fn_nr!]!;
+    if binds::is_loft_defined(d) && !binds::return_adopts_fresh_store(d) {
+      return true;
+    }
+  }
+  owned(s, b, value)
+}
+
+// port: witness.rs fn is_view_of_storage
+fn is_view_of_storage(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, f: ir::Function) -> boolean {
+  if scope_backings::delivered_work_ref(b, value, f) >= 0 {
+    return false;
+  }
+  u = scope_fn::unspan(value);
+  match u {
+    NdNull => false,
+    NdCall { def_nr, args } => !(len(args) == 0 && scope_args::def_name(b, def_nr) == "OpNullRefSentinel"),
+    NdVar => false,
+    NdCallRef => true,
+    NdBlock => true,
+    NdInsert => true,
+    NdTupleGet => true,
+    NdIf => {
+      seen = through_null_arm(b, u);
+      if !(seen is NdIf) {
+        return is_view_of_storage(s, b, seen, f);
+      }
+      match scope_scan::ownership(s, b, u) {
+        Borrowed => true,
+        Join => true,
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: witness.rs fn held_by_compiler_temp
+fn held_by_compiler_temp(b: ir::Bundle, value: ir::Node, f: ir::Function) -> boolean {
+  u = scope_fn::unspan(value);
+  match u {
+    NdVar { n: r } => {
+      if r >= scope_fn::count(f) || !scope_fn::is_compiler_generated(f, r) {
+        return false;
+      }
+      nm = scope_fn::name(f, r);
+      if nm.starts_with("__ref_") || nm.starts_with("__rref_") || nm.starts_with("__vdb_") || nm.starts_with("__ncc_") {
+        return true;
+      }
+      if nm.starts_with("__lift_") && !scope_fn::is_skip_free(f, r) {
+        return true;
+      }
+      if nm.starts_with("_ncr_") {
+        for d in scope_fn::deps(f, r) {
+          if d != r && held_by_compiler_temp(b, ir::NdVar { n: d }, f) {
+            return true;
+          }
+        }
+      }
+      false
+    },
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && held_by_compiler_temp(b, block[0].operators[k - 1]!, f)
+    },
+    NdInsert { items } => len(items) > 0 && held_by_compiler_temp(b, items[len(items) - 1]!, f),
+    NdIf { t, f: e } => {
+      nt = holds_no_store(b, t);
+      ne = holds_no_store(b, e);
+      (nt || held_by_compiler_temp(b, t, f)) && (ne || held_by_compiler_temp(b, e, f)) && !(nt && ne)
+    },
+    NdCall { def_nr, args } => scope_fn::has(own::projection_ops(b), def_nr) && len(args) > 0 && held_by_compiler_temp(b, args[0]!, f),
+    _ => false
+  }
+}
+
+// A block's value for `choice_delivering_temps`: its last operator that is no line marker and
+// no release (`OpFreeText`, `OpFreeRef`, `OpFreeRefIfDistinct`).
+fn choice_tail(b: ir::Bundle, ops: vector<ir::Node>) -> ir::Node? {
+  k = len(ops) - 1;
+  while k >= 0 {
+    o = scope_fn::unspan(ops[k]!);
+    skip = o is NdLine || match o {
+      NdCall { def_nr } => {
+        nm = scope_args::def_name(b, def_nr);
+        nm == "OpFreeText" || nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct"
+      },
+      _ => false
+    };
+    if !skip {
+      return ops[k]!;
+    }
+    k -= 1;
+  }
+  null
+}
+
+// port: witness.rs fn choice_delivering_temps, asked as a yes/no.
+fn choice_delivering_temps(b: ir::Bundle, value: ir::Node, f: ir::Function) -> boolean {
+  choice = false;
+  at = scope_fn::unspan(value);
+  while true {
+    match at {
+      NdIf => {
+        choice = true;
+        break;
+      },
+      NdBlock { block } => {
+        t = choice_tail(b, block[0].operators);
+        if t == null {
+          break;
+        }
+        at = scope_fn::unspan(t!);
+      },
+      _ => { break; }
+    }
+  }
+  if !choice {
+    return false;
+  }
+  calls: vector<integer> = [];
+  choice_walk(b, value, f, calls) && len(calls) > 0
+}
+
+fn choice_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<integer>) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f: e } => { return choice_walk(b, t, f, calls) && choice_walk(b, e, f, calls); },
+    NdBlock { block } => {
+      t = choice_tail(b, block[0].operators);
+      return t != null && choice_walk(b, t!, f, calls);
+    },
+    NdInsert { items } => {
+      t = choice_tail(b, items);
+      return t != null && choice_walk(b, t!, f, calls);
+    },
+    _ => {}
+  }
+  if holds_no_store(b, u) {
+    return true;
+  }
+  match u {
+    NdVar => held_by_compiler_temp(b, u, f),
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr]!;
+      if !binds::is_loft_defined(d) {
+        return false;
+      }
+      through_buffer = true;
+      for x in scope_fn::depend(d.returned[0] ?? ir::TyVoid) {
+        a = d.attributes[x];
+        if !(x == scope_fn::NONE || (a != null && a!.hidden)) {
+          through_buffer = false;
+        }
+      }
+      buf = false;
+      for a in args {
+        match scope_fn::unspan(a) {
+          NdVar { n: w } => if w < scope_fn::count(f) && scope_fn::is_compiler_generated(f, w) && !scope_fn::is_argument(f, w) && scope_fn::name(f, w).starts_with("__ref_") {
+            buf = true;
+          },
+          _ => {}
+        }
+      }
+      if through_buffer && buf {
+        calls += [def_nr];
+        return true;
+      }
+      false
+    },
+    _ => false
+  }
+}

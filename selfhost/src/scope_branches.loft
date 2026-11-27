@@ -1,0 +1,381 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/branches.rs` transcribed: an `if` — scan both arms, reconcile what each
+// owns, and establish the slots an arm assigns at the parent scope.  The per-path facts the arms
+// reconcile (`owned_refs`, the backings, the tuple mints) belong to records, vectors and tuples,
+// which `scan_set` refuses, so they stay empty here and their reconcile is a no-op.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_backings;
+use scope_phase;
+use binds;
+
+// port: branches.rs fn leaves_as_value
+fn leaves_as_value(val: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(val) {
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      !(scope_fn::base(bl.result[0] ?? ir::TyVoid) is TyVoid) && k > 0 && scope_phase::mentions_of(bl.operators[k - 1]!, v) > 0
+    },
+    NdInsert { items } => {
+      k = len(items);
+      k > 0 && leaves_as_value(items[k - 1]!, v)
+    },
+    NdIf { t, f } => leaves_as_value(t, v) || leaves_as_value(f, v),
+    _ => false
+  }
+}
+
+// port: branches.rs fn returned_in
+fn returned_in(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdReturn { inner } => if scope_phase::mentions_of(inner, v) > 0 { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if returned_in(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: branches.rs fn binds_of — the right-hand sides of `v`'s binds.
+fn binds_of(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if var == v { out += [inner]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    binds_of(c, v, out);
+  }
+}
+
+// port: branches.rs fn split_variable — the view walk's materialise orders are empty here.
+pub fn split_variable(s: scope_scan::Scopes, f: ir::Function, ov: integer, binds: vector<ir::Node>) -> integer {
+  scope_fn::copy_variable(f, ov)
+}
+
+// port: branches.rs fn scan_if
+pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::Node, f_val: ir::Node, f: ir::Function) -> ir::Node {
+  pre_inits: vector<integer> = [];
+  find_first_ref_vars(s, t_val, f, pre_inits);
+  find_first_ref_vars(s, f_val, f, pre_inits);
+  splits: vector<integer> = [];
+  find_split_first_vars(s, t_val, f, splits);
+  find_split_first_vars(s, f_val, f, splits);
+  for ov in splits {
+    binds: vector<ir::Node> = [];
+    binds_of(t_val, ov, binds);
+    binds_of(f_val, ov, binds);
+    nv = split_variable(s, f, ov, binds);
+    scope_scan::put(s.var_mapping, ov, nv);
+    pre_inits += [nv];
+  }
+  arm_scoped: vector<integer> = [];
+  kept: vector<integer> = [];
+  for v in pre_inits {
+    if confined_to_one_arm(s, v, t_val, f_val, f) {
+      arm_scoped += [v];
+    } else {
+      kept += [v];
+    }
+  }
+  pre_inits = kept;
+  small_both: vector<integer> = [];
+  t_vars: vector<integer> = [];
+  f_vars: vector<integer> = [];
+  find_assigned_vars(s, t_val, t_vars);
+  find_assigned_vars(s, f_val, f_vars);
+  for v in t_vars {
+    if scope_fn::has(f_vars, v) && !scope_scan::in_scope(s, v) && !scope_fn::has(pre_inits, v) && !needs_pre_init(scope_fn::tp(f, v)) {
+      small_both += [v];
+    }
+  }
+  // @PLN164 B1 behind a null-init (`@FR-O-Move`) — the pre-init below turns a local's bind in
+  // this `if` into a REBIND, and a rebind copies where a first bind adopts.  When that bind is
+  // the local's only assignment it follows the pre-init on every path that reaches it, so it is
+  // a first bind.
+  for v in pre_inits {
+    adopt_check(s, b, f, v, t_val, f_val);
+  }
+  for v in s.null_led {
+    if !scope_fn::has(pre_inits, v) {
+      adopt_check(s, b, f, v, t_val, f_val);
+    }
+  }
+  for v in arm_scoped {
+    adopt_check(s, b, f, v, t_val, f_val);
+  }
+  for v in pre_inits {
+    scope_scan::register_binding(s, v, f);
+  }
+  for v in small_both {
+    scope_scan::put_scope(s, v);
+    s.var_order += [v];
+  }
+  scanned_test = scope_scan::scan(s, b, test, f);
+  // #316 — ownership state is path-sensitive: scan each branch from the same pre-If state, then
+  // keep only entries BOTH branches agree on (@FR-O-Complete).
+  owned_before = scope_scan::copy_ints(s.owned_refs);
+  backing_before = scope_scan::copy_ints(s.construction_backing);
+  binds_before = scope_scan::copy_ints(s.bind_backing);
+  views_before = scope_scan::copy_ints(s.view_backing);
+  scanned_true = scope_scan::scan(s, b, t_val, f);
+  owned_after_true = scope_scan::copy_ints(s.owned_refs);
+  backing_after_true = scope_scan::copy_ints(s.construction_backing);
+  binds_after_true = scope_scan::copy_ints(s.bind_backing);
+  views_after_true = scope_scan::copy_ints(s.view_backing);
+  restore(s.owned_refs, owned_before);
+  restore(s.construction_backing, backing_before);
+  restore(s.bind_backing, binds_before);
+  restore(s.view_backing, views_before);
+  scanned_false = scope_scan::scan(s, b, f_val, f);
+  scope_scan::retain_same(s.owned_refs, owned_after_true);
+  scope_scan::retain_same(s.construction_backing, backing_after_true);
+  scope_scan::retain_same(s.bind_backing, binds_after_true);
+  scope_scan::retain_same(s.view_backing, views_after_true);
+  scanned_if = ir::NdIf { cond: scanned_test, t: scanned_true, f: scanned_false };
+  if len(pre_inits) == 0 {
+    return scanned_if;
+  }
+  stmts: vector<ir::Node> = [];
+  for v in pre_inits {
+    if scope_fn::tp(f, v) is TyText {
+      stmts += [scope_fn::v_set(v, ir::NdText { s: "" })];
+    } else {
+      stmts += [scope_fn::v_set(v, ir::NdNull)];
+    }
+  }
+  stmts += [scanned_if];
+  ir::NdInsert { items: stmts }
+}
+
+// `std::mem::replace(&mut map, before)`.
+fn restore(m: vector<integer>, before: vector<integer>) {
+  m.clear();
+  m += before;
+}
+
+// The adoption half of `scan_if`'s pre-init loop for one local.
+fn adopt_check(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, t_val: ir::Node, f_val: ir::Node) {
+  if scope_fn::has(s.multi_assigned, v) && !scope_fn::has(s.null_led, v) {
+    return;
+  }
+  found: vector<ir::Node> = [];
+  only_bind_find(t_val, v, found);
+  only_bind_find(f_val, v, found);
+  if len(found) != 1 {
+    return;
+  }
+  // The oracle is read only past the callee's record-shape test (`may_hand_back_a_caller_store`).
+  vt = scope_fn::base(scope_fn::tp(f, v));
+  if scope_fn::is_record(vt) || vt is TyVector {
+    scope_scan::oracle_guard(s, found[0]!);
+  }
+  if binds::adopts_minted_at_bind(b, s.own_ops, f, v, found[0]!) {
+    f.variables[v].deferred_first_bind = true;
+  }
+}
+
+// port: branches.rs fn only_bind_in_arms — the binds of `v`, a loop's not counted.
+fn only_bind_find(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if var == v {
+      out += [inner];
+      return;
+    },
+    NdLoop => { return; },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    only_bind_find(c, v, out);
+  }
+}
+
+// port: branches.rs fn arm_bind_backing — the backing the ONE bind of `v` inside `arm` fills,
+// -1 when the arm binds `v` other than once or through another shape.
+fn arm_bind_backing(s: scope_scan::Scopes, arm: ir::Node, v: integer, f: ir::Function) -> integer {
+  found: vector<ir::Node> = [];
+  arm_bind_find(arm, v, found);
+  if len(found) != 1 {
+    return -1;
+  }
+  scope_backings::bind_backing_of(found[0]!, f, s.ops.get_field)
+}
+
+fn arm_bind_find(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if var == v {
+      out += [inner];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    arm_bind_find(c, v, out);
+  }
+}
+
+// port: branches.rs fn confined_to_one_arm
+fn confined_to_one_arm(s: scope_scan::Scopes, v: integer, t_val: ir::Node, f_val: ir::Node, f: ir::Function) -> boolean {
+  total = scope_scan::get(s.mentions, v);
+  if total <= 0 || scope_fn::has(s.sunk, v) || scope_fn::is_compiler_generated(f, v) || scope_scan::get(s.var_mapping, v) >= 0 || scope_fn::has(s.var_mapping, v) {
+    return false;
+  }
+  in_t = scope_phase::mentions_of(t_val, v);
+  in_f = scope_phase::mentions_of(f_val, v);
+  t = scope_fn::base(scope_fn::tp(f, v));
+  collection = t is TyVector || t is TyTuple;
+  // A VECTOR bound in both arms is each arm's own when each arm's bind names the backing it
+  // fills (`bind_backing`, loft#1607): the arm's release then reads that one.
+  per_arm_backing = t is TyVector && arm_bind_backing(s, t_val, v, f) >= 0 && arm_bind_backing(s, f_val, v, f) >= 0;
+  if in_t + in_f != total || (collection && in_t > 0 && in_f > 0 && !per_arm_backing) {
+    return false;
+  }
+  if leaves_as_value(t_val, v) || leaves_as_value(f_val, v) || returned_in(t_val, v) || returned_in(f_val, v) {
+    return false;
+  }
+  for x in 0..scope_fn::count(f) {
+    if x == v || !scope_fn::has(scope_fn::deps(f, x), v) {
+      continue;
+    }
+    n = scope_scan::get(s.mentions, x);
+    if n >= 0 && scope_phase::mentions_of(t_val, x) + scope_phase::mentions_of(f_val, x) != n {
+      return false;
+    }
+  }
+  true
+}
+
+// port: branches.rs fn find_assigned_vars
+fn find_assigned_vars(s: scope_scan::Scopes, val: ir::Node, result: vector<integer>) {
+  match scope_fn::unspan(val) {
+    NdSet { var, inner } => {
+      r = scope_scan::mapped(s, var);
+      if !scope_fn::has(result, r) {
+        result += [r];
+      }
+      find_assigned_vars(s, inner, result);
+    },
+    NdBlock { block } => {
+      for op in block[0].operators {
+        find_assigned_vars(s, op, result);
+      }
+    },
+    NdIf { cond, t, f } => {
+      find_assigned_vars(s, cond, result);
+      find_assigned_vars(s, t, result);
+      find_assigned_vars(s, f, result);
+    },
+    NdInsert { items } => {
+      for op in items {
+        find_assigned_vars(s, op, result);
+      }
+    },
+    NdCall { args } => {
+      for a in args {
+        find_assigned_vars(s, a, result);
+      }
+    },
+    NdCallRef { args } => {
+      for a in args {
+        find_assigned_vars(s, a, result);
+      }
+    },
+    NdDrop { inner } => find_assigned_vars(s, inner, result),
+    NdReturn { inner } => find_assigned_vars(s, inner, result),
+    _ => {}
+  }
+}
+
+// port: branches.rs fn find_first_ref_vars
+fn find_first_ref_vars(s: scope_scan::Scopes, val: ir::Node, f: ir::Function, result: vector<integer>) {
+  match scope_fn::unspan(val) {
+    NdSet { var } => {
+      r = scope_scan::mapped(s, var);
+      ready = true;
+      for d in scope_fn::deps(f, r) {
+        if d != r && !scope_scan::in_scope(s, d) && !scope_fn::has(result, d) {
+          ready = false;
+        }
+      }
+      if !scope_scan::in_scope(s, r) && needs_pre_init(scope_fn::tp(f, r)) && ready && !scope_fn::has(result, r) {
+        result += [r];
+      }
+    },
+    NdBlock { block } => {
+      for op in block[0].operators {
+        find_first_ref_vars(s, op, f, result);
+      }
+    },
+    NdIf { cond, t, f: e } => {
+      find_first_ref_vars(s, cond, f, result);
+      find_first_ref_vars(s, t, f, result);
+      find_first_ref_vars(s, e, f, result);
+    },
+    NdInsert { items } => {
+      for op in items {
+        find_first_ref_vars(s, op, f, result);
+      }
+    },
+    _ => {}
+  }
+}
+
+fn dead(s: scope_scan::Scopes, v: integer) -> boolean {
+  sc = scope_scan::get(s.var_scope, v);
+  sc >= 0 && sc != s.scope && !scope_fn::has(s.stack, sc)
+}
+
+// port: branches.rs fn find_split_first_vars
+fn find_split_first_vars(s: scope_scan::Scopes, val: ir::Node, f: ir::Function, result: vector<integer>) {
+  match scope_fn::unspan(val) {
+    NdSet { var: ov } => {
+      m = scope_scan::get(s.var_mapping, ov);
+      deps_ready = true;
+      for d in scope_fn::deps(f, ov) {
+        if !scope_scan::in_scope(s, d) {
+          deps_ready = false;
+        }
+      }
+      if dead(s, ov) && (m < 0 || dead(s, m)) && needs_pre_init(scope_fn::tp(f, ov)) && deps_ready && !scope_fn::has(result, ov) {
+        result += [ov];
+      }
+    },
+    NdIf { t, f: e } => {
+      find_split_first_vars(s, t, f, result);
+      find_split_first_vars(s, e, f, result);
+    },
+    NdInsert { items } => {
+      for op in items {
+        find_split_first_vars(s, op, f, result);
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: branches.rs fn needs_pre_init
+pub fn needs_pre_init(t: ir::TypeT) -> boolean {
+  bt = scope_fn::base(t);
+  match bt {
+    TyTuple { elems } => {
+      for e in elems {
+        if needs_pre_init(e) {
+          return true;
+        }
+      }
+      false
+    },
+    TyText => true,
+    TyReference => true,
+    TyVector => true,
+    TyEnum { is_ref } => is_ref,
+    _ => scope_fn::is_keyed(bt)
+  }
+}

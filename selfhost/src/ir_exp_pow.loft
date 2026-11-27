@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/exp_pow.rs` transcribed (`@FR-R-ExpPow`): `pow(E, x)` is `exp(x)`.  Folded, for
+// `float` and `single`: the operator `OpPowFloat(E, x)` and the stdlib call `pow(E, x)`, where
+// `E` is the constant `OpMathEFloat()` (cast to `single` for the single form) or a literal with
+// exactly its bits.  The result is `OpMathFuncFloat(10, x)` / `OpMathFuncSingle(10, x)`.
+
+use ir;
+use scope_fn;
+use lower;
+use binds;
+use ir_pass_tree;
+
+// The math function id of `exp` in `OpMathFuncFloat` / `OpMathFuncSingle`.
+EXP_ID = 10;
+
+struct Ops {
+  pow_float: vector<integer>,
+  pow_single: vector<integer>,
+  e_float: integer,
+  single_from_float: integer,
+  func_float: integer,
+  func_single: integer
+}
+
+// Is `v` the double `E`?
+fn is_e(ops: Ops, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => def_nr == ops.e_float && len(args) == 0,
+    NdFloat { f } => f == 2.718281828459045,
+    _ => false
+  }
+}
+
+// Is `v` the single `E`: the double `E` cast down, or a literal with its bits?
+fn is_single_e(ops: Ops, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => def_nr == ops.single_from_float && len(args) == 1 && is_e(ops, args[0]!),
+    NdSingle { f } => f == (2.718281828459045 as single),
+    _ => false
+  }
+}
+
+struct Count { n: integer }
+
+// `map_nodes`' visit: the node folded where it is a `pow(E, x)`, then its children.
+fn fold(ops: Ops, n: ir::Node, c: Count) -> ir::Node {
+  at = n;
+  match n {
+    NdCall { def_nr, args } => {
+      if len(args) == 2 {
+        func = -1;
+        if ops.pow_float.contains(def_nr) && is_e(ops, args[0]!) {
+          func = ops.func_float;
+        } else if ops.pow_single.contains(def_nr) && is_single_e(ops, args[0]!) {
+          func = ops.func_single;
+        }
+        if func >= 0 {
+          c.n += 1;
+          at = ir::NdCall { def_nr: func, args: [ir::NdInt { n: EXP_ID }, args[1]!] };
+        }
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(at);
+  if len(kids) == 0 {
+    return at;
+  }
+  ir_pass_tree::with_children(at, [for k in kids { fold(ops, k, c) }])
+}
+
+// port: exp_pow.rs fn rewrite_program — every `pow(E, x)` of the program folded into `exp(x)`.
+pub fn rewrite_program(b: ir::Bundle) {
+  if (env_variable("LOFT_NO_EXP_POW") ?? "") != "" {
+    return;
+  }
+  ops = Ops {
+    pow_float: [lower::find(b, "OpPowFloat") ?? -1, lower::find(b, "t_5float_pow") ?? -2],
+    pow_single: [lower::find(b, "OpPowSingle") ?? -1, lower::find(b, "t_6single_pow") ?? -2],
+    e_float: lower::find(b, "OpMathEFloat") ?? -1,
+    single_from_float: lower::find(b, "OpCastSingleFromFloat") ?? -1,
+    func_float: lower::find(b, "OpMathFuncFloat") ?? -1,
+    func_single: lower::find(b, "OpMathFuncSingle") ?? -1
+  };
+  if ops.pow_float[0]! < 0 || ops.pow_single[0]! < 0 || ops.e_float < 0 || ops.single_from_float < 0 || ops.func_float < 0 || ops.func_single < 0 {
+    return;
+  }
+  for d in b.data.definitions {
+    if d.def_type != 1 || !binds::is_loft_defined(d) {
+      continue;
+    }
+    c = Count { n: 0 };
+    code = fold(ops, d.code[0]!, c);
+    if c.n > 0 {
+      b.data.definitions[d#index].code = [code];
+    }
+  }
+}

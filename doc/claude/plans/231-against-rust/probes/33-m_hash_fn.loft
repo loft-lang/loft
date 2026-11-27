@@ -1,0 +1,4 @@
+// @PLN231 R5 probe — map over a hash, with a typed fn
+// Expect on both backends: refused: map: first argument must be a vector
+struct E { k: text, v: integer }
+fn main() { h: hash<E[k]> = [E { k: "a", v: 1 }, E { k: "b", v: 2 }]; println("{map(h, fn(e: E) -> integer { e.v * 10 })}"); }

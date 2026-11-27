@@ -273,6 +273,10 @@ pub struct Vars {
   pub lit_root: integer = -1,
   // `literal_into_place`'s field notes of the literal being built into `lit_place` (`{field}:staged`).
   pub lit_notes: vector<text> = [],
+  // How many ops at the END of the list `object_fields` answered are the omitted fields'
+  // defaults and what follows them (-1: unknown): the staging of `parse_object_field` covers
+  // the written fields only.
+  pub lit_defaults_at: integer = -1,
   pub self_read: integer = -1,
   pub self_stage: vector<ir::Node> = [],
   // The node whose tuple FIELD read is taken member by member (`x.f.0`, `x.f = …`): no copy.
@@ -292,6 +296,15 @@ pub struct Vars {
   // `Parser::pending_arg_posts` (loft#2146): what a call's arguments store back once it returns
   // (a slot link read again, `n = OpRefFromChildRec(_slot_n_N)`), taken by `call_args`.
   pub arg_posts: vector<ir::Node> = [],
+  // The syntax of the call's arguments, in `call_args`' order (-1 for a receiver): an untyped
+  // `[]` is read against its parameter at its own `]` (`parse_vector` under the hint).
+  pub arg_syntax: vector<integer> = [],
+  // A local a `&` bound to a keyed FIELD (`a = &b.h`): a `+=` through it is the field's
+  // (`set_amp_link`'s place) — the field's syntax, by local.
+  // The empty `[]` tail of a vector body with early returns, built into a store of its own.
+  pub empty_tail: integer = -1,
+  pub field_links: vector<integer> = [],
+  pub field_link_syn: vector<integer> = [],
   // `Function::fn_lambda_map`'s question on both passes: the locals a capturing lambda was
   // bound to (`closure_made` is the pending build, taken by the bind).
   pub closure_bound: vector<integer> = [],
@@ -1585,4 +1598,14 @@ pub fn release_guarded_backings(v: Vars, local: integer) {
       v.vars[d].skip_free = false;
     }
   }
+}
+
+// The slot of local `nr` among the keyed field links, or -1.
+pub fn field_link_at(v: Vars, nr: integer) -> integer {
+  for f in v.field_links {
+    if f == nr {
+      return f#index;
+    }
+  }
+  -1
 }

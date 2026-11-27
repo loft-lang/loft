@@ -722,7 +722,7 @@ to report precisely what was wrong.  Both are supported.
 
 ## Higher-order functions
 
-`map`, `filter`, and `reduce` are compiler special-cases (like `parallel_for`) — they take a function by its bare name (or a lambda) and a vector and produce a new vector or scalar.
+`map`, `filter`, and `reduce` are compiler special-cases (like `parallel_for`) — they take a function by its bare name (or a lambda) and a source, and produce a new vector or scalar.  The source is anything a `for` walks except a text: a vector, a `hash`, `sorted` or `index` (its records, in the order a `for` visits them) or a generator (its items), spelled `map(src, f)` or `src.map(f)`.  A text maps through the comprehension, `[for c in t { … }]`.  Over a source that is not a vector, `reduce` folds into a scalar or a `text`; a collection accumulator over one is written as the loop.
 
 | Signature | Description |
 |---|---|

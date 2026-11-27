@@ -153,13 +153,9 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
             x = ex(el_ir::v_block([el_ir::v_set(w, x.code), ir::NdVar { n: w }], owned, "tuple_member_copy"), owned);
           }
         },
-        _ => {
-          // (A boxed return's tail writes the member into its record: any text value.)
-          if !in_boxed_tail {
-            el::refuse(e, "a tuple with a text member that is no literal or variable");
-            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-          }
-        }
+        // (Any other text — a call's answer, a concatenation into a work text — is the member as
+        // it stands, `(text["__work_1"], integer)`; a boxed return's tail writes it into its record.)
+        _ => {}
       }
     }
     items += [x.code];
@@ -187,7 +183,7 @@ fn plain_struct_member(e: el::El, t: ir::TypeT) -> boolean {
 // `unbox_tuple_from_dbref`'s cursor: the element held in a work ref typed `ref(<tuple>)`
 // borrowing the vector it is read out of (`vector_element_cursor_deps`), never freed where it
 // borrows — that mark taken on the second pass only (loft#848: the `__ref_N` counter restarts).
-fn unbox_cursor(e: el::El, vars: el_vars::Vars, td: integer, elem: ir::Node) -> integer {
+pub fn unbox_cursor(e: el::El, vars: el_vars::Vars, td: integer, elem: ir::Node) -> integer {
   croot = place_root(e, elem);
   ct = ir::TyReference { n: td, dep: if croot >= 0 { [croot] } else { [] } };
   cw = el_vars::work_ref(vars, ct);
@@ -535,7 +531,12 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   vars.tuple_raw = te!;
+  // (A call answering a boxed tuple, read for a member — `pair(3).1` — takes its buffer as a
+  // destructure's does, `boxed_tuple_return`: the member is read off the call.)
+  tg_outer_boxed = vars.boxed_tuple_at;
+  match e.p.nodes[te!] { SCall { at: tca } => { vars.boxed_tuple_at = tca; }, _ => {} }
   x = el_ex_assign::expression(e, vars, te!);
+  vars.boxed_tuple_at = tg_outer_boxed;
   // The element of a member an assignment writes is its place: read dense (`OpGetVector`).
   if te! == vars.place_tuple_subject && x.tp is TyOptional && el_types::base(x.tp) is TyTuple {
     match el_ir::unspan(x.code) {
@@ -597,6 +598,26 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
   // (`@FR-T-Ref-Rep`: a `&(…)` parameter links the `__tuple<…>` record — its members are read
   // as a boxed tuple's are.)
   xlt = match x.tp { TyRefVar { inner: xli } => if el_types::base(xli) is TyReference { el_types::base(xli) } else { x.tp }, _ => x.tp };
+  // (A boxed tuple a CALL answers is read off the call, its member a field of the record.)
+  match el_ir::unspan(x.code) {
+    NdCall { def_nr: bcd } => {
+      match xlt {
+        TyReference { n: bcn } => {
+          if !starts_with(el::def(e, bcd).name, "Op") && starts_with(el::def(e, bcn).name, "__tuple<") && index >= 0 && index < len(el::def(e, bcn).attributes) {
+            bmt = el::def(e, bcn).attributes[index]!.typedef[0] ?? ir::TyVoid;
+            if bmt is TyText || el_convert::plain_scalar(bmt) {
+              bgot = field_get(e, bcn, index, x.code);
+              if bgot != null {
+                return ex(bgot!, if bmt is TyText { ir::TyText { dep: [] } } else { bmt });
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
   match el_ir::unspan(x.code) {
     NdVar { n: tv } => {
       match xlt {
@@ -622,6 +643,11 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
             mt = el::def(e, bd).attributes[index]!.typedef[0] ?? ir::TyVoid;
             // (A record member is read where it lies: a view of the tuple's local.)
             rec = struct_ref(e, mt) >= 0 && el_ex_object::literal_def(e, struct_ref(e, mt)) && !(mt is TyOptional);
+            // (…and so is a vector member: its field, `OpGetField(t, pos, vector)`, a view of the
+            // tuple's local.)
+            if mt is TyVector {
+              rec = true;
+            }
             if !(mt is TyText || el_convert::plain_scalar(mt) || rec || (mt is TyOptional && el_convert::plain_scalar(el_types::base(mt)))) {
               el::refuse(e, "a member of a boxed tuple that is no plain scalar, text or record");
               return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -663,9 +689,10 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
       td = el_types::tuple_def_of(e, ee);
       elem_read = match el_ir::unspan(x.code) { NdCall { def_nr: xd } => el::def(e, xd).name == "OpGetVector", _ => false };
       mt = ee[index] ?? ir::TyVoid;
-      // A member of a tuple that is itself a tuple's member (`n.0.1`): the inner tuple held in
-      // a work ref first (`tuple_tmp`).
-      if el_ir::unspan(x.code) is NdTupleGet && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt) || (el_types::base(mt) is TyReference && struct_ref(e, mt) >= 0)) {
+      // A member of a tuple that is itself a tuple's member (`n.0.1`), or a loft function's answer
+      // (`pair().1`): the tuple held in a work ref first (`tuple_tmp`).
+      tcall_subj = match el_ir::unspan(x.code) { NdCall { def_nr: tcd } => !starts_with(el::def(e, tcd).name, "Op"), _ => false };
+      if (el_ir::unspan(x.code) is NdTupleGet || tcall_subj) && index >= 0 && index < len(ee) && (mt is TyText || is_scalar(mt) || (el_types::base(mt) is TyReference && struct_ref(e, mt) >= 0)) {
         tw = el_vars::work_ref(vars, x.tp);
         // (Through an OPTIONAL tuple local the member may be absent: `τ?`.)
         outer_opt = match el_ir::unspan(x.code) { NdTupleGet { var: otg } => el_vars::tp(vars, otg) is TyOptional, _ => false };
@@ -681,6 +708,33 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
         }
         rroot = place_root(e, x.code);
         return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, rsd).known_type }]), el_types::with_deps(mt, if rroot >= 0 { [rroot] } else { [] }));
+      }
+      // So is a struct-enum member, its record inline in the element (`OpGetField(…, pos, E)`).
+      sed = match el_types::base(mt) { TyEnum { n: sen, is_ref: ser } => if ser { sen } else { -1 }, _ => -1 };
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && sed >= 0 && !(mt is TyOptional) {
+        // (A view of the vector's local, on both passes.)
+        euw = unbox_cursor(e, vars, td, x.code);
+        eroot = place_root(e, x.code);
+        // (On the first pass a field read too, offsets unsettled: a match takes it as a place
+        // and holds no subject, as on the second.)
+        if e.first_pass {
+          return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]), el_types::with_deps(mt, if eroot >= 0 { [eroot] } else { [] }));
+        }
+        return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, sed).known_type }]), el_types::with_deps(mt, if eroot >= 0 { [eroot] } else { [] }));
+      }
+      // A vector member of an element is its field the same way, a view of the vector's local.
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && mt is TyVector {
+        vuw = unbox_cursor(e, vars, td, x.code);
+        if e.first_pass {
+          return ex(ir::NdNull, mt);
+        }
+        vmi = match mt { TyVector { inner: vmn } => vmn, _ => ir::TyVoid };
+        vmnm = el_types::elem_name(e, vmi);
+        vmk = if vmnm == "" { -1 } else { el_ex_base::vector_store(e, vmi, vmnm) };
+        if vmk >= 0 {
+          vroot = place_root(e, x.code);
+          return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: vmk }]), el_types::with_deps(mt, if vroot >= 0 { [vroot] } else { [] }));
+        }
       }
       // A narrow member of an element is read at its width (`OpGetByte`, `OpGetShortRaw`).
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && match mt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {

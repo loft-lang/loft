@@ -908,7 +908,7 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
 // A keyed FIELD of a local record (`box.data += R { … }`): `v` is the owner, `fd` its record
 // and `fnr` the field's number — each record made through the owner and the field's position,
 // `OpNewRecord(box, <Box>, 0)`, as Rust spells a field append; the element borrows the owner.
-pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: integer = -1, fnr: integer = -1) -> vector<ir::Node>? {
+pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: integer = -1, fnr: integer = -1, link: integer = -1) -> vector<ir::Node>? {
   ct = if fd >= 0 { el_types::base(el::def(e, fd).attributes[fnr]!.typedef[0] ?? ir::TyVoid) } else { el_types::base(el_vars::tp(vars, v)) };
   // (Through a link — `c: &hash<Row[id]>` — the collection the link names.)
   match ct {
@@ -936,10 +936,12 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
   bare_field = fd >= 0 && e.p.nodes[n] is SStructLit;
   if len(items) > 0 && !(bare_field && e.first_pass) {
     // (Typed as the collection's record from the first pass on, `ref(Rec)["s"]`.)
-    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if el_d >= 0 { el_d } else { 0 }, dep: [v] });
+    // (Through a link to the field — `a = &b.h; a += […]` — the element borrows the link, and is
+    // no `is_field` element: the link is the container variable.)
+    elm = el_vars::create_unique(vars, "elm", ir::TyReference { n: if el_d >= 0 { el_d } else { 0 }, dep: [if link >= 0 { link } else { v }] });
     // (`is_field`: into a keyed FIELD the element is a reference into the field's store, which
     // the owning record frees — never freed itself.)
-    if fd >= 0 && !bare_field {
+    if fd >= 0 && !bare_field && link < 0 {
       el_vars::set_skip_free(vars, elm, "parse_vector_inner");
     }
   }
@@ -962,7 +964,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
         refuse_known(e, kx.tp, "a keyed collection item of another type: {type_kind(kx.tp)}");
         return null;
       }
-      el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [v] });
+      el_vars::set_var_type(vars, elm, ir::TyReference { n: el_d, dep: [if link >= 0 { link } else { v }] });
       ls += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [w, ir::NdInt { n: kt }, ir::NdInt { n: kpos }]))];
       kcopy = el_ex_link::record_item_copy(e, vars, elm, el_d, kx);
       if kcopy == null {
@@ -980,7 +982,7 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
       el_ex_pattern::literal_field_exprs(e, vars, it);
       continue;
     }
-    el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [v] });
+    el_vars::set_var_type(vars, elm, ir::TyReference { n: sd, dep: [if link >= 0 { link } else { v }] });
     fields: vector<integer> = [];
     match e.p.nodes[it] {
       SStructLit { fields: fs } => { fields = fs; },
@@ -1032,14 +1034,38 @@ pub fn keyed_items(e: el::El, vars: el_vars::Vars, v: integer, n: integer, fd: i
 // for any other literal.
 pub fn keyed_tail_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex? {
   result = el::def(e, e.context).returned[0] ?? ir::TyVoid;
-  if result is TyOptional || !keyed_kind(result) || el_ex_deliver::tail_syntax(e, vars.body) != n {
+  if !keyed_kind(el_types::base(result)) || el_ex_deliver::tail_syntax(e, vars.body) != n {
+    // (…or a literal read where its position expects a keyed collection — an arm of a keyed
+    // join (`arm_expect`), a keyed `??` default: `parse_vector` is handed that type.)
+    et = el_types::base(vars.expect);
+    if vars.expect_node == n && keyed_kind(et) {
+      return keyed_literal(e, vars, n, if vars.expect is TyOptional { ir::TyOptional { inner: el_types::without_deps(et) } } else { el_types::without_deps(et) });
+    }
     return null;
   }
-  ct = el_types::without_deps(result);
-  kvb = el_vars::create_unique(vars, "_kvb", ct);
+  // (A `-> τ?` result's literal accumulates in a `τ?`, `keyed_literal`.)
+  keyed_literal(e, vars, n, if result is TyOptional { ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) } } else { el_types::without_deps(result) })
+}
+
+// `parse_vector` under a keyed hint `ct`: the literal built as that collection in a `__kvb_N` of
+// its own — nulled, given its store, each item a record of it — and answered ("Vector").
+pub fn keyed_literal(e: el::El, vars: el_vars::Vars, n: integer, ct: ir::TypeT) -> Ex? {
+  // (`parse_vector` with the element known mints its temp even for an empty `[]`, `unique_elm_var`:
+  // it is minted after the accumulator, below.)
+  empty = match e.p.nodes[n] { SVecLit { items } => len(items) == 0, _ => false };
+  // (Under an expected `τ?` the accumulator is typed `τ?` — its store given where it holds
+  // none — and the literal answers `τ`.)
+  // (An empty `[]` keeps the dense accumulator, `τ?` or not: there is nothing to re-give a store.)
+  kvt = if empty { el_types::base(ct) } else { ct };
+  ct = el_types::base(ct);
+  kvb = el_vars::create_unique(vars, "_kvb", kvt);
   // Nulled at the function's head as a work reference is.
   if !e.first_pass {
     el_vars::register_work_ref(vars, kvb);
+  }
+  if empty && el_types::keyed_elem(ct) >= 0 {
+    eelm = el_vars::create_unique(vars, "elm", ir::TyReference { n: el_types::keyed_elem(ct), dep: [kvb] });
+    el_vars::mark_inline(vars, eelm, "unique_elm_var");
   }
   items = keyed_items(e, vars, kvb, n);
   if items == null {
@@ -1049,7 +1075,13 @@ pub fn keyed_tail_literal(e: el::El, vars: el_vars::Vars, n: integer) -> Ex? {
     return ex(ir::NdNull, ct);
   }
   w = ir::NdVar { n: kvb };
-  ops = [el_ir::v_set(kvb, ir::NdNull), el_ir::cl(e, "OpDatabase", [w, ir::NdInt { n: el_schema::keyed_type(e, ct) }])] + items! + [w];
+  alloc = el_ir::cl(e, "OpDatabase", [w, ir::NdInt { n: el_schema::keyed_type(e, ct) }]);
+  ops = [el_ir::v_set(kvb, ir::NdNull), alloc];
+  // (A `τ?` accumulator is given its store again where it holds none, as Rust's literal does.)
+  if kvt is TyOptional {
+    ops += [el_ir::v_if(el_ir::cl(e, "OpVectorIsNull", [w]), alloc, ir::NdNull)];
+  }
+  ops = ops + items! + [w];
   ex(el_ir::v_block(ops, ct, "Vector"), ct)
 }
 
@@ -1134,7 +1166,13 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
   // the entry then borrows (`bind_inline_container`, on both passes), as a vector's index does.
   subject = x.code;
   lifted = -1;
-  if el_ex_assign::minting_call(e, x.code) {
+  // (…and on a FIELD of such a result, `hb(3).h[k]`: the call bound where the field is read out
+  // of it, `inline_container`, as a vector's index binds it.)
+  pcw = el_ex_assign::inline_container(e, vars, x);
+  if pcw >= 0 {
+    lifted = pcw;
+    subject = el_ex_assign::bind_root(e, x.code, pcw, el_vars::tp(vars, pcw));
+  } else if el_ex_assign::minting_call(e, x.code) {
     lifted = el_vars::work_ref_p2(vars, x.tp);
     el_vars::mark_inline(vars, lifted, "bind_inline_container");
     subject = el_ir::v_block([el_ir::v_set(lifted, x.code), ir::NdVar { n: lifted }], el_types::with_deps(x.tp, [lifted]), "inline_container");
@@ -1514,6 +1552,13 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
             if idx < len(elems) && is_scalar(el_types::base(elems[idx])) {
               return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: elems[idx] });
             }
+            // (Refused, but the tuple's record is made first, past the statement, as Rust boxes
+            // the tuple a link into a heap member needs: `c = &a.0` makes
+            // `__tuple<vector<integer>,integer>`.)
+            // (Not a text member's: Rust links a text member without boxing.)
+            if idx < len(elems) && el_types::base(elems[idx]) is TyVector {
+              _ = el_types::tuple_def(e, [for m in elems { el_types::without_deps(m) }], el::pos_at(e, el_ex_pattern::statement_end(e, if e.at >= 0 { e.at } else { 0 })));
+            }
           },
           _ => {}
         }
@@ -1578,6 +1623,27 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       }
       return a;
     }
+    // A link to a KEYED local is its view the same way (`a = &h`: `a: hash<…>["h"] = h`), the
+    // writes through it the collection's (`@FR-B-Ref-Uniform`).  A link to a keyed FIELD of a
+    // local (`a = &b.h`) the same, its uses the field's (`Vars.field_links`).
+    if keyed_kind(el_types::base(a.tp)) && !(a.tp is TyOptional) && (a.code is NdVar || calls(e, el_ir::unspan(a.code), "OpGetField") && place_root(e, el_ir::unspan(a.code)) >= 0 && el_ir::unspan(match el_ir::unspan(a.code) { NdCall { args: fga } => fga[0] ?? ir::NdNull, _ => ir::NdNull }) is NdVar) && len(el_types::deps(a.tp)) > 0 {
+      return a;
+    }
+    // A link to a FUNCTION-value local (`pd = &g`) is the local's slot the same way
+    // (`@FR-B-Ref-Intro`: `&τ` for every τ): `OpCreateStack(g)`, typed `&fn(…)` — and such a
+    // link met again (a `&fn(…)` declaration reads its `&g` as a link) is that link.
+    if match a.tp { TyRefVar { inner: fri } => el_types::base(fri) is TyFunction, _ => false } && calls(e, el_ir::unspan(a.code), "OpCreateStack") {
+      return a;
+    }
+    match a.code {
+      NdVar { n: fv } => {
+        if el_types::base(a.tp) is TyFunction && !(a.tp is TyOptional) && !vars.vars[fv].argument && !(el_vars::tp(vars, fv) is TyRefVar) {
+          // (The local's own type: what its function borrows, not the read's `[g]`.)
+          return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: el_vars::tp(vars, fv) });
+        }
+      },
+      _ => {}
+    }
     // A link to a record LOCAL (`pc = &c`) is the local's slot (`OpCreateStack`), typed as a
     // link borrowing it; its fields are reached as the record's are (`@FR-C-Ref`).
     match a.code {
@@ -1587,7 +1653,8 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
         }
         // (A NULLABLE record local the same way, the link as nullable as the local:
         // `pd: &ref(S)["d"]? = OpCreateStack(d)`, loft#1372.)
-        if a.tp is TyOptional && struct_ref(e, rb) >= 0 && el::def(e, struct_ref(e, rb)).def_type == el::DT_STRUCT && !vars.vars[rv].argument && !(el_vars::tp(vars, rv) is TyRefVar) {
+        // (…and a nullable record PARAMETER, `fn walk(n: Nd?) { cur = &n; … }`, alike.)
+        if a.tp is TyOptional && struct_ref(e, rb) >= 0 && el::def(e, struct_ref(e, rb)).def_type == el::DT_STRUCT && (!vars.vars[rv].argument || !hidden_param(e, vars, rv)) && !(el_vars::tp(vars, rv) is TyRefVar) {
           return ex(el_ir::cl(e, "OpCreateStack", [a.code]), ir::TyRefVar { inner: ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(rb), [rv]) } });
         }
       },
@@ -1596,8 +1663,15 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     if e.first_pass && el_types::is_unknown(a.tp) {
       return a;
     }
+    // (A tuple's record is made first: `r = &b` of a tuple local makes `__tuple<integer,integer>`.)
+    match el_types::base(a.tp) { TyTuple { elems: re } => { _ = el_types::tuple_def(e, [for m in re { el_types::without_deps(m) }], el::pos_at(e, el_ex_pattern::statement_end(e, if e.at >= 0 { e.at } else { 0 }))); }, _ => {} }
     el::refuse(e, "a `&` reference to something other than a scalar or a vector place: {type_kind(el_types::base(a.tp))}");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    // Refused; a link to a KEYED collection keeps Rust's type (`@FR-B-Ref-Uniform`: `&τ` is a
+    // link to the place of any `τ`): unknown, the link's next use read its operand untyped, so
+    // an append through it (`a = &h; a += [Row {…}]`) minted a `vector<Row>` Rust never has.
+    // (Every other `τ` stays unknown for now: typed, a link to a function value took a road that
+    // left later closures unregistered, try 3e4ddbdc3.)
+    return ex(ir::NdNull, if keyed_kind(el_types::base(a.tp)) { ir::TyRefVar { inner: a.tp } } else { ir::TyUnknown { n: 0 } });
   }
   x = el_ex_assign::expression(e, vars, n!);
   // `!` of a nullable operand is the negation of its truth: a `boolean?` as it is, anything
@@ -1958,7 +2032,7 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
   if stack && el_types::base(x.tp) is TyCharacter {
     render += [el_ir::cl(e, "OpAppendStackCharacter", [w, x.code])];
   } else {
-    el_ex_call::append_spec(e, render, acc, x.code, x.tp, stack, el_ex_call::plain_fmt());
+    el_ex_call::append_spec(e, vars, render, acc, x.code, x.tp, stack, el_ex_call::plain_fmt());
   }
   if e.first_pass {
     for op in render {

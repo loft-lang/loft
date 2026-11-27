@@ -1568,6 +1568,12 @@ pub fn substitute(t: ir::TypeT, h: integer, bound: ir::TypeT) -> ir::TypeT {
     },
     TyRefVar { inner } => ir::TyRefVar { inner: substitute(inner, h, bound) },
     TyFunction { args, result, dep, consts } => ir::TyFunction { args: [for a in args { substitute(a, h, bound) }], result: substitute(result, h, bound), dep: dep, consts: consts },
+    // `Type::substitute` is the one keystone every former descends through (Plan-17 for the
+    // tuple, loft#1032 for the iterator): `[T ↦ integer]` reaches `(T, U)` and `iterator<T>`,
+    // so a call's predicted `vector<(T, U)>` is `vector<(integer, text)>`.
+    TyTuple { elems } => ir::TyTuple { elems: [for m in elems { substitute(m, h, bound) }] },
+    TyIterator { step, inner } => ir::TyIterator { step: substitute(step, h, bound), inner: substitute(inner, h, bound) },
+    TyRewritten { inner } => ir::TyRewritten { inner: substitute(inner, h, bound) },
     _ => t
   }
 }
@@ -2292,11 +2298,43 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
     },
     // (A generator handle, which `elem_name` does not spell: `iterator<…>`.)
     TyIterator { step: _ } => el_types::type_key_name(e, t),
+    // (A range with no rows of its own — four bytes, `integer limit(-99999, 99999)` — by its range,
+    // as `Type::name` spells it.)
+    TyInteger { spec: _ } => if el_types::elem_name(e, t) != "" { el_types::elem_name(e, t) } else { el_types::key_name(e, t) },
     _ => el_types::elem_name(e, t)
   }
 }
 
-pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
+// The store row a vector element is stored as, where every vector under it already has its
+// row: a nullable vector is stored as the vector it holds, a vector as the vector of its
+// element's row (made where missing).  -1 where a leaf has no row yet.
+pub fn stored_row(e: el::El, t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => if el_types::base(inner) is TyVector { stored_row(e, el_types::base(inner)) } else { -1 },
+    TyVector { inner } => {
+      // (A narrow element's vector is laid out at the fill, not here.)
+      if match el_types::base(inner) { TyInteger { spec: _ } => el_types::elem_name(e, el_types::base(inner)) != "integer", _ => false } {
+        return -1;
+      }
+      kn = el_types::type_key_name(e, t);
+      kd = if kn == "" { -1 } else { el::def_nr(e, kn) };
+      if kd >= 0 && el::def(e, kd).known_type != el_schema::NO_TYPE {
+        return el::def(e, kd).known_type;
+      }
+      s = stored_row(e, inner);
+      if s < 0 { -1 } else { el_schema::vector_type(e, s) }
+    },
+    // (A scalar has the library's row.)
+    TyFloat => el_schema::content_type(e, t),
+    TyBoolean => el_schema::content_type(e, t),
+    TyCharacter => el_schema::content_type(e, t),
+    TyText { dep: _ } => el_schema::content_type(e, t),
+    TyInteger { spec: _ } => if el_types::elem_name(e, t) == "integer" { el_schema::content_type(e, t) } else { -1 },
+    _ => -1
+  }
+}
+
+pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, appended: boolean = false) -> VecRows? {
   if t is TyTuple {
     return tuple_vector_rows(e, t, lit, declared);
   }
@@ -2305,6 +2343,22 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     // Refused, but `vector<…>` and `main_vector<…>` are registered first, as Rust's `vector_def`
     // registers them for any element: every definition after them keeps Rust's number.
     rn = registration_name(e, t);
+    // The element's own vector, which Rust's `parse_vector` of the first nested literal with
+    // items registers at its `]` (`[null, [1.5f]]` against `vector<single>?`: `vector<single>`):
+    // ahead of the outer pair where nothing declared the outer one (the inner `]` comes first),
+    // after it where a declaration registered the outer pair before the literal was read.
+    it = match t { TyOptional { inner } => inner, _ => t };
+    ie = match it { TyVector { inner } => inner, _ => ir::TyVoid };
+    inm = el_types::elem_name(e, ie);
+    if inm == "" && !(ie is TyVoid) {
+      inm = registration_name(e, ie);
+    }
+    nested = match e.p.nodes[lit] { SVecLit { items } => [for x in items if match e.p.nodes[x] { SVecLit { items: xi } => len(xi) > 0, _ => false } { x }], _ => [] };
+    inner_pos = if len(nested) > 0 { el::pos_at(e, closing_bracket(e, match e.p.nodes[nested[0]!] { SVecLit { at } => at, _ => 0 })) } else { el::pos_at(e, 0) };
+    inner_first = !declared && inm != "" && len(nested) > 0;
+    if inner_first && el_schema::wants_vector_def(e, inm) {
+      el_schema::make_vector_def(e, ie, inm, inner_pos, true, narrow_early: false);
+    }
     if rn != "" && el::def_nr(e, "vector<{rn}>") < 0 {
       rtok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
       rat = closing_bracket(e, rtok);
@@ -2312,6 +2366,21 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
         rat = rtok - 1;
       }
       el_schema::make_vector_def(e, t, rn, el::pos_at(e, rat), true, narrow_early: false);
+    }
+    if !inner_first && inm != "" && len(nested) > 0 && el_schema::wants_vector_def(e, inm) {
+      el_schema::make_vector_def(e, ie, inm, inner_pos, true, narrow_early: false);
+    }
+    // A nullable vector element is stored as the vector it holds.  Where the vectors under it
+    // already have their rows (the library's `vector<integer>`), Rust's `vector_of` makes each
+    // row above at the literal — `vector<vector<integer>?>`'s, then its own vector's — and the
+    // wrapper's fill names them (`check_vector`: `vector<vector<integer>>`).
+    srow = stored_row(e, t);
+    if srow >= 0 {
+      vr = el_schema::vector_type(e, srow);
+      vrd = el::def_nr(e, "vector<{rn}>");
+      if !(t is TyOptional) && vrd >= 0 && el::def(e, vrd).known_type == el_schema::NO_TYPE {
+        e.b.data.definitions[vrd].known_type = vr;
+      }
     }
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
@@ -2323,7 +2392,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   if !empty_narrow {
     int4_rows(e, t);
   }
-  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if el_schema::wants_vector_def(e, nm) {
     tok = 0;
     match e.p.nodes[lit] {
       SVecLit { at } => { tok = at; },
@@ -2335,6 +2404,11 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   // The scalar's own `vector<scalar>` definition follows on the second pass (`check_vector`),
   // at the same place, its row the first pass's.
   sbn = el_types::nullable_scalar_elem(e, t);
+  // (A nullable plain enum's too: `check_vector` names it by the enum's definition,
+  // `vector<ColLink>` for a `vector<ColLink?>`.)
+  if sbn == "" {
+    sbn = match t { TyOptional { inner: oe } => match oe { TyEnum { n, is_ref } => if is_ref { "" } else { el::def(e, n).name }, _ => "" }, _ => "" };
+  }
   // So does a plain `single`'s, for a literal with items (`v: vector<single> = [0.5f]`): the
   // library declares its wrapper and no `vector<single>`.
   if sbn == "" && t is TySingle && match e.p.nodes[lit] { SVecLit { items: li } => len(li) > 0, _ => false } {
@@ -2343,11 +2417,13 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   if !e.first_pass && sbn != "" && el::def_nr(e, "vector<{sbn}>") < 0 && el_schema::schema_type(e, "vector<{sbn}>") >= 0 {
     stok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
     sat = closing_bracket(e, stok);
-    if sat == stok + 1 || declared {
+    // (An append's literal names it at its `]`, as `parse_append_vector` does.)
+    if (sat == stok + 1 || declared) && !appended {
       sat = stok - 1;
     }
     svd = el::add_def(e, "vector<{sbn}>", el::pos_at(e, sat), el::DT_VECTOR);
-    e.b.data.definitions[svd].parent = el::source_nr(e, 0, sbn);
+    spar = el::source_nr(e, 0, sbn);
+    e.b.data.definitions[svd].parent = if spar >= 0 { spar } else { el::def_nr(e, sbn) };
     e.b.data.definitions[svd].known_type = el_schema::schema_type(e, "vector<{sbn}>");
   }
   // (A function value's `vector<i32>` definition follows on the second pass, at the literal,
@@ -2367,7 +2443,7 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   // `Parser::vector_of`, on either pass: an element whose record already has its store type —
   // a library's, laid out when that library's file ended — has its `vector<T>` store type made
   // here, ahead of the `main_vector<T>` wrapper the schema lays out after the pass.
-  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, TyOptional { inner } => match inner { TyEnum { n } => el::def(e, n).known_type, _ => el_schema::NO_TYPE }, _ => el_schema::NO_TYPE };
+  ek = match t { TyReference { n } => el::def(e, n).known_type, TyEnum { n } => el::def(e, n).known_type, TyOptional { inner } => match inner { TyEnum { n } => el::def(e, n).known_type, TyCharacter => el::def(e, el::source_nr(e, 0, "character")).known_type, _ => el_schema::NO_TYPE }, _ => el_schema::NO_TYPE };
   if vk < 0 && ek != el_schema::NO_TYPE {
     vk = el_schema::vector_type(e, ek);
   }
@@ -2381,26 +2457,38 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   VecRows { main_def: md, main_known: el::def(e, md).known_type, vec_known: vk }
 }
 
+
 // `vector_rows` for a tuple element (`Data::vector_def` with `ensure_tuple_defs`): at the
 // literal's `]`, the `__tuple<…>` struct, `vector<(…)>` owned by it and the `main_vector<(…)>`
 // wrapper; on the second pass, once the rows are laid out, `check_vector`'s
 // `vector<__tuple<…>>` under the row's own name, at the same place.
-pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
+pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, at_close: boolean = false) -> VecRows? {
   elems = match t { TyTuple { elems: es } => es, _ => [] };
   sp = el_types::tuple_spelling_e(e, elems, ", ");
   tok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
   // `vector_def`'s position: the `]`, or — for a declared element or an empty `[]` — the token
   // before the `[`, read before the literal is.
   cb = closing_bracket(e, tok);
-  pos = el::pos_at(e, if cb == tok + 1 || declared { tok - 1 } else { cb });
+  // (A field's literal read at the field's type is at its own `]`, even an empty one: `at_close`.)
+  pos = el::pos_at(e, if at_close { cb } else if cb == tok + 1 || declared { tok - 1 } else { cb });
   if sp == "" {
     // Refused, but the tuple's record, `vector<(…)>` and `main_vector<(…)>` are registered
     // first, as Rust's `vector_def` registers them for any element: every definition after them
     // keeps Rust's number.
-    rn = el_types::type_key_name(e, t);
-    if rn != "" && el::def_nr(e, "main_vector<{rn}>") < 0 {
-      rtd = el_types::tuple_def(e, elems, pos);
-      el_schema::make_vector_def(e, t, rn, pos, true);
+    // (`parse_item`'s variant join, member by member: a variant's record is its enum's —
+    // `[(Circle { r: 1.5 }, "a")]` is a `vector<(Shape, text)>`.)
+    jelems = [for m in elems { if match el_types::without_deps(m) { TyReference { n } => el::def(e, n).def_type == el::DT_ENUM_VALUE && el::def(e, n).parent >= 0, _ => false } { ir::TyEnum { n: match el_types::without_deps(m) { TyReference { n } => el::def(e, n).parent, _ => -1 }, is_ref: true, dep: [] } } else { m } }];
+    jt = ir::TyTuple { elems: jelems };
+    rn = el_types::type_key_name(e, jt);
+    // (A narrow, nullable or enum member has no `type_key_name`: Rust names the vector from each
+    // member's `Type::name` all the same — `vector<(integer(0, 255), integer, Hue)>` — so where
+    // every member is one Rust spells so, `key_name` names it; any other member mints nothing.)
+    if rn == "" && el_types::nameable_members(e, jelems) {
+      rn = el_types::key_name(e, jt);
+    }
+    if rn != "" && el_schema::wants_vector_def(e, rn) {
+      rtd = el_types::tuple_def(e, jelems, pos);
+      el_schema::make_vector_def(e, jt, rn, pos, true);
       rvd = el::def_nr(e, "vector<{rn}>");
       if rvd >= 0 && rtd >= 0 {
         e.b.data.definitions[rvd].parent = rtd;
@@ -2411,7 +2499,7 @@ pub fn tuple_vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolea
   }
   td = el_types::tuple_def(e, elems, pos);
   nm = "({sp})";
-  if el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if el_schema::wants_vector_def(e, nm) {
     el_schema::make_vector_def(e, t, nm, pos, true);
     vd = el::def_nr(e, "vector<{nm}>");
     if vd >= 0 {
@@ -2619,10 +2707,12 @@ pub struct Built {
 pub fn struct_literal_def(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
     SStructLit { name, member, base } => {
-      if member != "" || base != null {
+      if base != null {
         return -1;
       }
-      d = el::def_nr(e, name);
+      // (A library-qualified literal, `ltl::Pt { … }`, is that library's struct — as the lexer
+      // resolves the name for Rust; an enum-qualified variant names no `use`, `qualified_def`.)
+      d = el::qualified_def(e, name, member);
       if d >= 0 && el::def(e, d).def_type == el::DT_STRUCT { d } else { -1 }
     },
     _ => -1
@@ -2799,6 +2889,11 @@ pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>,
     if r != null {
       return r!;
     }
+  }
+  // (No candidate on the first pass, an operand still holding a stub anywhere — `Unknown?`, a
+  // record declared below behind a `?`: undecidable until the second pass, which answers.)
+  if e.first_pass && len([for t in types if el_types::has_unknown(t) { 1 }]) > 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   kinds = "";
   for t in types {

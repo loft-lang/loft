@@ -602,7 +602,7 @@ fn breaks(n: ir::Node) -> boolean {
 // `slot_alias::range_slot_aliases`: a range loop's variable shares its index's slot where both
 // are one kind, the variable is set only by the iterator and the index is written by no body
 // statement — and neither has its address taken.
-fn range_aliases(code: ir::Node, f: ir::Function, ops: Ops) -> vector<Alias> {
+pub fn range_aliases(code: ir::Node, f: ir::Function, ops: Ops) -> vector<Alias> {
   loops: vector<ir::Block> = [];
   collect_loops(code, loops);
   out: vector<Alias> = [];
@@ -718,7 +718,7 @@ fn children(n: ir::Node) -> vector<ir::Node> {
 
 // Where the locals start: past every argument's stepped slot and the return address's
 // (`assign_function_slots`).
-fn local_start(f: ir::Function) -> integer {
+pub fn local_start(f: ir::Function) -> integer {
   at = 0;
   for v in f.variables {
     if v.argument {
@@ -768,7 +768,7 @@ struct Iv { var_nr: integer, ls: integer, le: integer, size: integer, align: int
 // `slots_v2::assign_slots_v2`: each local, in order of its first definition, at the lowest
 // aligned offset no live local of another kind or size overlaps, and that does not straddle a
 // loop the other is wholly inside or outside of.  A range loop's variable takes its index's slot.
-fn assign_slots(f: ir::Function, iv: Intervals, aliases: vector<Alias>, start: integer) {
+pub fn assign_slots(f: ir::Function, iv: Intervals, aliases: vector<Alias>, start: integer) {
   kept: vector<Alias> = [];
   for a in aliases {
     v = f.variables[a.ix]!;
@@ -878,7 +878,7 @@ fn round_up(n: integer, a: integer) -> integer {
 }
 
 // `apply_var_size`: one reserve at the function's entry covers every slot, so no block reserves.
-fn zero_var_size(n: ir::Node) -> ir::Node {
+pub fn zero_var_size(n: ir::Node) -> ir::Node {
   match n {
     NdBlock { block } => {
       bl = block[0];

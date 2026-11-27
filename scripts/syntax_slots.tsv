@@ -162,6 +162,7 @@ cn-field-text	construct	E-Record	once	1	text	p2 = P { k: 1, t: <S> }; o = p2.t;
 cn-field-child	construct	E-Record	once	1	int	nd = mkhd(); nd.root.left = Nd { key: <S> }; s = nd.root.left.key ?? -1;
 cn-field-child-absent	construct	E-Record	once	1	int	nd = Hd { root: null }; nd.root.left = Nd { key: <S> }; s = nd.root.left.key ?? -1;
 cn-vector	construct	Col-Cons	once	1	int	q = [i, <S>, j]; s = len(q);
+cn-vector-rec	construct	Col-Cons	once	1	rec	h.ws += [<S>]; s = h.ws[2].n;
 cn-tuple	construct	T-Cons	once	1	int	tp = (j, <S>); s = tp.1;
 cn-format	construct	F-Interp	once	1	int	o = "{ <S> }";
 cn-format-text	construct	F-Interp	once	1	text	o = "<{ <S> }>";

@@ -98,6 +98,7 @@ int-alias	int	(ident(<C>, vi)[0] - 9)
 int-alias-field	int	own(<C>, r).n
 text-alias	text	own(<C>, r).t
 rec-alias	rec	own(<C>, r)
+rec-join-alias	rec	if yes(<C>, true) { same(r) } else { h.ws[0] }
 vint-alias	vint	ident(<C>, vi)
 coll-alias	coll	idc(<C>, xs)
 coll-alias-field	coll	own(<C>, r).items

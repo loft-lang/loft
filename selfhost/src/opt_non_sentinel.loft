@@ -46,6 +46,14 @@ pub fn new_proof(b: ir::Bundle) -> Proof {
   }
 }
 
+// The proof as the IR passes ask it (`opt::begin_program`): the program-wide parameter fact
+// off, which only the C generator switches on (`begin_c_generation`).
+pub fn new_ir_proof(b: ir::Bundle) -> Proof {
+  p = new_proof(b);
+  p.params_state = 2;
+  p
+}
+
 // `Value::walk`: `f` on every node of `node`, a node before its children, a source span
 // passed through.
 pub fn walk(node: ir::Node, f: fn(ir::Node)) {

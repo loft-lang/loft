@@ -1,0 +1,4 @@
+// @PLN231 R11 probe — a local bound to a call of a function declared lower in the file (loft#918)
+// Expect on both backends: later 6
+fn main() { x = later(3); println("later {x}"); }
+fn later(a: integer) -> integer { a * 2 }

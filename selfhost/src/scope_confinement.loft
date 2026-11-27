@@ -1,0 +1,552 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/confinement.rs` transcribed (scope-pass-port.md step 4): the block a
+// vector store is provably confined to, so a rescan registers — and frees — it at that block's
+// exit, and the null-init relocation that follows it.  The reporting halves (`rest_store_oracle`,
+// `store_lifetime_guard`) are diagnostics `check` runs only under a switch, not carried.
+
+use ir;
+use scope_fn;
+
+// port: confinement.rs fn is_var_null_init — `Set(vdb, Null)`.
+pub fn is_var_null_init(op: ir::Node, vdb: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet { var, inner } => var == vdb && scope_fn::unspan(inner) is NdNull,
+    _ => false
+  }
+}
+
+// `prepend_to_scope`'s answer: the node, and whether `ni` went into it.
+struct Prepended {
+  node: ir::Node,
+  done: boolean
+}
+
+// port: confinement.rs fn prepend_to_scope — `ni` put at the head of the block whose scope is
+// `target`, descending only the control-flow spine.
+fn prepend_to_scope(node: ir::Node, target: integer, ni: ir::Node) -> Prepended {
+  match node {
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.scope == target {
+        ops = [ni];
+        ops += bl.operators;
+        return Prepended { node: with_ops(node, ops), done: true };
+      }
+      return prepend_seq(node, bl.operators, target, ni);
+    },
+    NdLoop { block } => { return prepend_seq(node, block[0].operators, target, ni); },
+    NdInsert { items } => {
+      ops = items;
+      for i in 0..len(ops) {
+        p = prepend_to_scope(ops[i]!, target, ni);
+        if p.done {
+          ops[i] = p.node;
+          return Prepended { node: ir::NdInsert { items: ops }, done: true };
+        }
+      }
+      return Prepended { node: node, done: false };
+    },
+    NdIf { cond, t, f } => {
+      p = prepend_to_scope(cond, target, ni);
+      if p.done {
+        return Prepended { node: ir::NdIf { cond: p.node, t: t, f: f }, done: true };
+      }
+      p = prepend_to_scope(t, target, ni);
+      if p.done {
+        return Prepended { node: ir::NdIf { cond: cond, t: p.node, f: f }, done: true };
+      }
+      p = prepend_to_scope(f, target, ni);
+      if p.done {
+        return Prepended { node: ir::NdIf { cond: cond, t: t, f: p.node }, done: true };
+      }
+      return Prepended { node: node, done: false };
+    },
+    NdSpan { pos, inner } => {
+      p = prepend_to_scope(inner, target, ni);
+      return Prepended { node: if p.done { ir::NdSpan { pos: pos, inner: p.node } } else { node }, done: p.done };
+    },
+    NdReturn { inner } => {
+      p = prepend_to_scope(inner, target, ni);
+      return Prepended { node: if p.done { ir::NdReturn { inner: p.node } } else { node }, done: p.done };
+    },
+    NdDrop { inner } => {
+      p = prepend_to_scope(inner, target, ni);
+      return Prepended { node: if p.done { ir::NdDrop { inner: p.node } } else { node }, done: p.done };
+    },
+    NdYield { inner } => {
+      p = prepend_to_scope(inner, target, ni);
+      return Prepended { node: if p.done { ir::NdYield { inner: p.node } } else { node }, done: p.done };
+    },
+    _ => {}
+  }
+  Prepended { node: node, done: false }
+}
+
+// A block's or loop's operators, each asked in turn.
+fn prepend_seq(node: ir::Node, operators: vector<ir::Node>, target: integer, ni: ir::Node) -> Prepended {
+  ops = operators;
+  for i in 0..len(ops) {
+    p = prepend_to_scope(ops[i]!, target, ni);
+    if p.done {
+      ops[i] = p.node;
+      return Prepended { node: with_ops(node, ops), done: true };
+    }
+  }
+  Prepended { node: node, done: false }
+}
+
+// A block or loop node with new operators.
+fn with_ops(node: ir::Node, ops: vector<ir::Node>) -> ir::Node {
+  match node {
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => node
+  }
+}
+
+// port: confinement.rs fn relocate_null_init — `vdb`'s null-init moved from the body into its
+// confined block; put back at body position 0 where no spine reaches that block.
+pub fn relocate_null_init(code: ir::Node, vdb: integer, block_scope: integer) -> ir::Node {
+  ops: vector<ir::Node> = [];
+  match code {
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return code; }
+  }
+  pos = -1;
+  for op in ops {
+    if pos < 0 && is_var_null_init(op, vdb) {
+      pos = op#index;
+    }
+  }
+  if pos < 0 {
+    return code;
+  }
+  ni = ops[pos]!;
+  rest: vector<ir::Node> = [for op in ops if op#index != pos { op }];
+  body = with_ops(code, rest);
+  p = prepend_to_scope(body, block_scope, ni);
+  if p.done {
+    return p.node;
+  }
+  back = [ni];
+  back += rest;
+  with_ops(code, back)
+}
+
+// The scope path of a reference: each open block or loop as `scope * 2 + is_loop`.
+struct Lca {
+  has: boolean,
+  path: vector<integer>
+}
+
+// port: confinement.rs fn guard_note — the running longest common prefix of the paths.
+fn guard_note(stack: vector<integer>, lca: Lca) {
+  if !lca.has {
+    lca.has = true;
+    lca.path = [for x in stack { x }];
+    return;
+  }
+  k = 0;
+  while k < len(lca.path) && k < len(stack) && lca.path[k] == stack[k] {
+    k += 1;
+  }
+  lca.path = lca.path[0..k];
+}
+
+// port: confinement.rs fn guard_refs
+fn guard_refs(node: ir::Node, target: integer, free_ref: integer, stack: vector<integer>, lca: Lca) {
+  match node {
+    NdVar { n } => if n == target { guard_note(stack, lca); },
+    NdSet { var, inner } => {
+      if var == target && !(scope_fn::unspan(inner) is NdNull) {
+        guard_note(stack, lca);
+      }
+      guard_refs(inner, target, free_ref, stack, lca);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr == free_ref && len(args) == 1 && match scope_fn::unspan(args[0]!) { NdVar { n } => n == target, _ => false } {
+        return;
+      }
+      for a in args {
+        guard_refs(a, target, free_ref, stack, lca);
+      }
+    },
+    NdBlock { block } => {
+      stack += [block[0].scope * 2];
+      for op in block[0].operators {
+        guard_refs(op, target, free_ref, stack, lca);
+      }
+      stack.remove(len(stack) - 1);
+    },
+    NdLoop { block } => {
+      stack += [block[0].scope * 2 + 1];
+      for op in block[0].operators {
+        guard_refs(op, target, free_ref, stack, lca);
+      }
+      stack.remove(len(stack) - 1);
+    },
+    NdIf { cond, t, f } => {
+      guard_refs(cond, target, free_ref, stack, lca);
+      guard_refs(t, target, free_ref, stack, lca);
+      guard_refs(f, target, free_ref, stack, lca);
+    },
+    NdIter { var, create, next, init } => {
+      if var == target {
+        guard_note(stack, lca);
+      }
+      guard_refs(create, target, free_ref, stack, lca);
+      guard_refs(next, target, free_ref, stack, lca);
+      guard_refs(init, target, free_ref, stack, lca);
+    },
+    NdCallRef { var, args } => {
+      if var == target {
+        guard_note(stack, lca);
+      }
+      for a in args {
+        guard_refs(a, target, free_ref, stack, lca);
+      }
+    },
+    NdReturn { inner } => guard_refs(inner, target, free_ref, stack, lca),
+    NdDrop { inner } => guard_refs(inner, target, free_ref, stack, lca),
+    NdYield { inner } => guard_refs(inner, target, free_ref, stack, lca),
+    NdInsert { items } => {
+      for op in items {
+        guard_refs(op, target, free_ref, stack, lca);
+      }
+    },
+    NdTuple { items } => {
+      for op in items {
+        guard_refs(op, target, free_ref, stack, lca);
+      }
+    },
+    NdParallel { arms } => {
+      for op in arms {
+        guard_refs(op, target, free_ref, stack, lca);
+      }
+    },
+    NdTupleGet { var } => if var == target { guard_note(stack, lca); },
+    NdTuplePut { var, inner } => {
+      if var == target {
+        guard_note(stack, lca);
+      }
+      guard_refs(inner, target, free_ref, stack, lca);
+    },
+    NdSpan { inner } => guard_refs(inner, target, free_ref, stack, lca),
+    _ => {}
+  }
+}
+
+// The LCA path of every reference to `target`.
+fn refs_lca(code: ir::Node, target: integer, free_ref: integer) -> Lca {
+  lca = Lca { has: false, path: [] };
+  stack: vector<integer> = [];
+  guard_refs(code, target, free_ref, stack, lca);
+  lca
+}
+
+// port: confinement.rs fn escapes_value — `v` hands `target` out as-is.
+fn escapes_value(v: ir::Node, target: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n == target,
+    NdTuple { items } => {
+      for e in items {
+        if escapes_value(e, target) {
+          return true;
+        }
+      }
+      false
+    },
+    NdInsert { items } => {
+      for e in items {
+        if escapes_value(e, target) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: confinement.rs fn guard_escapes — returned, yielded, or a block's value.
+pub fn guard_escapes(node: ir::Node, target: integer) -> boolean {
+  hit = match node {
+    NdReturn { inner } => escapes_value(inner, target),
+    NdYield { inner } => escapes_value(inner, target),
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && escapes_value(block[0].operators[k - 1]!, target)
+    },
+    NdLoop { block } => {
+      k = len(block[0].operators);
+      k > 0 && escapes_value(block[0].operators[k - 1]!, target)
+    },
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for c in scope_fn::children(node) {
+    if guard_escapes(c, target) {
+      return true;
+    }
+  }
+  false
+}
+
+// The `ok` flag of the dominance walk.
+struct Dom {
+  ok: boolean
+}
+
+// port: confinement.rs fn confine_reassign_safe — every read of `local` is dominated by a
+// non-null assignment earlier in the same straight-line block.
+pub fn confine_reassign_safe(code: ir::Node, local: integer) -> boolean {
+  d = Dom { ok: true };
+  dominance_walk(code, local, false, d, false);
+  d.ok
+}
+
+// port: confinement.rs fn store_dead_after_block
+fn store_dead_after_block(code: ir::Node, local: integer) -> boolean {
+  d = Dom { ok: true };
+  dominance_walk(code, local, true, d, true);
+  d.ok
+}
+
+// port: confinement.rs fn dominance_walk
+fn dominance_walk(node: ir::Node, local: integer, dom: boolean, ok: Dom, inv: boolean) -> boolean {
+  match node {
+    NdSet { var, inner } => {
+      dominance_walk(inner, local, dom, ok, inv);
+      if var == local {
+        return !(scope_fn::unspan(inner) is NdNull);
+      }
+      dom
+    },
+    NdVar { n } => {
+      if n == local && !dom {
+        ok.ok = false;
+      }
+      dom
+    },
+    NdTupleGet { var } => {
+      if var == local && !dom {
+        ok.ok = false;
+      }
+      dom
+    },
+    NdCallRef { var, args } => {
+      if var == local && !dom {
+        ok.ok = false;
+      }
+      d = dom;
+      for a in args {
+        d = dominance_walk(a, local, d, ok, inv);
+      }
+      dom
+    },
+    NdBlock { block } => {
+      d = dom;
+      for op in block[0].operators {
+        d = dominance_walk(op, local, d, ok, inv);
+      }
+      d
+    },
+    NdLoop { block } => {
+      d = dom;
+      for op in block[0].operators {
+        d = dominance_walk(op, local, d, ok, inv);
+      }
+      if inv && assigns_local(node, local) { false } else { dom }
+    },
+    NdIf { cond, t, f } => {
+      dc = dominance_walk(cond, local, dom, ok, inv);
+      dominance_walk(t, local, dc, ok, inv);
+      dominance_walk(f, local, dc, ok, inv);
+      if inv && (assigns_local(t, local) || assigns_local(f, local)) { false } else { dc }
+    },
+    NdIter { var, create, next, init } => {
+      if var == local && !dom {
+        ok.ok = false;
+      }
+      d = dominance_walk(create, local, dom, ok, inv);
+      d = dominance_walk(next, local, d, ok, inv);
+      dominance_walk(init, local, d, ok, inv);
+      if inv && assigns_local(node, local) { false } else { d }
+    },
+    NdCall { args } => dom_seq(args, local, dom, ok, inv),
+    NdInsert { items } => dom_seq(items, local, dom, ok, inv),
+    NdTuple { items } => dom_seq(items, local, dom, ok, inv),
+    NdParallel { arms } => dom_seq(arms, local, dom, ok, inv),
+    NdReturn { inner } => {
+      dominance_walk(inner, local, dom, ok, inv);
+      dom
+    },
+    NdDrop { inner } => {
+      dominance_walk(inner, local, dom, ok, inv);
+      dom
+    },
+    NdYield { inner } => {
+      dominance_walk(inner, local, dom, ok, inv);
+      dom
+    },
+    NdTuplePut { var, inner } => {
+      if var == local && !dom {
+        ok.ok = false;
+      }
+      dominance_walk(inner, local, dom, ok, inv);
+      dom
+    },
+    NdSpan { inner } => dominance_walk(inner, local, dom, ok, inv),
+    _ => dom
+  }
+}
+
+fn dom_seq(xs: vector<ir::Node>, local: integer, dom: boolean, ok: Dom, inv: boolean) -> boolean {
+  d = dom;
+  for a in xs {
+    d = dominance_walk(a, local, d, ok, inv);
+  }
+  d
+}
+
+// port: confinement.rs fn assigns_local — a non-null `Set(local, …)` anywhere in `node`.
+fn assigns_local(node: ir::Node, local: integer) -> boolean {
+  match node {
+    NdSet { var, inner } => if var == local && !(scope_fn::unspan(inner) is NdNull) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(node) {
+    if assigns_local(c, local) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: confinement.rs fn recover_backer — the local an orphaned store flows into through its
+// repoint `Set(L, OpGetField(Var(vdb), …))`, -1 for none.
+fn recover_backer(code: ir::Node, vdb: integer, get_field: integer) -> integer {
+  match code {
+    NdSet { var, inner } => {
+      match scope_fn::unspan(inner) {
+        NdCall { def_nr, args } => if def_nr == get_field && len(args) > 0 {
+          match scope_fn::unspan(args[0]!) {
+            NdVar { n } => if n == vdb { return var; },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(code) {
+    r = recover_backer(c, vdb, get_field);
+    if r >= 0 {
+      return r;
+    }
+  }
+  -1
+}
+
+// One confined store: its backing, the local it backs, the block scope it is confined to.
+pub struct Confined {
+  pub vdb: integer,
+  pub local: integer,
+  pub block: integer
+}
+
+// port: confinement.rs fn store_confinement — per `__vdb` store, the non-loop block it is
+// provably confined to, in variable order.
+pub fn store_confinement(code: ir::Node, f: ir::Function, free_ref: integer, get_field: integer) -> vector<Confined> {
+  out: vector<Confined> = [];
+  count = scope_fn::count(f);
+  for vdb in 0..count {
+    if !scope_fn::name(f, vdb).starts_with("__vdb") || scope_fn::is_argument(f, vdb) {
+      continue;
+    }
+    backed = -1;
+    ambiguous = false;
+    for v in 0..count {
+      if scope_fn::has(scope_fn::deps(f, v), vdb) {
+        if scope_fn::is_argument(f, v) || scope_fn::is_captured(f, v) || backed >= 0 {
+          ambiguous = true;
+          break;
+        }
+        backed = v;
+      }
+    }
+    if ambiguous {
+      continue;
+    }
+    recovered = backed < 0;
+    local = backed;
+    if recovered {
+      local = recover_backer(code, vdb, get_field);
+      if local < 0 || scope_fn::is_argument(f, local) || scope_fn::is_captured(f, local) {
+        continue;
+      }
+    }
+    if scope_fn::is_skip_free(f, local) || scope_fn::is_skip_free(f, vdb) || guard_escapes(code, local) {
+      continue;
+    }
+    // `Function::is_ref_home` is not in the image: `check` refuses a body with a stored
+    // reference wherever this answers a store (`stored_reference`).
+    multi_store = recovered || len(scope_fn::deps(f, local)) != 1;
+    if multi_store && !confine_reassign_safe(code, local) {
+      continue;
+    }
+    span_target = if multi_store { vdb } else { local };
+    lca = refs_lca(code, span_target, free_ref);
+    if !lca.has || len(lca.path) == 0 {
+      continue;
+    }
+    bk = lca.path[len(lca.path) - 1]! / 2;
+    any_loop = false;
+    for x in lca.path {
+      if x % 2 == 1 {
+        any_loop = true;
+      }
+    }
+    if any_loop || f.variables[vdb].scope == bk {
+      continue;
+    }
+    if recovered && !store_dead_after_block(code, local) {
+      continue;
+    }
+    outlived = false;
+    for w in 0..count {
+      if w == local || scope_fn::name(f, w).starts_with("_") || !scope_fn::has(scope_fn::deps(f, w), local) {
+        continue;
+      }
+      wl = refs_lca(code, w, free_ref);
+      if wl.has {
+        inside = false;
+        for x in wl.path {
+          if x / 2 == bk {
+            inside = true;
+          }
+        }
+        if !inside {
+          outlived = true;
+        }
+      }
+    }
+    if outlived {
+      continue;
+    }
+    out += [Confined { vdb: vdb, local: local, block: bk }];
+  }
+  out
+}

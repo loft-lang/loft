@@ -1,0 +1,398 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/fill_loop.rs` transcribed (`@FR-R-PushFill`'s fill form): a counted loop
+// whose whole body is ONE push of a simple invariant onto a plain local vector variable —
+// `for _ in a..b { v += [c] }` — is one fill of the vector's tail: the push of `c`, then
+// `OpAppendCopy(v, n, tp)`, guarded `if 0 < n { fill } else { the loop as written }`.  The
+// several clause takes one push onto each of two or more such vectors.  The shape is
+// `opt_window::push_loop`'s, the analysis the C writer's clauses read.
+
+use ir;
+use scope_fn;
+use lower;
+use loop_shape;
+use opt_push;
+use opt_window;
+use opt_append_twin;
+use el;
+use el_types;
+use ir_pass_tree;
+
+struct Ops {
+  add_int: integer,
+  min_int: integer,
+  lt_int: integer,
+  append_copy: integer,
+}
+
+struct Count { n: integer }
+
+// `keys::push_fill_enabled` and `LOFT_NO_FILL_LOOP`.
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_PUSH_FILL") ?? "") == "" && (env_variable("LOFT_NO_FILL_LOOP") ?? "0") == "0"
+}
+
+// port: fill_loop.rs fn rewrite_program — every admitted fill loop of the program rewritten;
+// answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if !enabled() {
+    return 0;
+  }
+  ops = Ops {
+    add_int: lower::find(b, "OpAddInt") ?? -1,
+    min_int: lower::find(b, "OpMinInt") ?? -1,
+    lt_int: lower::find(b, "OpLtInt") ?? -1,
+    append_copy: lower::find(b, "OpAppendCopy") ?? -1,
+  };
+  if ops.add_int < 0 || ops.min_int < 0 || ops.lt_int < 0 || ops.append_copy < 0 {
+    return 0;
+  }
+  total = 0;
+  for d in b.data.definitions {
+    // A native NAME is no reason to skip: a library export or a compiled stdlib function keeps
+    // the loft body a native build emits.
+    if !ir_pass_tree::has_body(d) || el::is_operator(d) || d.rust != "" {
+      continue;
+    }
+    c = Count { n: 0 };
+    code = rewrite(b, d.code[0]!, d#index, ops, c);
+    if c.n > 0 {
+      b.data.definitions[d#index].code = [code];
+      total += c.n;
+    }
+  }
+  total
+}
+
+// port: fill_loop.rs fn rewrite — each admitted loop under `v` replaced; a replaced loop is not
+// walked again (its `else` arm holds the loop as written).
+fn rewrite(b: ir::Bundle, v: ir::Node, d: integer, ops: Ops, c: Count) -> ir::Node {
+  match v {
+    NdLoop { block } => {
+      rep = fill_of(b, block[0]!, d, ops);
+      match rep {
+        NdIf { cond, t } => {
+          c.n += 1;
+          return ir::NdIf { cond: cond, t: t, f: v };
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for k in kids { rewrite(b, k, d, ops, c) }])
+}
+
+// port: fill_loop.rs fn fill_of — `if 0 < n { <the body's push>; OpAppendCopy(v, n, tp) }` for
+// loop `lp` when it is a fill onto a plain local vector variable; `NdNull` where it is none.
+fn fill_of(b: ir::Bundle, lp: ir::Block, d: integer, ops: Ops) -> ir::Node {
+  p = opt_window::push_loop(b, lp);
+  if p == null {
+    return several_fill(b, lp, d, ops);
+  }
+  if !p.fill {
+    return ir::NdNull;
+  }
+  // `p.path.1.is_empty()`: no field read off the root.
+  if !p.path.ends_with(":") {
+    return ir::NdNull;
+  }
+  v = match loop_shape::unspan(p.vector) {
+    NdVar { n } => n,
+    _ => return ir::NdNull,
+  };
+  f = b.data.definitions[d]!.variables;
+  // `@FR-N-Shape`: a `vector<T>?` local is declined on purpose, not missed — the fill would
+  // read a vector the loop's push may first have to create.
+  elem = match f.variables[v]!.type_def[0] ?? ir::TyVoid {
+    TyVector { inner } => inner,
+    _ => return ir::NdNull,
+  };
+  tp = copy_type(b, elem);
+  if tp < 0 {
+    return ir::NdNull;
+  }
+  body = opt_window::push_loop_body(lp);
+  if len(body) == 0 {
+    return ir::NdNull;
+  }
+  trip = trip_count(ops, p.hi, p.next_var, p.index_var, p.inclusive);
+  stmts = [for s in body { s }];
+  stmts += [ir::NdCall { def_nr: ops.append_copy, args: [ir::NdVar { n: v }, trip, ir::NdInt { n: tp }] }];
+  // `0 < n`: loft spells `>` as the swapped `<`.
+  test = ir::NdCall { def_nr: ops.lt_int, args: [ir::NdInt { n: 0 }, trip] };
+  ir::NdIf { cond: test, t: ir::NdBlock { block: [ir_pass_tree::block("fill", stmts, ir::TyVoid, 65535)] }, f: ir::NdNull }
+}
+
+// port: fill_loop.rs fn copy_type — the element type `[c; n]`'s lowering names: the element,
+// or the vector itself when the element is under four bytes (`Parser`'s `known_tp`); -1 for
+// none.
+fn copy_type(b: ir::Bundle, elem: ir::TypeT) -> integer {
+  elem_tp = vector_element_type(b, elem);
+  if elem_tp < 0 {
+    return -1;
+  }
+  if size(b, content(b, elem_tp)) < 4 { vector(b, elem_tp) } else { elem_tp }
+}
+
+// port: fill_loop.rs fn trip_count — the range's trip count read at the loop's entry.
+fn trip_count(ops: Ops, hi: ir::Node, next: integer, index: integer, inclusive: boolean) -> ir::Node {
+  start = if next >= 0 { ir::NdVar { n: next } } else { ir::NdCall { def_nr: ops.add_int, args: [ir::NdVar { n: index }, ir::NdInt { n: 1 }] } };
+  trip = ir::NdCall { def_nr: ops.min_int, args: [hi, start] };
+  if inclusive { ir::NdCall { def_nr: ops.add_int, args: [trip, ir::NdInt { n: 1 }] } } else { trip }
+}
+
+// port: fill_loop.rs fn several_fill — THE SEVERAL CLAUSE: one push of a simple invariant onto
+// each of two or more plain local vectors (each with its own reservation) is one fill per
+// vector.
+fn several_fill(b: ir::Bundle, lp: ir::Block, d: integer, ops: Ops) -> ir::Node {
+  body = opt_window::push_loop_body(lp);
+  if len(body) == 0 {
+    return ir::NdNull;
+  }
+  rc = loop_shape::range_counters(lp, b.data.definitions) ?? return ir::NdNull;
+  f = b.data.definitions[d]!.variables;
+  pushed: vector<integer> = [];
+  vals: vector<ir::Node> = [];
+  reserved: vector<integer> = [];
+  for s in body {
+    us = loop_shape::unspan(s);
+    if us is NdLine {
+      continue;
+    }
+    match us {
+      NdCall { def_nr, args } => {
+        name = ir_pass_tree::def_name(b, def_nr);
+        if name == "OpPreAllocVector" {
+          rv = match loop_shape::unspan(args[0] ?? ir::NdNull) { NdVar { n } => n, _ => return ir::NdNull };
+          reserved += [rv];
+          continue;
+        }
+        if !opt_push::is_fusable(name) {
+          return ir::NdNull;
+        }
+        // `push_operands`: `(vector, value)`, or `OpPushByte(vector, min, value)`.
+        if (name == "OpPushByte" && len(args) != 3) || (name != "OpPushByte" && len(args) != 2) {
+          return ir::NdNull;
+        }
+        pv = match loop_shape::unspan(args[0]!) { NdVar { n } => n, _ => return ir::NdNull };
+        for w in pushed {
+          if w == pv {
+            return ir::NdNull;
+          }
+        }
+        pushed += [pv];
+        vals += [args[len(args) - 1]!];
+      },
+      _ => return ir::NdNull,
+    }
+  }
+  if len(pushed) < 2 {
+    return ir::NdNull;
+  }
+  for r in reserved {
+    found = false;
+    for w in pushed {
+      if w == r {
+        found = true;
+      }
+    }
+    if !found {
+      return ir::NdNull;
+    }
+  }
+  banned = [rc.loop_var, rc.index];
+  if rc.next >= 0 {
+    banned += [rc.next];
+  }
+  for w in pushed {
+    banned += [w];
+  }
+  if !opt_push::simple_invariant(b, rc.hi, banned) {
+    return ir::NdNull;
+  }
+  trip = trip_count(ops, rc.hi, rc.next, rc.index, rc.inclusive);
+  copies: vector<ir::Node> = [];
+  for v in pushed {
+    // `@FR-N-Shape`: a `vector<T>?` local is declined on purpose, as the one-push fill declines
+    // it — the fill would read a vector the push may first have to create.
+    elem = match f.variables[v]!.type_def[0] ?? ir::TyVoid {
+      TyVector { inner } => inner,
+      _ => return ir::NdNull,
+    };
+    views = opt_append_twin::views(f, v);
+    if f.variables[v]!.argument || !opt_push::simple_invariant(b, vals[v#index]!, banned) {
+      return ir::NdNull;
+    }
+    for w in pushed {
+      if w != v && (views[w] ?? false) {
+        return ir::NdNull;
+      }
+    }
+    tp = copy_type(b, elem);
+    if tp < 0 {
+      return ir::NdNull;
+    }
+    copies += [ir::NdCall { def_nr: ops.append_copy, args: [ir::NdVar { n: v }, trip, ir::NdInt { n: tp }] }];
+  }
+  stmts = [for s in body { s }];
+  stmts += copies;
+  test = ir::NdCall { def_nr: ops.lt_int, args: [ir::NdInt { n: 0 }, trip] };
+  ir::NdIf { cond: test, t: ir::NdBlock { block: [ir_pass_tree::block("fill", stmts, ir::TyVoid, 65535)] }, f: ir::NdNull }
+}
+
+// ---- the schema questions, on the bundle's type table --------------------------------------
+
+// `Stores::content`: a collection type's element type, -1 for any other.
+fn content(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return -1;
+  }
+  match b.types[tp]!.parts[0] ?? ir::PtBase {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content } => content,
+    PtSorted { content } => content,
+    PtIndex { content } => content,
+    PtHash { content } => content,
+    PtRadix { content } => content,
+    PtTrie { content } => content,
+    _ => -1,
+  }
+}
+
+// `Stores::size`: 0 for no type.
+fn size(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) { 0 } else { b.types[tp]!.size }
+}
+
+fn type_named(b: ir::Bundle, name: text) -> integer {
+  for t in b.types {
+    if t.name == name {
+      return t#index;
+    }
+  }
+  -1
+}
+
+// `Stores::vector`: the type `vector<content's name>`, made at the end of the table the first
+// time it is asked for.  (`promoted_lookup_key` — a linked element's `array<T>` named by its
+// constructor spelling — is not carried: such a content is refused, -1.)
+fn vector(b: ir::Bundle, content: integer) -> integer {
+  if content >= 0 && (b.types[content]!.parts[0] ?? ir::PtBase) is PtArray {
+    return -1;
+  }
+  name = if content < 0 || content >= len(b.types) { "vector" } else { "vector<{b.types[content]!.name}>" };
+  t = type_named(b, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(b.types);
+  b.types += [ir::DbType { name: name, parts: [ir::PtVector { content: content }], keys: [], complex: true, linked: false, size: 4, align: 4, field_groups: [] }];
+  num
+}
+
+// The narrow Part `Stores::byte` / `short` / `short_raw` / `int` / `int_raw` registers, made
+// where it is missing.
+fn narrow_part(b: ir::Bundle, name: text, part: ir::DbParts, sz: integer) -> integer {
+  t = type_named(b, name);
+  if t >= 0 {
+    return t;
+  }
+  num = len(b.types);
+  b.types += [ir::DbType { name: name, parts: [part], keys: [], complex: false, linked: false, size: sz, align: sz, field_groups: [] }];
+  num
+}
+
+// `Data::narrow_vector_content`'s integer arm: the narrow element's Part (`NarrowIntKind::of`
+// with `narrow_vec`, `part_min`), -1 when the element stores at the wide stride.
+fn narrow_content(b: ir::Bundle, spec: ir::IntegerSpec, nullable: boolean) -> integer {
+  s = 0;
+  if spec.forced_size > 0 {
+    s = spec.forced_size;
+  } else {
+    w = if nullable { el_types::nullable_width(spec) } else { el_types::narrow_width(spec) };
+    s = w;
+  }
+  if s != 1 && s != 2 && s != 4 {
+    return -1;
+  }
+  m = if nullable && (s == 1 || s == 2) { el_types::nullable_start(spec) } else { spec.min };
+  if s == 1 {
+    name = if m == 0 && !nullable { "byte" } else { "byte<{m},{nullable}>" };
+    return narrow_part(b, name, ir::PtByte { start: m, nullable: nullable }, 1);
+  }
+  if s == 2 {
+    if nullable {
+      return narrow_part(b, "short<{m},{nullable}>", ir::PtShort { start: m, nullable: nullable }, 2);
+    }
+    return narrow_part(b, "short_raw<{m},{nullable}>", ir::PtShortRaw { start: m, nullable: nullable }, 2);
+  }
+  if spec.min >= 0 && spec.max > 2147483647 {
+    return narrow_part(b, "int_raw<{m},{nullable}>", ir::PtIntRaw { start: m, nullable: nullable }, 4);
+  }
+  narrow_part(b, "int<{m},{nullable}>", ir::PtInt { start: m, nullable: nullable }, 4)
+}
+
+// The known type of the standard library's definition `name`, -1 for none.
+fn std_known(b: ir::Bundle, name: text) -> integer {
+  for d in b.data.definitions {
+    if d.source == 0 && d.name == name {
+      return if d.known_type == 65535 { -1 } else { d.known_type };
+    }
+  }
+  -1
+}
+
+fn def_known(b: ir::Bundle, n: integer) -> integer {
+  d = b.data.definitions[n];
+  if d == null || d!.known_type == 65535 { -1 } else { d!.known_type }
+}
+
+// port: data.rs fn vector_element_type — the schema type of a vector ELEMENT whose loft type is
+// `content`, -1 for none.  (The `type_elm` arms carried are the scalars, a record, an enum, a
+// nested vector and a function value; any other element answers none, and the loop stays.)
+fn vector_element_type(b: ir::Bundle, content: ir::TypeT) -> integer {
+  match content {
+    TyInteger { spec } => {
+      if (spec.forced_size == 0 && el_types::narrow_width(spec) > 0) || (spec.forced_size > 0 && spec.forced_size < 8) {
+        n = narrow_content(b, spec, false);
+        if n >= 0 {
+          return n;
+        }
+      }
+      std_known(b, "integer")
+    },
+    TyOptional { inner } => match inner {
+      TyInteger { spec } => {
+        if (spec.forced_size == 0 && el_types::narrow_width(spec) > 0) || (spec.forced_size > 0 && spec.forced_size < 8) {
+          n = narrow_content(b, spec, true);
+          if n >= 0 {
+            return n;
+          }
+        }
+        std_known(b, "integer")
+      },
+      _ => vector_element_type(b, inner),
+    },
+    TyFunction { args: _ } => narrow_part(b, "int<0,false>", ir::PtInt { start: 0, nullable: false }, 4),
+    TyVector { inner } => {
+      e = vector_element_type(b, inner);
+      if e < 0 { -1 } else { vector(b, e) }
+    },
+    TyRewritten { inner } => vector_element_type(b, inner),
+    TyBoolean => std_known(b, "boolean"),
+    TyFloat => std_known(b, "float"),
+    TyText { dep: _ } => std_known(b, "text"),
+    TySingle => std_known(b, "single"),
+    TyCharacter => std_known(b, "character"),
+    TyReference { n } => def_known(b, n),
+    TyEnum { n } => def_known(b, n),
+    _ => -1,
+  }
+}

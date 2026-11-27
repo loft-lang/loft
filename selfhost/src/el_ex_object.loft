@@ -155,8 +155,8 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
     if ird >= 0 && e.p.nodes[it] is SStructLit && struct_literal_def(e, it) == ird {
       fs: vector<integer> = [];
       match e.p.nodes[it] {
-        SStructLit { member, fields: lf, base } => {
-          if member != "" || base != null {
+        SStructLit { name: qn, member, fields: lf, base } => {
+          if (member != "" && !el::use_exists(e, qn)) || base != null {
             el::refuse(e, "a qualified struct literal or an update");
             return null;
           }
@@ -413,6 +413,104 @@ pub fn update_writes(e: el::El, vars: el_vars::Vars, r: ir::Node, d: integer, fi
   out
 }
 
+// port: objects.rs literal_instance
+// A literal of a generic struct, or of a generic enum's variant (`Grid { cells: [m], w: 1 }`),
+// names the instance its field values bind: each type variable, in header order, takes the
+// first field whose declared type mentions it and whose value resolves it (`resolve_type_var`),
+// and the instance is minted (`instance_def`).  Register, then refuse: the literal itself is
+// refused by the caller.  Not ported: the expected instance a declaration or a parameter gives.
+pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vector<integer>, expected: ir::TypeT = ir::TyUnknown { n: 0 }) -> integer {
+  if d < 0 {
+    return -1;
+  }
+  template = if el::def(e, d).def_type == el::DT_TYPE_TEMPLATE { d } else if el::def(e, d).def_type == el::DT_ENUM_VALUE && el::def(e, d).parent >= 0 && el::def(e, el::def(e, d).parent).def_type == el::DT_TYPE_TEMPLATE { el::def(e, d).parent } else { -1 };
+  if template < 0 || len(el::def(e, template).type_params) == 0 {
+    return -1;
+  }
+  // The position's own instance of this template (`w: TBox<u8> = TBox { … }`) is the literal's:
+  // nothing is read off the values (`literal_instance`'s `expected`; an open one only inside a
+  // template).
+  xp = expected;
+  if el_types::is_unknown(xp) && vars.expect_node >= 0 {
+    same = match e.p.nodes[vars.expect_node] { SStructLit { fields: xf } => xf == fields, _ => false };
+    if same {
+      xp = vars.expect;
+    }
+  }
+  ei = match el_types::base(xp) { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
+  if ei >= 0 && el::def(e, ei).instance_of == template && (!el_types::is_open_instance(e, ei) || (e.context >= 0 && el::def(e, e.context).def_type == el::DT_GENERIC)) {
+    return -1;
+  }
+  // The values' types, read as Rust's discovery reads them.
+  got: vector<Binding> = [];
+  for fi in fields {
+    match e.p.nodes[fi] {
+      SFieldInit { name: fname, e: fe } => {
+        a = attr_nr(el::def(e, d), fname);
+        if a >= 0 && fe != null {
+          vt = el_ex_assign::expression(e, vars, fe!).tp;
+          b = Binding { vars: [], types: [], ok: true };
+          bind_type_vars(e, el::def(e, d).attributes[a]!.typedef[0] ?? ir::TyVoid, vt, b);
+          if b.ok {
+            got += [b];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  args: vector<ir::TypeT> = [];
+  for v in el::def(e, template).type_params {
+    bound: ir::TypeT? = null;
+    for b in got {
+      if bound == null {
+        for bv in b.vars {
+          t = b.types[bv#index] ?? ir::TyUnknown { n: 0 };
+          if bv == v && bound == null && !el_types::is_unknown(t) && !(t is TyNull) && !(t is TyVoid) && !(t is TyNever) {
+            bound = t;
+          }
+        }
+      }
+    }
+    if bound == null {
+      return -1;
+    }
+    args += [el_types::without_deps(bound!)];
+  }
+  el_types::instance_def(e, template, args)
+}
+
+// `parse_object`'s forward construction (loft#801): on the first pass a `Name { … }` whose
+// type is declared BELOW it has no definition yet — or only the stub a signature left — and is
+// not built: its `{ … }` is skipped unread, and a name no definition holds yet leaves a stub
+// (`DefType::Unknown`) the declaration adopts in place, keeping its number.  True when handled.
+pub fn forward_literal(e: el::El, vars: el_vars::Vars, name: text, member: text, at: integer) -> boolean {
+  // (A qualified variant `Sh::Sq { … }` whose enum is declared below: not built on the first
+  // pass either; the stub is the VARIANT's name, which its declaration adopts.)
+  if e.first_pass && member != "" && name != "" && el::def_nr(e, name) < 0 && !el::use_exists(e, name) && el_vars::var(vars, name) < 0 {
+    if el::def_nr(e, member) < 0 && !el::pending_import_names(e, member) && el::any_source_nr(e, member) < 0 {
+      e.speculative += [el::add_def(e, member, el::pos_at(e, at), el::DT_UNKNOWN)];
+    }
+    return true;
+  }
+  if !e.first_pass || member != "" || name == "" || el_vars::var(vars, name) >= 0 {
+    return false;
+  }
+  d = el::def_nr(e, name);
+  if d >= 0 && el::def(e, d).def_type != el::DT_UNKNOWN {
+    return false;
+  }
+  // (Nor a name another source defines — a library's, which a `use` the port refused never
+  // brought in: Rust's table has it, so Rust leaves no stub.)
+  if d < 0 && (el::pending_import_names(e, name) || el::any_source_nr(e, name) >= 0) {
+    return false;
+  }
+  if d < 0 {
+    e.speculative += [el::add_def(e, name, el::pos_at(e, at), el::DT_UNKNOWN)];
+  }
+  true
+}
+
 pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, fields: vector<integer>, base: integer?) -> Ex {
   if el_trace::on() {
     el_trace::route(e, "parse_object");
@@ -429,8 +527,33 @@ pub fn object_expr(e: el::El, vars: el_vars::Vars, name0: text, member0: text, f
   }
   d = el::qualified_def(e, name, member);
   if !literal_def(e, d) {
+    // Refused, but answered as Rust answers it — the instance its values name — so a literal
+    // holding it (`Box { items: [Inner { v: 7 }] }`) binds through it (register, then refuse).
+    // (A field given a vector literal is read at the template's own field type, its rows made
+    // as `vector_def` makes them there: `Bag { items: [] }` over `items: vector<(T, integer)>`
+    // makes `vector<(__typevar_T#4, integer)>` and its wrapper at that literal.)
+    if d >= 0 && el::def(e, d).def_type == el::DT_TYPE_TEMPLATE {
+      for tfi in fields {
+        match e.p.nodes[tfi] {
+          SFieldInit { name: tfn, e: tfe } => {
+            if tfe != null && e.p.nodes[tfe!] is SVecLit {
+              for ta in el::def(e, d).attributes {
+                if ta.name == tfn {
+                  match el_types::base(ta.typedef[0] ?? ir::TyVoid) {
+                    TyVector { inner: tvi } => { if tvi is TyTuple { _ = el_ex_base::tuple_vector_rows(e, tvi, tfe!, true, at_close: true); } },
+                    _ => {}
+                  }
+                }
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    }
+    li = literal_instance(e, vars, d, fields);
     el::refuse(e, "a literal of something other than a declared struct");
-    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    return ex(ir::NdNull, if li >= 0 { el::def(e, li).returned[0] ?? ir::TyUnknown { n: 0 } } else { ir::TyUnknown { n: 0 } });
   }
   el_ex_pattern::name_fields(e, d, fields);
   // A variant's literal is built in a buffer of its enum, the type every position it stands in
@@ -822,6 +945,16 @@ pub fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) 
         return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
       }
     },
+    // A vector value is appended into the field's own vector (`OpAppendVector`), as a vector
+    // field takes a copy.
+    TyVector { inner: fvi } => {
+      fvn = el_types::elem_name(e, fvi);
+      fvk = if fvn == "" { -1 } else { el_ex_base::vector_store(e, fvi, fvn) };
+      fvr = el_ex_vector::append_row(e, fvi);
+      if fvk >= 0 && fvr >= 0 {
+        return el_ir::cl(e, "OpAppendVector", [el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: fvk }]), val, ir::NdInt { n: fvr }]);
+      }
+    },
     _ => {}
   }
   write_at(e, at, r, pos, val)
@@ -998,6 +1131,12 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
     SMember { at: ra, e: rre, name: rn, args: rargs, call: rc } => if is_field_step(e, re!) { member(e, vars, ra, rre, rn, rargs, rc, true) } else { el_ex_assign::expression(e, vars, re!) },
     _ => el_ex_assign::expression(e, vars, re!)
   };
+  // (A METHOD call's record answer — `c.run().ok` — borrows nothing, and the chain goes on: it is
+  // held in an inline ref (`parse_part_inner`'s hold, `.` next), as a field step's record is.)
+  // (Only a CALL of a function — not `T.parse(…)`, which lowers to a cast and is held nowhere.)
+  if !e.first_pass && match e.p.nodes[re!] { SMember { call: mcall } => mcall, _ => false } && match el_ir::unspan(x.code) { NdCall { def_nr: mcd } => starts_with(el::def(e, mcd).name, "t_") || starts_with(el::def(e, mcd).name, "n_"), _ => false } {
+    x = chain_hold(e, vars, x, true);
+  }
   // A field of an `S?` slot is read through its tag: absent reads as the null `S?`.
   // (A guard's proof is of the slot — the receiver as it was written, before the tag's read.)
   slot_code = x.code;
@@ -1036,11 +1175,30 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
   }
   def = el::def(e, d);
   a = attr_nr(def, name);
+  // (`$.x` naming a field declared later does not resolve on the first pass — Rust's diagnostics
+  // are silent there — and does on the second.)
+  if a < 0 && e.first_pass && d == e.context && el_ir::unspan(x.code) == ir::NdVar { n: 0 } {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   if a < 0 {
     el::refuse(e, "a field the struct does not declare: `{name}` of `{def.name}`");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  t = def.attributes[a]!.typedef[0];
+  // A computed field (`constant`) reads its expression with the receiver in `$`'s place
+  // (`replace_record_ref`), typed as the field with the receiver's deps.
+  if def.attributes[a]!.constant {
+    ct = def.attributes[a]!.typedef[0] ?? ir::TyVoid;
+    for on in el_types::deps(x.tp) {
+      ct = el_types::with_deps(ct, [on]);
+    }
+    cc = el_ir::replace_var(def.attributes[a]!.value[0] ?? ir::NdNull, 0, x.code);
+    if !e.first_pass {
+      cc = ir::NdSpan { pos: el::pos_at(e, at), inner: cc };
+    }
+    return ex(cc, ct);
+  }
+  // (`stored_ref_read`: a stored `reference<E>` of a struct-enum reads as `E`.)
+  t = el_types::stored_ref_read(e, def.attributes[a]!.typedef[0] ?? ir::TyVoid);
   for on in el_types::deps(x.tp) {
     t = el_types::with_deps(t, [on]);
   }
@@ -1065,8 +1223,10 @@ fn member_inner(e: el::El, vars: el_vars::Vars, at: integer, re: integer?, name:
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }
   // A field of a record that may be null (`x: S?`) may be null too — unless a guard proved
-  // the record present here (`(N-Guard)`).
-  proven = match el_ir::unspan(slot_code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(slot_code)) };
+  // the record present here (`(N-Guard)`).  (A guarded PROJECTION — `b.mid != null` — is
+  // narrowed on the second pass alone, as Rust's `narrowed_non_null_exprs` is: an inferred local
+  // keeps the `τ?` its first-pass read gave it, a block tail reads `τ`.)
+  proven = match el_ir::unspan(slot_code) { NdVar { n } => vars.present.contains(n), _ => !e.first_pass && vars.present_exprs.contains(bare(slot_code)) };
   // A tagged `S?` slot spells its own absence (`wrap_projection_nullable`).
   if rt is TyOptional && !(t is TyOptional) && !proven && !is_nullable_wrapper(e, t) {
     t = ir::TyOptional { inner: t };
@@ -1307,7 +1467,10 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       bnm = match e.p.nodes[pl] { SName { name, member } => if member == "" { name } else { "" }, _ => "" };
       bsd = struct_ref(e, bt);
       plain = (bt is TyText || el_convert::plain_scalar(bt)) && read_op(bt) != "" && match bt { TyInteger { spec } => spec.forced_size == 0 && el_types::narrow_width(spec) == 0, _ => true };
-      if bnm == "" || bnm == "_" || !(plain || (bsd >= 0 && literal_def(e, bsd) && !(bt is TyOptional))) {
+      // (A vector member is copied out into the local's own store, as a whole-vector bind is
+      // (`lower_vec_copy_bind`): `OpAppendVector(v, OpGetField(tmp, pos, vector), row)`.)
+      bvec = bt is TyVector;
+      if bnm == "" || bnm == "_" || !(plain || bvec || (bsd >= 0 && literal_def(e, bsd) && !(bt is TyOptional))) {
         el::refuse(e, "a destructure of a boxed tuple into a place that is not a name, or of a member that is no plain scalar or record");
         return ex(ir::NdNull, ir::TyVoid);
       }
@@ -1324,6 +1487,19 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       bpos = ir::NdInt { n: if e.first_pass { 0 } else { field_position(e, btd, ba.name) } };
       if plain {
         bsteps += [el_ir::v_set(bv, el_ir::cl(e, read_op(bt), [ir::NdVar { n: btmp }, bpos]))];
+      } else if bvec {
+        bvin = match bt { TyVector { inner: bvi } => bvi, _ => ir::TyVoid };
+        bvnm = el_types::elem_name(e, bvin);
+        bvk = if e.first_pass || bvnm == "" { 0 } else { el_ex_base::vector_store(e, bvin, bvnm) };
+        if !e.first_pass {
+          brec = el_ex_vector::append_row(e, bvin);
+          bops = el_ex_bind::vec_copy_ops(e, vars, bv, el_ir::cl(e, "OpGetField", [ir::NdVar { n: btmp }, bpos, ir::NdInt { n: bvk }]), bvin, brec);
+          if bops == null || brec < 0 {
+            el::refuse(e, "a destructure of a boxed tuple's vector member of this element type");
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          bsteps += bops!;
+        }
       } else {
         bw = el_vars::work_ref(vars, ir::TyReference { n: bsd, dep: [] });
         bk = ir::NdInt { n: el::def(e, bsd).known_type };
@@ -1423,10 +1599,14 @@ pub fn call_ref(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer
   if ca < 0 || attr_nr(el::def(e, e.closure_rec), "{cname}__clos") < 0 {
     return call_ref_at(e, vars, v, args);
   }
-  // (A captured function answering a record or a vector passes on what its result borrows
-  // (`fnref_result_type` through the capture): not carried yet.)
+  // (A captured function answering a record or a vector that borrows none of its parameters —
+  // a record or a vector it builds — is called the same way.  One whose result names a parameter
+  // passes on what that argument borrows (`fnref_result_type` through the capture), which a
+  // parameter or a null-bound local handed on does not resolve alike here (1323's forwarding
+  // closure): refused.  `LOFT_ELAB_REFUSE_CAPTURED_HEAP_CALL` refuses every one.)
   crt = match el_types::base(el_vars::tp(vars, v)) { TyFunction { result: cr } => el_types::base(cr), _ => ir::TyVoid };
-  if crt is TyVector || crt is TyReference {
+  crt_borrows = len(el_types::deps(crt)) > 0;
+  if (crt is TyVector || crt is TyReference) && (crt_borrows || (env_variable("LOFT_ELAB_REFUSE_CAPTURED_HEAP_CALL") ?? "") != "") {
     el::refuse(e, "a call through a captured function value answering a record or a vector");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
@@ -1681,28 +1861,6 @@ pub fn argument_element_hint(e: el::El, d: integer, i: integer, node: integer) -
   }
 }
 
-// The token after the `)` that closes the call starting at token `from` (the parser's peek once
-// the call is read).
-pub fn past_call(e: el::El, from: integer) -> integer {
-  at = from;
-  while at < len(e.p.src) && !(e.p.src[at] is LParen) {
-    at += 1;
-  }
-  depth = 0;
-  while at < len(e.p.src) {
-    t = e.p.src[at];
-    if t is LParen {
-      depth += 1;
-    } else if t is RParen {
-      depth -= 1;
-      if depth == 0 {
-        return at + 1;
-      }
-    }
-    at += 1;
-  }
-  at
-}
 
 // Is `t` a type variable's placeholder, or a vector over one?
 fn over_type_var(e: el::El, t: ir::TypeT) -> boolean {
@@ -1815,6 +1973,31 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     }
     return rf;
   }
+  // A call through a LINK to a function value (`pd: &fn(…)`, `pd()`): the function the link names
+  // read into a `__fnlink_N`, then called through it (`fnlink`, `@FR-B-Ref-Uniform`).
+  if source < 0 && name != "" && el_vars::var(vars, name) >= 0 && match el_vars::tp(vars, el_vars::var(vars, name)) { TyRefVar { inner: lfi } => el_types::base(lfi) is TyFunction, _ => false } {
+    lnk = el_vars::var(vars, name);
+    // (The temp is the second pass's — minted after the frame's closure records — typed with the
+    // borrows the link's function carries.)
+    lft = match el_vars::tp(vars, lnk) { TyRefVar { inner: lfi2 } => el_types::base(lfi2), _ => ir::TyVoid };
+    // (The first pass reads the call through the link itself: its arguments and the buffers
+    // the call mints — a text answer's `__work_N` — in order, the temp not yet.)
+    if e.first_pass {
+      // (Read as the function it links, for this call only: `call_ref` asks the variable's type.)
+      ltp = el_vars::tp(vars, lnk);
+      el_vars::set_var_type(vars, lnk, lft);
+      lpr = call_ref(e, vars, lnk, args);
+      el_vars::set_var_type(vars, lnk, ltp);
+      return lpr;
+    }
+    lw = el_vars::create_unique(vars, "__fnlink", lft);
+    el_vars::set_defined(vars, lw);
+    lcr = call_ref(e, vars, lw, args);
+    if el_types::is_unknown(lcr.tp) {
+      return lcr;
+    }
+    return ex(el_ir::v_block([el_ir::v_set(lw, ir::NdVar { n: lnk }), lcr.code], lcr.tp, "fnlink"), lcr.tp);
+  }
   // A call through an ELEMENT of a vector of function values (`fs[1](4)`): the element read into
   // a `__fn_ref_tmp`, then called through it (`fn_call_tmp`), as a function-valued field is.
   // (So is a call answering a function value, `pass(fn(x) { … })(2)`, `@FR-L-CapKeep`: the
@@ -1911,7 +2094,7 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
         // statement ends (`ensure_tuple_defs`): the instance is keyed and laid out by it.
         if !e.first_pass && hd >= 0 && el::def(e, hd).def_type == el::DT_GENERIC {
           match el_types::base(x.tp) {
-            TyTuple { elems: tel } => { el_types::tuple_def(e, [for m in tel { el_types::without_deps(m) }], el::pos_at(e, past_call(e, at))); },
+            TyTuple { elems: tel } => { el_types::tuple_def(e, [for m in tel { el_types::without_deps(m) }], el::pos_at(e, el::past_call(e, at))); },
             _ => {}
           }
         }
@@ -1979,6 +2162,10 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
     if name == "reduce" && len(list) == 3 && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) {
       return el_ex_loop::reduce_call(e, vars, list, types);
     }
+  }
+  if source < 0 && !e.first_pass && rust_builds_in_place(e, name, list, types) {
+    el::refuse(e, "a `{name}` this port does not build in place");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   if source < 0 && len(types) == 1 && el_types::base(first) is TyIterator && (name == "next" || name == "exhausted") {
     if el_trace::on() {
@@ -2072,7 +2259,9 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
   }
   vars.call_at = at;
   vars.call_tok = at;
+  vars.arg_syntax = args;
   r = el_ex_call::call_args(e, vars, d, list, types);
+  vars.arg_syntax = [];
   vars.call_at = -2;
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -3080,6 +3269,10 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   if name == "reduce" && len(list) == 3 && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) && el_types::base(types[2]!) is TyFunction && (e.first_pass || el_ir::unspan(list[2]!) is NdInt) && !open_types(e, types) && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_reduce") < 0 {
     return el_ex_loop::reduce_call(e, vars, list, types);
   }
+  if !e.first_pass && rust_builds_in_place(e, name, list, types) {
+    el::refuse(e, "a `{name}` this port does not build in place");
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   // A method name that is an overload set reaches the member its argument types select, the
   // receiver first (`x.m(a)` is `m(x, a)`, `F-Recv`).
   mset = el_dispatch::own_set(e, name);
@@ -3113,7 +3306,9 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   }
   vars.call_at = at;
   vars.call_tok = at;
+  vars.arg_syntax = if len(list) == len(args) + 1 { [-1] + args } else { args };
   r = el_ex_call::call_args(e, vars, d, list, types);
+  vars.arg_syntax = [];
   vars.call_at = -2;
   if r == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -3121,7 +3316,7 @@ pub fn method_call_on(e: el::El, vars: el_vars::Vars, at: integer, x0: Ex, re: i
   c = r!;
   // `@FR-N-Chain`: a method on a receiver that may be absent may answer absent too — unless a
   // guard proved the receiver present here (`(N-Guard)`).
-  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => vars.present_exprs.contains(bare(x.code)) };
+  proven = match el_ir::unspan(x.code) { NdVar { n } => vars.present.contains(n), _ => !e.first_pass && vars.present_exprs.contains(bare(x.code)) };
   if (x.tp is TyOptional || is_nullable_wrapper(e, x.tp)) && !proven && chain_lifts(e, c.tp) {
     c.tp = ir::TyOptional { inner: c.tp };
   }
@@ -3155,6 +3350,25 @@ pub fn sorts_itself(types: vector<ir::TypeT>) -> boolean {
     TyVector { inner } => inner is TyInteger || inner is TyFloat || inner is TySingle || inner is TyText,
     _ => false
   }
+}
+
+// The calls Rust's `parse_call` builds in place, so no instance of the standard library's
+// generic is ever minted for them: `sort` of a vector — through a link too, `sort_is_special`
+// peels it — whose element sorts itself, and every `map` / `filter` of a vector where the
+// program declares none of its own (`"map" => parse_map`).  Where this port's in-place build
+// declines one of them it is refused, not instantiated: an instance would be a definition only
+// the port registers (`port-only-definitions.md`).
+pub fn rust_builds_in_place(e: el::El, name: text, list: vector<ir::Node>, types: vector<ir::TypeT>) -> boolean {
+  // (Inside a template the types are open: there the body keeps the call of the generic, as
+  // Rust's does — try ddbe54a9e lost `keep<T>(v, f) { filter(v, f) }` refused this way.)
+  if len(types) == 0 || open_types(e, types) {
+    return false;
+  }
+  recv = match types[0] ?? ir::TyVoid { TyRefVar { inner } => inner, _ => types[0]! };
+  if name == "sort" && len(types) == 1 {
+    return match recv { TyVector { inner } => !(inner is TyOptional) && (el_types::base(inner) is TyInteger || el_types::base(inner) is TyFloat || el_types::base(inner) is TySingle || el_types::base(inner) is TyText), _ => false };
+  }
+  (name == "map" || name == "filter") && len(list) == 2 && el_types::base(recv) is TyVector && el_dispatch::own_set(e, name) < 0 && el::def_nr(e, "n_{name}") < 0
 }
 
 // `parse_sort`: `OpSortVector(v, elem)`, sorting in place by the elements' store type; nothing on
@@ -3662,6 +3876,22 @@ pub fn bind_type_vars(e: el::El, p: ir::TypeT, a: ir::TypeT, b: Binding) {
         _ => { b.ok = false; }
       }
     },
+    // A tuple parameter binds through its members, pairwise (`vector<(T, U)>` against
+    // `vector<(integer, text)>` binds both): a boxed tuple's `__tuple<…>` record by its members.
+    TyTuple { elems: pe } => {
+      ae: vector<ir::TypeT> = match a {
+        TyTuple { elems: te } => te,
+        TyReference { n: tr } => if starts_with(el::def(e, tr).name, "__tuple<") { [for ta in el::def(e, tr).attributes { ta.typedef[0] ?? ir::TyVoid }] } else { [] },
+        _ => []
+      };
+      if len(ae) != len(pe) {
+        b.ok = false;
+        return;
+      }
+      for x in pe {
+        bind_type_vars(e, x, ae[x#index] ?? ir::TyVoid, b);
+      }
+    },
     // A function parameter binds through its own parameters and its result (`fn(T) -> U`
     // against `fn(integer) -> text`).
     TyFunction { args: pa, result: pr } => {
@@ -3713,10 +3943,13 @@ pub fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Bind
 
 // `Data::mangle_instance`: `i_<LEN><spelling>_<template>`, the bound types' identity spellings
 // joined by `#` — "" for a bound type this port spells no identity for.
-pub fn instance_name(e: el::El, d: integer, b: Binding) -> text {
+pub fn instance_name(e: el::El, d: integer, b: Binding, open: boolean = false) -> text {
   spelling = "";
   for t in b.types {
-    sp = el_dispatch::identity(e, t);
+    // (An OPEN instance — bound to another template's variable — spells that variable by its
+    // placeholder's name, `U#2`: `i_3U#2_n_hole`.)
+    tvp = if open { el_types::type_var(e, el_types::base(t)) } else { -1 };
+    sp = if tvp >= 0 { match el_types::base(t) { TyReference { n: tvn } => el::def(e, tvn).name, _ => "" } } else { el_dispatch::identity(e, t) };
     if sp == "" {
       return "";
     }
@@ -3734,16 +3967,21 @@ pub fn instance_name(e: el::El, d: integer, b: Binding) -> text {
 // `Parser::predict_template_return`: the first pass's type for a call of a template — its
 // declared result with each variable replaced by what this call binds it to; null where a
 // variable binds to nothing known yet.
-pub fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>) -> ir::TypeT? {
+pub fn predict_template_return(e: el::El, d: integer, types: vector<ir::TypeT>, at: integer = -1) -> ir::TypeT? {
   b = template_binding(e, d, types);
   if b == null {
     return null;
   }
-  r = el::def(e, d).returned[0] ?? ir::TyVoid;
   for t in b!.types {
     if el_types::is_unknown(t) {
       return null;
     }
+  }
+  // `-> Box<T>` predicts the instance the binding names: the open instances it closes are minted
+  // here, as Rust's `open_instance_bindings` does before it substitutes.
+  el_types::open_instance_bindings(e, d, b!.vars, b!.types, at: at);
+  r = el::def(e, d).returned[0] ?? ir::TyVoid;
+  for t in b!.types {
     r = substitute(r, b!.vars[t#index] ?? -1, t);
   }
   r

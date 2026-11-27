@@ -779,6 +779,17 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   } else {
     fr = field_get(e, proj!.vd, proj!.fa, slice_elem(e, elm, el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, at])));
     if fr == null || !(el_convert::plain_scalar(proj!.ft) || proj!.ft is TyText) {
+      // (Refused, but the vector the repetition collects the field into is registered first, as
+      // Rust's `vector_def` makes it: `[(Pt { p })*]` collects a `vector<Point>`.)
+      pnm = el_types::elem_name(e, el_types::without_deps(proj!.ft));
+      if pnm != "" && el_schema::wants_vector_def(e, pnm) {
+        // (At the arm's `=>`, where Rust's lexer stands once the pattern is read.)
+        fa = if e.at >= 0 { e.at } else { 0 };
+        while fa < len(e.p.src) && !(e.p.src[fa] is FatArrow) {
+          fa += 1;
+        }
+        el_schema::make_vector_def(e, el_types::without_deps(proj!.ft), pnm, el::pos_at(e, fa), false);
+      }
       el::refuse(e, "a projected repetition field of this type: {type_kind(proj!.ft)}");
       return null;
     }
@@ -1069,7 +1080,9 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               // field as the text it reads.
               // An out-of-line field (a struct enum's child) binds as that view too.
               // (So does a struct enum's, `_mv_inner_1: ref(In)["o"]`.)
-              if ft is TyVector || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
+              // (A nullable vector field is stored as the vector it holds, and binds as one's view.)
+              opt_vec = match ft { TyOptional { inner: ovf } => el_types::base(ovf) is TyVector, _ => false };
+              if ft is TyVector || opt_vec || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
                 // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
                 // root where the subject is read in place (`match_borrow_source`).
                 sroot = el_ex_match::match_borrow_source(e, vars, subj);
@@ -1099,6 +1112,11 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               }
               if mv < 0 {
                 mv = el_vars::create_unique(vars, "mv_{bname}", ft);
+                // (The pass-1 capture's type is no fact on pass 2 — `add_variable` lets pass 2
+                // win: its borrow names this pass's subject, a `par` result renamed per pass.)
+                if !e.first_pass {
+                  el_vars::set_var_type(vars, mv, ft);
+                }
                 el_vars::set_defined(vars, mv);
                 // (`bind_match_field_capture`: a text payload is its capture's own — Rust records
                 // it as a text payload view — and any other capture views the subject's record.)
@@ -1246,7 +1264,7 @@ pub fn empty_vector_arm(e: el::El, vars: el_vars::Vars, body: integer?, expected
     ein = match evt { TyVector { inner } => inner, _ => ir::TyVoid };
     enm = el_types::elem_name(e, ein);
     if enm != "" {
-      if el::def_nr(e, "main_vector<{enm}>") < 0 {
+      if el_schema::wants_vector_def(e, enm) {
         match e.p.nodes[body!] {
           SVecLit { at } => { el_schema::make_vector_def(e, ein, enm, el::pos_at(e, closing_bracket(e, at)), true, narrow_early: false); },
           _ => {}
@@ -1264,7 +1282,15 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
     return ex(ir::NdNull, ir::TyVoid);
   }
   if e.p.nodes[body!] is SBlock {
+    // (Under a keyed expectation the block arm's literal is built as the collection, `arm_expect`.)
+    bkn = vars.expect_node;
+    bkt = vars.expect;
+    if keyed_kind(el_types::base(vars.arm_expect)) {
+      el_ex_null::arm_expect(e, vars, body!, vars.arm_expect);
+    }
     b = el_ex_assign::parse_block(e, vars, body!, "match_arm", expected);
+    vars.expect_node = bkn;
+    vars.expect = bkt;
     // (A block arm answering a vector where the siblings settled on its `?` is typed as that `?`,
     // its borrows kept: `{ x = [n]; x }` is `vector<integer>["x"]?`.)
     // (…and so is a plain scalar one, `{ x = n + 10; x }` beside `num(3)`'s `integer?`.)
@@ -1302,10 +1328,11 @@ pub fn arm_body(e: el::El, vars: el_vars::Vars, body: integer?, expected: ir::Ty
   // (An `if` arm of a match answering into an expected vector takes that vector, `arm_expect`.)
   kept_node = vars.expect_node;
   kept_tp = ex(ir::NdNull, vars.expect);
-  if e.p.nodes[body!] is SIf && el_types::base(vars.arm_expect) is TyVector {
+  // (…a keyed collection the same way: each literal is built as it.)
+  if e.p.nodes[body!] is SIf && (el_types::base(vars.arm_expect) is TyVector || keyed_kind(el_types::base(vars.arm_expect))) {
     vars.expect_node = body!;
     vars.expect = vars.arm_expect;
-  } else if el_types::base(vars.arm_expect) is TyVector {
+  } else if el_types::base(vars.arm_expect) is TyVector || keyed_kind(el_types::base(vars.arm_expect)) {
     // (A literal of records answering the arm is read against the expected vector too.)
     el_ex_null::arm_expect(e, vars, body!, vars.arm_expect);
   }
@@ -2209,7 +2236,7 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
   // `parse_append_vector` makes the definitions where a value literal does, at its `]` — not
   // before the literal, as a declared element type would.
   nm = el_types::elem_name(e, inner);
-  if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+  if nm != "" && el_schema::wants_vector_def(e, nm) {
     match e.p.nodes[n] {
       SVecLit { at } => { el_schema::make_vector_def(e, inner, nm, el::pos_at(e, closing_bracket(e, at)), true); },
       _ => {}
@@ -2231,12 +2258,18 @@ pub fn vector_append(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> 
 // A literal of a struct enum's variant (`DIce { n: 8 }`): the record it builds, as a struct
 // literal's is.
 pub fn variant_literal(e: el::El, n: integer) -> boolean {
+  d = literal_variant(e, n);
+  d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE
+}
+
+// The definition a variant literal's name resolves to, or -1 for an update.  An enum-qualified
+// spelling (`Ch::Beta`) is rewritten to the plain one first (`unqualify_literal`), as the lexer
+// resolves it for Rust — so every reader of the node after this sees `Beta`.
+fn literal_variant(e: el::El, n: integer) -> integer {
+  el_ex_place::unqualify_literal(e, n);
   match e.p.nodes[n] {
-    SStructLit { name, member, base } => {
-      d = if member == "" && base == null { el::def_nr(e, name) } else { -1 };
-      d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE
-    },
-    _ => false
+    SStructLit { name, member, base } => if member == "" && base == null { el::def_nr(e, name) } else { -1 },
+    _ => -1
   }
 }
 
@@ -2327,11 +2360,8 @@ pub fn type_def_of(e: el::El, t: ir::TypeT) -> integer {
 // variant's definition, or -1.
 pub fn variant_literal_def(e: el::El, n: integer) -> integer {
   match e.p.nodes[n] {
-    SStructLit { name, member, base } => {
-      if member != "" || base != null {
-        return -1;
-      }
-      d = el::def_nr(e, name);
+    SStructLit { name: _ } => {
+      d = literal_variant(e, n);
       if d >= 0 && el::def(e, d).def_type == el::DT_ENUM_VALUE && len(el::def(e, d).attributes) > 0 { d } else { -1 }
     },
     _ => -1
@@ -2481,6 +2511,80 @@ pub fn name_fields(e: el::El, d: integer, fields: vector<integer>) {
   }
 }
 
+// Is `target` the value a body ends in, through its last statement and the arms of an `if` or a
+// `match` there?  (Such a literal is typed by the function's declared result.)
+fn in_tail(e: el::El, body: integer, target: integer) -> boolean {
+  if body < 0 {
+    return false;
+  }
+  if body == target {
+    return true;
+  }
+  match e.p.nodes[body] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return false;
+      }
+      match e.p.nodes[stmts[-1]] {
+        SStmt { e: se, semi } => !semi && se != null && in_tail(e, se!, target),
+        _ => in_tail(e, stmts[-1], target)
+      }
+    },
+    SStmt { e: se, semi } => !semi && se != null && in_tail(e, se!, target),
+    SIf { then: it, other: io } => in_tail(e, it, target) || (io != null && in_tail(e, io!, target)),
+    SMatch { arms } => {
+      for a in arms {
+        match e.p.nodes[a] {
+          SArm { body: ab } => {
+            if ab != null && in_tail(e, ab!, target) {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// The right side of a `+=` into a local declared keyed: `h += [R { … }]` with
+// `h: hash<R[id]>` (a type this pass may not resolve yet) is a keyed append, no vector literal
+// of its own.  (Into a declared vector it is one: `o: vector<Memo>`, probed.)  The declaration is
+// the nearest `let` of that name before the `+=`.
+fn appended_literal(e: el::El, n: integer) -> boolean {
+  for x in e.p.nodes {
+    match x {
+      SAssign { op: aop, target: at, e: arhs } => {
+        if aop == "+=" && arhs != null && arhs! == n {
+          tn = match e.p.nodes[at] { SName { name: an, member: am } => if am == "" { an } else { "" }, _ => "" };
+          if tn == "" {
+            return false;
+          }
+          keyed = false;
+          for y in e.p.nodes {
+            if y#index >= x#index {
+              break;
+            }
+            match y {
+              SLet { name: ln, tp: lt } => {
+                if ln == tn {
+                  keyed = lt != null && match e.p.nodes[lt!] { STy { name: tyn } => tyn == "hash" || tyn == "sorted" || tyn == "index" || tyn == "spatial" || tyn == "radix" || tyn == "trie", _ => false };
+                }
+              },
+              _ => {}
+            }
+          }
+          return keyed;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
 pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
   if el_trace::on() {
     el_trace::route(e, "parse_vector");
@@ -2619,11 +2723,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       // library has not (`vector<i16>` beside the library's `vector<integer>`), and a vector
       // element's: the middle literal of a three-deep one.)
       ninner = match el_types::base(xs[-1]!.tp) { TyVector { inner: ni } => ni, _ => ir::TyVoid };
-      if e.first_pass && el_ex_place::vec_lit_len(e, it) > 0 && (ninner is TyVector || match ninner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false }) && el::def_nr(e, "main_vector<{el_types::elem_name(e, ninner)}>") < 0 {
+      if e.first_pass && el_ex_place::vec_lit_len(e, it) > 0 && (ninner is TyVector || match ninner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false }) && el_schema::wants_vector_def(e, el_types::elem_name(e, ninner)) {
         ntok = match e.p.nodes[it] { SVecLit { at: nat } => nat, _ => 0 };
         // (A declared outer vector's own definitions stand first: Rust registers them where the
         // declaration is read, before the literal's items.)
-        if declared is TyVector && el::def_nr(e, "main_vector<{el_types::elem_name(e, declared)}>") < 0 {
+        if declared is TyVector && el_schema::wants_vector_def(e, el_types::elem_name(e, declared)) {
           otok = match e.p.nodes[n] { SVecLit { at: oat } => oat, _ => 0 };
           vector_def(e, declared, el_types::elem_name(e, declared), otok, true);
         }
@@ -2757,16 +2861,57 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         bd = el::def_nr(e, bn);
         lp = el::pos_at(e, ut);
         // (An unnamed `{…}` is typed by its place, which Rust knows.)
-        bn != "" && (bd < 0 || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
+        bn != "" && (bd < 0 || (el::def(e, bd).def_type == el::DT_UNKNOWN && !appended_literal(e, n)) || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
       },
+      // (A name bound off a value whose type only a stub names — `match s { Sq { w } => [w, w] }`
+      // with `enum Shape` below — is no more typed on Rust's first pass.)
+      SName { name: inn, member: inm } => inm == "" && !append && !appended_literal(e, n) && !in_tail(e, vars.body, n) && el_vars::var(vars, inn) >= 0 && el_types::is_unknown(el_vars::tp(vars, el_vars::var(vars, inn))),
       _ => false
     };
     if e.first_pass && below && el::def_nr(e, "main_vector<unknown>") < 0 {
       if ut >= 0 {
         um = el::add_def(e, "main_vector<unknown>", el::pos_at(e, closing_bracket(e, ut)), el::DT_STRUCT);
-        e.b.data.definitions[um].source = 0;
+        el::make_global(e, um);
         e.b.data.definitions[um].returned = [ir::TyReference { n: um, dep: [] }];
         e.b.data.definitions[um].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
+      }
+    }
+    // (A literal of such literals — `[[Fyle { … }], …]` — has the library's `vector` for its
+    // element on the first pass: `vector_def` names it `vector<vector>`, its wrapper beside it,
+    // at the literal's `]`.)
+    // (Its first item a literal of a struct declared below — `o += [[Memo { … }]]` — that item's
+    // own wrapper comes first, at its `]`: the item is read here, not as a literal of its own.)
+    if e.first_pass && ut >= 0 && len(items) > 0 && el::def_nr(e, "main_vector<unknown>") < 0 && !appended_literal(e, n) {
+      match e.p.nodes[items[0]] {
+        SVecLit { at: iat, items: iit } => {
+          ibelow = len(iit) > 0 && match e.p.nodes[iit[0]] {
+            SStructLit { name: ibn } => {
+              ibd = el::def_nr(e, ibn);
+              ilp = el::pos_at(e, iat);
+              ibn != "" && (ibd < 0 || el::def(e, ibd).def_type == el::DT_UNKNOWN || el::def(e, ibd).position.line > ilp.line || (el::def(e, ibd).position.line == ilp.line && el::def(e, ibd).position.pos > ilp.pos))
+            },
+            _ => false
+          };
+          if ibelow {
+            ium = el::add_def(e, "main_vector<unknown>", el::pos_at(e, closing_bracket(e, iat)), el::DT_STRUCT);
+            el::make_global(e, ium);
+            e.b.data.definitions[ium].returned = [ir::TyReference { n: ium, dep: [] }];
+            e.b.data.definitions[ium].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
+          }
+        },
+        _ => {}
+      }
+    }
+    nested_unknown = len(items) > 0 && match e.p.nodes[items[0]] { SVecLit { items: nvi } => len(nvi) > 0, _ => false } && el::def_nr(e, "main_vector<unknown>") >= 0;
+    if e.first_pass && ut >= 0 && nested_unknown && el::def_nr(e, "vector<vector>") < 0 {
+      vvat = el::pos_at(e, closing_bracket(e, ut));
+      vvd = el::add_def(e, "vector<vector>", vvat, el::DT_VECTOR);
+      e.b.data.definitions[vvd].parent = el::source_nr(e, 0, "vector");
+      if el::def_nr(e, "main_vector<vector>") < 0 {
+        vvm = el::add_def(e, "main_vector<vector>", vvat, el::DT_STRUCT);
+        el::make_global(e, vvm);
+        e.b.data.definitions[vvm].returned = [ir::TyReference { n: vvm, dep: [] }];
+        e.b.data.definitions[vvm].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] }, dep: [] })];
       }
     }
     return refused_build();
@@ -2853,6 +2998,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
       return refused_build();
     }
     if in_t is TyVector {
+      // (Refused, but the literal's `vector<vector<…>>` and its wrapper are registered first, at
+      // its `]`, as Rust's `vector_def` makes them for a repeat of a vector item.)
+      rnm = el_types::elem_name(e, el_types::without_deps(in_t));
+      if rnm != "" && el_schema::wants_vector_def(e, rnm) {
+        rtk = match e.p.nodes[n] { SVecLit { at } => at, _ => -1 };
+        if rtk >= 0 {
+          el_schema::make_vector_def(e, el_types::without_deps(in_t), rnm, el::pos_at(e, closing_bracket(e, rtk)), false);
+        }
+      }
       el::refuse(e, "a repeated vector item of vectors");
       return refused_build();
     }
@@ -2934,14 +3088,15 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   if len(xs) > 0 {
     vector_of(e, in_t);
   }
-  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
+  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close, appended: append);
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
   // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.  So
   // does a vector element in value position — a `for`'s source, an argument, a subscript's
   // receiver: `vector<vector<integer>>` — and a scalar one whose rows the schema lays out after
   // the pass (`[1.5, -1.0]`, `['a', 'b']`, `[true, false]`: a `for` over it walks its items,
-  // `literal_walk`, on this pass as on the second.)
-  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t)))) {
+  // `literal_walk`, on this pass as on the second), a plain enum's among them (`[Hue.Blue]`
+  // handed to a generic's `vector<U>` binds `U` to `Hue`, as Rust's `parse_vector` types it).
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t) || el_types::base(in_t) is TyEnum))) {
     rcodes: vector<ir::Node> = [];
     for x in xs {
       rcodes += [x.code];
@@ -3268,9 +3423,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
           },
           _ => {}
         }
-        // A record member is copied into its slot of the element (`set_field`).
+        // A record member is copied into its slot of the element (`set_field`), a vector member
+        // appended into its field.
         narrow = match elems[m#index] ?? ir::TyVoid { TyInteger { spec: ns } => el_types::narrow_width(ns) > 0, _ => false };
-        if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow {
+        if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow || el_types::base(elems[m#index] ?? ir::TyVoid) is TyVector || el_convert::struct_enum(el_types::base(elems[m#index] ?? ir::TyVoid)) {
           ls += [el_ex_object::set_field(e, td, m#index, at, m)];
         } else {
           ls += [el_ir::cl(e, el_ex_object::tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
@@ -3531,7 +3687,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
   if e.first_pass && lit >= 0 {
     lnm = el_types::elem_name(e, inner);
     ltok = match e.p.nodes[lit] { SVecLit { at } => at, _ => -1 };
-    if lnm != "" && ltok >= 0 && el::def_nr(e, "main_vector<{lnm}>") < 0 && struct_ref(e, el_types::base(inner)) >= 0 {
+    if lnm != "" && ltok >= 0 && el_schema::wants_vector_def(e, lnm) && struct_ref(e, el_types::base(inner)) >= 0 {
       el_schema::make_vector_def(e, inner, lnm, el::pos_at(e, closing_bracket(e, ltok)), true);
     }
   }

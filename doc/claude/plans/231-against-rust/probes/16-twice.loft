@@ -1,0 +1,5 @@
+// @PLN231 probe — one struct passed to two parameters
+// Expect on both backends: q saw 10, a.x=10 (the callee's write through p is seen through q)
+struct S { x: integer }
+fn both(p: S, q: S) -> integer { p.x = 10; q.x }
+fn main() { a = S { x: 1 }; r = both(a, a); println("q saw {r}, a.x={a.x}"); }

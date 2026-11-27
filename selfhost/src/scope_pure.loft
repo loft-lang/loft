@@ -1,0 +1,257 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/pure_reuse.rs` `effect_free` transcribed: the functions whose only effect is
+// their result, a greatest fixed point over the call graph (`fixpoint::solve`, `Greatest`).  The
+// scope pass's port asks it for `@FR-R-PureReuse`'s sites: a call the rewrite can reuse is of an
+// effect-free function or of a wrapper of one (`site_of`), and only a key called twice in one
+// body is rewritten (`reuse_in_block`).
+
+use ir;
+use scope_fn;
+use binds;
+
+// port: pure_reuse.rs fn candidates — a loft function `n_…` with a body.
+fn candidate(d: ir::Definition) -> boolean {
+  d.def_type == 1 && d.name.starts_with("n_") && len(d.code) > 0 && !(d.code[0]! is NdNull)
+}
+
+// port: pure_reuse.rs fn effect_free — per definition, whether it is effect-free.
+pub fn effect_free(b: ir::Bundle) -> vector<boolean> {
+  free: vector<boolean> = [for d in b.data.definitions { candidate(d) }];
+  changed = true;
+  while changed {
+    changed = false;
+    for d in b.data.definitions {
+      i = d#index;
+      if free[i]! && !body_ok(b, d, free) {
+        free[i] = false;
+        changed = true;
+      }
+    }
+  }
+  free
+}
+
+// port: shared_call.rs fn comparison
+fn comparison(nm: text) -> boolean {
+  for p in ["OpEq", "OpNe", "OpLt", "OpLe"] {
+    if nm.starts_with(p) {
+      k = nm[len(p)..];
+      if k == "Bool" || k == "Content" || k == "Float" || k == "Int" || k == "Ref" || k == "Single" || k == "Text" {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// port: pure_reuse.rs fn reads_only
+pub fn reads_only(nm: text) -> boolean {
+  for p in ["OpGet", "OpLength", "OpConv", "OpCast", "OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpLt", "OpLe", "OpGt", "OpGe", "OpAnd", "OpOr", "OpXor", "OpNeg", "OpAbs", "OpShl", "OpShr", "OpLogical", "OpMathFunc"] {
+    if nm.starts_with(p) {
+      return true;
+    }
+  }
+  comparison(nm) || nm == "OpNot" || nm == "OpRefIsNull" || nm == "OpRefAlias" || nm == "OpCreateStack" || nm == "OpGetVectorNullable" || nm == "t_6vector_len" || nm == "t_4text_len" || nm == "n_text_from_bytes" || nm == "n_text_from_byte_range"
+}
+
+// port: pure_reuse.rs fn write_target / text_write_target / own_writes — the argument
+// positions an operator writes, -1 for none; `own_writes` answers two.
+fn write_target(nm: text) -> integer {
+  if nm == "OpCopyRecord" {
+    return 1;
+  }
+  if nm.starts_with("OpSet") || nm == "OpDatabase" || nm == "OpPreAllocVector" || nm == "OpAppendVector" || nm == "OpAppendCopy" || nm == "OpNewRecord" || nm == "OpFinishRecord" || nm == "OpSliceVector" || nm == "OpSliceView" || nm.starts_with("OpPush") {
+    return 0;
+  }
+  -1
+}
+
+fn text_write_target(nm: text) -> integer {
+  for t in ["OpAppendText", "OpAppendStackText", "OpAppendCharacter", "OpAppendStackCharacter", "OpAppendTextBytes", "OpClearText", "OpClearStackText", "OpClearVector", "OpSetTextReplace", "OpFormatText", "OpFormatStackText", "OpFormatInt", "OpFormatStackInt", "OpFormatFloat", "OpFormatStackFloat", "OpFormatSingle", "OpFormatStackSingle", "OpFormatDatabase", "OpFormatStackDatabase", "OpPutRef", "OpPutText", "OpPutInt", "OpPutFloat", "OpPutSingle", "OpPutBool", "OpPutCharacter", "OpPutEnum", "OpPutNarrow"] {
+    if nm == t {
+      return 0;
+    }
+  }
+  write_target(nm)
+}
+
+// port: pure_reuse.rs fn root — -1 for none.
+fn root(b: ir::Bundle, v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr];
+      if d != null && d!.name.starts_with("OpGet") && len(args) > 0 { root(b, args[0]!) } else { -1 }
+    },
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k == 0 { -1 } else { root(b, block[0].operators[k - 1]!) }
+    },
+    _ => -1
+  }
+}
+
+// port: pure_reuse.rs fn params — the parameters, its own return buffer excluded.
+fn params(d: ir::Definition) -> vector<integer> {
+  rb = binds::hidden_return_buffer_attr(d) ?? -1;
+  out: vector<integer> = [];
+  for a in d.attributes {
+    if a#index == rb {
+      continue;
+    }
+    for n in d.variables.names {
+      if n.name == a.name {
+        out += [n.nr];
+        break;
+      }
+    }
+  }
+  out
+}
+
+fn writes_param(b: ir::Bundle, args: vector<ir::Node>, t: integer, ps: vector<integer>) -> boolean {
+  a = args[t];
+  if a == null {
+    return true;
+  }
+  r = root(b, a!);
+  r < 0 || scope_fn::has(ps, r)
+}
+
+// port: pure_reuse.rs fn body_ok
+fn body_ok(b: ir::Bundle, d: ir::Definition, free: vector<boolean>) -> boolean {
+  ps = params(d);
+  !body_bad(b, d.code[0] ?? ir::NdNull, free, ps)
+}
+
+fn body_bad(b: ir::Bundle, n: ir::Node, free: vector<boolean>, ps: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr, args } => {
+      callee = b.data.definitions[def_nr];
+      if callee == null {
+        return true;
+      }
+      nm = callee!.name;
+      if candidate(callee!) {
+        if !free[def_nr]! {
+          return true;
+        }
+        k = binds::hidden_return_buffer_attr(callee!);
+        if k != null && args[k!] != null && writes_param(b, args, k!, ps) {
+          return true;
+        }
+      } else if reads_only(nm) || (len(callee!.code) == 0 || callee!.code[0]! is NdNull) && callee!.purity == 1 && !nm.starts_with("Op") {
+      } else if nm == "OpAdoptVector" {
+        if writes_param(b, args, 0, ps) || writes_param(b, args, 1, ps) {
+          return true;
+        }
+      } else {
+        t = text_write_target(nm);
+        if t < 0 || writes_param(b, args, t, ps) {
+          return true;
+        }
+      }
+    },
+    NdCallRef => { return true; },
+    NdYield => { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if body_bad(b, c, free, ps) {
+      return true;
+    }
+  }
+  false
+}
+
+// The function whose result a call of `w` reuses (`site_of`'s key), or -1 where no call of
+// `w` can be a site: a total function answering a vector through its buffer (`Site::Bare`),
+// an effect-free function calling one (`shared_call::sharing_of`), or a wrapper whose body is
+// one call of an effect-free function and a read of its result (`projection_of`, at most two
+// significant statements, the `return_source` spelling three).
+pub fn reuse_key(b: ir::Bundle, free: vector<boolean>, w: integer) -> integer {
+  d = b.data.definitions[w];
+  if d == null || !candidate(d!) {
+    return -1;
+  }
+  if (free[w] ?? false) && vector_buffer(b, d!) {
+    return w;
+  }
+  if free[w] ?? false {
+    s = first_free_call(b, d!.code[0]!, free, true);
+    if s >= 0 {
+      return s;
+    }
+  }
+  // `projection_of`: the whole body one projection, or its first significant statement the
+  // bind of the inner call (`d = f(…)`); a body leading with anything else is no wrapper.
+  sig = significant(d!.code[0]!);
+  if sig <= 3 && (sig == 1 || leads_with_call_bind(d!.code[0]!)) {
+    return first_free_call(b, d!.code[0]!, free, false);
+  }
+  -1
+}
+
+// The body's first statement that is no line marker and no null init is `Set(_, Call(…))`.
+fn leads_with_call_bind(code: ir::Node) -> boolean {
+  match scope_fn::unspan(code) {
+    NdBlock { block } => {
+      for o in block[0].operators {
+        match scope_fn::unspan(o) {
+          NdLine => {},
+          NdSet { inner } => {
+            u = scope_fn::unspan(inner);
+            if u is NdNull {
+              continue;
+            }
+            return u is NdCall;
+          },
+          _ => { return false; }
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: shared_call.rs fn vector_buffer — the hidden return buffer is a vector.
+fn vector_buffer(b: ir::Bundle, d: ir::Definition) -> boolean {
+  k = binds::hidden_return_buffer_attr(d);
+  k != null && scope_fn::base(d.attributes[k!]!.typedef[0] ?? ir::TyVoid) is TyVector
+}
+
+// port: pure_reuse.rs fn significant — the body's statements that are no line marker and no
+// null init.
+fn significant(code: ir::Node) -> integer {
+  match scope_fn::unspan(code) {
+    NdBlock { block } => {
+      k = 0;
+      for o in block[0].operators {
+        match scope_fn::unspan(o) {
+          NdLine => {},
+          NdSet { inner } => if !(scope_fn::unspan(inner) is NdNull) { k += 1; },
+          _ => { k += 1; }
+        }
+      }
+      k
+    },
+    _ => 1000
+  }
+}
+
+fn first_free_call(b: ir::Bundle, n: ir::Node, free: vector<boolean>, vector_only: boolean) -> integer {
+  match n {
+    NdCall { def_nr } => if (free[def_nr] ?? false) && (!vector_only || vector_buffer(b, b.data.definitions[def_nr]!)) { return def_nr; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    r = first_free_call(b, c, free, vector_only);
+    if r >= 0 {
+      return r;
+    }
+  }
+  -1
+}

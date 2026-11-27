@@ -1,0 +1,177 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/single_use.rs` transcribed (`@FR-R-SingleUse`'s statement clause): a temporary
+// assigned a pure value and read once, by the next statement, is that value.  A comprehension
+// binds each element to `_comp_N` and appends it in the next statement; when the value is pure
+// and everything the next statement evaluates before the read is pure too, moving the value into
+// the read changes no order anyone can see.  The temporary must be assigned once and read once
+// in the whole function, and never captured.
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+use ir_same_read;
+
+// How often the function reads (`reads`) and assigns (`sets`) each variable.
+struct Uses {
+  reads: vector<integer>,
+  sets: vector<integer>
+}
+
+fn uses(node: ir::Node, u: Uses) {
+  match node {
+    NdVar { n } => if n < len(u.reads) { u.reads[n] = u.reads[n]! + 1; },
+    NdSet { var } => if var < len(u.sets) { u.sets[var] = u.sets[var]! + 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(node) {
+    uses(c, u);
+  }
+}
+
+// The value a single-expression block wraps, or the node itself.
+fn bare(v: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => {
+      ops = [for o in block[0]!.operators if !(o is NdLine) { o }];
+      if len(ops) == 1 {
+        return bare(ops[0]!);
+      }
+    },
+    _ => {}
+  }
+  v
+}
+
+// Does `next` read `t` once, with only pure operands evaluated before the read?  1 once the read
+// is found, 0 while still looking, -1 when an impure operand precedes it or the shape is not
+// followed (`Some(true)`, `Some(false)`, `None`).
+fn read_after_pure(b: ir::Bundle, next: ir::Node, t: integer) -> integer {
+  u = scope_fn::unspan(next);
+  match u {
+    NdVar { n } => if n == t { return 1; },
+    NdCall { args } => {
+      for a in args {
+        r = read_after_pure(b, a, t);
+        if r == 1 {
+          return 1;
+        }
+        if r != 0 || !ir_same_read::pure(b, a) {
+          return -1;
+        }
+      }
+      return 0;
+    },
+    _ => {}
+  }
+  if ir_same_read::pure(b, u) { 0 } else { -1 }
+}
+
+struct Sub { done: boolean }
+
+// The first `Var(t)` of `v` replaced by `e`.
+fn substitute(v: ir::Node, t: integer, e: ir::Node, s: Sub) -> ir::Node {
+  if s.done {
+    return v;
+  }
+  match v {
+    NdVar { n } => {
+      if n == t {
+        s.done = true;
+        return e;
+      }
+      return v;
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { substitute(c, t, e, s) }])
+}
+
+struct Count { n: integer }
+
+fn rewrite_in(b: ir::Bundle, f: ir::Function, u: Uses, node: ir::Node, c: Count) -> ir::Node {
+  kids = scope_fn::children(node);
+  if len(kids) == 0 {
+    return node;
+  }
+  n2 = ir_pass_tree::with_children(node, [for k in kids { rewrite_in(b, f, u, k, c) }]);
+  // A loop's body is a block of statements like any other (a comprehension's is).
+  bl = match n2 { NdBlock { block } => block[0]!, NdLoop { block } => block[0]!, _ => return n2 };
+  st = [for o in bl.operators { o }];
+  moved = 0;
+  at = 0;
+  while at + 1 < len(st) {
+    tmp = -1;
+    e = ir::NdNull;
+    match st[at]! {
+      NdSet { var, inner } => { tmp = var; e = inner; },
+      _ => {}
+    }
+    // The name and capture tests first: only a comprehension temporary is a candidate.
+    if tmp < 0 || !scope_fn::name(f, tmp).starts_with("_comp_") || scope_fn::is_captured(f, tmp) {
+      at += 1;
+      continue;
+    }
+    value = bare(e);
+    admitted = (u.reads[tmp] ?? 0) == 1 && (u.sets[tmp] ?? 0) == 1 && ir_same_read::pure(b, value)
+      && scope_fn::unspan(value) is NdCall && read_after_pure(b, st[at + 1]!, tmp) == 1;
+    if admitted {
+      nx = substitute(st[at + 1]!, tmp, value, Sub { done: false });
+      st = [for o in st if o#index != at { if o#index == at + 1 { nx } else { o } }];
+      moved += 1;
+    } else {
+      at += 1;
+    }
+  }
+  if moved == 0 {
+    return n2;
+  }
+  c.n += moved;
+  match n2 {
+    NdLoop => ir::NdLoop { block: [ir_pass_tree::with_operators(bl, st)] },
+    _ => ir::NdBlock { block: [ir_pass_tree::with_operators(bl, st)] }
+  }
+}
+
+// port: single_use.rs fn rewrite_program — every admitted temporary moved into its read;
+// answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_SINGLE_USE") ?? "0") != "0" {
+    return 0;
+  }
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) {
+      continue;
+    }
+    f = d.variables;
+    comp = false;
+    for v in f.variables {
+      if v.name.starts_with("_comp_") {
+        comp = true;
+      }
+    }
+    if !comp {
+      continue;
+    }
+    // Counted on the body as it stands before any move.
+    u = Uses { reads: [for _ in f.variables { 0 }], sets: [for _ in f.variables { 0 }] };
+    uses(d.code[0]!, u);
+    c = Count { n: 0 };
+    code = rewrite_in(b, f, u, d.code[0]!, c);
+    if c.n > 0 {
+      if (env_variable("LOFT_TRACE_SINGLE_USE") ?? "0") != "0" {
+        eprintln("single-use: {d.name} — {c.n} temporary(ies) moved into their read");
+      }
+      b.data.definitions[d#index].code = [code];
+      ir_pass_tree::relayout(b, d#index);
+      total += c.n;
+    }
+  }
+  total
+}

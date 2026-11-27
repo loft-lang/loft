@@ -33,6 +33,7 @@ use el_ex_copy;
 use el_ex_deliver;
 use el_ex_tuple;
 use el_ex_into;
+use el_ex_name;
 
 // `Parser::parse_code`: the body of the current definition, its result its declared return.
 // `rewrite_tail_tuple_with_work_ref`: the tail of a function answering a boxed tuple, built
@@ -54,7 +55,9 @@ pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, 
     },
     NdBlock { block } => {
       ab = block[0];
-      if ab.name != "block" || len(ab.operators) == 0 {
+      // (A `match` tail is its arms' `if` chain behind the subject's hold: each arm builds into
+      // the same record.)
+      if !(ab.name == "block" || ab.name == "scalar_match" || ab.name == "match") || len(ab.operators) == 0 {
         return null;
       }
       r = boxed_tail_into(e, vars, el_ir::last(ab.operators), w, td);
@@ -90,6 +93,21 @@ pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, 
   for m in members {
     full = def.attributes[m#index]!.typedef[0] ?? ir::TyVoid;
     mt = el_types::base(full);
+    // (A vector member is appended into the record's own vector field, `OpAppendVector(
+    // OpGetField(w, pos, vector), member, element row)` — the copy a vector field takes.)
+    if !(full is TyOptional) && mt is TyVector {
+      vin = match mt { TyVector { inner: vi } => vi, _ => ir::TyVoid };
+      vnm = el_types::elem_name(e, vin);
+      vk = if vnm == "" { -1 } else { el_ex_base::vector_store(e, vin, vnm) };
+      vrow = el_ex_vector::append_row(e, vin);
+      if !e.first_pass && (vk < 0 || vrow < 0) {
+        el::refuse(e, "a boxed tuple's vector member of this element type: {type_kind(vin)}");
+        return null;
+      }
+      vplace = el_ir::cl(e, "OpGetField", [ir::NdVar { n: w }, ir::NdInt { n: field_position(e, td, def.attributes[m#index]!.name) }, ir::NdInt { n: vk }]);
+      ops += [el_ir::cl(e, "OpAppendVector", [vplace, m, ir::NdInt { n: vrow }])];
+      continue;
+    }
     // (A nullable plain scalar is set as its value is, its null the scalar's own sentinel.)
     if (full is TyOptional && !el_convert::plain_scalar(mt)) || !(el_convert::plain_scalar(mt) || mt is TyText || struct_ref(e, mt) >= 0) {
       el::refuse(e, "a boxed tuple with a member that is no plain scalar, text or record");
@@ -136,7 +154,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if ttail >= 0 && result is TyOptional && el_types::base(result) is TyVector && match e.p.nodes[ttail] { SVecLit { items } => len(items) > 0, _ => false } {
     vars.bare_literal = ttail;
   }
-  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && el_types::base(result) is TyVector {
+  // (An empty `[]` tail under a vector result, in a body with an early `return`: Rust reads it
+  // into a store of its own — `__vdb_N`, the one the buffer is renamed onto, the early exits
+  // copied in (`deliver_mid_vector_returns`).)
+  if ttail >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) && match e.p.nodes[ttail] { SVecLit { items } => len(items) == 0, _ => false } && syntax_returns(e, body) {
+    vars.expect_node = ttail;
+    vars.expect = el_types::without_deps(result);
+    vars.empty_tail = ttail;
+  }
+  // (A tail literal under a KEYED result — `[]` included — is read as the collection.)
+  if ttail >= 0 && keyed_kind(el_types::base(result)) && e.p.nodes[ttail] is SVecLit {
+    vars.expect_node = ttail;
+    vars.expect = result;
+  }
+  // (…and a KEYED result reaches them too: each arm's literal is built as the collection.)
+  if ttail >= 0 && (e.p.nodes[ttail] is SIf || e.p.nodes[ttail] is SMatch || lit_tail) && (el_types::base(result) is TyVector || keyed_kind(el_types::base(result))) {
     vars.expect_node = ttail;
     vars.expect = el_types::without_deps(result);
   }
@@ -323,6 +355,13 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // tuple literal into a work ref of the `__tuple<…>` record (`synthetic_tuple_return`): a
   // record member copied into its slot, a scalar set.  Any other tail is refused by name.
   btd = match el_types::base(result) { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 };
+  // (A tail CALL answering the same boxed tuple is delivered as a record's tail call is: the
+  // buffer renamed onto the one handed to it, `ref_return`'s `Rename`.)
+  btail_syn = el_ex_deliver::tail_syntax(e, vars.body);
+  boxed_call_tail = btd >= 0 && btail_syn >= 0 && e.p.nodes[btail_syn] is SCall && match body_tail(code) { NdCall { def_nr: bcd } => !starts_with(el::def(e, bcd).name, "Op"), _ => e.first_pass };
+  if boxed_call_tail {
+    btd = -1;
+  }
   boxed_bad = false;
   if btd >= 0 {
     // (Minted on the second pass alone, after the body's own work refs.)
@@ -448,7 +487,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   }
   if lambda && !lam_done && !e.first_pass && rb >= 0 && el_types::base(result) is TyVector && !(result is TyOptional) {
     chained = el_ex_deliver::lambda_call_chain(e, vars, code, rb, result);
-    code = if chained != null { chained! } else { el_ex_deliver::lambda_vector_copy(e, code, rb, result) };
+    code = if chained != null { chained! } else { el_ex_deliver::lambda_vector_copy(e, vars, code, rb, result) };
   }
   // A nullable vector a CALL answers at the tail (`fn(k) -> vector<integer>? { g(k) }`): Rust
   // renames the buffer onto the call's work ref (`__ref_N` the hidden parameter, the result
@@ -509,8 +548,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // body stays typed as the parameter's read.
   // (So is any body whose type borrows only visible parameters — a field of one, an `if` of
   // two, a `??` over one: the result borrows each, as the body's type names them.)
+  // (A `-> τ?` result the same: `fn kn_tail(x: hash<…>?) -> hash<…>? { x }` borrows `x`.)
   kparam = false;
-  if keyed_kind(el_types::base(result)) && !(result is TyOptional) && len(el_types::deps(b.tp)) > 0 {
+  if keyed_kind(el_types::base(result)) && len(el_types::deps(b.tp)) > 0 {
     kas: vector<integer> = [];
     for kpv in el_types::deps(b.tp) {
       ka = if kpv >= 0 && kpv < len(vars.vars) && vars.vars[kpv].argument && !hidden_param(e, vars, kpv) { attr_nr(el::def(e, e.context), el_vars::name_of(vars, kpv)) } else { -1 };
@@ -543,6 +583,21 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           kco = keyed_field_copy_out(e, vars, kcb.operators[-1]!, result);
           if kco != null {
             kcb.operators[len(kcb.operators) - 1] = kco!;
+            // (A root local bound straight from a parameter (`b = x; b.fr_h`): Rust's body keeps
+            // the parameter's borrow (`["x"]`), which the port does not derive — not carried,
+            // refused by name.)
+            for kr in keyed_copied_roots(e, vars, kcb.operators[-1]!) {
+              for kop in kcb.operators {
+                match el_ir::unspan(kop) {
+                  NdSet { var: ksv, inner: ksi } => {
+                    if ksv == kr && match el_ir::unspan(ksi) { NdVar { n: ksn } => ksn >= 0 && vars.vars[ksn]!.argument, _ => false } {
+                      el::refuse(e, "a keyed field returned off a local bound to a parameter");
+                    }
+                  },
+                  _ => {}
+                }
+              }
+            }
             kcb.result = [el_types::without_deps(el_types::base(result))];
             code = ir::NdBlock { block: [kcb] };
             kcopied = true;
@@ -556,6 +611,11 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // collection as it is.)
   if !e.first_pass && keyed_kind(el_types::base(result)) && !kparam && !kcopied && len(el_types::deps(b.tp)) > 0 {
     kv = match body_tail(code) { NdVar { n } => if !vars.vars[n].argument && keyed_kind(el_types::base(el_vars::tp(vars, n))) && !(result is TyOptional) { n } else { -1 }, _ => -1 };
+    // (…and a join whose every leaf is such a local or a keyed literal: each arm hands up its own
+    // store, the body typed without a borrow and each arm keeping its own.)
+    if kv < 0 && !(result is TyOptional) && body_tail(code) is NdIf && keyed_owned_leaves(e, vars, body_tail(code)) {
+      kv = 0;
+    }
     // A literal tail was built as the collection where it was read (`keyed_tail_literal`).
     klit = match body_tail(code) { NdBlock { block } => block[0].name == "Vector" && keyed_kind(block[0].result[0] ?? ir::TyVoid), _ => false };
     if klit {
@@ -608,11 +668,17 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) {
     materialize_view_route(e, vars);
   }
-  vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result);
+  // (…a `-> E?` struct enum's tail too, an element or a field read as the `E?` its slot holds:
+  // the buffer takes the copy behind the slot's tag test, `view_tail`.)
+  // (The first pass's element read is not built yet: the projection test of `mv_tail` decides.)
+  // (On the second pass a slot rooted at a local, or read off a call's answer — named first,
+  // `enum_slot_name`.)
+  mv_result = el_ex_copy::record_result(result) || (result is TyOptional && el_types::struct_enum_def(result) >= 0 && (e.first_pass || match el_ir::unspan(raw_tail(code)) { NdCall { def_nr: mvd, args: mva } => el::def(e, mvd).name == "OpGetField" && (place_root(e, raw_tail(code)) >= 0 && !vars.vars[place_root(e, raw_tail(code))]!.argument || len(mva) == 3 && el_ir::unspan(mva[0]!) is NdCall), _ => false }));
+  vars.mv_tail = mv_tail && rb >= 0 && !lambda && expr_tail && mv_result;
   if !(el_types::base(result) is TyVector) {
     vars.ret_src = raw_tail(code);
   }
-  if rb >= 0 && !lambda && expr_tail && el_ex_copy::record_result(result) && mv_tail {
+  if rb >= 0 && !lambda && expr_tail && mv_result && mv_tail {
     mt = view_tail(e, vars, code, rb, result);
     if mt != null {
       code = mt!;
@@ -687,6 +753,17 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           code = el_ex_deliver::stage_exits(e, vars, code, rb);
         }
       }
+    } else if e.first_pass && match body_tail(code) { NdCall { def_nr: kgd1 } => el::def(e, kgd1).name == "OpGetRecord", _ => false } && place_root(e, body_tail(code)) >= 0 && !vars.vars[place_root(e, body_tail(code))]!.argument {
+      // (The keyed lookup's first pass: `Bind` on the collection's local, the buffer named.)
+      kroot = place_root(e, body_tail(code));
+      if kroot >= 0 {
+        el_trace::retpromo(e, vars, kroot, "Bind");
+      }
+      kba = attr_nr(el::def(e, e.context), "__retbuf");
+      kret = el::def(e, e.context).returned[0] ?? result;
+      if kba >= 0 && !el_types::deps(kret).contains(kba) {
+        e.b.data.definitions[e.context].returned = [el_types::with_deps(kret, el_types::deps(kret) + [kba])];
+      }
     } else if !e.first_pass {
       // A `??` tail viewing parameters alone answers that view (`MergeAttr`), before any
       // delivery is asked of it.
@@ -721,6 +798,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A `null` tail answers the sentinel and delivers nothing into the buffer.
       if built == null && el_ex_copy::null_sentinel_tail(e, code) {
         built = code;
+        // (A struct enum's bound buffer an earlier exit copied into: the body answers it, typed
+        // as borrowing it, as the result names it.)
+        nsa = attr_nr(el::def(e, e.context), "__retbuf");
+        if rb >= 0 && nsa >= 0 && el_types::struct_enum_def(result) >= 0 && el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid).contains(nsa) {
+          match code {
+            NdBlock { block: nsb } => {
+              nsl = nsb[0];
+              nsown = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+              nsl.result = [if result is TyOptional { ir::TyOptional { inner: nsown } } else { nsown }];
+              built = ir::NdBlock { block: [nsl] };
+            },
+            _ => {}
+          }
+        }
       }
       // A body ending in a `return` delivered its value already (`record_return`).
       if built == null && el_ex_deliver::ends_in_return(code) {
@@ -783,6 +874,27 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // buffer: its answer copied into the buffer (`materialized_view_return`).
       if built == null && body_tail(code) is NdCallRef {
         built = materialize_whole_tail(e, vars, code, rb, result);
+        if_copied = built != null;
+      }
+      // A KEYED lookup at the tail (`b.h[k]`, `OpGetRecord`) views the collection's local: Rust's
+      // `ls` is that record, of another type than the result, so the buffer keeps its name and
+      // takes the copy (`Bind`, `materialized_view_return`) — behind the lookup's null test for a
+      // `S?` result, the sentinel where nothing is found.
+      // (Over a collection a LOCAL holds; a call's answer read in place, `hb(3).h[k]`, is Rust's
+      // `return_source` road with its `inline_container` — not carried.)
+      if built == null && match body_tail(code) { NdCall { def_nr: kgd } => el::def(e, kgd).name == "OpGetRecord", _ => false } && place_root(e, body_tail(code)) >= 0 && !vars.vars[place_root(e, body_tail(code))]!.argument {
+        ktail = body_tail(code);
+        kroot2 = place_root(e, ktail);
+        if kroot2 >= 0 {
+          el_trace::retpromo(e, vars, kroot2, "Bind");
+        }
+        built = materialize_whole_tail(e, vars, code, rb, result);
+        if built != null && result is TyOptional {
+          // (The null test is a statement of its own, as Rust's: no position of the tail's.)
+          kbl = match built! { NdBlock { block: kbb } => kbb[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+          kbl.operators[-1] = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [ktail]), el_ir::cl(e, "OpNullRefSentinel", []), el_ir::unspan(kbl.operators[-1]!));
+          built = ir::NdBlock { block: [kbl] };
+        }
         if_copied = built != null;
       }
       if built == null && body_tail(code) is NdIf {
@@ -1018,7 +1130,18 @@ fn projects_into_local(e: el::El, vars: el_vars::Vars, n: ir::Node, every_arm: b
     NdTupleGet { var: tb, idx: _ } => tb >= 0 && tb < len(vars.vars) && !vars.vars[tb].argument,
     NdCall { def_nr, args } => {
       nm = el::def(e, def_nr).name;
-      if (nm != "OpGetField" && nm != "OpGetVector") || len(args) == 0 {
+      // (A LINKED vector's element read — `OpVectorRef`, where a keyed collection over the
+      // element type exists — is the `OpGetVector` Rust classifies before its linked-layout
+      // rewrite: the same projection.)
+      // (A keyed lookup — `OpGetRecord` — projects into an owned temporary where its collection is
+      // read off a call's answer, `hb(3).h[k]`: the copy road.  Off a local it is `Bind`, which
+      // the record delivery copies into the buffer as it stands.)
+      if nm == "OpGetRecord" && len(args) > 0 {
+        // (…a call, or the `inline_container` the call was lifted into when its field was read.)
+        kr = read_root(e, args[0]!);
+        return el_ex_assign::call_rooted(e, vars, args[0]!) || match kr { NdBlock { block: krb } => krb[0].name == "inline_container", _ => false };
+      }
+      if (nm != "OpGetField" && nm != "OpGetVector" && nm != "OpVectorRef") || len(args) == 0 {
         return false;
       }
       // The first pass's `!` read of a subject that is no local stands for its `_ncr_N`.
@@ -1341,6 +1464,58 @@ pub fn keyed_field_copy_out(e: el::El, vars: el_vars::Vars, n: ir::Node, t: ir::
   null
 }
 
+// Does the syntax under `n` hold a `return` (not one inside a lambda)?
+fn syntax_returns(e: el::El, n: integer) -> boolean {
+  match e.p.nodes[n] {
+    SJump { kind } => { if kind == "return" { return true; } },
+    SLambda { at: _ } => { return false; },
+    _ => {}
+  }
+  for c in el_length::children(e, n) {
+    if syntax_returns(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// Is every leaf of this join a keyed LOCAL that is no parameter, or a keyed literal (`Vector`)?
+pub fn keyed_owned_leaves(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match el_ir::unspan(n) {
+    NdIf { cond: _, t, f } => keyed_owned_leaves(e, vars, t) && keyed_owned_leaves(e, vars, f),
+    NdBlock { block } => if block[0].name == "Vector" { keyed_kind(block[0].result[0] ?? ir::TyVoid) } else { len(block[0].operators) > 0 && keyed_owned_leaves(e, vars, el_ir::last(block[0].operators)) },
+    NdVar { n: lv } => lv >= 0 && lv < len(vars.vars) && !vars.vars[lv]!.argument && keyed_kind(el_types::base(el_vars::tp(vars, lv))),
+    _ => false
+  }
+}
+
+// The roots of the keyed field leaves `keyed_field_copy_out` copied (each `__blk_val_N`'s
+// `OpReplaceKeyed` source), through the tail's returns, blocks, inserts and arms.
+fn keyed_copied_roots(e: el::El, vars: el_vars::Vars, n: ir::Node) -> vector<integer> {
+  match n {
+    NdReturn { inner } => keyed_copied_roots(e, vars, inner),
+    NdDrop { inner } => keyed_copied_roots(e, vars, inner),
+    NdSpan { inner } => keyed_copied_roots(e, vars, inner),
+    NdIf { cond: _, t, f } => keyed_copied_roots(e, vars, t) + keyed_copied_roots(e, vars, f),
+    NdBlock { block } => if len(block[0].operators) > 0 { keyed_copied_roots(e, vars, block[0].operators[-1]!) } else { [] },
+    NdInsert { items } => {
+      if len(items) == 3 {
+        match items[1]! {
+          NdCall { def_nr, args } => {
+            if el::def(e, def_nr).name == "OpReplaceKeyed" && len(args) > 0 {
+              r = place_root(e, args[0]!);
+              return if r >= 0 { [r] } else { [] };
+            }
+          },
+          _ => {}
+        }
+      }
+      if len(items) > 0 { keyed_copied_roots(e, vars, items[-1]!) } else { [] }
+    },
+    _ => []
+  }
+}
+
 // `Parser::reads_a_stored_reference` (loft#1977): does the tail hand up, on some arm, the record
 // a stored `reference<T>` names (`OpGetDbRef`), or a local of `bound` a block set to such a read?
 pub fn reads_stored_reference(e: el::El, n: ir::Node, bound: vector<integer>) -> boolean {
@@ -1431,7 +1606,26 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   }
   enum_result = el_types::struct_enum_def(result) >= 0;
   unrenamed = attr_nr(el::def(e, d), "__retbuf") >= 0;
+  // `read_through_enum_slot` (`(L-Null-Which)`): an `E?` slot read off a CALL's record is not
+  // read twice (tag, then value) off the call — the call is named once, in a work ref minted
+  // before this road's own, and the slot re-read off the name (`enum_slot_read_named`).  A
+  // projection's name borrows its container: it frees nothing.
+  named = enum_slot_name(e, vars, value, enum_result && result is TyOptional);
+  nbase = ir::NdNull;
+  if named >= 0 {
+    match el_ir::unspan(value) {
+      NdCall { args: nga } => {
+        nbase = nga[0]!;
+        value = el_ir::cl(e, "OpGetField", [ir::NdVar { n: named }, nga[1]!, nga[2]!]);
+      },
+      _ => {}
+    }
+  }
   w = el_vars::work_ref(vars, if enum_result { ir::TyReference { n: td, dep: [] } } else { el_types::without_deps(el_types::base(result)) });
+  // (A `-> E?` struct enum's work ref is `Bind`, substituted by the buffer, on both passes.)
+  if enum_result && result is TyOptional {
+    el_trace::retpromo(e, vars, w, "Bind");
+  }
   if e.first_pass {
     if unrenamed && !buffer_bound(e) && !enum_result {
       rename_onto(e, vars, rb, w);
@@ -1462,6 +1656,21 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [buf]);
   copied = el_ex_copy::copy_arms(e, vars, value, buf, td, owned);
+  // (A `-> E?` struct enum read out of its slot is the `E?` the slot holds: absent where the
+  // slot's first word is zero (`read_through_enum_slot`) — that test before the copy's own.)
+  if copied != null && enum_result && result is TyOptional {
+    match el_ir::unspan(value) {
+      NdCall { def_nr: vfd, args: vfa } => {
+        if el::def(e, vfd).name == "OpGetField" && len(vfa) == 3 {
+          copied = el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [vfa[0]!, vfa[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), copied!);
+        }
+      },
+      _ => {}
+    }
+  }
+  if copied != null && named >= 0 {
+    copied = el_ir::v_block([el_ir::v_set(named, nbase), copied!], el_types::with_deps(el_types::without_deps(result), [named]), "enum_slot_read_named");
+  }
   if copied == null {
     el::refuse(e, "a record tail reading into a local, copied from a source read once");
     return code;
@@ -1471,6 +1680,38 @@ fn view_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result
   }
   bl.operators[-1] = if through_return { el_ir::respan(last, ir::NdReturn { inner: copied! }) } else { copied! };
   ir::NdBlock { block: [bl] }
+}
+
+// The work ref naming the call an `E?` slot is read off (`OpGetField(f(…)[i], 0, T)`), minted
+// on the second pass for `read_through_enum_slot`; -1 where the slot is read off a place a
+// test may read twice, or the call answers no record.
+fn enum_slot_name(e: el::El, vars: el_vars::Vars, value: ir::Node, wanted: boolean) -> integer {
+  if e.first_pass || !wanted || el_ex_name::repeatable_place(e, el_ir::unspan(value)) {
+    return -1;
+  }
+  match el_ir::unspan(value) {
+    NdCall { def_nr: gd, args: ga } => {
+      if el::def(e, gd).name != "OpGetField" || len(ga) != 3 {
+        return -1;
+      }
+      match el_ir::unspan(ga[0]!) {
+        NdCall { def_nr: cd } => {
+          hd = match el_types::base(el::def(e, cd).returned[0] ?? ir::TyVoid) { TyReference { n: hn } => hn, _ => -1 };
+          if hd < 0 {
+            return -1;
+          }
+          nv = el_vars::work_ref(vars, ir::TyReference { n: hd, dep: [] });
+          el_vars::mark_inline(vars, nv, "read_through_enum_slot");
+          if el_ex_base::projection_op(el::def(e, cd).name) {
+            el_vars::set_skip_free(vars, nv, "read_through_enum_slot");
+          }
+          nv
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
 }
 
 // Is the place this read chain starts at an `ncr` block (a `!` read)?
@@ -2017,8 +2258,12 @@ pub fn rename_candidate(e: el::El, vars: el_vars::Vars, code: ir::Node, x: ir::N
         return n;
       }
     },
-    NdCall { args } => {
-      if e.first_pass {
+    NdCall { def_nr: rcd, args } => {
+      // (On the second pass too for a callee declared BELOW: the first pass met it before its
+      // answer took a buffer, so its `__ref_N` shows only now, where Rust's `ref_return` first
+      // meets it — the vector road's `late_tail`.  `LOFT_ELAB_NO_LATE_RECORD_TAIL=1` switches it
+      // off, the first bisect step.)
+      if e.first_pass || (rcd > e.context && (env_variable("LOFT_ELAB_NO_LATE_RECORD_TAIL") ?? "") == "") {
         w = hidden_ref_arg(vars, args);
         if w >= 0 {
           return w;
@@ -2067,7 +2312,15 @@ pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: i
     return null;
   }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-  arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
+  // (A struct enum's `τ?` branch is copied arm by arm, each view where present — the sentinel
+  // where absent — as its `τ?` join is: `copy_arms`.  A record's with no null arm keeps the road
+  // below: 1990's `if i == 99 { S { a: 5 } } else { e }` under `-> S?`.)
+  // (A record's the same where an arm yields null; one with no null arm keeps the road below.)
+  if_arms = el_ir::unspan(el_ir::last(bl.operators));
+  arms: ir::Node? = if result is TyOptional && (el_convert::struct_enum(el_types::base(result)) || branch_yields_null(e, if_arms)) { el_ex_copy::copy_arms(e, vars, if_arms, rb, td, owned) } else { null };
+  if arms == null {
+    arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
+  }
   if arms == null {
     return null;
   }
@@ -2149,7 +2402,9 @@ pub fn materialize_join_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb:
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
   // (A join that can leave — a `return` in an arm — is copied arm by arm, its exit building
   // into the buffer itself: `materialize_return_into`'s `leaving_branch`.)
-  if el_ex_copy::returns_in([tail]) > 0 {
+  // (So is a `τ?` join: each arm's view copied where present, the sentinel where not — a dense
+  // join is copied whole, Rust's `MaterializeView` on the join.)
+  if el_ex_copy::returns_in([tail]) > 0 || result is TyOptional {
     arms = el_ex_copy::copy_arms(e, vars, tail, rb, td, owned);
     if arms == null {
       return null;

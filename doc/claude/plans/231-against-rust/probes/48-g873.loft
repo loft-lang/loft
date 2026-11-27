@@ -1,0 +1,5 @@
+// @PLN231 R11 probe — interpolating a struct with a hash field (loft#873)
+// Expect on both backends: bag n=3 shown: {h:[{k:"a",v:1}],n:3}
+struct E { k: text, v: integer }
+struct Bag { h: hash<E[k]>, n: integer }
+fn main() { b = Bag { h: [E { k: "a", v: 1 }], n: 3 }; println("bag n={b.n} shown: {b}"); }

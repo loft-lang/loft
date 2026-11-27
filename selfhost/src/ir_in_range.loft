@@ -1,0 +1,604 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/in_range.rs` transcribed (`@FR-R-InRange`): a record element its loop proves in
+// range needs no null discharge.  `v[i]?` over a vector of records lowers to a discharge block;
+// inside `for i in 0..len(v)` whose body can neither resize `v` nor assign `i` (the check
+// `@FR-R-ForwardWalk` makes, `ir_forward_walk::check_body`), every `i` is in range, so the
+// discharge block is the read alone.  The range end may also be a local `n` bound by `n = len(v)`
+// as the statement before the loop, or a length local (`opt_length::own_length_locals`).  Its
+// field clause, `field_decline`, is what `ir_forward_walk` asks for a walk over a record's field.
+
+use ir;
+use scope_fn;
+use cgen_types;
+use opt_writes;
+use lower;
+use opt_length;
+use ir_pass_tree;
+use ir_forward_walk;
+
+// The operators that read the walked vector and change nothing about it.
+READS = ["OpGetVector", "OpGetVectorNullable", "OpLengthVector", "t_6vector_len", "OpVecGetInt", "OpVecGetIntNullable"];
+
+// What the field clause's body check carries through the walk.
+struct FieldWalk {
+  root: integer,
+  off: integer,
+  root_is_param: boolean,
+  idx: integer,
+  lv: integer
+}
+
+// port: in_range.rs fn field_decline — why the body might resize `d.f` or move the counter, or
+// "".  `d` is named only through its fields, never assigned, handed bare to a call or captured;
+// the walked field is named only as the vector a read operator reads; a `&` parameter that could
+// be `d` itself declines, and so does any vector local that is a view into `d`.
+pub fn field_decline(b: ir::Bundle, f: ir::Function, root: integer, off: integer, idx: integer, lv: integer, body: vector<ir::Node>) -> text {
+  if scope_fn::is_captured(f, root) {
+    return "a closure captures the record";
+  }
+  for x in 0..scope_fn::count(f) {
+    if x != root && cgen_types::base(scope_fn::tp(f, x)) is TyVector && scope_fn::deps(f, x).contains(root) {
+      for o in body {
+        if scope_fn::reads_var(o, x) {
+          return "a vector local that views the record is used in the body";
+        }
+      }
+    }
+  }
+  cx = FieldWalk { root: root, off: off, root_is_param: scope_fn::is_argument(f, root), idx: idx, lv: lv };
+  for o in body {
+    why = walk(b, f, cx, o);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+// `d.f` itself, the walked field.
+fn ours(b: ir::Bundle, cx: FieldWalk, v: ir::Node) -> boolean {
+  a = ir_pass_tree::args_of(v);
+  len(a) == 3 && ir_pass_tree::def_name(b, ir_pass_tree::call_def(v)) == "OpGetField"
+    && (ir_pass_tree::var_of(a[0]!) ?? -1) == cx.root && (ir_pass_tree::int_of(a[1]!) ?? -2147483647) == cx.off
+}
+
+fn walk(b: ir::Bundle, f: ir::Function, cx: FieldWalk, node: ir::Node) -> text {
+  match node {
+    NdSpan { inner } => walk(b, f, cx, inner),
+    NdVar { n } => if n == cx.root { "the record is used other than through a field" } else { "" },
+    NdSet { var, inner } => {
+      if var == cx.root || var == cx.idx || var == cx.lv {
+        return "the body assigns the record or the counter";
+      }
+      walk(b, f, cx, inner)
+    },
+    NdCallRef => "a call through a reference, a yield or a par in the body",
+    NdYield => "a call through a reference, a yield or a par in the body",
+    NdParallel => "a call through a reference, a yield or a par in the body",
+    NdCall { def_nr, args } => {
+      name = ir_pass_tree::def_name(b, def_nr);
+      if ours(b, cx, node) {
+        return "the walked vector is used other than by a read";
+      }
+      // A field of the record, read whole: another field, or the record's own scalar.
+      if name == "OpGetField" && len(args) > 0 && (ir_pass_tree::var_of(args[0]!) ?? -1) == cx.root {
+        return "";
+      }
+      reads = READS.contains(name);
+      for a in args {
+        if ours(b, cx, a) {
+          if reads {
+            continue;
+          }
+          return "the walked vector is handed to an operator that may resize it";
+        }
+        n = ir_pass_tree::var_of(a);
+        if n != null && cx.root_is_param && n! != cx.root && scope_fn::is_argument(f, n!) && may_be_record(b, scope_fn::tp(f, n!)) {
+          // A `&text` or a `&` scalar (a result buffer among them) holds no record.
+          return "another record parameter, which may be the same record";
+        }
+        why = walk(b, f, cx, a);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    },
+    _ => {
+      for c in scope_fn::children(node) {
+        why = walk(b, f, cx, c);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    }
+  }
+}
+
+// The parameter types that can name the walked record (the `match` in `FieldWalk::walk`).
+fn may_be_record(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  match cgen_types::base(t) {
+    // A record of scalars only owns no vector: it is not `d`, holds no part of it, and no write
+    // through it resizes one (a hidden `Cell` result buffer, `get_cell`).
+    TyReference { n } => !opt_writes::all_scalar_record(b, n),
+    TyRefVar { inner } => match cgen_types::base(inner) {
+      TyReference { n } => !opt_writes::all_scalar_record(b, n),
+      TyVector => true,
+      _ => false
+    },
+    // A record or vector passed plainly names the caller's record too.
+    TyVector => true,
+    _ => false
+  }
+}
+
+struct Ops {
+  add_int: integer,
+  le_int: integer,
+  length_vector: integer,
+  vector_len: integer,
+  get_vector_nullable: integer,
+  conv_bool_from_ref: integer,
+  get_field: integer,
+  rem_int: integer,
+  rem_int_nullable: integer,
+  conv_bool_from_int: integer
+}
+
+// The vector a range walks: a variable (`root` -1, `v` the variable), or a field of one
+// (`d.pieces`: the root and the field's offset).  `ok` false for none.
+struct Src { ok: boolean, v: integer, root: integer, off: integer }
+
+fn no_src() -> Src {
+  Src { ok: false, v: -1, root: -1, off: 0 }
+}
+
+fn same_src(a: Src, c: Src) -> boolean {
+  a.ok && c.ok && a.v == c.v && a.root == c.root && a.off == c.off
+}
+
+fn src(ops: Ops, v: ir::Node) -> Src {
+  u = scope_fn::unspan(v);
+  match u {
+    NdVar { n } => return Src { ok: true, v: n, root: -1, off: 0 },
+    _ => {}
+  }
+  a = ir_pass_tree::args_of(u);
+  if ir_pass_tree::call_def(u) == ops.get_field && len(a) == 3 {
+    r = match scope_fn::unspan(a[0]!) { NdVar { n } => n, _ => return no_src() };
+    o = match scope_fn::unspan(a[1]!) { NdInt { n } => n, _ => return no_src() };
+    return Src { ok: true, v: -1, root: r, off: o };
+  }
+  no_src()
+}
+
+fn plain(ops: vector<ir::Node>) -> vector<ir::Node> {
+  [for o in ops if !(o is NdLine) { o }]
+}
+
+// `n = len(v)` — a length bound to a variable: `src` the vector (`ok` false for none), `n` the
+// variable.
+struct LenBind { n: integer, s: Src }
+
+fn len_bind(ops: Ops, stmt: ir::Node) -> LenBind {
+  none = LenBind { n: -1, s: no_src() };
+  n = -1;
+  ln = ir::NdNull;
+  match scope_fn::unspan(stmt) {
+    NdSet { var, inner } => { n = var; ln = inner; },
+    _ => return none
+  }
+  ld = ir_pass_tree::call_def(ln);
+  la = ir_pass_tree::args_of(ln);
+  if ld < 0 || (ld != ops.length_vector && ld != ops.vector_len) || len(la) != 1 {
+    return none;
+  }
+  s = src(ops, la[0]!);
+  if !s.ok {
+    return none;
+  }
+  LenBind { n: n, s: s }
+}
+
+// `for i in 0..len(v)`, or `for i in 0..n` where `n` is `len(v)` (`alias`): the vector, the
+// counter `i#index`, the loop variable `i`, and where the body starts in the loop.
+struct Range { ok: boolean, v: Src, idx: integer, lv: integer, first_body: integer }
+
+fn no_range() -> Range {
+  Range { ok: false, v: no_src(), idx: -1, lv: -1, first_body: 0 }
+}
+
+fn match_range(ops: Ops, bl: ir::Block, alias: LenBind) -> Range {
+  if bl.name != "For block" {
+    return no_range();
+  }
+  st = plain(bl.operators);
+  if len(st) != 3 {
+    return no_range();
+  }
+  end = -1;
+  ln = ir::NdNull;
+  match st[0]! {
+    NdSet { var, inner } => { end = var; ln = inner; },
+    _ => return no_range()
+  }
+  idx = -1;
+  start = ir::NdNull;
+  match st[1]! {
+    NdSet { var, inner } => { idx = var; start = inner; },
+    _ => return no_range()
+  }
+  lp = match st[2]! { NdLoop { block } => block[0]!, _ => return no_range() };
+  v = no_src();
+  aliased = false;
+  match scope_fn::unspan(ln) {
+    NdVar { n } => if alias.s.ok && n == alias.n { v = alias.s; aliased = true; },
+    _ => {}
+  }
+  if !aliased {
+    lb = len_bind(ops, ir::NdSet { var: end, inner: ln });
+    if !lb.s.ok {
+      return no_range();
+    }
+    v = lb.s;
+  }
+  if (ir_pass_tree::int_of(start) ?? 0) != -1 || !(scope_fn::unspan(start) is NdInt) || lp.name != "For loop" {
+    return no_range();
+  }
+  body_at = -1;
+  for o in lp.operators {
+    if body_at < 0 && !(o is NdLine) {
+      body_at = o#index;
+    }
+  }
+  if body_at < 0 {
+    return no_range();
+  }
+  lv = -1;
+  iter = ir::NdNull;
+  match lp.operators[body_at]! {
+    NdSet { var, inner } => { lv = var; iter = inner; },
+    _ => return no_range()
+  }
+  it = match scope_fn::unspan(iter) { NdBlock { block } => block[0]!, _ => return no_range() };
+  iops = plain(it.operators);
+  if len(iops) != 3 {
+    return no_range();
+  }
+  step_var = -1;
+  step = ir::NdNull;
+  match iops[0]! {
+    NdSet { var, inner } => { step_var = var; step = inner; },
+    _ => return no_range()
+  }
+  test = match iops[1]! { NdIf { cond } => cond, _ => return no_range() };
+  last = iops[2]!;
+  sd = ir_pass_tree::call_def(step);
+  td = ir_pass_tree::call_def(test);
+  if sd < 0 || td < 0 {
+    return no_range();
+  }
+  sargs = ir_pass_tree::args_of(step);
+  targs = ir_pass_tree::args_of(test);
+  if it.name != "Iter range" || step_var != idx || sd != ops.add_int
+    || (ir_pass_tree::var_of(sargs[0] ?? ir::NdNull) ?? -1) != idx
+    || !(scope_fn::unspan(sargs[1] ?? ir::NdNull) is NdInt) || (ir_pass_tree::int_of(sargs[1]!) ?? 0) != 1
+    || td != ops.le_int
+    || (ir_pass_tree::var_of(targs[0] ?? ir::NdNull) ?? -1) != end
+    || (ir_pass_tree::var_of(targs[1] ?? ir::NdNull) ?? -1) != idx
+    || (ir_pass_tree::var_of(last) ?? -1) != idx {
+    return no_range();
+  }
+  Range { ok: true, v: v, idx: idx, lv: lv, first_body: body_at + 1 }
+}
+
+// The loop's view of its counters: the vector, `i#index` and `i`, and the local the range end
+// was copied from (-1 for none).
+struct Counter { v: Src, idx: integer, lv: integer, len_var: integer }
+
+// `v`'s length, as the loop sees it: the local the range end came from, or `len(v)`.
+fn is_length(ops: Ops, cn: Counter, d: ir::Node) -> boolean {
+  u = scope_fn::unspan(d);
+  match u {
+    NdVar { n } => return cn.len_var >= 0 && n == cn.len_var,
+    NdCall { def_nr, args } => return (def_nr == ops.length_vector || def_nr == ops.vector_len) && len(args) == 1 && same_src(src(ops, args[0]!), cn.v),
+    _ => {}
+  }
+  false
+}
+
+// An index inside `v` for every turn: a counter, or a counter wrapped at the length
+// (`loop_shape::wrapped_counter`).
+fn in_range(b: ir::Bundle, ops: Ops, cn: Counter, at: ir::Node) -> boolean {
+  u = scope_fn::unspan(at);
+  match u {
+    NdVar { n } => return n == cn.idx || n == cn.lv,
+    _ => {}
+  }
+  // `loop_shape::wrapped_counter`: `ctr % d` or `(ctr + step) % d`, `0 <= step <= WRAP_STEP_MAX`.
+  nm = ir_pass_tree::def_name(b, ir_pass_tree::call_def(u));
+  operands = ir_pass_tree::args_of(u);
+  if len(operands) != 2 || (nm != "OpRemInt" && nm != "OpRemIntNullable") {
+    return false;
+  }
+  ctr = -1;
+  o0 = scope_fn::unspan(operands[0]!);
+  match o0 {
+    NdVar { n } => { ctr = n; },
+    NdCall { def_nr, args } => {
+      if len(args) == 2 && ir_pass_tree::def_name(b, def_nr) == "OpAddInt" {
+        c0 = scope_fn::unspan(args[0]!);
+        c1 = scope_fn::unspan(args[1]!);
+        match c0 {
+          NdVar { n } => match c1 {
+            NdInt { n: step } => if step >= 0 && step <= WRAP_STEP_MAX { ctr = n; },
+            _ => {}
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  ctr >= 0 && (ctr == cn.idx || ctr == cn.lv) && is_length(ops, cn, operands[1]!)
+}
+
+// `loop_shape::WRAP_STEP_MAX`
+WRAP_STEP_MAX = 65536;
+
+// The parts `{t = read; if conv(t) then t else _}` of an `ncc` block: `t` -1 for none.
+struct Ncc { t: integer, read: ir::Node, conv: integer, cargs: vector<ir::Node>, then_arm: ir::Node }
+
+fn ncc(node: ir::Node) -> Ncc {
+  none = Ncc { t: -1, read: ir::NdNull, conv: -1, cargs: [], then_arm: ir::NdNull };
+  bl = match scope_fn::unspan(node) { NdBlock { block } => block[0]!, _ => return none };
+  if bl.name != "ncc" {
+    return none;
+  }
+  st = plain(bl.operators);
+  if len(st) != 2 {
+    return none;
+  }
+  t = -1;
+  read = ir::NdNull;
+  match st[0]! {
+    NdSet { var, inner } => { t = var; read = inner; },
+    _ => return none
+  }
+  test = ir::NdNull;
+  then_arm = ir::NdNull;
+  match st[1]! {
+    NdIf { cond, t: th } => { test = cond; then_arm = th; },
+    _ => return none
+  }
+  cd = ir_pass_tree::call_def(test);
+  if cd < 0 {
+    return none;
+  }
+  Ncc { t: t, read: read, conv: cd, cargs: ir_pass_tree::args_of(test), then_arm: then_arm }
+}
+
+// `{ t = (i + c) % n; t ?? d }` with `n` the loop's length: the remainder alone (`NdNull` for
+// none).
+fn wrapped_discharge(b: ir::Bundle, ops: Ops, node: ir::Node, cn: Counter) -> ir::Node {
+  x = ncc(node);
+  if x.t < 0 || ir_pass_tree::call_def(x.read) < 0 {
+    return ir::NdNull;
+  }
+  rd = ir_pass_tree::call_def(x.read);
+  if x.conv == ops.conv_bool_from_int && len(x.cargs) == 1 && (ir_pass_tree::var_of(x.cargs[0]!) ?? -1) == x.t
+    && (ir_pass_tree::var_of(x.then_arm) ?? -1) == x.t && rd == ops.rem_int_nullable && in_range(b, ops, cn, x.read) {
+    return ir::NdCall { def_nr: ops.rem_int, args: ir_pass_tree::args_of(x.read) };
+  }
+  ir::NdNull
+}
+
+// The record element read a discharge block wraps, when it reads `v` at an index the loop keeps
+// inside it (`NdNull` for none).
+fn record_discharge(b: ir::Bundle, ops: Ops, node: ir::Node, cn: Counter) -> ir::Node {
+  x = ncc(node);
+  if x.t < 0 || ir_pass_tree::call_def(x.read) < 0 {
+    return ir::NdNull;
+  }
+  rd = ir_pass_tree::call_def(x.read);
+  rargs = ir_pass_tree::args_of(x.read);
+  if x.conv == ops.conv_bool_from_ref && len(x.cargs) == 1 && (ir_pass_tree::var_of(x.cargs[0]!) ?? -1) == x.t
+    && (ir_pass_tree::var_of(x.then_arm) ?? -1) == x.t && rd == ops.get_vector_nullable && len(rargs) > 2
+    && same_src(src(ops, rargs[0]!), cn.v) && in_range(b, ops, cn, rargs[2]!) {
+    return x.read;
+  }
+  ir::NdNull
+}
+
+struct Count { n: integer }
+
+// Every wrapped index's `??` dropped, then every in-range record element's discharge: the first
+// makes the index the second reads.
+fn strip(b: ir::Bundle, ops: Ops, node: ir::Node, cn: Counter, c: Count) -> ir::Node {
+  rem = wrapped_discharge(b, ops, node, cn);
+  if !(rem is NdNull) {
+    c.n += 1;
+    return rem;
+  }
+  kids = scope_fn::children(node);
+  n2 = if len(kids) == 0 { node } else { ir_pass_tree::with_children(node, [for k in kids { strip(b, ops, k, cn, c) }]) };
+  read = record_discharge(b, ops, n2, cn);
+  if !(read is NdNull) {
+    c.n += 1;
+    return read;
+  }
+  n2
+}
+
+// The length local a `for i in 0..n` block's end `n` is, as aliases (`own` the pairs flat).
+fn length_local_aliases(stmt: ir::Node, own: vector<integer>) -> vector<LenBind> {
+  fb = match scope_fn::unspan(stmt) { NdBlock { block } => block[0]!, _ => return [] };
+  if fb.name != "For block" {
+    return [];
+  }
+  st = plain(fb.operators);
+  if len(st) == 0 {
+    return [];
+  }
+  end = match st[0]! { NdSet { inner } => inner, _ => return [] };
+  n = ir_pass_tree::var_of(end) ?? -1;
+  if n < 0 {
+    return [];
+  }
+  out: vector<LenBind> = [];
+  k = 0;
+  while k + 1 < len(own) {
+    if own[k]! == n {
+      out += [LenBind { n: n, s: Src { ok: true, v: own[k + 1]!, root: -1, off: 0 } }];
+    }
+    k += 2;
+  }
+  out
+}
+
+fn sets(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var } => if var == v { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if sets(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: in_range.rs fn rewrite_for — one `for` block: its in-range discharges dropped when the
+// range and the body allow.
+fn rewrite_for(b: ir::Bundle, ops: Ops, f: ir::Function, bl: ir::Block, alias: LenBind, c: Count) -> ir::Block {
+  r = match_range(ops, bl, alias);
+  if !r.ok {
+    return bl;
+  }
+  lp_at = -1;
+  for o in bl.operators {
+    if lp_at < 0 && o is NdLoop {
+      lp_at = o#index;
+    }
+  }
+  if lp_at < 0 {
+    return bl;
+  }
+  lp = match bl.operators[lp_at]! { NdLoop { block } => block[0]!, _ => return bl };
+  body = [for k in r.first_body..len(lp.operators) { lp.operators[k]! }];
+  // The body may not assign the bound length either.
+  if alias.s.ok {
+    for o in body {
+      if sets(o, alias.n) {
+        return bl;
+      }
+    }
+  }
+  // The body may neither resize `v` nor assign `i` or `i#index`.
+  if r.v.root < 0 {
+    for counter in [r.idx, r.lv] {
+      w = ir_forward_walk::Walk { vec_t: r.v.v, src: r.v.v, idx: counter, lv: r.lv, read: ir::NdNull, iter_scope: 0, root: -1, off: 0, first_body: 0 };
+      if scope_fn::is_captured(f, r.v.v) {
+        return bl;
+      }
+      for o in body {
+        if ir_forward_walk::check_body(b, f, w, o) != "" {
+          return bl;
+        }
+      }
+    }
+  } else if field_decline(b, f, r.v.root, r.v.off, r.idx, r.lv, body) != "" {
+    return bl;
+  }
+  cn = Counter { v: r.v, idx: r.idx, lv: r.lv, len_var: if alias.s.ok { alias.n } else { -1 } };
+  k = Count { n: 0 };
+  nb = [for o in body { strip(b, ops, o, cn, k) }];
+  if k.n == 0 {
+    return bl;
+  }
+  c.n += k.n;
+  lops = [for x in 0..r.first_body { lp.operators[x]! }];
+  for o in nb {
+    lops += [o];
+  }
+  out = [for o in bl.operators { if o#index == lp_at { ir::NdLoop { block: [ir_pass_tree::with_operators(lp, lops)] } } else { o } }];
+  ir_pass_tree::with_operators(bl, out)
+}
+
+// The block under `n`'s spans, rewritten by `rewrite_for` under `alias`.
+fn for_under_spans(b: ir::Bundle, ops: Ops, f: ir::Function, n: ir::Node, alias: LenBind, c: Count) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: for_under_spans(b, ops, f, inner, alias, c) },
+    NdBlock { block } => ir::NdBlock { block: [rewrite_for(b, ops, f, block[0]!, alias, c)] },
+    _ => n
+  }
+}
+
+fn rewrite_in(b: ir::Bundle, ops: Ops, f: ir::Function, own: vector<integer>, node: ir::Node, c: Count) -> ir::Node {
+  kids = scope_fn::children(node);
+  if len(kids) == 0 {
+    return node;
+  }
+  n2 = ir_pass_tree::with_children(node, [for k in kids { rewrite_in(b, ops, f, own, k, c) }]);
+  bl = match n2 { NdBlock { block } => block[0]!, _ => return n2 };
+  st = [for o in bl.operators { o }];
+  // `n = len(v)` and, as the very next statement, `for i in 0..n`; or `n` is a length local.
+  for k in 0..len(st) {
+    prev = LenBind { n: -1, s: no_src() };
+    j = k - 1;
+    while j >= 0 {
+      if !(scope_fn::unspan(st[j]!) is NdLine) {
+        prev = len_bind(ops, st[j]!);
+        break;
+      }
+      j -= 1;
+    }
+    aliases = length_local_aliases(st[k]!, own);
+    if len(aliases) == 0 && prev.s.ok {
+      aliases = [prev];
+    }
+    for a in aliases {
+      st[k] = for_under_spans(b, ops, f, st[k]!, a, c);
+    }
+  }
+  ir::NdBlock { block: [rewrite_for(b, ops, f, ir_pass_tree::with_operators(bl, st), LenBind { n: -1, s: no_src() }, c)] }
+}
+
+// port: in_range.rs fn rewrite_program — the discharge of every in-range record element read
+// dropped; answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_IN_RANGE") ?? "0") != "0" {
+    return 0;
+  }
+  ops = Ops {
+    add_int: lower::find(b, "OpAddInt") ?? -1,
+    le_int: lower::find(b, "OpLeInt") ?? -1,
+    length_vector: lower::find(b, "OpLengthVector") ?? -1,
+    vector_len: lower::find(b, "t_6vector_len") ?? -1,
+    get_vector_nullable: lower::find(b, "OpGetVectorNullable") ?? -1,
+    conv_bool_from_ref: lower::find(b, "OpConvBoolFromRef") ?? -1,
+    get_field: lower::find(b, "OpGetField") ?? -1,
+    rem_int: lower::find(b, "OpRemInt") ?? -1,
+    rem_int_nullable: lower::find(b, "OpRemIntNullable") ?? -1,
+    conv_bool_from_int: lower::find(b, "OpConvBoolFromInt") ?? -1
+  };
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || !ir_pass_tree::has_block(d.code[0]!, "ncc") {
+      continue;
+    }
+    own = opt_length::own_length_locals(b, d#index);
+    c = Count { n: 0 };
+    code = rewrite_in(b, ops, d.variables, own, d.code[0]!, c);
+    if c.n > 0 {
+      b.data.definitions[d#index].code = [code];
+      ir_pass_tree::relayout(b, d#index);
+      total += c.n;
+    }
+  }
+  total
+}

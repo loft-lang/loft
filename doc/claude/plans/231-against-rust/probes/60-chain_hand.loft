@@ -1,0 +1,3 @@
+// @PLN231 goal-F probe — the natural form against its hand rewrite (chain_hand); prints its own time in µs
+// Run with --interpret and without (C is the default); read the answer and the µs
+fn main() { t0 = ticks(); v = [for i in 0..2000 { i }]; t = 0; for _k in 0..2000 { w = [for x in v if x % 2 == 0 { x * 10 }]; t += len(w); } println("fused {t} us {ticks() - t0}"); }

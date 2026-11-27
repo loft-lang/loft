@@ -1,0 +1,7 @@
+// @PLN231 R10 probe — a link to an element that does not exist
+// Expect on both backends: no write lands and the program runs on: 100 / 2
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy>, name: text }
+fn hurt(e: Enemy, d: integer) { e.hp -= d; }
+fn mk() -> State { State { enemies: [Enemy { hp: 100 }, Enemy { hp: 50 }], name: "s" } }
+fn main() { s = mk(); e = &s.enemies[5]; e.hp -= 10; println("{s.enemies[0].hp} / {len(s.enemies)}"); }

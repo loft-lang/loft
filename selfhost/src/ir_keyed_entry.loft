@@ -1,0 +1,768 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/keyed_entry.rs` transcribed (`@FR-R-KeyedEntry`): `h += [T{k: key, …}]`
+// written into the entry the key names.  The literal's values are evaluated first (STAGED, in
+// program order), then `keyed_entry_ints` / `keyed_entry_text` answers the entry under the key —
+// the existing one, or a fresh one filed where the probe for it ended — and the staged values
+// are written into it.  Admitted when overwriting the entry IS replacing it: a `hash` with one to
+// four `integer`/`long` key parts whose element owns no heap and is no member of a linked group,
+// every field written by the literal, the literal's buffer named nowhere else; or one `text` key
+// over an element whose every other field is a plain value.  The SUBSCRIPT clause rewrites
+// `coll[k₁, …] = T{…}` (`ir_keyed_place::site`) the same way.
+
+use ir;
+use scope_fn;
+use lower;
+use types;
+use opt_push;
+use el_types;
+use ir_pass_tree;
+use ir_keyed_place;
+
+// The setters a literal of a heap-free element writes its fields with.
+SETTERS = ["OpSetBoolean", "OpSetByte", "OpSetByteNullable", "OpSetCharacter", "OpSetEnum", "OpSetFloat", "OpSetInt", "OpSetInt4", "OpSetInt4Raw", "OpSetShort", "OpSetShortRaw", "OpSetSingle"];
+
+fn enabled() -> boolean {
+  (env_variable("LOFT_NO_KEYED_ENTRY") ?? "0") == "0"
+}
+
+fn trace() -> boolean {
+  (env_variable("LOFT_TRACE_KEYED_ENTRY") ?? "0") != "0"
+}
+
+fn parts_of(b: ir::Bundle, tp: integer) -> ir::DbParts {
+  if tp < 0 || tp >= len(b.types) {
+    return ir::PtBase;
+  }
+  b.types[tp]!.parts[0] ?? ir::PtBase
+}
+
+fn fields_of(b: ir::Bundle, tp: integer) -> vector<ir::DbField> {
+  match parts_of(b, tp) {
+    PtStruct { fields } => fields,
+    PtEnumValue { fields } => fields,
+    _ => []
+  }
+}
+
+fn is_record(b: ir::Bundle, tp: integer) -> boolean {
+  p = parts_of(b, tp);
+  tp >= 0 && tp < len(b.types) && (p is PtStruct || p is PtEnumValue)
+}
+
+// A type whose value an overwrite replaces whole: a base, an enum, an integer range.
+fn plain_type(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  p = parts_of(b, tp);
+  p is PtBase || p is PtEnum || p is PtByte || p is PtShort || p is PtInt || p is PtShortRaw || p is PtIntRaw
+}
+
+fn is_linked(b: ir::Bundle, tp: integer) -> boolean {
+  tp >= 0 && tp < len(b.types) && b.types[tp]!.linked
+}
+
+// `Stores::key_owner`: a `__nullable<S>` element keeps its keys in its `Some` variant's
+// `payload` field, any other element itself.
+fn key_owner(b: ir::Bundle, content: integer) -> integer {
+  name = b.types[content]?.name ?? "";
+  if name.starts_with("__nullable<") {
+    some = "{name}::Some";
+    for t in b.types {
+      if t.name == some {
+        for f in fields_of(b, t#index) {
+          if f.name == "payload" {
+            return f.content;
+          }
+        }
+      }
+    }
+  }
+  content
+}
+
+// `Stores::field_is_group_member`
+fn field_is_group_member(b: ir::Bundle, struct_tp: integer, byte_off: integer) -> boolean {
+  fields = fields_of(b, struct_tp);
+  nr = -1;
+  for f in fields {
+    if nr < 0 && f.position == byte_off {
+      nr = f#index;
+    }
+  }
+  if nr < 0 {
+    return false;
+  }
+  for o in fields[nr]!.other_indexes {
+    if o != 65535 {
+      return true;
+    }
+  }
+  for f in fields {
+    if f#index != nr && f.other_indexes.contains(nr) {
+      return true;
+    }
+  }
+  false
+}
+
+// `subscript_keys`: the offsets of the hash's key parts when the entry under the key may be
+// OVERWRITTEN in place of removed and claimed again; empty for none.
+fn subscript_keys(b: ir::Bundle, tp: integer, writes: vector<ir_keyed_place::Setter>) -> vector<integer> {
+  if !enabled() {
+    return [];
+  }
+  for w in writes {
+    if !SETTERS.contains(w.name) {
+      return [];
+    }
+  }
+  if tp < 0 || tp >= len(b.types) {
+    return [];
+  }
+  t = b.types[tp]!;
+  c = match parts_of(b, tp) { PtHash { content } => content, _ => return [] };
+  if len(t.keys) == 0 || len(t.keys) > 4 || is_linked(b, c) || types::owns_heap(b.types, c) {
+    return [];
+  }
+  for k in t.keys {
+    if abs(k.type_nr) != 1 && abs(k.type_nr) != 2 {
+      return [];
+    }
+  }
+  key_pos = [for k in t.keys { k.position }];
+  if !is_record(b, c) {
+    return [];
+  }
+  fields = fields_of(b, c);
+  if len(fields) == 0 {
+    return [];
+  }
+  for f in fields {
+    plain = key_pos.contains(f.position);
+    if !plain && plain_type(b, f.content) {
+      for w in writes {
+        if w.off == f.position {
+          plain = true;
+        }
+      }
+    }
+    if !plain {
+      return [];
+    }
+  }
+  key_pos
+}
+
+// `heap_free_hash`: the element type a `hash` field (or a `hash` itself) holds, with its key's
+// positions and whether that key is a `text`, when an overwrite of its entry is a replace.
+// `content` -1 for none.
+struct Hash { content: integer, key_pos: vector<integer>, text_key: boolean }
+
+fn no_hash() -> Hash {
+  Hash { content: -1, key_pos: [], text_key: false }
+}
+
+fn heap_free_hash(b: ir::Bundle, parent_tp: integer, field: integer) -> Hash {
+  if parent_tp < 0 || parent_tp >= len(b.types) || key_owner(b, parent_tp) != parent_tp {
+    return no_hash();
+  }
+  htp = parent_tp;
+  if field != 65535 {
+    fields = match parts_of(b, parent_tp) { PtStruct { fields } => fields, _ => return no_hash() };
+    f = fields[field] ?? return no_hash();
+    if field_is_group_member(b, parent_tp, f.position) {
+      return no_hash();
+    }
+    htp = f.content;
+  }
+  if htp < 0 || htp >= len(b.types) {
+    return no_hash();
+  }
+  t = b.types[htp]!;
+  c = match parts_of(b, htp) { PtHash { content } => content, _ => return no_hash() };
+  if is_linked(b, c) {
+    return no_hash();
+  }
+  // The compound clause: two to four `integer` / `long` parts of a heap-free element.
+  if len(t.keys) >= 2 && len(t.keys) <= 4 {
+    for k in t.keys {
+      if abs(k.type_nr) != 1 && abs(k.type_nr) != 2 {
+        return no_hash();
+      }
+    }
+    if types::owns_heap(b.types, c) {
+      return no_hash();
+    }
+    return Hash { content: c, key_pos: [for k in t.keys { k.position }], text_key: false };
+  }
+  if len(t.keys) != 1 {
+    return no_hash();
+  }
+  k = t.keys[0]!;
+  kt = abs(k.type_nr);
+  if (kt == 1 || kt == 2) && !types::owns_heap(b.types, c) {
+    return Hash { content: c, key_pos: [k.position], text_key: false };
+  }
+  if kt == 6 && only_heap_is_key(b, c, k.position) {
+    return Hash { content: c, key_pos: [k.position], text_key: true };
+  }
+  no_hash()
+}
+
+// Is the field at `key_pos` the only heap element type `c` owns?
+fn only_heap_is_key(b: ir::Bundle, c: integer, key_pos: integer) -> boolean {
+  if !is_record(b, c) {
+    return false;
+  }
+  fields = fields_of(b, c);
+  if len(fields) == 0 {
+    return false;
+  }
+  for f in fields {
+    if f.position != key_pos && !plain_type(b, f.content) {
+      return false;
+    }
+  }
+  true
+}
+
+// Does `op` write a field of the literal: a scalar setter, or the key's text write under the
+// text clause?
+fn field_setter(op: text, text_key: boolean) -> boolean {
+  SETTERS.contains(op) || (text_key && op == "OpSetText")
+}
+
+// `writes_key`: the key part a write writes (>= 0), -1 for a field that is not a key part, -2
+// for a write the clause declines.
+fn writes_key(op: text, off: integer, key_pos: vector<integer>, text_key: boolean) -> integer {
+  key_setter = if text_key { "OpSetText" } else { "OpSetInt" };
+  part = -1;
+  for p in key_pos {
+    if part < 0 && p == off {
+      part = p#index;
+    }
+  }
+  if part >= 0 && op == key_setter {
+    return part;
+  }
+  if part < 0 && op != "OpSetText" {
+    return -1;
+  }
+  -2
+}
+
+fn int_of(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) {
+    NdInt { n } => n,
+    NdLong { n } => n,
+    _ => null
+  }
+}
+
+// Does `v` assign a variable the collection's path is rooted in?
+fn rebinds(v: ir::Node, roots: vector<integer>) -> boolean {
+  match v {
+    NdSet { var } => if roots.contains(var) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    if rebinds(c, roots) {
+      return true;
+    }
+  }
+  false
+}
+
+fn roots_of(v: ir::Node, out: vector<integer>) {
+  match v {
+    NdVar { n } => { out += [n]; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    roots_of(c, out);
+  }
+}
+
+// The binds of `buf` to a value in `n` (`Set(buf, v)`, `v` not null).
+fn binds(n: ir::Node, buf: integer) -> integer {
+  k = match n { NdSet { var, inner } => if var == buf && !(scope_fn::unspan(inner) is NdNull) { 1 } else { 0 }, _ => 0 };
+  for c in scope_fn::children(n) {
+    k += binds(c, buf);
+  }
+  k
+}
+
+// Is `buf` bound to a value once in the function and named nowhere outside `run`?
+fn buffer_alone(code: ir::Node, buf: integer, run: vector<ir::Node>) -> boolean {
+  inside = 0;
+  for o in run {
+    inside += ir_keyed_place::mentions(o, buf);
+  }
+  binds(code, buf) == 1 && ir_keyed_place::mentions(code, buf) == inside
+}
+
+// An admitted insert: statements `at ..= last` of a block are `B = OpNewRecord(coll, tp, fld)`,
+// the literal's field writes through `B`, and `OpFinishRecord(coll, B, tp, fld)`.  `writes` the
+// field writes in program order, `parts` the key part each writes (-1 for none), `keys` the
+// values written to the key parts.  `last` -1 for no site.
+struct Site {
+  coll: ir::Node,
+  parent_tp: integer,
+  field: integer,
+  keys: vector<ir::Node>,
+  text_key: boolean,
+  writes: vector<ir::Node>,
+  parts: vector<integer>,
+  last: integer
+}
+
+fn no_site() -> Site {
+  Site { coll: ir::NdNull, parent_tp: 0, field: 0, keys: [], text_key: false, writes: [], parts: [], last: -1 }
+}
+
+// port: keyed_entry.rs fn site — the insert headed by statement `at` of `ops`.
+fn site(b: ir::Bundle, ops: vector<ir::Node>, at: integer, code: ir::Node) -> Site {
+  buf = -1;
+  mint = ir::NdNull;
+  match scope_fn::unspan(ops[at]!) {
+    NdSet { var, inner } => { buf = var; mint = inner; },
+    _ => return no_site()
+  }
+  if ir_pass_tree::def_name(b, ir_pass_tree::call_def(mint)) != "OpNewRecord" {
+    return no_site();
+  }
+  margs = ir_pass_tree::args_of(mint);
+  if len(margs) != 3 {
+    return no_site();
+  }
+  coll = margs[0]!;
+  ptp = margs[1]!;
+  fld = margs[2]!;
+  pt = int_of(ptp) ?? -1;
+  if pt < 0 || pt > 65535 {
+    return no_site();
+  }
+  fl = int_of(fld);
+  if fl == null {
+    return no_site();
+  }
+  field = if fl! < 0 || fl! > 65535 { 65535 } else { fl! };
+  h = heap_free_hash(b, pt, field);
+  if h.content < 0 {
+    return no_site();
+  }
+  keys: vector<ir::Node> = [for _ in h.key_pos { ir::NdNull }];
+  key_set: vector<boolean> = [for _ in h.key_pos { false }];
+  // The collection is evaluated once for the entry: a pure path.
+  root = -1;
+  if opt_push::vector_path(b, coll, root) == "" {
+    return no_site();
+  }
+  roots: vector<integer> = [];
+  roots_of(coll, roots);
+  writes: vector<ir::Node> = [];
+  parts: vector<integer> = [];
+  written: vector<integer> = [];
+  last = -1;
+  for j in at + 1..len(ops) {
+    op = ops[j]!;
+    u = scope_fn::unspan(op);
+    if u is NdLine {
+      continue;
+    }
+    nm = ir_pass_tree::def_name(b, ir_pass_tree::call_def(u));
+    a = ir_pass_tree::args_of(u);
+    if u is NdCall && nm == "OpFinishRecord" && len(a) > 1 && (ir_pass_tree::var_of(a[1]!) ?? -1) == buf {
+      if len(a) != 4 {
+        return no_site();
+      }
+      if "{scope_fn::unspan(a[0]!)}" != "{scope_fn::unspan(coll)}" || "{a[2]!}" != "{ptp}" || "{a[3]!}" != "{fld}" {
+        return no_site();
+      }
+      last = j;
+      break;
+    }
+    setter = u is NdCall && field_setter(nm, h.text_key) && len(a) > 0 && (ir_pass_tree::var_of(a[0]!) ?? -1) == buf;
+    if setter {
+      for k in 1..len(a) {
+        if ir_keyed_place::mentions(a[k]!, buf) != 0 || rebinds(a[k]!, roots) {
+          setter = false;
+        }
+      }
+    }
+    if !setter {
+      // A statement between the mint and the finish that is no field write of the buffer alone.
+      return no_site();
+    }
+    off = int_of(a[1] ?? ir::NdNull) ?? -1;
+    if off < 0 || off > 65535 {
+      return no_site();
+    }
+    if written.contains(off) {
+      return no_site();
+    }
+    written += [off];
+    p = writes_key(nm, off, h.key_pos, h.text_key);
+    if p == -2 {
+      return no_site();
+    }
+    if p >= 0 {
+      if len(a) < 3 {
+        return no_site();
+      }
+      keys[p] = a[2]!;
+      key_set[p] = true;
+    }
+    writes += [op];
+    parts += [p];
+  }
+  if last < 0 || key_set.contains(false) {
+    return no_site();
+  }
+  // Every field written, so an overwrite leaves nothing of the entry it lands on.
+  if !is_record(b, h.content) {
+    return no_site();
+  }
+  fields = fields_of(b, h.content);
+  if len(fields) == 0 {
+    return no_site();
+  }
+  for f in fields {
+    if !written.contains(f.position) {
+      return no_site();
+    }
+  }
+  if !buffer_alone(code, buf, [for k in at..last + 1 { ops[k]! }]) {
+    return no_site();
+  }
+  Site { coll: coll, parent_tp: pt, field: field, keys: keys, text_key: h.text_key, writes: writes, parts: parts, last: last }
+}
+
+// The temporaries one function's rewrite asks for, numbered from `next` in the order asked.
+struct Temps {
+  next: integer,
+  types: vector<ir::TypeT>,
+  scopes: vector<integer>,
+  subscripts: integer
+}
+
+fn add(t: Temps, tp: ir::TypeT, scope: integer) -> integer {
+  v = t.next;
+  t.next += 1;
+  t.types += [tp];
+  t.scopes += [scope];
+  v
+}
+
+struct Calls { ints: integer, text: integer }
+
+// The last attribute's type of setter `d` (`attributes().last()?.typedef`); `TyUnknown` -1
+// for none.
+fn val_tp(b: ir::Bundle, d: integer) -> ir::TypeT {
+  at = b.data.definitions[d]!.attributes;
+  if len(at) == 0 {
+    return ir::TyUnknown { n: -1 };
+  }
+  at[len(at) - 1]!.typedef[0] ?? ir::TyUnknown { n: -1 }
+}
+
+fn no_tp(t: ir::TypeT) -> boolean {
+  match t { TyUnknown { n } => n == -1, _ => false }
+}
+
+// The statements that replace the insert opened by `ops[at]` (empty for none); `last` takes the
+// index of its last statement.
+fn replacement(b: ir::Bundle, ops: vector<ir::Node>, at: integer, code: ir::Node, calls: Calls, scope: integer, temps: Temps, last: &integer) -> vector<ir::Node> {
+  ke = site(b, ops, at, code);
+  if ke.last < 0 {
+    return [];
+  }
+  buf = match scope_fn::unspan(ops[at]!) { NdSet { var } => var, _ => return [] };
+  // A text key is read where the entry is asked for, after every staged value: a variable or a
+  // literal no later value can rebind.
+  if ke.text_key {
+    key = scope_fn::unspan(ke.keys[0]!);
+    after: vector<ir::Node> = [];
+    seen = false;
+    for w in ke.writes {
+      if seen {
+        after += [w];
+      }
+      if ke.parts[w#index]! == 0 {
+        seen = true;
+      }
+    }
+    ok = match key {
+      NdText => true,
+      NdVar { n } => {
+        r = true;
+        for w in after {
+          if rebinds(w, [n]) {
+            r = false;
+          }
+        }
+        r
+      },
+      _ => false
+    };
+    if !ok {
+      if trace() {
+        eprintln("[keyed-entry] declined: a text key read late");
+      }
+      return [];
+    }
+  }
+  stmts: vector<ir::Node> = [for k in at..ke.last + 1 if scope_fn::unspan(ops[k]!) is NdLine { ops[k]! }];
+  parts: vector<ir::Node> = [for _ in ke.keys { ir::NdNull }];
+  part_set: vector<boolean> = [for _ in ke.keys { false }];
+  writes: vector<ir::Node> = [];
+  for op in ke.writes {
+    u = scope_fn::unspan(op);
+    setter = ir_pass_tree::call_def(u);
+    if setter < 0 {
+      return [];
+    }
+    args = ir_pass_tree::args_of(u);
+    part = ke.parts[op#index]!;
+    vt = val_tp(b, setter);
+    if no_tp(vt) {
+      return [];
+    }
+    staged: vector<ir::Node> = [ir::NdVar { n: buf }];
+    for a in args {
+      i = a#index;
+      if i == 0 {
+        continue;
+      }
+      keep = ir_keyed_place::constant(a) || (ke.text_key && part >= 0 && i == 2);
+      if keep {
+        staged += [a];
+      } else {
+        t = add(temps, vt, scope);
+        stmts += [ir::NdSet { var: t, inner: a }];
+        staged += [ir::NdVar { n: t }];
+      }
+    }
+    if part >= 0 {
+      if len(staged) > 2 {
+        parts[part] = staged[2]!;
+        part_set[part] = true;
+      }
+    } else {
+      writes += [ir::NdCall { def_nr: setter, args: staged }];
+    }
+  }
+  if part_set.contains(false) {
+    return [];
+  }
+  cargs: vector<ir::Node> = [ke.coll, ir::NdInt { n: ke.parent_tp }, ir::NdInt { n: ke.field }];
+  for p in parts {
+    cargs += [p];
+  }
+  call = calls.text;
+  if !ke.text_key {
+    while len(cargs) < 7 {
+      cargs += [ir::NdInt { n: 0 }];
+    }
+    call = calls.ints;
+  }
+  stmts += [ir::NdSet { var: buf, inner: ir::NdCall { def_nr: call, args: cargs } }];
+  for w in writes {
+    stmts += [w];
+  }
+  last = ke.last;
+  stmts
+}
+
+// port: keyed_entry.rs fn subscript_replacement — `coll[k₁, …] = T{…}` on a hash whose integer key
+// parts `subscript_keys` admits; empty for none.
+fn subscript_replacement(b: ir::Bundle, stmt: ir::Node, d: integer, calls: Calls, scope: integer, temps: Temps) -> vector<ir::Node> {
+  ks = ir_keyed_place::site(b, stmt, d);
+  if !ks.ok {
+    return [];
+  }
+  key_pos = subscript_keys(b, ks.tp, ir_keyed_place::setters(b, ks));
+  if len(key_pos) == 0 || len(key_pos) != len(ks.keys) || len(ks.keys) > 4 {
+    return [];
+  }
+  f = b.data.definitions[d]!.variables;
+  entry = add(temps, el_types::without_deps(scope_fn::tp(f, ks.buf)), scope);
+  stmts: vector<ir::Node> = [];
+  writes: vector<ir::Node> = [];
+  for op in ks.body {
+    u = scope_fn::unspan(op);
+    args = ir_pass_tree::args_of(u);
+    if u is NdCall && len(args) > 0 && (ir_pass_tree::var_of(args[0]!) ?? -1) == ks.buf {
+      setter = ir_pass_tree::call_def(u);
+      off = int_of(args[1] ?? ir::NdNull) ?? -1;
+      if off < 0 || off > 65535 {
+        return [];
+      }
+      vt = val_tp(b, setter);
+      if no_tp(vt) {
+        return [];
+      }
+      key_field = key_pos.contains(off);
+      staged: vector<ir::Node> = [ir::NdVar { n: entry }];
+      for a in args {
+        if a#index == 0 {
+          continue;
+        }
+        if ir_keyed_place::constant(a) {
+          staged += [a];
+        } else {
+          t = add(temps, vt, scope);
+          stmts += [ir::NdSet { var: t, inner: a }];
+          staged += [ir::NdVar { n: t }];
+        }
+      }
+      if !key_field {
+        writes += [ir::NdCall { def_nr: setter, args: staged }];
+      }
+    } else {
+      stmts += [op];
+    }
+  }
+  cargs: vector<ir::Node> = [ks.coll, ir::NdInt { n: ks.tp }, ir::NdInt { n: 65535 }];
+  for k in ks.keys {
+    cargs += [k];
+  }
+  while len(cargs) < 7 {
+    cargs += [ir::NdInt { n: 0 }];
+  }
+  stmts += [ir::NdSet { var: entry, inner: ir::NdCall { def_nr: calls.ints, args: cargs } }];
+  for w in writes {
+    stmts += [w];
+  }
+  stmts
+}
+
+struct Count { n: integer }
+
+// The statements of one block or loop with every admitted insert rewritten.
+fn statements(b: ir::Bundle, ops0: vector<ir::Node>, code: ir::Node, d: integer, calls: Calls, scope: integer, temps: Temps, c: Count) -> vector<ir::Node> {
+  ops = [for o in ops0 { o }];
+  i = 0;
+  while i < len(ops) {
+    last = -1;
+    rep = replacement(b, ops, i, code, calls, scope, temps, last);
+    if last >= 0 {
+      ops = splice(ops, i, last, rep);
+      c.n += 1;
+      i += len(rep);
+      continue;
+    }
+    sub = subscript_replacement(b, ops[i]!, d, calls, scope, temps);
+    if len(sub) > 0 {
+      ops = splice(ops, i, i, sub);
+      temps.subscripts += 1;
+      i += len(sub);
+      continue;
+    }
+    i += 1;
+  }
+  ops
+}
+
+// `ops` with `from ..= to` replaced by `with`.
+fn splice(ops: vector<ir::Node>, from: integer, to: integer, with: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [for k in 0..from { ops[k]! }];
+  for w in with {
+    out += [w];
+  }
+  for k in to + 1..len(ops) {
+    out += [ops[k]!];
+  }
+  out
+}
+
+// port: keyed_entry.rs fn rewrite — every admitted insert in the blocks under `v`: the block
+// under `v`'s spans first, then `v`'s children.
+fn rewrite(b: ir::Bundle, v: ir::Node, code: ir::Node, d: integer, calls: Calls, temps: Temps, c: Count) -> ir::Node {
+  v2 = in_block(b, v, code, d, calls, temps, c);
+  kids = scope_fn::children(v2);
+  if len(kids) == 0 {
+    return v2;
+  }
+  ir_pass_tree::with_children(v2, [for k in kids { rewrite(b, k, code, d, calls, temps, c) }])
+}
+
+fn in_block(b: ir::Bundle, v: ir::Node, code: ir::Node, d: integer, calls: Calls, temps: Temps, c: Count) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: in_block(b, inner, code, d, calls, temps, c) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ir::NdBlock { block: [ir_pass_tree::with_operators(bl, statements(b, bl.operators, code, d, calls, bl.scope, temps, c))] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      ir::NdLoop { block: [ir_pass_tree::with_operators(bl, statements(b, bl.operators, code, d, calls, bl.scope, temps, c))] }
+    },
+    _ => v
+  }
+}
+
+fn mints(n: ir::Node, new_record: integer, set_keyed: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == new_record || def_nr == set_keyed { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if mints(c, new_record, set_keyed) {
+      return true;
+    }
+  }
+  false
+}
+
+fn is_operator(d: ir::Definition) -> boolean {
+  len(d.name) > 2 && d.name.starts_with("Op") && d.name[2] >= 'A' && d.name[2] <= 'Z'
+}
+
+// port: keyed_entry.rs fn rewrite_program — each admitted insert and subscript assignment
+// written into its entry; answers how many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if !enabled() {
+    return 0;
+  }
+  calls = Calls { ints: lower::find(b, "n_keyed_entry_ints") ?? -1, text: lower::find(b, "n_keyed_entry_text") ?? -1 };
+  new_record = lower::find(b, "OpNewRecord") ?? -1;
+  set_keyed = lower::find(b, "OpSetKeyed") ?? -1;
+  if calls.ints < 0 || calls.text < 0 || new_record < 0 {
+    return 0;
+  }
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || is_operator(d) || d.rust != "" || cgen_base(d.returned[0] ?? ir::TyVoid) is TyIterator {
+      continue;
+    }
+    code = d.code[0]!;
+    if !mints(code, new_record, set_keyed) {
+      continue;
+    }
+    temps = Temps { next: len(d.variables.variables), types: [], scopes: [], subscripts: 0 };
+    c = Count { n: 0 };
+    nc = rewrite(b, code, code, d#index, calls, temps, c);
+    if c.n + temps.subscripts == 0 {
+      continue;
+    }
+    f = d.variables;
+    for t in temps.types {
+      ir_pass_tree::add_unique(f, "ke", t, temps.scopes[t#index]!);
+    }
+    b.data.definitions[d#index].code = [nc];
+    ir_pass_tree::relayout(b, d#index);
+    if trace() {
+      eprintln("[keyed-entry] fn={d.name} {c.n} insert(s), {temps.subscripts} subscript assignment(s) written into their entry");
+    }
+    total += c.n + temps.subscripts;
+  }
+  total
+}
+
+fn cgen_base(t: ir::TypeT) -> ir::TypeT {
+  match t { TyOptional { inner } => cgen_base(inner), _ => t }
+}

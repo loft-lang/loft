@@ -1,0 +1,1224 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/value_record.rs` transcribed, its ADMISSION half: an admitted callee's shape
+// (`callee_shape`), a tuple parameter's (`param_shape`), and the per-function walk that decides
+// which locals and parameters carry a tuple against the admitted sets (`plan_function`, `scan`).
+
+use ir;
+use scope_fn;
+use cgen_types;
+use opt_names;
+use opt_vr_layout;
+use ir_vr_shape;
+use opt_vr_shape;
+use opt_vr_locals;
+use own;
+
+// An admitted callee (`Callee`): its function, its layout key, its buffer parameter, the
+// locals a FORWARD returns, its DELIVERY locals and the callees called bare at a result
+// position.  View leaves are not carried: a layout with a view field is refused.
+pub struct Callee {
+  pub d: integer,
+  pub record: integer,
+  pub buf: integer,
+  pub forwards: vector<integer>,
+  pub delivered: vector<integer>,
+  pub tail_calls: vector<integer>,
+  // Per literal, in the order `literals_to_tuples` meets them, the value each view field
+  // carries, `len(view_off)` values a literal (`Callee::leaves`).
+  pub leaves: vector<ir::Node>,
+}
+
+// What the pass works from (`World`).  `params` and `lendable` as `[d, idx, key]` triples.
+pub struct World {
+  pub ops: ir_vr_shape::Ops,
+  pub layouts: vector<ir_vr_shape::Layout>,
+  pub cands: vector<Callee>,
+  pub params: vector<integer>,
+  pub lendable: vector<integer>,
+  // `World::value_locals`: per function asked, its value locals (key per variable, -1 none).
+  pub vl_d: vector<integer>,
+  pub vl: vector<vector<integer>>,
+  pub oops: own::Ops,
+}
+
+// `World::is_value_local`: is `l` one of `f`'s value locals (`value_locals_in`)?
+fn is_value_local(b: ir::Bundle, w: World, vr: opt_vr_layout::ValueRecords, f: integer, l: integer) -> boolean {
+  for x in w.vl_d {
+    if x == f {
+      return (w.vl[x#index][l] ?? -1) >= 0;
+    }
+  }
+  locals = opt_vr_locals::value_locals_in(b, w.oops, f, vr, vr.fns, vr.sp);
+  w.vl_d += [f];
+  w.vl += [locals];
+  (locals[l] ?? -1) >= 0
+}
+
+pub fn layout(w: World, key: integer) -> ir_vr_shape::Layout {
+  for l in w.layouts {
+    if l.key == key {
+      return l;
+    }
+  }
+  w.layouts[0]!
+}
+
+pub fn has_layout(w: World, key: integer) -> boolean {
+  for l in w.layouts {
+    if l.key == key {
+      return true;
+    }
+  }
+  false
+}
+
+// The index of `d`'s callee in `w.cands`, -1 when `d` is not admitted.
+pub fn cand(w: World, d: integer) -> integer {
+  for c in w.cands {
+    if c.d == d {
+      return c#index;
+    }
+  }
+  -1
+}
+
+// The key parameter `(d, idx)` is received as, -1 none.
+pub fn param_key(w: World, d: integer, idx: integer) -> integer {
+  triple_get(w.params, d, idx)
+}
+
+pub fn triple_get(t: vector<integer>, d: integer, idx: integer) -> integer {
+  i = 0;
+  while i + 2 < len(t) {
+    if t[i]! == d && t[i + 1]! == idx {
+      return t[i + 2]!;
+    }
+    i += 3;
+  }
+  -1
+}
+
+fn var_name(f: ir::Function, v: integer) -> text {
+  x = f.variables[v];
+  if x == null { "" } else { x.name }
+}
+
+fn var_type(f: ir::Function, v: integer) -> ir::TypeT {
+  x = f.variables[v];
+  if x == null { ir::TyVoid } else { x.type_def[0] ?? ir::TyVoid }
+}
+
+// `Function::var`: the variable a name maps to, -1 none.
+pub fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+fn is_argument(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  x != null && x.argument
+}
+
+fn record_of_type(t: ir::TypeT) -> integer {
+  match cgen_types::base(opt_names::peel_link(t)) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+fn minted_walk(n: ir::Node, ops: ir_vr_shape::Ops, out: vector<integer>) {
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == ops.database && len(args) > 0 {
+        v = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
+        if v >= 0 {
+          ir_vr_shape::add(out, v);
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    minted_walk(c, ops, out);
+  }
+}
+
+// `minted_locals`: the locals a literal fills IN PLACE.
+fn minted_locals(code: ir::Node, ops: ir_vr_shape::Ops) -> vector<integer> {
+  out: vector<integer> = [];
+  minted_walk(code, ops, out);
+  out
+}
+
+// The answer of `callee_shape`: the callee, or the reason it cannot return a tuple here.
+pub struct Shape {
+  pub ok: boolean,
+  pub why: text,
+  pub callee: Callee,
+}
+
+fn refuse(why: text) -> Shape {
+  Shape { ok: false, why: why, callee: Callee { d: -1, record: 0, buf: -1, forwards: [], delivered: [], tail_calls: [], leaves: [] } }
+}
+
+// port: value_record.rs fn callee_shape — the callee half of the shape.  `views` is the
+// analysis' view offsets of `tp`.
+pub fn callee_shape(b: ir::Bundle, w: World, vr: opt_vr_layout::ValueRecords, d: integer, tp: integer) -> Shape {
+  def = b.data.definitions[d]!;
+  if def.def_type != 1 {
+    return refuse("no function");
+  }
+  if def.native != "" {
+    return refuse("a native function");
+  }
+  idx = ir_vr_shape::hidden_return_buffer_attr(def);
+  if idx < 0 {
+    return refuse("no return buffer");
+  }
+  f = def.variables;
+  buf = var_named(f, def.attributes[idx]!.name);
+  if (idx + 1 != len(def.attributes) && (w.ops.ret_arg[d] ?? -1) != idx) || buf < 0 || !is_argument(f, buf) {
+    return refuse("the return buffer is not the last parameter");
+  }
+  record = record_of_type(def.returned[0] ?? ir::TyVoid);
+  if record < 0 {
+    return refuse("no record result");
+  }
+  view_offs = opt_vr_locals_view_offs(vr, tp);
+  lo = ir_vr_shape::flat_layout(b, record, tp, view_offs, len(view_offs) > 0);
+  if lo == null {
+    return refuse("no flat layout");
+  }
+  l = lo!;
+  code = def.code[0] ?? ir::NdNull;
+  sh = ir_vr_shape::no_shape();
+  if !ir_vr_shape::body_shape(b, code, buf, l, w.ops, true, sh) {
+    return refuse("a body shape the tuple cannot spell");
+  }
+  if sh.buf_reads && !scope_fn::has(sh.bound, buf) {
+    return refuse("a field of the caller's buffer read");
+  }
+  delivered: vector<integer> = [];
+  minted = minted_locals(code, w.ops);
+  tail_calls = [for t in sh.tail_calls { t }];
+  returned = [for r in sh.returned { r }];
+  todo: vector<integer> = [for r in returned if !scope_fn::has(sh.bound, r) { r }];
+  while len(todo) > 0 {
+    lv = todo[len(todo) - 1]!;
+    todo = [for t in todo if t#index < len(todo) - 1 { t }];
+    sets: vector<integer> = [for s in sh.set_l if s == lv { s#index }];
+    is_rec = match cgen_types::base(var_type(f, lv)) { TyReference { n } => n == record, _ => false };
+    if len(sets) == 0 {
+      if lv == buf || !is_rec {
+        return refuse("a returned local that is no forward, delivery or view");
+      }
+    } else {
+      all_ok = true;
+      for i in sets {
+        if !sh.set_ok[i]! {
+          all_ok = false;
+        }
+      }
+      if all_ok && !scope_fn::has(minted, lv) {
+        ir_vr_shape::add(delivered, lv);
+        for i in sets {
+          tail_calls += sh.set_calls[i] ?? [];
+          for a in sh.set_answers[i] ?? [] {
+            if !scope_fn::has(returned, a) {
+              returned += [a];
+              if !scope_fn::has(sh.bound, a) {
+                todo += [a];
+              }
+            }
+          }
+        }
+      } else if !is_rec {
+        return refuse("a returned local set from a value the tuple cannot spell");
+      }
+    }
+  }
+  for s in sh.set_l {
+    if sh.set_names[s#index]! && !scope_fn::has(delivered, s) {
+      return refuse("the buffer in a set that delivers nothing");
+    }
+  }
+  leaves: vector<ir::Node> = [];
+  if ir_vr_shape::has_views(l) {
+    if len(delivered) > 0 || len(tail_calls) > 0 {
+      return refuse("a view layout's exit of another kind");
+    }
+    for r in returned {
+      if !scope_fn::has(sh.bound, r) {
+        return refuse("a view layout's exit of another kind");
+      }
+    }
+    has_plan = false;
+    for x in vr.views {
+      if x.d == d {
+        has_plan = true;
+      }
+    }
+    if !has_plan {
+      return refuse("no view plan");
+    }
+    if !view_leaves(b, code, buf, l, w.ops, vr, d, leaves) {
+      return refuse("an exit without a leaf");
+    }
+  }
+  forwards: vector<integer> = [for r in returned if scope_fn::has(sh.bound, r) { r }];
+  if !ir_vr_shape::has_layout_in(w.layouts, l.key) {
+    w.layouts += [l];
+  }
+  Shape { ok: true, why: "", callee: Callee { d: d, record: l.key, buf: buf, forwards: forwards, delivered: delivered, tail_calls: tail_calls, leaves: leaves } }
+}
+
+fn view_exits(b: ir::Bundle, n: ir::Node, num: integer, sz: vector<integer>, buf: integer, l: ir_vr_shape::Layout, ops: ir_vr_shape::Ops, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  if ir_vr_shape::literal(b, u, buf, l, ops) != null {
+    if u is NdBlock {
+      out += [num];
+    }
+    return;
+  }
+  c = num + 1;
+  for k in opt_vr_shape::kids(u) {
+    view_exits(b, k, c, sz, buf, l, ops, out);
+    c += sz[c]!;
+  }
+}
+
+fn struct_field_at(b: ir::Bundle, tp: integer, off: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match b.types[tp]!.parts[0]! { PtStruct { fields } => fields, _ => return -1 };
+  for f in fields {
+    if f.position == off {
+      return f.content;
+    }
+  }
+  -1
+}
+
+fn field_type(b: ir::Bundle, tp: integer, fld: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return 65535;
+  }
+  fields: vector<ir::DbField> = match b.types[tp]!.parts[0]! { PtStruct { fields } => fields, PtEnumValue { fields } => fields, _ => [] };
+  if fld < 0 || fld >= len(fields) { 65535 } else { fields[fld]!.content }
+}
+
+fn content(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp]!.parts) == 0 {
+    return 65535;
+  }
+  match b.types[tp]!.parts[0]! {
+    PtVector { content } => content,
+    PtArray { content } => content,
+    PtOrdered { content } => content,
+    PtSorted { content } => content,
+    PtIndex { content } => content,
+    PtHash { content } => content,
+    PtRadix { content } => content,
+    PtTrie { content } => content,
+    _ => 65535
+  }
+}
+
+// `hoist::element_stride`
+fn element_stride(b: ir::Bundle, ptp: integer, fld: integer) -> integer {
+  elem = if (fld & 65535) == 65535 { content(b, ptp & 65535) } else { content(b, field_type(b, ptp & 65535, fld & 65535)) };
+  if elem < 0 || elem >= len(b.types) { 0 } else { b.types[elem]!.size }
+}
+
+// port: value_record.rs fn view_leaves — each literal's view values, in the order
+// `literals_to_tuples` meets the literals: the leaf the view plan proved for that exit (keyed
+// by the exit block's node number on this very IR).  False when an exit has no leaf.
+fn view_leaves(b: ir::Bundle, code: ir::Node, buf: integer, l: ir_vr_shape::Layout, ops: ir_vr_shape::Ops, vr: opt_vr_layout::ValueRecords, d: integer, out: vector<ir::Node>) -> boolean {
+  sz = opt_vr_shape::sizes(code);
+  exits: vector<integer> = [];
+  view_exits(b, code, 0, sz, buf, l, ops, exits);
+  for e in exits {
+    for off in l.view_off {
+      found = -1;
+      for x in vr.views {
+        if found < 0 && x.d == d && x.exit == e && x.off == off {
+          found = x#index;
+        }
+      }
+      if found < 0 {
+        return false;
+      }
+      v = vr.views[found]!;
+      if v.kind == 0 {
+        out += [ir::NdCall { def_nr: ops.null_ref, args: [] }];
+      } else if v.kind == 1 {
+        out += [ir::NdCall { def_nr: ops.get_field, args: [ir::NdVar { n: v.elem }, ir::NdInt { n: v.eoff }, ir::NdInt { n: v.tp }] }];
+      } else {
+        if v.root_f == 4294967295 || v.fld < 0 {
+          return false;
+        }
+        vec_tp = field_type(b, v.ptp & 65535, v.fld & 65535);
+        elem_tp = content(b, vec_tp);
+        field_tp = struct_field_at(b, elem_tp, v.eoff);
+        if field_tp < 0 {
+          return false;
+        }
+        stride = element_stride(b, v.ptp, v.fld);
+        container = ir::NdCall { def_nr: ops.get_field, args: [ir::NdVar { n: v.root_v }, ir::NdInt { n: v.root_f }, ir::NdInt { n: vec_tp }] };
+        last = ir::NdCall { def_nr: ops.get_vector, args: [container, ir::NdInt { n: stride }, ir::NdInt { n: -1 }] };
+        out += [ir::NdCall { def_nr: ops.get_field, args: [last, ir::NdInt { n: v.eoff }, ir::NdInt { n: field_tp }] }];
+      }
+    }
+  }
+  true
+}
+
+// `vr.view_offs.get(tp)`: the view-leaf offsets of a type's layout.
+fn opt_vr_locals_view_offs(vr: opt_vr_layout::ValueRecords, tp: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  at = opt_vr_layout::type_at(vr, tp);
+  if at < 0 {
+    return out;
+  }
+  t = vr.types[at]!;
+  for rt in t.rts {
+    if opt_vr_layout::is_view_part(rt) {
+      out += [t.offs[rt#index]!];
+    }
+  }
+  out
+}
+
+// port: value_record.rs fn param_shape — parameter `idx` of `d` as a tuple of type `tp`, when
+// its record is flat and its function may change its signature: the layout key, -1 none.
+pub fn param_shape(b: ir::Bundle, w: World, d: integer, idx: integer, tp: integer) -> integer {
+  def = b.data.definitions[d]!;
+  if def.pub_visible || def.def_type != 1 {
+    return -1;
+  }
+  a = def.attributes[idx];
+  if a == null {
+    return -1;
+  }
+  record = match cgen_types::base(a.typedef[0] ?? ir::TyVoid) { TyReference { n } => n, _ => return -1 };
+  v = var_named(def.variables, a.name);
+  if v < 0 || !is_argument(def.variables, v) || def.variables.variables[v]!.captured {
+    return -1;
+  }
+  lo = ir_vr_shape::flat_layout(b, record, tp, [], false);
+  if lo == null {
+    return -1;
+  }
+  if !ir_vr_shape::has_layout_in(w.layouts, lo!.key) {
+    w.layouts += [lo!];
+  }
+  lo!.key
+}
+
+// ---- The per-function walk ---------------------------------------------------------------
+
+// What one function's rewrite needs (`Plan`): carriers `[v, key, …]`.
+pub struct Plan {
+  pub carriers: vector<integer>,
+  pub buffers: vector<integer>,
+  pub reads_at_call: boolean,
+  pub lent: vector<integer>,
+}
+
+pub fn carrier(p: Plan, v: integer) -> integer {
+  i = 0;
+  while i + 1 < len(p.carriers) {
+    if p.carriers[i]! == v {
+      return p.carriers[i + 1]!;
+    }
+    i += 2;
+  }
+  -1
+}
+
+// What one walk decided against the admitted sets (`Verdict`); `bad_params` as pairs.
+pub struct Verdict {
+  pub bad_fns: vector<integer>,
+  pub bad_params: vector<integer>,
+  pub called: vector<integer>,
+  pub owed: vector<integer>,
+}
+
+// Everything one walk of a function learns (`Scan`), its tuples as parallel lists.
+struct Scan {
+  b_l: vector<integer>, b_d: vector<integer>, b_r: vector<integer>,
+  r_v: vector<integer>, r_off: vector<integer>, r_k: vector<integer>,
+  w_v: vector<integer>, w_off: vector<integer>, w_k: vector<integer>,
+  written: vector<integer>,
+  h_x: vector<integer>, h_d: vector<integer>, h_i: vector<integer>,
+  frees: vector<integer>,
+  fid_a: vector<integer>, fid_b: vector<integer>,
+  returns: vector<integer>,
+  al_w: vector<integer>, al_b: vector<integer>,
+  guards: vector<integer>,
+  cp_v: vector<integer>, cp_tp: vector<integer>,
+  null_inits: vector<integer>,
+  mints: vector<integer>,
+  other: vector<integer>,
+  cc_d: vector<integer>, cc_n: vector<integer>,
+  unserved: vector<integer>,
+  called: vector<integer>,
+  reads_place: boolean,
+  pb_x: vector<integer>, pb_p: vector<integer>,
+  l_x: vector<integer>, l_d: vector<integer>, l_i: vector<integer>,
+  tests: vector<integer>,
+  own_results: vector<integer>,
+  own_buf: integer,
+  own_rec: integer,
+}
+
+fn add_pair(v: vector<integer>, a: integer, b: integer) {
+  i = 0;
+  while i + 1 < len(v) {
+    if v[i]! == a && v[i + 1]! == b {
+      return;
+    }
+    i += 2;
+  }
+  v += [a, b];
+}
+
+fn has_pair(v: vector<integer>, a: integer, b: integer) -> boolean {
+  i = 0;
+  while i + 1 < len(v) {
+    if v[i]! == a && v[i + 1]! == b {
+      return true;
+    }
+    i += 2;
+  }
+  false
+}
+
+fn count_call(s: Scan, d: integer) {
+  for x in s.cc_d {
+    if x == d {
+      s.cc_n[x#index] = s.cc_n[x#index]! + 1;
+      return;
+    }
+  }
+  s.cc_d += [d];
+  s.cc_n += [1];
+}
+
+// port: value_record.rs fn scan_args
+fn scan_args(b: ir::Bundle, d: integer, a: vector<ir::Node>, upto: integer, w: World, s: Scan) {
+  for x in a {
+    i = x#index;
+    if i >= upto {
+      break;
+    }
+    if param_key(w, d, i) >= 0 {
+      u = scope_fn::unspan(x);
+      match u {
+        NdVar { n: v } => {
+          s.h_x += [v];
+          s.h_d += [d];
+          s.h_i += [i];
+          continue;
+        },
+        _ => {}
+      }
+      if !ir_vr_shape::pure_place(x, w.ops) || len(ir_vr_shape::place_of(x, w.ops)) == 0 {
+        add_pair(s.unserved, d, i);
+      } else {
+        s.reads_place = true;
+      }
+    } else {
+      u = scope_fn::unspan(x);
+      match u {
+        NdVar { n: v } => {
+          if triple_get(w.lendable, d, i) >= 0 {
+            s.l_x += [v];
+            s.l_d += [d];
+            s.l_i += [i];
+            continue;
+          }
+        },
+        _ => {}
+      }
+    }
+    scan(b, x, false, w, s);
+  }
+}
+
+// port: value_record.rs fn scan_result — a value in a RESULT position.
+fn scan_result(b: ir::Bundle, n: ir::Node, w: World, s: Scan) {
+  u = scope_fn::unspan(n);
+  if s.own_buf >= 0 && ir_vr_shape::literal(b, u, s.own_buf, layout(w, s.own_rec), w.ops) != null {
+    scan(b, n, false, w, s);
+    return;
+  }
+  match u {
+    NdVar { n: x } => ir_vr_shape::add(s.returns, x),
+    NdBlock { block } => {
+      list = block[0]!.operators;
+      last = len(list) - 1;
+      for op in list {
+        if op#index == last {
+          scan_result(b, op, w, s);
+        } else {
+          scan(b, op, true, w, s);
+        }
+      }
+    },
+    _ => scan(b, u, false, w, s)
+  }
+}
+
+fn tuple_var(n: ir::Node) -> integer {
+  match n {
+    NdVar { n: x } => x,
+    NdCallRef { var } => var,
+    NdIter { var } => var,
+    NdTupleGet { var } => var,
+    NdTuplePut { var } => var,
+    NdFnRef { var } => var,
+    NdFnRefDnr { n: x } => x,
+    _ => -1
+  }
+}
+
+// port: value_record.rs fn scan
+fn scan(b: ir::Bundle, n: ir::Node, stmt: boolean, w: World, s: Scan) {
+  ops = w.ops;
+  u = scope_fn::unspan(n);
+  if s.own_buf >= 0 {
+    lit = ir_vr_shape::literal(b, u, s.own_buf, layout(w, s.own_rec), ops);
+    if lit != null {
+      for part in lit!.parts {
+        match part {
+          PFill { vals } => {
+            for v in vals {
+              copy_arm = false;
+              match v {
+                NdIf { cond, t, f } => {
+                  c = scope_fn::unspan(cond);
+                  ca = ir_vr_shape::args(c);
+                  if ir_vr_shape::call_of(c, ops.bool_from_ref) && len(ca) == 1 && scope_fn::unspan(ca[0]!) is NdVar {
+                    scan(b, t, false, w, s);
+                    scan(b, f, false, w, s);
+                    copy_arm = true;
+                  }
+                },
+                _ => {}
+              }
+              if !copy_arm {
+                scan(b, v, false, w, s);
+              }
+            }
+          },
+          PFree { n: p } => {
+            match scope_fn::unspan(p) {
+              NdVar { n: x } => ir_vr_shape::add(s.frees, x),
+              _ => scan(b, scope_fn::unspan(p), false, w, s)
+            }
+          },
+          POther { n: o } => scan(b, o, true, w, s),
+          _ => {}
+        }
+      }
+      return;
+    }
+  }
+  match u {
+    NdSet { var: v, inner } => {
+      iu = scope_fn::unspan(inner);
+      match iu {
+        NdCall { def_nr: d, args: a } => {
+          if cand(w, d) >= 0 {
+            at = ir_vr_shape::buf_at(ops, d, len(a));
+            r = if at < len(a) { match scope_fn::unspan(a[at]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };
+            s.b_l += [v];
+            s.b_d += [d];
+            s.b_r += [r];
+            count_call(s, d);
+            ir_vr_shape::add(s.called, d);
+            scan_args(b, d, a, at, w, s);
+            for x in a {
+              if x#index > at {
+                scan(b, x, false, w, s);
+              }
+            }
+            return;
+          }
+        },
+        _ => {}
+      }
+      if stmt && iu is NdNull {
+        s.null_inits += [v];
+        return;
+      }
+      if stmt && ir_vr_shape::call_of(iu, ops.ref_alias) {
+        a = ir_vr_shape::args(iu);
+        if len(a) == 1 && scope_fn::unspan(a[0]!) is NdVar {
+          s.al_w += [v];
+          s.al_b += [ir_vr_shape::var_of(a[0]!)];
+          return;
+        }
+      }
+      ir_vr_shape::add(s.other, v);
+      scan(b, inner, false, w, s);
+    },
+    NdCall { def_nr: op, args: a } => {
+      if op == ops.get_field {
+        p = ir_vr_shape::place_of(u, ops);
+        if len(p) == 2 {
+          s.r_v += [p[0]!];
+          s.r_off += [p[1]!];
+          s.r_k += [ir_vr_shape::K_VIEW];
+          return;
+        }
+      }
+      gk = ir_vr_shape::get_kind(ops, op);
+      if gk >= 0 && len(a) == 2 && ir_vr_shape::raw_int(a[1]!) != null {
+        p = ir_vr_shape::place_of(a[0]!, ops);
+        if len(p) == 2 {
+          s.r_v += [p[0]!];
+          s.r_off += [p[1]! + ir_vr_shape::raw_int(a[1]!)!];
+          s.r_k += [gk];
+          return;
+        }
+      }
+      sk = ir_vr_shape::set_kind(ops, op);
+      if sk >= 0 && len(a) == 3 && ir_vr_shape::raw_int(a[1]!) != null {
+        p = ir_vr_shape::place_of(a[0]!, ops);
+        if len(p) == 2 {
+          s.w_v += [p[0]!];
+          s.w_off += [p[1]! + ir_vr_shape::raw_int(a[1]!)!];
+          s.w_k += [sk];
+          ir_vr_shape::add(s.written, p[0]!);
+          scan(b, a[2]!, false, w, s);
+          return;
+        }
+      }
+      if stmt && op == ops.free_ref && len(a) == 1 && scope_fn::unspan(a[0]!) is NdVar {
+        ir_vr_shape::add(s.frees, ir_vr_shape::var_of(a[0]!));
+        return;
+      }
+      if stmt && op == ops.free_if_distinct && len(a) == 2 && scope_fn::unspan(a[0]!) is NdVar && scope_fn::unspan(a[1]!) is NdVar {
+        fa = ir_vr_shape::var_of(a[0]!);
+        fb = ir_vr_shape::var_of(a[1]!);
+        if (s.own_buf >= 0 && s.own_buf == fb) || scope_fn::has(s.own_results, fb) {
+          ir_vr_shape::add(s.frees, fa);
+        } else {
+          s.fid_a += [fa];
+          s.fid_b += [fb];
+        }
+        return;
+      }
+      if stmt && op == ops.copy_record && len(a) == 3 && ir_vr_shape::raw_int(a[2]!) != null && scope_fn::unspan(a[0]!) is NdVar {
+        s.cp_v += [ir_vr_shape::var_of(a[0]!)];
+        s.cp_tp += [ir_vr_shape::raw_int(a[2]!)! & ir_vr_shape::COPY_TP_MASK];
+        scan(b, a[1]!, false, w, s);
+        return;
+      }
+      if (op == ops.bool_from_ref || op == ops.ref_is_null) && len(a) == 1 && scope_fn::unspan(a[0]!) is NdVar {
+        s.tests += [ir_vr_shape::var_of(a[0]!)];
+        return;
+      }
+      ir_vr_shape::add(s.called, op);
+      if cand(w, op) >= 0 {
+        count_call(s, op);
+      }
+      scan_args(b, op, a, len(a), w, s);
+    },
+    NdReturn { inner } => scan_result(b, inner, w, s),
+    NdBlock { block } => {
+      for op in block[0]!.operators {
+        scan(b, op, true, w, s);
+      }
+    },
+    NdLoop { block } => {
+      for op in block[0]!.operators {
+        scan(b, op, true, w, s);
+      }
+    },
+    NdInsert { items } => {
+      for op in items {
+        scan(b, op, true, w, s);
+      }
+    },
+    _ => {
+      if stmt && u is NdIf {
+        pc = ir_vr_shape::place_copy(u, ops);
+        if len(pc) == 2 {
+          s.pb_x += [pc[0]!];
+          s.pb_p += [pc[1]!];
+          return;
+        }
+        cond = match u { NdIf { cond: c } => scope_fn::unspan(c), _ => ir::NdNull };
+        ca = ir_vr_shape::args(cond);
+        if cond is NdCall && len(ca) > 0 {
+          bv = match scope_fn::unspan(ca[0]!) { NdVar { n: x } => x, _ => -1 };
+          if bv >= 0 && ir_vr_shape::is_buffer_guard(u, bv, ops) {
+            s.guards += [bv];
+            return;
+          }
+        }
+        if ir_vr_shape::call_of(cond, ops.ref_is_null) && len(ca) == 1 {
+          r = match ca[0]! { NdVar { n: x } => x, _ => -1 };
+          if r >= 0 && ir_vr_shape::is_header(u, r, ops) {
+            s.mints += [r];
+            return;
+          }
+        }
+      }
+      x = tuple_var(u);
+      if x >= 0 {
+        ir_vr_shape::add(s.other, x);
+      }
+      for c in scope_fn::children(u) {
+        scan(b, c, false, w, s);
+      }
+    }
+  }
+}
+
+fn new_scan() -> Scan {
+  Scan { b_l: [], b_d: [], b_r: [], r_v: [], r_off: [], r_k: [], w_v: [], w_off: [], w_k: [], written: [], h_x: [], h_d: [], h_i: [], frees: [], fid_a: [], fid_b: [], returns: [], al_w: [], al_b: [], guards: [], cp_v: [], cp_tp: [], null_inits: [], mints: [], other: [], cc_d: [], cc_n: [], unserved: [], called: [], reads_place: false, pb_x: [], pb_p: [], l_x: [], l_d: [], l_i: [], tests: [], own_results: [], own_buf: -1, own_rec: -1 }
+}
+
+// The handed uses of `x` all go to parameters of `record`'s layout, or the nullable layout of
+// a dense carrier's record.
+fn handed_fits(w: World, s: Scan, x: integer, record: integer) -> boolean {
+  for h in s.h_x {
+    if h != x {
+      continue;
+    }
+    k = param_key(w, s.h_d[h#index]!, s.h_i[h#index]!);
+    if k < 0 {
+      return false;
+    }
+    if !(k == record || (ir_vr_shape::rec_of(k) == ir_vr_shape::rec_of(record) && layout(w, k).presence && !layout(w, record).presence)) {
+      return false;
+    }
+  }
+  true
+}
+
+fn reads_fit(w: World, s: Scan, x: integer, record: integer) -> boolean {
+  l = layout(w, record);
+  for v in s.r_v {
+    if v == x && ir_vr_shape::kind_at(l, s.r_off[v#index]!) != s.r_k[v#index]! {
+      return false;
+    }
+  }
+  for v in s.w_v {
+    if v == x && ir_vr_shape::kind_at(l, s.w_off[v#index]!) != s.w_k[v#index]! {
+      return false;
+    }
+  }
+  true
+}
+
+fn dep_of(t: ir::TypeT) -> vector<integer> {
+  match t {
+    TyText { dep } => dep,
+    TyReference { dep } => dep,
+    TyIndex { dep } => dep,
+    TyRadix { dep } => dep,
+    TyTrie { dep } => dep,
+    TyHash { dep } => dep,
+    TySorted { dep } => dep,
+    TyEnum { dep } => dep,
+    TyVector { dep } => dep,
+    TyFunction { dep } => dep,
+    TyRefVar { inner } => dep_of(inner),
+    TyOptional { inner } => dep_of(inner),
+    TyTuple { elems } => {
+      out: vector<integer> = [];
+      for e in elems {
+        for x in dep_of(e) {
+          ir_vr_shape::add(out, x);
+        }
+      }
+      out
+    },
+    _ => []
+  }
+}
+
+// `Type::depend`
+pub fn depend(t: ir::TypeT) -> vector<integer> {
+  dep_of(t)
+}
+
+fn depended(f: ir::Function, x: integer) -> boolean {
+  for v in f.variables {
+    if scope_fn::has(dep_of(v.type_def[0] ?? ir::TyVoid), x) {
+      return true;
+    }
+  }
+  false
+}
+
+fn copies_fit(w: World, s: Scan, x: integer, record: integer) -> boolean {
+  l = layout(w, record);
+  if ir_vr_shape::has_views(l) {
+    return !scope_fn::has(s.cp_v, x);
+  }
+  for c in s.cp_v {
+    if c == x && s.cp_tp[c#index]! != l.tp {
+      return false;
+    }
+  }
+  true
+}
+
+fn has_fid(s: Scan, p: integer) -> boolean {
+  for a in s.fid_a {
+    if a == p || s.fid_b[a#index]! == p {
+      return true;
+    }
+  }
+  false
+}
+
+fn bound_local(s: Scan, p: integer) -> boolean {
+  scope_fn::has(s.b_l, p)
+}
+
+// port: value_record.rs fn plan_function — the plan for `f`'s body and what it decides against
+// the admitted sets; `tuple` says `f` itself returns the tuple.
+pub fn plan_into(b: ir::Bundle, w: World, vr: opt_vr_layout::ValueRecords, f: integer, tuple: boolean, v: Verdict) -> Plan {
+  def = b.data.definitions[f]!;
+  vars = def.variables;
+  s = new_scan();
+  ci = cand(w, f);
+  if ci >= 0 && tuple {
+    c = w.cands[ci]!;
+    s.own_buf = c.buf;
+    s.own_rec = c.record;
+    for x in c.forwards {
+      ir_vr_shape::add(s.own_results, x);
+    }
+    for x in c.delivered {
+      ir_vr_shape::add(s.own_results, x);
+    }
+  }
+  code = def.code[0] ?? ir::NdNull;
+  cu = scope_fn::unspan(code);
+  match cu {
+    NdBlock { block } => {
+      list = block[0]!.operators;
+      last = len(list) - 1;
+      for op in list {
+        done = false;
+        if op#index == last {
+          match scope_fn::unspan(op) {
+            NdVar { n: x } => {
+              ir_vr_shape::add(s.returns, x);
+              done = true;
+            },
+            _ => {}
+          }
+        }
+        if !done {
+          scan(b, op, true, w, s);
+        }
+      }
+    },
+    _ => scan(b, cu, false, w, s)
+  }
+  i = 0;
+  while i + 1 < len(s.unserved) {
+    add_pair(v.bad_params, s.unserved[i]!, s.unserved[i + 1]!);
+    i += 2;
+  }
+  for c in s.called {
+    ir_vr_shape::add(v.called, c);
+  }
+  plan = Plan { carriers: [], buffers: [], reads_at_call: s.reads_place, lent: [] };
+  // The admitted parameters of `f` itself.
+  i = 0;
+  while i + 2 < len(w.params) {
+    d = w.params[i]!;
+    idx = w.params[i + 1]!;
+    record = w.params[i + 2]!;
+    i += 3;
+    if d != f {
+      continue;
+    }
+    p = var_named(vars, def.attributes[idx]!.name);
+    why = "";
+    if scope_fn::has(s.other, p) || scope_fn::has(s.l_x, p) {
+      why = "a mention that is no read or hand-on";
+    } else if !layout(w, record).presence && scope_fn::has(s.tests, p) {
+      why = "a presence test of a dense tuple";
+    } else if scope_fn::has(s.written, p) || scope_fn::has(s.null_inits, p) {
+      why = "written";
+    } else if scope_fn::has(s.returns, p) {
+      why = "returned";
+    } else if scope_fn::has(s.frees, p) || has_fid(s, p) {
+      why = "freed";
+    } else if bound_local(s, p) {
+      why = "bound from a call";
+    } else if !copies_fit(w, s, p, record) {
+      why = "a copy into a place it cannot name per field";
+    } else if !reads_fit(w, s, p, record) || !handed_fits(w, s, p, record) {
+      why = "a read or hand-on of another shape";
+    } else if depended(vars, p) {
+      why = "another variable depends on it";
+    }
+    if why == "" {
+      plan.carriers += [p, record];
+    } else {
+      add_pair(v.bad_params, d, idx);
+    }
+  }
+  // The locals bound from admitted calls, in the order first bound.
+  locals: vector<integer> = [];
+  for l in s.b_l {
+    ir_vr_shape::add(locals, l);
+  }
+  buffer_uses_v: vector<integer> = [];
+  buffer_uses_n: vector<integer> = [];
+  for r in s.b_r {
+    if r < 0 {
+      continue;
+    }
+    found = false;
+    for x in buffer_uses_v {
+      if x == r {
+        buffer_uses_n[x#index] = buffer_uses_n[x#index]! + 1;
+        found = true;
+      }
+    }
+    if !found {
+      buffer_uses_v += [r];
+      buffer_uses_n += [1];
+    }
+  }
+  own_buf = -1;
+  for l in locals {
+    first = -1;
+    for x in s.b_l {
+      if first < 0 && x == l {
+        first = x#index;
+      }
+    }
+    record = w.cands[cand(w, s.b_d[first]!)]!.record;
+    own = -1;
+    if ci >= 0 && tuple && scope_fn::has(w.cands[ci]!.forwards, l) {
+      own = w.cands[ci]!.buf;
+    }
+    why = "";
+    for x in s.b_l {
+      if x != l || why != "" {
+        continue;
+      }
+      bi = x#index;
+      bd = s.b_d[bi]!;
+      r = s.b_r[bi]!;
+      if w.cands[cand(w, bd)]!.record != record {
+        why = "a bind's buffer: binds of different records";
+      } else if r < 0 {
+        why = "a bind's buffer: no buffer variable";
+      } else if has_pair_lists(s.pb_x, s.pb_p, l, r) {
+        // built into a place and copied there
+        continue;
+      } else {
+        forward = own == r;
+        uses = 0;
+        for y in buffer_uses_v {
+          if y == r {
+            uses = buffer_uses_n[y#index]!;
+          }
+        }
+        heap_read = false;
+        for y in s.r_v {
+          if y == r && s.r_k[y#index]! == ir_vr_shape::K_VIEW {
+            heap_read = true;
+          }
+        }
+        witnesses = false;
+        for y in s.fid_b {
+          if y == r && s.fid_a[y#index]! != l {
+            witnesses = true;
+          }
+        }
+        if uses != 1 && r != l {
+          why = "a bind's buffer: shared by several binds";
+        } else if scope_fn::has(s.other, r) || scope_fn::has(s.tests, r) || scope_fn::has(s.l_x, r) {
+          why = "a bind's buffer: another mention";
+        } else if scope_fn::has(s.written, r) {
+          why = "a bind's buffer: written field-wise";
+        } else if heap_read {
+          why = "a bind's buffer: a heap field read";
+        } else if !forward && is_argument(vars, r) {
+          why = "a bind's buffer: a parameter, and no forward of a tuple";
+        } else if !forward && (scope_fn::has(s.guards, r) || scope_fn::has(s.al_b, r)) {
+          why = "a bind's buffer: guarded or aliased, and no forward";
+        } else if witnesses {
+          why = "a bind's buffer: witnesses another free";
+        }
+      }
+    }
+    l_layout = layout(w, record);
+    if why == "" {
+      if scope_fn::has(s.returns, l) && own < 0 {
+        why = "returned by a function that keeps its record";
+      } else if lent_unserved(w, s, l, record) {
+        why = "lent to a record parameter it cannot serve";
+      } else if scope_fn::has(s.other, l) || (scope_fn::has(s.tests, l) && !l_layout.presence) {
+        why = "a mention that is no read, hand-on, bind or free";
+      } else if (is_argument(vars, l) && own != l) || vars.variables[l]!.captured {
+        why = "a parameter or a capture";
+      } else if record_of_type(var_type(vars, l)) != ir_vr_shape::rec_of(record) {
+        why = "its type";
+      } else if !reads_fit(w, s, l, record) || !handed_fits(w, s, l, record) {
+        why = "a read or hand-on of another shape";
+      } else if !copies_fit(w, s, l, record) {
+        why = "a copy into a place it cannot name per field";
+      } else if !fids_witnessed(s, l) {
+        why = "a free it only witnesses";
+      } else if depended(vars, l) {
+        why = "another variable depends on it";
+      } else if ir_vr_shape::has_views(l_layout) && !is_value_local(b, w, vr, f, l) {
+        why = "a view carrier the analysis does not hold to its reads (O-ViewField)";
+      }
+    }
+    if why == "" {
+      plan.carriers += [l, record];
+      for x in s.b_l {
+        if x == l {
+          r = s.b_r[x#index]!;
+          if r >= 0 && !has_pair_lists(s.pb_x, s.pb_p, l, r) {
+            ir_vr_shape::add(plan.buffers, r);
+          }
+        }
+      }
+      if scope_fn::has(s.l_x, l) {
+        ir_vr_shape::add(plan.lent, l);
+      }
+    }
+  }
+  // Every call of an admitted function that is no carrier's bind still wants its record.
+  carried_d: vector<integer> = [];
+  carried_n: vector<integer> = [];
+  for x in s.b_l {
+    if carrier(plan, x) >= 0 {
+      bump(carried_d, carried_n, s.b_d[x#index]!);
+    }
+  }
+  if tuple && ci >= 0 {
+    for d in w.cands[ci]!.tail_calls {
+      bump(carried_d, carried_n, d);
+    }
+  }
+  for d in s.cc_d {
+    n = s.cc_n[d#index]!;
+    got = 0;
+    for x in carried_d {
+      if x == d {
+        got = carried_n[x#index]!;
+      }
+    }
+    if got < n {
+      ir_vr_shape::add(v.owed, d);
+    }
+  }
+  if tuple && ci >= 0 {
+    c = w.cands[ci]!;
+    for d in c.tail_calls {
+      k = cand(w, d);
+      fits = k >= 0 && (w.cands[k]!.record == c.record || (ir_vr_shape::rec_of(w.cands[k]!.record) == ir_vr_shape::rec_of(c.record) && !layout(w, w.cands[k]!.record).presence));
+      if !fits {
+        ir_vr_shape::add(v.bad_fns, f);
+      }
+    }
+    for l in c.forwards {
+      if carrier(plan, l) < 0 {
+        ir_vr_shape::add(v.bad_fns, f);
+      }
+    }
+  }
+  // What is handed to an admitted parameter and is no carrier.
+  for x in s.h_x {
+    if carrier(plan, x) >= 0 {
+      continue;
+    }
+    d = s.h_d[x#index]!;
+    idx = s.h_i[x#index]!;
+    record = param_key(w, d, idx);
+    tp = var_type(vars, x);
+    if (layout(w, record).presence || !(tp is TyOptional)) && record_of_plain(tp) == ir_vr_shape::rec_of(record) {
+      plan.reads_at_call = true;
+    } else {
+      add_pair(v.bad_params, d, idx);
+    }
+  }
+  plan
+}
+
+fn record_of_plain(t: ir::TypeT) -> integer {
+  match cgen_types::base(t) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+fn bump(ds: vector<integer>, ns: vector<integer>, d: integer) {
+  for x in ds {
+    if x == d {
+      ns[x#index] = ns[x#index]! + 1;
+      return;
+    }
+  }
+  ds += [d];
+  ns += [1];
+}
+
+fn has_pair_lists(xs: vector<integer>, ps: vector<integer>, x: integer, p: integer) -> boolean {
+  for a in xs {
+    if a == x && ps[a#index]! == p {
+      return true;
+    }
+  }
+  false
+}
+
+fn lent_unserved(w: World, s: Scan, l: integer, record: integer) -> boolean {
+  for x in s.l_x {
+    if x != l {
+      continue;
+    }
+    i = x#index;
+    if triple_get(w.lendable, s.l_d[i]!, s.l_i[i]!) != ir_vr_shape::rec_of(record) || scope_fn::has(s.returns, l) || ir_vr_shape::has_views(layout(w, record)) {
+      return true;
+    }
+  }
+  false
+}
+
+// Every free `l` witnesses names one of `l`'s own bind buffers.
+fn fids_witnessed(s: Scan, l: integer) -> boolean {
+  for b2 in s.fid_b {
+    if b2 != l {
+      continue;
+    }
+    a = s.fid_a[b2#index]!;
+    ok = false;
+    for x in s.b_l {
+      if x == l && s.b_r[x#index]! == a {
+        ok = true;
+      }
+    }
+    if !ok {
+      return false;
+    }
+  }
+  true
+}

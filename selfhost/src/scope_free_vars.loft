@@ -1,0 +1,1141 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/free_vars.rs` transcribed: a scope EXIT — the releases a block, a loop
+// pass or a return runs on the way out, around the value leaving with it — with the return
+// helpers it calls from `returns.rs` and `insert_free.rs`.  What a return of a record, a vector,
+// a tuple or a closure owes (the per-arm hooks, the null-arm joins, the rebound parameters) is
+// refused by name; a scalar, text or void exit is carried whole.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_args;
+use scope_get_free_vars;
+use scope_drops;
+use binds;
+use own;
+use opt_names;
+
+// port: free_vars.rs struct Delivered — the return's sources (`arm_dropped` and `moved_out`
+// are facts of records, never set here).
+pub struct Delivered {
+  pub sources: vector<integer>
+}
+
+pub fn no_delivery() -> Delivered {
+  Delivered { sources: [] }
+}
+
+// port: free_vars.rs fn text_buffer_in_frame — `tp` with a dep on the hidden TEXT buffer
+// renumbered from the attribute index to the argument variable it is; `tp` itself where no dep
+// names it (Rust's `None`).  A tuple's members are renumbered one by one in Rust: refused here.
+fn text_buffer_in_frame(s: scope_scan::Scopes, d: ir::Definition, tp: ir::TypeT, f: ir::Function) -> ir::TypeT {
+  bufs: vector<integer> = [];
+  for a in d.attributes {
+    if is_text_buffer_attr(a) {
+      bufs += [a#index];
+    }
+  }
+  if len(bufs) == 0 {
+    return tp;
+  }
+  args: vector<integer> = [for v in f.variables if v.argument { v#index }];
+  if len(d.attributes) != len(args) {
+    return tp;
+  }
+  if scope_fn::base(tp) is TyTuple {
+    scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a tuple return naming a text buffer");
+    return tp;
+  }
+  raw = scope_fn::depend(tp);
+  hit = false;
+  frame: vector<integer> = [];
+  for r in raw {
+    if r != scope_fn::NONE && (r / 32768) % 2 == 0 && scope_fn::has(bufs, r) {
+      hit = true;
+      frame += [args[r]!];
+    } else {
+      frame += [r];
+    }
+  }
+  if !hit {
+    return tp;
+  }
+  match tp {
+    TyText => ir::TyText { dep: frame },
+    TyOptional { inner } => if inner is TyText { ir::TyOptional { inner: ir::TyText { dep: frame } } } else { tp },
+    _ => {
+      scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a non-text return naming a text buffer");
+      tp
+    }
+  }
+}
+
+// port: free_vars.rs fn free_vars
+pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr: ir::Node, f: ir::Function, tp0: ir::TypeT, to_scope: integer) -> vector<ir::Node> {
+  def = b.data.definitions[s.d_nr]!;
+  def_ret = def.returned[0] ?? ir::TyVoid;
+  tp = if to_scope == 1 && "{tp0}" == "{def_ret}" { text_buffer_in_frame(s, def, tp0, f) } else { tp0 };
+  if is_return {
+    // loft#1476 — the closure records a return delivers on some path.
+    for v in 0..scope_fn::count(f) {
+      if scope_fn::is_argument(f, v) {
+        continue;
+      }
+      match scope_fn::tp(f, v) {
+        TyReference { n: rec } => if scope_args::def_name(b, rec).starts_with("__closure_") {
+          scope_scan::refuse(s, "capture_adoption::free_record_in_omitting_arms: a closure record at a return");
+        },
+        _ => {}
+      }
+    }
+    // `move_join_hooks_into_arms`, `return_copies_whole_local`, `return_copies_view_holders`,
+    // `return_moved_holders`: the hooks of a returned record.
+    // `move_join_hooks_into_arms` moves the HOOKS of a join's sources into its arms, and
+    // `return_copies_whole_local`, `return_copies_view_holders`, `return_moved_holders` take a
+    // hook away from the sweep: for a record return no source has one (the phase refuses a
+    // record type with a cascade, and a vector source's elements are asked here).  A VECTOR
+    // return's sources are vectors and records, none with a cascade (the phase refuses both).
+    if (scope_fn::is_record(tp) || scope_fn::base(tp) is TyVector) && !(scope_fn::base(tp) is TyRefVar) {
+      for v in 0..scope_fn::count(f) {
+        match scope_fn::base(scope_fn::tp(f, v)) {
+          TyVector { inner } => {
+            rec = own::heap_def_nr(inner);
+            if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
+              scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a vector of droppable records beside a record return");
+            }
+          },
+          _ => {}
+        }
+      }
+    } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) {
+      scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a {scope_fn::kind_name(tp)} return");
+    }
+  }
+  ret_var = returned_var_null_unified(expr, s.ops.null_ref_sentinel);
+  sources: vector<integer> = [];
+  // @PLN85 P4-records — the record sources whose free is decided at run time against the
+  // value returned (`null_arm_record_sources`).
+  null_arm: vector<integer> = [];
+  if is_return {
+    collect_return_sources(s, expr, sources);
+    if return_has_null_arm(expr, s.ops.null_ref_sentinel) {
+      live_here = scope_scan::variables(s, to_scope);
+      for v in sources {
+        if scope_fn::is_record(scope_fn::tp(f, v))
+          && (scope_fn::has(live_here, v) || scope_drops::is_promoted_ret_buffer(s, b, f, v))
+          && !store_is_the_callers(s, b, f, v) {
+          null_arm += [v];
+        }
+      }
+      for v in sources {
+        if !is_collection(scope_fn::tp(f, v)) {
+          continue;
+        }
+        for d in scope_fn::deps(f, v) {
+          if d != v && !scope_fn::is_argument(f, d) && !scope_fn::has(null_arm, d) {
+            null_arm += [d];
+          }
+        }
+      }
+    }
+    if len(sources) > 1 {
+      for v in sources {
+        if bare_record(scope_fn::tp(f, v)) && owns_freeable_store(s, b, f, v) && !scope_fn::has(null_arm, v) {
+          null_arm += [v];
+        }
+      }
+    }
+    // loft#688 — the promoted NRVO buffer (an argument whose hidden attribute was renamed off
+    // `__retbuf`) is a candidate source too; not for a collection return (loft#1096).
+    collection_return = is_collection(def_ret);
+    for v in 0..scope_fn::count(f) {
+      if scope_fn::is_argument(f, v) && !scope_fn::has(sources, v) && !scope_fn::has(null_arm, v) && bare_record(scope_fn::tp(f, v)) {
+        nm = scope_fn::name(f, v);
+        if nm != "__retbuf" && !collection_return && hidden_attr_named(def, nm) {
+          null_arm += [v];
+        }
+      }
+    }
+    // loft#1142's keyed join is a keyed return's, refused above.  loft#1022 — a record return
+    // with an arm that is no source.
+    if scope_fn::is_record(tp) && return_has_non_source_arm(expr, sources, false) {
+      for v in sources {
+        if scope_fn::has(null_arm, v) || !bare_record(scope_fn::tp(f, v)) || !owns_freeable_store(s, b, f, v) {
+          continue;
+        }
+        null_arm += [v];
+      }
+    }
+    if is_return && to_scope == 1 {
+      for v in 0..scope_fn::count(f) {
+        if scope_fn::rebind_orig(f, v) >= 0 && scope_fn::is_argument(f, v) && (v == ret_var || scope_fn::has(sources, v)) {
+          scope_scan::refuse(s, "free_vars: a rebound parameter returned (rebind_params)");
+        }
+      }
+    }
+  }
+  ls = scope_get_free_vars::get_free_vars(s, b, f, to_scope, tp, ret_var, Delivered { sources: sources });
+  // @PLN85 P4-records — at a RETURN, any record local's store may BE the returned store: its
+  // free is conditional on not being it.  (`hooks_follow_returned_frees` moves no hook: none is
+  // placed for a record without a cascade.)
+  if is_return && ret_var != scope_fn::NONE && ret_var < scope_fn::count(f) && bare_record(scope_fn::tp(f, ret_var)) {
+    distinct_frees(s, f, ls, ret_var, false);
+  }
+  expr_is_terminal = expr_ends_in_return(expr);
+  // @PLN85 P4-records — a null-arm or joined record return: hoist the value to `__ret_N`, run
+  // the sweep's frees against it, then free each join source unless it is the value returned.
+  if is_return && !expr_is_terminal && len(null_arm) > 0 {
+    s.ret_temp_counter += 1;
+    tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
+    scope_scan::set_scope_of(s, tmp, s.scope);
+    s.var_order += [tmp];
+    free_if = if return_borrows_closure(def) { scope_fn::def_nr(b, "OpFreeRefOrHandUp") } else { s.ops.free_if_distinct };
+    result = bind_return_temp(s, b, tmp, expr, f);
+    if scope_fn::is_record(tp) {
+      distinct_frees(s, f, ls, tmp, true);
+    }
+    result += ls;
+    for src in null_arm {
+      hook = scope_drops::scope_end_drop(s, b, f, src);
+      if hook != null {
+        result += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: src }, ir::NdVar { n: tmp }] }, t: hook!, f: ir::NdNull }];
+      }
+      free = ir::NdCall { def_nr: free_if, args: [ir::NdVar { n: src }, ir::NdVar { n: tmp }] };
+      if s.entry_buf >= 0 && s.entry_buf == src {
+        free = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: src }, ir::NdVar { n: s.entry_w }] }, t: free, f: ir::NdNull };
+      }
+      result += [free];
+    }
+    result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    return result;
+  }
+  var_is_place_ref = len(ls) > 0 && match expr {
+    NdVar { n: v } => match scope_fn::tp(f, v) { TyRefVar { inner } => !scope_fn::is_text(inner), _ => false },
+    _ => false
+  };
+  expr_is_null_text_sentinel = match scope_fn::unspan(expr) {
+    NdCall { def_nr, args } => len(args) == 0 && scope_args::def_name(b, def_nr) == "OpConvTextFromNull",
+    _ => false
+  };
+  if is_return {
+    match scope_fn::unspan(expr) {
+      NdVar { n: v } => {
+        buf = any_text_return_buffer(b, f, s.d_nr);
+        if !scope_fn::is_argument(f, v) && !scope_fn::is_skip_free(f, v) && scope_fn::is_text(scope_fn::tp(f, v)) && !(scope_fn::tp(f, v) is TyRefVar) && buf >= 0 && buf != v {
+          result: vector<ir::Node> = [scope_fn::v_set(buf, ir::NdVar { n: v }), free_text(s, v)];
+          result += ls;
+          result += [ir::NdReturn { inner: ir::NdVar { n: buf } }];
+          return result;
+        }
+      },
+      _ => {}
+    }
+  }
+  expr_is_argument_text_view = is_return && scope_fn::is_text(tp) && is_argument_text_view(b, expr, f) && any_text_return_buffer(b, f, s.d_nr) < 0;
+  plain_expr = expr is NdNull || expr is NdVar || expr is NdText;
+  if len(ls) == 0 || ((plain_expr || expr_is_null_text_sentinel || expr_is_argument_text_view) && !var_is_place_ref) {
+    if is_return && !expr_is_terminal {
+      ls += [ir::NdReturn { inner: expr }];
+    } else if !(expr is NdNull) {
+      ls += [expr];
+    }
+    return ls;
+  }
+  if expr_is_terminal {
+    return [expr];
+  }
+  match expr {
+    NdBlock { block } => { return insert_free(s, b, block[0], ls, is_return, f); },
+    _ => {}
+  }
+  if is_return && is_value_return_type(tp) {
+    s.ret_temp_counter += 1;
+    tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
+    scope_scan::set_scope_of(s, tmp, s.scope);
+    s.var_order += [tmp];
+    result = bind_return_temp(s, b, tmp, expr, f);
+    free_copied_text_sources(s, result, expr, ls, f);
+    result += ls;
+    result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    return result;
+  }
+  // loft#754 — a HEAP return whose tail is a PLACE read: evaluate, free, return the value.
+  if is_return && ret_var == scope_fn::NONE && is_heap_return_type(tp) && !(expr is NdVar) && is_place_read(b, expr) {
+    s.ret_temp_counter += 1;
+    tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
+    scope_scan::set_scope_of(s, tmp, s.scope);
+    s.var_order += [tmp];
+    result = bind_return_temp(s, b, tmp, expr, f);
+    result += ls;
+    result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    return result;
+  }
+  // loft#793 — the CALL sibling for a heap return with no return buffer (a nullable one): hoist
+  // the call, each pending record or vector free conditional on not being the hoisted store.
+  if is_return && ret_var == scope_fn::NONE && is_heap_return_type(tp) && !has_return_buffer(def) && tail_is_value_call(b, expr) {
+    s.ret_temp_counter += 1;
+    tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
+    scope_scan::set_scope_of(s, tmp, s.scope);
+    s.var_order += [tmp];
+    for i in 0..len(ls) {
+      match ls[i]! {
+        NdCall { def_nr, args } => if def_nr == s.ops.free_ref && len(args) > 0 {
+          match scope_fn::unspan(args[0]!) {
+            NdVar { n: w } => {
+              wt = scope_fn::tp(f, w);
+              if bare_record(wt) || wt is TyVector {
+                ls[i] = ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: w }, ir::NdVar { n: tmp }] };
+              }
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    }
+    result = bind_return_temp(s, b, tmp, expr, f);
+    result += ls;
+    result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    return result;
+  }
+  if is_return && scope_fn::is_text(tp) && !(scope_fn::unspan(expr) is NdNull) {
+    buf = text_return_buffer_for(b, expr, f, s.d_nr);
+    if buf >= 0 {
+      delivered = push_text_arms(b, expr, buf);
+      result: vector<ir::Node> = [delivered];
+      free_copied_text_sources(s, result, expr, ls, f);
+      result += ls;
+      result += [ir::NdReturn { inner: ir::NdVar { n: buf } }];
+      return result;
+    }
+    buf = any_text_return_buffer(b, f, s.d_nr);
+    if buf >= 0 {
+      s.ret_temp_counter += 1;
+      tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
+      f.variables[tmp].skip_free = true;
+      scope_scan::set_scope_of(s, tmp, s.scope);
+      s.var_order += [tmp];
+      result: vector<ir::Node> = [scope_fn::v_set(tmp, expr)];
+      free_copied_text_sources(s, result, expr, ls, f);
+      result += [scope_fn::v_set(buf, ir::NdVar { n: tmp }), free_text(s, tmp)];
+      result += ls;
+      result += [ir::NdReturn { inner: ir::NdVar { n: buf } }];
+      return result;
+    }
+  }
+  if is_return && scope_fn::is_text(tp) {
+    s.ret_temp_counter += 1;
+    tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
+    f.variables[tmp].skip_free = true;
+    scope_scan::set_scope_of(s, tmp, s.scope);
+    s.var_order += [tmp];
+    result: vector<ir::Node> = [scope_fn::v_set(tmp, expr)];
+    free_copied_text_sources(s, result, expr, ls, f);
+    result += ls;
+    result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    return result;
+  }
+  if is_return && scope_fn::base(tp) is TyTuple {
+    scope_scan::refuse(s, "free_vars: a tuple returned past frees (__ret_text_N)");
+  }
+  if !is_return && scope_fn::is_text(tp) && !(expr is NdNull) && !(expr is NdVar) && !tail_is_branch(expr) {
+    s.ret_temp_counter += 1;
+    tmp = scope_fn::add_temp_var(f, "__blk_{s.ret_temp_counter}", tp);
+    scope_scan::set_scope_of(s, tmp, 1);
+    s.var_order += [tmp];
+    s.lift_texts += [tmp];
+    result: vector<ir::Node> = [scope_fn::v_set(tmp, expr)];
+    result += ls;
+    result += [ir::NdVar { n: tmp }];
+    return result;
+  }
+  frees_follow = len(ls) > 0;
+  out: vector<ir::Node> = [expr];
+  out += ls;
+  if is_return {
+    ux = scope_fn::unspan(expr);
+    call_tail = ux is NdCall || ux is NdCallRef || ux is NdIf || match ux {
+      NdInsert { items } => len(items) > 0 && (scope_fn::unspan(items[len(items) - 1]!) is NdCall || scope_fn::unspan(items[len(items) - 1]!) is NdCallRef),
+      _ => false
+    };
+    // loft#1097 — a null arm folded onto a COLLECTION (or a var the caller hands in) cannot
+    // carry the sentinel: the tail's value is hoisted to a temp (not registered — it holds the
+    // value the caller adopts), the frees run, the temp is returned.
+    null_arm_needs_the_value = ret_var != scope_fn::NONE && frees_follow && ret_var < scope_fn::count(f)
+      && (is_collection(scope_fn::tp(f, ret_var)) || scope_fn::is_argument(f, ret_var))
+      && return_has_null_arm(expr, s.ops.null_ref_sentinel);
+    if null_arm_needs_the_value {
+      s.ret_temp_counter += 1;
+      tmp = scope_fn::add_temp_var(f, "__ret_tail_{s.ret_temp_counter}", tp);
+      out = bind_return_temp(s, b, tmp, expr, f);
+      out += ls;
+      out += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    } else if ret_var != scope_fn::NONE {
+      out += [ir::NdReturn { inner: ir::NdVar { n: ret_var } }];
+    } else if frees_follow && !(tp is TyVoid) && (call_tail || scope_fn::base(tp) is TyFunction) && !(scope_fn::base(tp) is TyIterator) {
+      s.ret_temp_counter += 1;
+      tmp = scope_fn::add_temp_var(f, "__ret_tail_{s.ret_temp_counter}", tp);
+      bound = bind_return_temp(s, b, tmp, expr, f);
+      out = bound;
+      out += ls;
+      out += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    } else {
+      out += [ir::NdReturn { inner: ir::NdNull }];
+    }
+  }
+  out
+}
+
+// `matches!(t, Type::Reference(..) | Type::Enum(_, true, _))`, bare.
+fn bare_record(t: ir::TypeT) -> boolean {
+  match t { TyReference => true, TyEnum { is_ref } => is_ref, _ => false }
+}
+
+// port: parser/vectors.rs fn is_collection — a vector or a keyed collection, through `base()`.
+fn is_collection(t: ir::TypeT) -> boolean {
+  scope_fn::base(t) is TyVector || scope_fn::is_keyed(t)
+}
+
+fn hidden_attr_named(d: ir::Definition, nm: text) -> boolean {
+  for a in d.attributes {
+    if a.name == nm {
+      return a.hidden;
+    }
+  }
+  false
+}
+
+// port: free_vars.rs fn owns_freeable_store
+fn owns_freeable_store(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  scope_fn::proxy_says_owned(f, v) && (!scope_fn::is_argument(f, v) || scope_drops::is_promoted_ret_buffer(s, b, f, v))
+}
+
+// The null-arm leg's `store_is_the_callers`: a parameter (not the promoted buffer), or a view
+// of one.
+fn store_is_the_callers(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  if scope_fn::is_argument(f, v) && !scope_drops::is_promoted_ret_buffer(s, b, f, v) {
+    return true;
+  }
+  for d in scope_fn::deps(f, v) {
+    if scope_fn::is_argument(f, d) {
+      return true;
+    }
+  }
+  false
+}
+
+// Every plain `OpFreeRef(w)` of a record local in `ls` freed only where `w` is not `ret`
+// (`OpFreeRefIfDistinct(w, ret)`); `through_base` reads the local's type through `base()`.
+fn distinct_frees(s: scope_scan::Scopes, f: ir::Function, ls: vector<ir::Node>, ret: integer, through_base: boolean) {
+  for i in 0..len(ls) {
+    match ls[i]! {
+      NdCall { def_nr, args } => if def_nr == s.ops.free_ref && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: w } => {
+            wt = scope_fn::tp(f, w);
+            if (through_base && scope_fn::is_record(wt)) || (!through_base && bare_record(wt)) {
+              ls[i] = ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: w }, ir::NdVar { n: ret }] };
+            }
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
+// port: free_vars.rs fn return_borrows_closure
+fn return_borrows_closure(d: ir::Definition) -> boolean {
+  for a in d.attributes {
+    if a.name == "__closure" {
+      return scope_fn::has(scope_fn::depend(d.returned[0] ?? ir::TyVoid), a#index);
+    }
+  }
+  false
+}
+
+// port: returns.rs fn return_has_null_arm
+pub fn return_has_null_arm(n: ir::Node, null_nr: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr } => def_nr == null_nr,
+    NdIf { t, f } => return_has_null_arm(t, null_nr) || return_has_null_arm(f, null_nr),
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && return_has_null_arm(block[0].operators[k - 1]!, null_nr)
+    },
+    NdInsert { items } => len(items) > 0 && return_has_null_arm(items[len(items) - 1]!, null_nr),
+    NdReturn { inner } => return_has_null_arm(inner, null_nr),
+    NdDrop { inner } => return_has_null_arm(inner, null_nr),
+    _ => false
+  }
+}
+
+// port: returns.rs fn return_has_non_source_arm
+fn return_has_non_source_arm(n: ir::Node, sources: vector<integer>, in_join: boolean) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf { t, f } => return_has_non_source_arm(t, sources, true) || return_has_non_source_arm(f, sources, true),
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && return_has_non_source_arm(block[0].operators[k - 1]!, sources, in_join)
+    },
+    NdInsert { items } => len(items) > 0 && return_has_non_source_arm(items[len(items) - 1]!, sources, in_join),
+    NdReturn { inner } => return_has_non_source_arm(inner, sources, in_join),
+    NdDrop { inner } => return_has_non_source_arm(inner, sources, in_join),
+    NdVar { n: v } => in_join && !scope_fn::has(sources, v),
+    _ => in_join
+  }
+}
+
+// port: data.rs fn is_place_read
+fn is_place_read(b: ir::Bundle, n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar => true,
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      (nm == "OpGetField" || nm == "OpGetVector" || nm == "OpVectorRef") && len(args) > 0 && is_place_read(b, args[0]!)
+    },
+    _ => false
+  }
+}
+
+// port: free_vars.rs fn has_return_buffer — a hidden record or vector attribute.
+fn has_return_buffer(d: ir::Definition) -> boolean {
+  for a in d.attributes {
+    if a.hidden {
+      match a.typedef[0] ?? ir::TyVoid {
+        TyReference => { return true; },
+        TyVector => { return true; },
+        TyEnum { is_ref } => if is_ref { return true; },
+        _ => {}
+      }
+    }
+  }
+  false
+}
+
+// port: free_vars.rs fn tail_is_value_call
+fn tail_is_value_call(b: ir::Bundle, expr: ir::Node) -> boolean {
+  match scope_fn::unspan(tail(expr)) {
+    NdCall { def_nr } => {
+      nm = scope_args::def_name(b, def_nr);
+      nm != "OpNullRefSentinel" && !(nm.starts_with("OpConv") && nm.ends_with("FromNull"))
+    },
+    NdCallRef => true,
+    _ => false
+  }
+}
+
+fn free_text(s: scope_scan::Scopes, v: integer) -> ir::Node {
+  ir::NdCall { def_nr: s.ops.free_text, args: [ir::NdVar { n: v }] }
+}
+
+// port: free_vars.rs fn bind_return_temp — a value branch an arm of which borrows a frame
+// local is written out per arm (`sink_return_branch`), behind the temp's null.
+fn bind_return_temp(s: scope_scan::Scopes, b: ir::Bundle, tmp: integer, expr: ir::Node, f: ir::Function) -> vector<ir::Node> {
+  if scope_args::is_value_branch(expr) && branch_arm_borrows_a_frame_local(s, b, expr, f) && sinkable(s, expr) {
+    return [scope_fn::v_set(tmp, ir::NdNull), sink(s, expr, tmp)];
+  }
+  e = scope_fn::unspan(expr);
+  match e {
+    NdInsert { items } => {
+      k = len(items);
+      if k >= 2 {
+        last = items[k - 1]!;
+        lu = scope_fn::unspan(last);
+        if lu is NdCall || lu is NdCallRef {
+          out: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+          out += [scope_fn::v_set(tmp, last)];
+          return out;
+        }
+      }
+    },
+    _ => {}
+  }
+  [scope_fn::v_set(tmp, expr)]
+}
+
+// port: free_vars.rs fn branch_arm_borrows_a_frame_local
+fn branch_arm_borrows_a_frame_local(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f: e } => branch_arm_borrows_a_frame_local(s, b, t, f) || branch_arm_borrows_a_frame_local(s, b, e, f),
+    NdBlock { block } => {
+      if block[0].name == "ncc" {
+        return false;
+      }
+      l = last_non_free_result(s, block[0].operators);
+      l >= 0 && branch_arm_borrows_a_frame_local(s, b, block[0].operators[l]!, f)
+    },
+    NdInsert { items } => {
+      l = last_non_free_result(s, items);
+      l >= 0 && branch_arm_borrows_a_frame_local(s, b, items[l]!, f)
+    },
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr]!;
+      if !binds::is_loft_defined(d) || !scope_fn::is_record(d.returned[0] ?? ir::TyVoid) {
+        return false;
+      }
+      base = match scope_scan::ownership(s, b, u) {
+        Borrowed { base } => base,
+        Join { base } => base,
+        _ => -1
+      };
+      base >= 0 && (base == scope_fn::NONE || (base < scope_fn::count(f) && !scope_fn::is_argument(f, base)))
+    },
+    _ => false
+  }
+}
+
+// port: free_vars.rs fn sink_return_branch's `sinkable`
+fn sinkable(s: scope_scan::Scopes, n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdNull => true,
+    NdVar => true,
+    NdCall => true,
+    NdCallRef => true,
+    NdIf { t, f } => sinkable(s, t) && sinkable(s, f),
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name == "ncc" || bl.name == "Object" {
+        return false;
+      }
+      r = scope_fn::base(bl.result[0] ?? ir::TyVoid);
+      if r is TyVoid || r is TyNull {
+        return false;
+      }
+      l = last_non_free_result(s, bl.operators);
+      l >= 0 && sinkable(s, bl.operators[l]!)
+    },
+    NdInsert { items } => {
+      l = last_non_free_result(s, items);
+      l >= 0 && sinkable(s, items[l]!)
+    },
+    _ => false
+  }
+}
+
+// port: free_vars.rs fn sink_return_branch's `sink` — every arm's value bound to `tmp`.
+fn sink(s: scope_scan::Scopes, n: ir::Node, tmp: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: sink(s, inner, tmp) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: sink(s, t, tmp), f: sink(s, f, tmp) },
+    NdBlock { block } => {
+      bl = block[0];
+      ops = bl.operators;
+      l = last_non_free_result(s, ops);
+      if l >= 0 {
+        ops[l] = sink(s, ops[l]!, tmp);
+      }
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      ops = items;
+      l = last_non_free_result(s, ops);
+      if l >= 0 {
+        ops[l] = sink(s, ops[l]!, tmp);
+      }
+      ir::NdInsert { items: ops }
+    },
+    _ => scope_fn::v_set(tmp, n)
+  }
+}
+
+// port: returns.rs fn is_value_return_type
+pub fn is_value_return_type(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyTuple { elems } => {
+      if len(elems) == 0 {
+        return false;
+      }
+      for e in elems {
+        if !is_value_return_type(e) {
+          return false;
+        }
+      }
+      true
+    },
+    TyInteger => true,
+    TyFloat => true,
+    TySingle => true,
+    TyBoolean => true,
+    TyCharacter => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+// port: returns.rs fn is_heap_return_type
+fn is_heap_return_type(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyReference => true,
+    TyVector => true,
+    TyEnum { is_ref } => is_ref,
+    TyRefVar { inner } => is_heap_return_type(inner),
+    _ => false
+  }
+}
+
+// port: returns.rs fn tail_is_branch
+fn tail_is_branch(n: ir::Node) -> boolean {
+  match n {
+    NdIf => true,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && tail_is_branch(block[0].operators[k - 1]!)
+    },
+    NdInsert { items } => len(items) > 0 && tail_is_branch(items[len(items) - 1]!),
+    NdSpan { inner } => tail_is_branch(inner),
+    _ => false
+  }
+}
+
+fn is_null_terminal(n: ir::Node, null_nr: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr } => def_nr == null_nr,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && is_null_terminal(block[0].operators[k - 1]!, null_nr)
+    },
+    NdInsert { items } => len(items) > 0 && is_null_terminal(items[len(items) - 1]!, null_nr),
+    NdReturn { inner } => is_null_terminal(inner, null_nr),
+    NdDrop { inner } => is_null_terminal(inner, null_nr),
+    _ => false
+  }
+}
+
+// port: returns.rs fn returned_var_null_unified
+pub fn returned_var_null_unified(n: ir::Node, null_nr: integer) -> integer {
+  match n {
+    NdVar { n: v } => v,
+    NdBlock { block } => {
+      v = scope_fn::NONE;
+      for o in block[0].operators {
+        v = returned_var_null_unified(o, null_nr);
+      }
+      v
+    },
+    NdReturn { inner } => returned_var_null_unified(inner, null_nr),
+    NdDrop { inner } => returned_var_null_unified(inner, null_nr),
+    NdInsert { items } => if len(items) == 0 { scope_fn::NONE } else { returned_var_null_unified(items[len(items) - 1]!, null_nr) },
+    NdIf { t, f } => {
+      tv = returned_var_null_unified(t, null_nr);
+      fv = returned_var_null_unified(f, null_nr);
+      if tv == fv || (fv == scope_fn::NONE && is_null_terminal(f, null_nr)) {
+        tv
+      } else if tv == scope_fn::NONE && is_null_terminal(t, null_nr) {
+        fv
+      } else {
+        scope_fn::NONE
+      }
+    },
+    NdSpan { inner } => returned_var_null_unified(inner, null_nr),
+    _ => scope_fn::NONE
+  }
+}
+
+// port: returns.rs fn collect_return_sources
+pub fn collect_return_sources(s: scope_scan::Scopes, n: ir::Node, out: vector<integer>) {
+  match n {
+    NdVar { n: v } => if !scope_fn::has(out, v) { out += [v]; },
+    NdBlock { block } => {
+      l = last_non_free_result(s, block[0].operators);
+      if l >= 0 {
+        collect_return_sources(s, block[0].operators[l]!, out);
+      }
+    },
+    NdReturn { inner } => collect_return_sources(s, inner, out),
+    NdDrop { inner } => collect_return_sources(s, inner, out),
+    NdInsert { items } => {
+      l = last_non_free_result(s, items);
+      if l >= 0 {
+        collect_return_sources(s, items[l]!, out);
+      }
+    },
+    NdIf { t, f } => {
+      collect_return_sources(s, t, out);
+      collect_return_sources(s, f, out);
+    },
+    NdSpan { inner } => collect_return_sources(s, inner, out),
+    _ => {}
+  }
+}
+
+// port: returns.rs fn last_non_free_result — its index, -1 for none.
+fn last_non_free_result(s: scope_scan::Scopes, ops: vector<ir::Node>) -> integer {
+  k = len(ops);
+  i = k - 1;
+  while i >= 0 {
+    op = ops[i]!;
+    if !is_scope_exit_cleanup(s, op) && !(scope_fn::unspan(op) is NdLine) {
+      return i;
+    }
+    i -= 1;
+  }
+  -1
+}
+
+// port: insert_free.rs fn is_scope_exit_cleanup
+pub fn is_scope_exit_cleanup(s: scope_scan::Scopes, op: ir::Node) -> boolean {
+  if scope_scan::scope_free_op_var(s, op) >= 0 {
+    return true;
+  }
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => scope_scan::is_free(s, def_nr) && scope_fn::unspan(args[0] ?? ir::NdNull) is NdTupleGet,
+    NdSet { inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr, args } => len(args) == 0 && def_nr == s.ops.null_ref_sentinel,
+      _ => false
+    },
+    NdIf { cond, t, f } => {
+      (is_distinct_test(s, cond) && scope_fn::unspan(f) is NdNull && is_scope_exit_cleanup(s, t)) || (scope_fn::unspan(t) is NdNull && is_scope_exit_cleanup(s, f))
+    },
+    NdInsert { items } => len(items) > 0 && is_scope_exit_cleanup(s, items[len(items) - 1]!),
+    _ => false
+  }
+}
+
+fn is_distinct_test(s: scope_scan::Scopes, cond: ir::Node) -> boolean {
+  match scope_fn::unspan(cond) {
+    NdCall { def_nr } => def_nr == s.ops.distinct_store,
+    _ => false
+  }
+}
+
+// port: insert_free.rs fn expr_ends_in_return — `Value::tail()` is a `Return`.
+pub fn expr_ends_in_return(n: ir::Node) -> boolean {
+  tail(n) is NdReturn
+}
+
+// port: data.rs fn tail
+fn tail(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { inner } => tail(inner),
+    NdBlock { block } => {
+      ops = block[0].operators;
+      i = len(ops) - 1;
+      while i >= 0 {
+        if !(scope_fn::unspan(ops[i]!) is NdLine) {
+          return tail(ops[i]!);
+        }
+        i -= 1;
+      }
+      n
+    },
+    NdInsert { items } => {
+      i = len(items) - 1;
+      while i >= 0 {
+        if !(scope_fn::unspan(items[i]!) is NdLine) {
+          return tail(items[i]!);
+        }
+        i -= 1;
+      }
+      n
+    },
+    _ => n
+  }
+}
+
+// `function.var(name)` — -1 for none.
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for n in f.names {
+    if n.name == nm {
+      return n.nr;
+    }
+  }
+  -1
+}
+
+fn is_text_buffer_attr(a: ir::Attribute) -> boolean {
+  a.hidden && match a.typedef[0] ?? ir::TyVoid {
+    TyRefVar { inner } => inner is TyText,
+    _ => false
+  }
+}
+
+// port: insert_free.rs fn any_text_return_buffer — -1 for none.
+pub fn any_text_return_buffer(b: ir::Bundle, f: ir::Function, d_nr: integer) -> integer {
+  for a in b.data.definitions[d_nr]!.attributes {
+    if is_text_buffer_attr(a) {
+      v = var_named(f, a.name);
+      if v >= 0 {
+        return v;
+      }
+    }
+  }
+  -1
+}
+
+fn collect_reads(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_reads(c, out);
+  }
+}
+
+// port: insert_free.rs fn text_return_buffer_for — -1 for none.
+pub fn text_return_buffer_for(b: ir::Bundle, expr: ir::Node, f: ir::Function, d_nr: integer) -> integer {
+  read: vector<integer> = [];
+  collect_reads(expr, read);
+  for a in b.data.definitions[d_nr]!.attributes {
+    if is_text_buffer_attr(a) {
+      v = var_named(f, a.name);
+      if v >= 0 && !scope_fn::has(read, v) {
+        return v;
+      }
+    }
+  }
+  -1
+}
+
+// port: insert_free.rs fn free_copied_text_sources
+fn free_copied_text_sources(s: scope_scan::Scopes, result: vector<ir::Node>, expr: ir::Node, pending: vector<ir::Node>, f: ir::Function) {
+  srcs: vector<integer> = [];
+  collect_return_sources(s, expr, srcs);
+  for w in srcs {
+    if !scope_fn::is_text(scope_fn::tp(f, w)) || scope_fn::is_argument(f, w) {
+      continue;
+    }
+    freed = false;
+    for op in pending {
+      if scope_scan::scope_free_op_var(s, op) == w {
+        freed = true;
+      }
+    }
+    if freed {
+      continue;
+    }
+    n = scope_fn::name(f, w);
+    if n.starts_with("__work_") || (n.starts_with("__ncc_") && scope_fn::is_skip_free(f, w)) || (!scope_fn::is_skip_free(f, w) && !(scope_fn::tp(f, w) is TyRefVar)) {
+      result += [free_text(s, w)];
+    }
+  }
+}
+
+// port: returns.rs fn is_argument_text_view
+fn is_argument_text_view(b: ir::Bundle, expr: ir::Node, f: ir::Function) -> boolean {
+  is_view = match scope_fn::unspan(expr) {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      if nm == "OpGetText" {
+        true
+      } else if nm == "OpGetTextSub" && len(args) > 0 {
+        a0 = args[0]!;
+        is_argument_text_view(b, a0, f) || match scope_fn::unspan(a0) { NdVar { n: v } => scope_fn::is_argument(f, v), _ => false }
+      } else {
+        false
+      }
+    },
+    _ => false
+  };
+  is_view && !names_a_local(expr, f)
+}
+
+fn names_a_local(n: ir::Node, f: ir::Function) -> boolean {
+  v = match n {
+    NdVar { n: x } => x,
+    NdSet { var } => var,
+    NdTupleGet { var } => var,
+    NdTuplePut { var } => var,
+    NdFnRefDnr { n: x } => x,
+    NdCallRef { var } => var,
+    NdIter { var } => var,
+    NdFnRef { var } => var,
+    _ => -1
+  };
+  if v >= 0 && !scope_fn::is_argument(f, v) && !is_value_return_type(scope_fn::tp(f, v)) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if names_a_local(c, f) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: parser/control.rs fn push_text_arms — a text tail delivered into the buffer `av`.
+fn push_text_arms(b: ir::Bundle, n: ir::Node, av: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: push_text_arms(b, inner, av) },
+    NdReturn { inner } => ir::NdReturn { inner: push_text_arms(b, inner, av) },
+    NdDrop { inner } => ir::NdDrop { inner: push_text_arms(b, inner, av) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: push_text_arms(b, t, av), f: push_text_arms(b, f, av) },
+    NdBlock { block } => {
+      bl = block[0];
+      // A copy built element by element: `ops = bl.operators` on an element view writes back
+      // into the original (sp/repro/view_copy2.loft).
+      ops = [for x in bl.operators { x }];
+      k = len(ops);
+      if k > 0 {
+        ops[k - 1] = push_text_arms(b, ops[k - 1]!, av);
+      }
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      ops = [for x in items { x }];
+      k = len(ops);
+      if k > 0 {
+        ops[k - 1] = push_text_arms(b, ops[k - 1]!, av);
+      }
+      ir::NdInsert { items: ops }
+    },
+    NdCall { def_nr, args } => {
+      if scope_args::def_returned(b, def_nr) is TyVoid {
+        return n;
+      }
+      if scope_args::def_name(b, def_nr) == "OpCreateStack" && len(args) == 1 {
+        return scope_fn::v_set(av, args[0]!);
+      }
+      scope_fn::v_set(av, n)
+    },
+    _ => scope_fn::v_set(av, n)
+  }
+}
+
+// port: insert_free.rs fn insert_free — the frees placed around a block's value.
+fn insert_free(s: scope_scan::Scopes, b: ir::Bundle, block: ir::Block, free: vector<ir::Node>, is_return: boolean, f: ir::Function) -> vector<ir::Node> {
+  ls: vector<ir::Node> = [];
+  ops = block.operators;
+  n = len(ops);
+  result = block.result[0] ?? ir::TyVoid;
+  result_idx = n - 1;
+  if is_return && !(result is TyVoid) && n > 0 && is_scope_exit_cleanup(s, ops[n - 1]!) {
+    found = -1;
+    i = n - 1;
+    while i >= 0 {
+      if !is_scope_exit_cleanup(s, ops[i]!) {
+        found = i;
+        break;
+      }
+      i -= 1;
+    }
+    if found >= 0 && !(ops[found]! is NdBlock) {
+      result_idx = found;
+    }
+  }
+  trailing_frees: vector<ir::Node> = if n > 0 && result_idx + 1 < n { [for x in ops[result_idx + 1..] { x }] } else { [] };
+  for o in ops {
+    o_nr = o#index;
+    if o_nr > result_idx {
+      continue;
+    }
+    if o_nr != result_idx {
+      ls += [o];
+      continue;
+    }
+    match o {
+      NdBlock { block: inner } => {
+        ls += insert_free(s, b, inner[0], free, is_return, f);
+        continue;
+      },
+      _ => {}
+    }
+    if result is TyVoid || result is TyNever {
+      if expr_ends_in_return(o) {
+        ls += free;
+        ls += [o];
+      } else {
+        ls += [o];
+        ls += free;
+        ls += [ir::NdReturn { inner: ir::NdNull }];
+      }
+      continue;
+    }
+    tail_needs_eval = match scope_fn::unspan(o) {
+      NdNull => false,
+      NdVar { n: v } => {
+        tv = scope_fn::tp(f, v);
+        refvar_non_text = match tv { TyRefVar { inner } => !scope_fn::is_text(inner), _ => false };
+        buf = any_text_return_buffer(b, f, s.d_nr);
+        refvar_non_text || (is_return && !scope_fn::is_argument(f, v) && !scope_fn::is_skip_free(f, v) && scope_fn::is_text(tv) && !(tv is TyRefVar) && buf >= 0 && buf != v)
+      },
+      _ => true
+    };
+    is_text_result = scope_fn::is_text(result);
+    is_heap_ref_result = match scope_fn::base(result) { TyReference => true, TyVector => true, TyEnum { is_ref } => is_ref, _ => false };
+    is_fnref_result = scope_fn::base(result) is TyFunction;
+    if is_fnref_result {
+      scope_scan::refuse(s, "insert_free: a block answering a {scope_fn::kind_name(result)}");
+    }
+    hoist_tmp = -1;
+    if is_return && (len(free) > 0 || len(trailing_frees) > 0) && (is_value_return_type(result) || is_text_result || is_heap_ref_result || is_fnref_result) && tail_needs_eval && !expr_ends_in_return(o) && !(is_text_result && is_argument_text_view(b, o, f) && any_text_return_buffer(b, f, s.d_nr) < 0) {
+      pending: vector<ir::Node> = [for x in trailing_frees { x }];
+      pending += free;
+      tb = if is_text_result && !(scope_fn::unspan(o) is NdNull) { text_return_buffer_for(b, o, f, s.d_nr) } else { -1 };
+      if tb >= 0 {
+        ls += [push_text_arms(b, o, tb)];
+        free_copied_text_sources(s, ls, o, pending, f);
+        hoist_tmp = tb;
+      } else {
+        s.ret_temp_counter += 1;
+        tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", result);
+        if is_text_result || is_heap_ref_result {
+          f.variables[tmp].skip_free = true;
+        }
+        scope_scan::set_scope_of(s, tmp, s.scope);
+        s.var_order += [tmp];
+        ls += [scope_fn::v_set(tmp, o)];
+        if is_text_result {
+          free_copied_text_sources(s, ls, o, pending, f);
+        }
+        hoist_tmp = tmp;
+        if is_text_result && !(scope_fn::unspan(o) is NdNull) {
+          buf = any_text_return_buffer(b, f, s.d_nr);
+          if buf >= 0 {
+            ls += [scope_fn::v_set(buf, ir::NdVar { n: tmp }), free_text(s, tmp)];
+            hoist_tmp = buf;
+          }
+        }
+      }
+    }
+    // A free of a var the returned tail still READS that the return-delivery materializer
+    // consumed in-arm (`Function::is_arm_consumed`) is dropped: the tail frees that store
+    // inside the expression.
+    ret_frees: vector<ir::Node> = [];
+    all_frees: vector<ir::Node> = [for x in trailing_frees { x }];
+    all_frees += free;
+    for fr in all_frees {
+      fv = scope_scan::scope_free_op_var(s, fr);
+      if is_return && fv >= 0 && scope_fn::reads_var(o, fv) && f.variables[fv]!.arm_consumed {
+        continue;
+      }
+      ret_frees += [fr];
+    }
+    is_refvar_text = match scope_fn::base(result) { TyRefVar { inner } => scope_fn::is_text(inner), _ => false };
+    if hoist_tmp < 0 && is_return && is_refvar_text && len(ret_frees) > 0 && scope_fn::unspan(o) is NdIf {
+      scope_scan::refuse(s, "insert_free::push_frees_into_arms: a `&text` branch returned");
+      ls += [ir::NdReturn { inner: o }];
+    } else if hoist_tmp < 0 && !is_return {
+      before: vector<ir::Node> = [];
+      after: vector<ir::Node> = [];
+      for fr in ret_frees {
+        fv = scope_scan::scope_free_op_var(s, fr);
+        if fv >= 0 && scope_fn::reads_var(o, fv) {
+          after += [fr];
+        } else {
+          before += [fr];
+        }
+      }
+      ls += before;
+      ls += [o];
+      ls += after;
+    } else {
+      ls += ret_frees;
+      if hoist_tmp >= 0 {
+        ls += [ir::NdReturn { inner: ir::NdVar { n: hoist_tmp } }];
+      } else {
+        ls += [ir::NdReturn { inner: o }];
+      }
+    }
+  }
+  [ir::NdBlock { block: [ir::Block { name: block.name, operators: ls, result: block.result, scope: block.scope, var_size: 0 }] }]
+}

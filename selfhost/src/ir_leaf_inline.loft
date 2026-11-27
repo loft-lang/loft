@@ -1,0 +1,1161 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/leaf_inline.rs` transcribed (`@FR-R-InlineLeaf`, `@FR-R-MaskRange`,
+// `@FR-R-SingleUse`, `@FR-R-ScaleFold`): a call of a SCALAR LEAF is replaced by the leaf's
+// body.  A scalar leaf is a function whose parameters, locals and result are integers, floats,
+// singles, booleans or characters (or a tuple of them as its result), whose body is a block of
+// assignments and a result built only from operators, variables and literals.  The APPENDER
+// clause admits a void leaf appending scalars to vector fields of record parameters; the READER
+// clause a scalar leaf reading scalars from `File` parameters.  Inside an inlined body three
+// reductions follow: `(R-MaskRange)` (a mask its operand's range makes redundant, a nullable
+// division of a ranged integer by a finite non-zero literal), `(R-SingleUse)` (the last
+// assignment the result reads once, first, moved into the read) and `(R-ScaleFold)` (`x / c *
+// 2^k` as `x / (c / 2^k)`).  Not in an `open_world` program, nor in one that observes function
+// entries (`loft test`'s coverage, which the passes gate never builds), nor under a profiler.
+
+use ir;
+use scope_fn;
+use lower;
+use opt_non_sentinel;
+use opt_range;
+use ir_pass_tree;
+
+// A body larger than this many nodes stays a call: it is copied into every call site.
+MAX_NODES = 120;
+
+fn env_on(name: text) -> boolean {
+  (env_variable(name) ?? "0") != "0"
+}
+
+fn off_reader() -> boolean {
+  env_on("LOFT_NO_INLINE_READER")
+}
+
+fn trace() -> boolean {
+  env_on("LOFT_TRACE_INLINE_LEAF")
+}
+
+// An instrument that attributes work to FUNCTIONS is armed: the calls stay calls.
+fn profiled() -> boolean {
+  for k in ["LOFT_PROFILE", "LOFT_ALLOC_PATHS", "LOFT_ALLOC_SITES", "LOFT_OP_CENSUS"] {
+    if env_variable(k) != null {
+      return true;
+    }
+  }
+  false
+}
+
+// The operators the reductions read and write.
+struct Ops {
+  mul_int: integer,
+  add_int: integer,
+  min_int: integer,
+  eor_int: integer,
+  land_int: integer,
+  lor_int: integer,
+  div_float: integer,
+  div_float_nullable: integer,
+  mul_float: integer,
+  conv_float_from_int: integer,
+  conv_bool_from_float: integer
+}
+
+fn new_ops(b: ir::Bundle) -> Ops {
+  Ops {
+    mul_int: lower::find(b, "OpMulInt") ?? -1,
+    add_int: lower::find(b, "OpAddInt") ?? -1,
+    min_int: lower::find(b, "OpMinInt") ?? -1,
+    eor_int: lower::find(b, "OpEorInt") ?? -1,
+    land_int: lower::find(b, "OpLandInt") ?? -1,
+    lor_int: lower::find(b, "OpLorInt") ?? -1,
+    div_float: lower::find(b, "OpDivFloat") ?? -1,
+    div_float_nullable: lower::find(b, "OpDivFloatNullable") ?? -1,
+    mul_float: lower::find(b, "OpMulFloat") ?? -1,
+    conv_float_from_int: lower::find(b, "OpConvFloatFromInt") ?? -1,
+    conv_bool_from_float: lower::find(b, "OpConvBoolFromFloat") ?? -1
+  }
+}
+
+// An admitted leaf: what its call is replaced by (`ok` false, `why` set, for none).
+struct Leaf {
+  ok: boolean,
+  why: text,
+  name: text,
+  // The parameters in call order, as variable numbers.
+  params: vector<integer>,
+  // Every variable's name and type, by number.
+  names: vector<text>,
+  types: vector<ir::TypeT>,
+  // The variables the body assigns: never substituted by a literal argument.
+  assigned: vector<integer>,
+  // The body's assignments, in order, without line markers.
+  stmts: vector<ir::Node>,
+  // The body's result, a final `return` unwrapped.
+  tail: ir::Node,
+  result: ir::TypeT,
+  // The record parameters read in place at the call (the appender's records, the reader's files).
+  records: vector<integer>,
+  appender: boolean,
+  // The appender clause: variables the body never reads, which get no local in the caller.
+  unused: vector<integer>
+}
+
+fn refuse(why: text) -> Leaf {
+  Leaf { ok: false, why: why, name: "", params: [], names: [], types: [], assigned: [], stmts: [], tail: ir::NdNull, result: ir::TyVoid, records: [], appender: false, unused: [] }
+}
+
+fn scalar(t: ir::TypeT) -> boolean {
+  // Deliberately not peeled: a `τ?` admits the null its type allows.
+  t is TyInteger || t is TyFloat || t is TySingle || t is TyBoolean || t is TyCharacter
+}
+
+fn literal(v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  u is NdInt || u is NdLong || u is NdFloat || u is NdSingle || u is NdBoolean
+}
+
+fn add_assigned(s: vector<integer>, x: integer) {
+  if !s.contains(x) {
+    s += [x];
+  }
+}
+
+struct Nodes { n: integer }
+
+// Is `v` built only from operators, variables, literals, `if` and blocks of assignments?
+// Counts the nodes into `nodes`, short-circuiting as the Rust does.
+fn pure(b: ir::Bundle, v: ir::Node, assigned: vector<integer>, nodes: Nodes) -> boolean {
+  nodes.n += 1;
+  match v {
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdVar => true,
+    NdSpan { inner } => pure(b, inner, assigned, nodes),
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) || !b.data.definitions[def_nr]!.name.starts_with("Op") {
+        return false;
+      }
+      for a in args {
+        if !pure(b, a, assigned, nodes) {
+          return false;
+        }
+      }
+      true
+    },
+    NdIf { cond, t, f } => pure(b, cond, assigned, nodes) && pure(b, t, assigned, nodes) && pure(b, f, assigned, nodes),
+    // A tuple literal of pure elements: the tuple clause's result.
+    NdTuple { items } => {
+      for i in items {
+        if !pure(b, i, assigned, nodes) {
+          return false;
+        }
+      }
+      true
+    },
+    NdBlock { block } => {
+      body = [for o in block[0]!.operators if !(o is NdLine) { o }];
+      if len(body) == 0 {
+        return false;
+      }
+      for k in 0..len(body) - 1 {
+        if !(statement(b, body[k]!, assigned, nodes) || read(b, body[k]!, assigned, nodes)) {
+          return false;
+        }
+      }
+      pure(b, body[len(body) - 1]!, assigned, nodes)
+    },
+    _ => false
+  }
+}
+
+// The reader clause: `OpReadFile(f, OpCreateStack(t), n, tp)` as a statement.
+fn read(b: ir::Bundle, v: ir::Node, assigned: vector<integer>, nodes: Nodes) -> boolean {
+  nodes.n += 1;
+  u = scope_fn::unspan(v);
+  if ir_pass_tree::def_name(b, ir_pass_tree::call_def(u)) != "OpReadFile" {
+    return false;
+  }
+  args = ir_pass_tree::args_of(u);
+  if len(args) != 4 {
+    return false;
+  }
+  slot = scope_fn::unspan(args[1]!);
+  of = ir_pass_tree::args_of(slot);
+  if !(slot is NdCall) || len(of) != 1 {
+    return false;
+  }
+  t = match of[0]! { NdVar { n } => n, _ => return false };
+  if ir_pass_tree::def_name(b, ir_pass_tree::call_def(slot)) != "OpCreateStack" || !(scope_fn::unspan(args[0]!) is NdVar) {
+    return false;
+  }
+  add_assigned(assigned, t);
+  literal(args[3]!) && pure(b, args[2]!, assigned, nodes)
+}
+
+struct Uses { all: integer, hit: integer }
+
+// How often `f` is named in `v`, and how often as the file operand of an `OpReadFile`.
+fn file_uses(b: ir::Bundle, v: ir::Node, f: integer, u: Uses) {
+  match v {
+    NdVar { n } => if n == f { u.all += 1; },
+    NdSet { var } => if var == f { u.all += 1; },
+    NdCall { def_nr, args } => {
+      if ir_pass_tree::def_name(b, def_nr) == "OpReadFile" && len(args) > 0 && (ir_pass_tree::var_of(args[0]!) ?? -1) == f {
+        u.hit += 1;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    file_uses(b, c, f, u);
+  }
+}
+
+// An assignment of a pure expression.
+fn statement(b: ir::Bundle, v: ir::Node, assigned: vector<integer>, nodes: Nodes) -> boolean {
+  match v {
+    NdSet { var, inner } => {
+      add_assigned(assigned, var);
+      pure(b, inner, assigned, nodes)
+    },
+    _ => false
+  }
+}
+
+PUSH_OPS = ["OpPushInt", "OpPushFloat", "OpPushSingle", "OpPushBoolean", "OpPushEnum", "OpPushCharacter", "OpPushByte"];
+
+// The appender clause: one element appended to a vector field of a record parameter.
+fn push(b: ir::Bundle, v: ir::Node, records: vector<integer>, assigned: vector<integer>, nodes: Nodes) -> boolean {
+  nodes.n += 1;
+  u = scope_fn::unspan(v);
+  if !(u is NdCall) || !PUSH_OPS.contains(ir_pass_tree::def_name(b, ir_pass_tree::call_def(u))) {
+    return false;
+  }
+  args = ir_pass_tree::args_of(u);
+  if len(args) == 0 {
+    return false;
+  }
+  target = scope_fn::unspan(args[0]!);
+  field = ir_pass_tree::args_of(target);
+  if !(target is NdCall) || ir_pass_tree::def_name(b, ir_pass_tree::call_def(target)) != "OpGetField" || len(field) != 3 {
+    return false;
+  }
+  r = ir_pass_tree::var_of(field[0]!) ?? -1;
+  if !(scope_fn::unspan(field[0]!) is NdVar) || !records.contains(r) || !literal(field[1]!) || !literal(field[2]!) {
+    return false;
+  }
+  for k in 1..len(args) {
+    if !pure(b, args[k]!, assigned, nodes) {
+      return false;
+    }
+  }
+  true
+}
+
+// How often `r` is read in `v`, and how often as a push's record operand.
+fn record_uses(b: ir::Bundle, v: ir::Node, r: integer, u: Uses) {
+  match v {
+    NdVar { n } => if n == r { u.all += 1; },
+    NdCall { def_nr, args } => {
+      if PUSH_OPS.contains(ir_pass_tree::def_name(b, def_nr)) && len(args) > 0 {
+        t = scope_fn::unspan(args[0]!);
+        fa = ir_pass_tree::args_of(t);
+        if t is NdCall && len(fa) > 0 && (ir_pass_tree::var_of(fa[0]!) ?? -1) == r {
+          u.hit += 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    record_uses(b, c, r, u);
+  }
+}
+
+fn reads_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => if x == v { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if reads_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// `variables`: every variable's name and type, the records read in place and the unused
+// temporaries; any other non-scalar variable declines (`why`).
+fn variables(b: ir::Bundle, d: ir::Definition, appender: boolean, l: Leaf) -> text {
+  f = d.variables;
+  file = if appender || off_reader() { -1 } else { lower::find(b, "File") ?? -1 };
+  for x in f.variables {
+    v = x#index;
+    if x.captured {
+      return "a captured variable";
+    }
+    t = scope_fn::tp(f, v);
+    if !scalar(t) {
+      in_place = x.argument && match t { TyReference { n } => appender || (n == file && file >= 0), _ => false };
+      if in_place {
+        l.records += [v];
+      } else if appender && !x.argument && !reads_var(d.code[0]!, v) {
+        l.unused += [v];
+      } else {
+        return "a non-scalar variable";
+      }
+    }
+    l.names += [x.name];
+    l.types += [t];
+  }
+  ""
+}
+
+fn var_by_name(f: ir::Function, name: text) -> integer {
+  for n in f.names {
+    if n.name == name {
+      return n.nr;
+    }
+  }
+  65535
+}
+
+// port: leaf_inline.rs fn admit — the leaf a call of `d` may be replaced by.
+fn admit(b: ir::Bundle, d: integer) -> Leaf {
+  def = b.data.definitions[d]!;
+  if def.def_type != 1 {
+    return refuse("not a function");
+  }
+  bl = match def.code[0] ?? ir::NdNull { NdBlock { block } => block[0]!, _ => return refuse("no loft body") };
+  if def.c_sig != "" {
+    return refuse("a #c_twin, whose C routine the C backend calls");
+  }
+  ret = def.returned[0] ?? ir::TyVoid;
+  tuple_of_scalars = match ret {
+    TyTuple { elems } => {
+      all = true;
+      for e in elems {
+        if !scalar(e) {
+          all = false;
+        }
+      }
+      all
+    },
+    _ => false
+  };
+  appender = ret is TyVoid && !env_on("LOFT_NO_INLINE_APPENDER");
+  if !scalar(ret) && !tuple_of_scalars && !appender {
+    return refuse("a non-scalar result");
+  }
+  l = refuse("");
+  why = variables(b, def, appender, l);
+  if why != "" {
+    return refuse(why);
+  }
+  if appender && len(l.records) == 0 {
+    return refuse("a void body with no record to append to");
+  }
+  f = def.variables;
+  for a in def.attributes {
+    v = var_by_name(f, a.name);
+    if v == 65535 || !scope_fn::is_argument(f, v) {
+      return refuse("a parameter without its variable");
+    }
+    l.params += [v];
+  }
+  raw = [for o in bl.operators if !(o is NdLine) { o }];
+  if len(raw) == 0 {
+    return refuse("an empty body");
+  }
+  nodes = Nodes { n: 0 };
+  l.name = def.name;
+  if appender {
+    for s in raw {
+      if !statement(b, s, l.assigned, nodes) && !push(b, s, l.records, l.assigned, nodes) {
+        return refuse("an appender statement other than an assignment or a push");
+      }
+    }
+    for r in l.records {
+      if l.assigned.contains(r) {
+        return refuse("an appender that rebinds its record");
+      }
+      u = Uses { all: 0, hit: 0 };
+      record_uses(b, def.code[0]!, r, u);
+      if u.all != u.hit {
+        return refuse("an appender that reads its record other than to push");
+      }
+    }
+    if nodes.n > MAX_NODES {
+      return refuse("a body too large to copy into every call site");
+    }
+    l.ok = true;
+    l.stmts = raw;
+    l.tail = ir::NdNull;
+    l.result = ir::TyVoid;
+    l.appender = true;
+    return l;
+  }
+  // The line markers go with the call, so each value the body computes carries its own line
+  // as a `Span`.
+  body = [for o in located(bl.operators, def.position.file, def.position.line) if !(o is NdLine) { o }];
+  for k in 0..len(body) - 1 {
+    if !statement(b, body[k]!, l.assigned, nodes) {
+      return refuse("a statement other than an assignment");
+    }
+  }
+  last = body[len(body) - 1]!;
+  // A `return` is read as its value, which keeps the span of the statement around it.
+  tail = match last {
+    NdReturn { inner } => inner,
+    NdSpan { pos, inner } => match inner { NdReturn { inner: e } => spanned(e, pos), _ => last },
+    _ => last
+  };
+  l.unused = [];
+  if !pure(b, tail, l.assigned, nodes) {
+    return refuse("a result other than operators over variables and literals");
+  }
+  if nodes.n > MAX_NODES {
+    return refuse("a body too large to copy into every call site");
+  }
+  for r in l.records {
+    u = Uses { all: 0, hit: 0 };
+    file_uses(b, def.code[0]!, r, u);
+    if u.all != u.hit {
+      return refuse("a reader that uses its file other than to read a scalar");
+    }
+  }
+  l.ok = true;
+  l.stmts = [for k in 0..len(body) - 1 { body[k]! }];
+  l.tail = tail;
+  l.result = ret;
+  l.appender = false;
+  l
+}
+
+// A leaf body's statements with each computed value wrapped in a `Span` at the line of the
+// marker before it, inside nested blocks and `if` arms too; a value that already has a span
+// keeps it.
+fn located(ops: vector<ir::Node>, file: text, line: integer) -> vector<ir::Node> {
+  at = line;
+  out: vector<ir::Node> = [];
+  for o in ops {
+    match o {
+      NdLine { n } => {
+        at = n;
+        out += [o];
+        continue;
+      },
+      _ => {}
+    }
+    pos = ir::Position { file: file, line: at, pos: 1 };
+    out += [match o {
+      // Already located: the blocks inside it take ITS line.
+      NdSpan { pos: sp, inner } => ir::NdSpan { pos: sp, inner: locate(inner, file, sp.line) },
+      NdSet { var, inner } => ir::NdSet { var: var, inner: spanned(locate(inner, file, at), pos) },
+      NdReturn { inner } => ir::NdReturn { inner: spanned(locate(inner, file, at), pos) },
+      _ => spanned(locate(o, file, at), pos)
+    }];
+  }
+  out
+}
+
+// `v` with the blocks inside it located.
+fn locate(v: ir::Node, file: text, line: integer) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: locate(inner, file, pos.line) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, located(block[0]!.operators, file, line))] },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: locate(t, file, line), f: locate(f, file, line) },
+    _ => v
+  }
+}
+
+// `v` at `pos`, unless it already carries a span or no line is known.
+fn spanned(v: ir::Node, pos: ir::Position) -> ir::Node {
+  if pos.line == 0 || (v is NdSpan) {
+    v
+  } else {
+    ir::NdSpan { pos: pos, inner: v }
+  }
+}
+
+// What a leaf's variable is at one call site: `node`, when `has`.
+struct Map { has: vector<boolean>, node: vector<ir::Node> }
+
+// A copy of a leaf's node over the caller's names.
+fn remap(v: ir::Node, m: Map, scope: integer) -> ir::Node {
+  match v {
+    NdVar { n } => m.node[n]!,
+    NdSet { var, inner } => {
+      t = match m.node[var]! { NdVar { n } => n, _ => var };
+      ir::NdSet { var: t, inner: remap(inner, m, scope) }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: remap(inner, m, scope) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { remap(a, m, scope) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: remap(cond, m, scope), t: remap(t, m, scope), f: remap(f, m, scope) },
+    NdTuple { items } => ir::NdTuple { items: [for i in items { remap(i, m, scope) }] },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: [for o in bl.operators if !(o is NdLine) { remap(o, m, scope) }], result: [for t in bl.result { t }], scope: scope, var_size: 0 }] }
+    },
+    _ => v
+  }
+}
+
+// The body that replaces a call of `leaf` with `args` at a site in `scope`.
+fn expand(l: Leaf, args: vector<ir::Node>, scope: integer, f: ir::Function, fresh: vector<integer>) -> ir::Node {
+  m = Map { has: [for _ in l.names { false }], node: [for _ in l.names { ir::NdNull }] };
+  ops: vector<ir::Node> = [];
+  // A plain variable argument is read in place as well, when no argument can write.
+  simple = true;
+  for a in args {
+    if !literal(a) && !(scope_fn::unspan(a) is NdVar) {
+      simple = false;
+    }
+  }
+  for p in l.params {
+    arg = args[p#index] ?? ir::NdNull;
+    if l.records.contains(p) {
+      m.has[p] = true;
+      m.node[p] = scope_fn::unspan(arg);
+      continue;
+    }
+    in_place = literal(arg) || (simple && scope_fn::unspan(arg) is NdVar);
+    if !l.assigned.contains(p) && in_place {
+      m.has[p] = true;
+      m.node[p] = scope_fn::unspan(arg);
+    } else {
+      t = ir_pass_tree::add_unique(f, "il_{l.names[p]!}", l.types[p]!, scope);
+      fresh += [t];
+      ops += [ir::NdSet { var: t, inner: arg }];
+      m.has[p] = true;
+      m.node[p] = ir::NdVar { n: t };
+    }
+  }
+  for nm in l.names {
+    v = nm#index;
+    if l.unused.contains(v) || m.has[v]! {
+      continue;
+    }
+    t = ir_pass_tree::add_unique(f, "il_{nm}", l.types[v]!, scope);
+    fresh += [t];
+    m.has[v] = true;
+    m.node[v] = ir::NdVar { n: t };
+  }
+  for s in l.stmts {
+    ops += [remap(s, m, scope)];
+  }
+  if !l.appender {
+    ops += [remap(l.tail, m, scope)];
+  }
+  ir::NdBlock { block: [ir_pass_tree::block("Inline", ops, l.result, scope)] }
+}
+
+// The appender and reader clauses at one call site: each record argument a plain variable
+// holding the record itself, and no argument calling user code.
+fn appender_site(b: ir::Bundle, l: Leaf, args: vector<ir::Node>, f: ir::Function) -> boolean {
+  if len(l.records) == 0 {
+    return true;
+  }
+  for p in l.params {
+    if l.records.contains(p) {
+      a = scope_fn::unspan(args[p#index] ?? ir::NdNull);
+      plain = match a { NdVar { n } => scope_fn::tp(f, n) is TyReference, _ => false };
+      if !plain {
+        return false;
+      }
+    }
+  }
+  for a in args {
+    if !call_free(b, a) {
+      return false;
+    }
+  }
+  true
+}
+
+fn call_free(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdSpan { inner } => return call_free(b, inner),
+    NdCall { def_nr } => if !ir_pass_tree::def_name(b, def_nr).starts_with("Op") { return false; },
+    NdVar => {},
+    NdInt => {},
+    NdLong => {},
+    NdFloat => {},
+    NdSingle => {},
+    NdBoolean => {},
+    _ => return false
+  }
+  for c in scope_fn::children(n) {
+    if !call_free(b, c) {
+      return false;
+    }
+  }
+  true
+}
+
+struct Inl { n: integer }
+
+// Every call of an admitted leaf in `v` replaced, innermost first.
+fn inline_in(b: ir::Bundle, v: ir::Node, scope: integer, caller: integer, leaves: vector<Leaf>, leaf_of: vector<integer>, f: ir::Function, fresh: vector<integer>, c: Inl) -> ir::Node {
+  inner = match v { NdBlock { block } => block[0]!.scope, NdLoop { block } => block[0]!.scope, _ => scope };
+  kids = scope_fn::children(v);
+  v2 = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for k in kids { inline_in(b, k, inner, caller, leaves, leaf_of, f, fresh, c) }]) };
+  match v2 {
+    NdCall { def_nr, args } => {
+      li = if def_nr >= 0 && def_nr < len(leaf_of) { leaf_of[def_nr]! } else { -1 };
+      if def_nr != caller && li >= 0 {
+        l = leaves[li]!;
+        if len(args) == len(l.params) && appender_site(b, l, args, f) {
+          if trace() {
+            eprintln("inline-leaf: {l.name} into fn {caller}");
+          }
+          c.n += 1;
+          return expand(l, args, scope, f, fresh);
+        }
+      }
+    },
+    _ => {}
+  }
+  v2
+}
+
+// The literal an integer operator over two literals answers, when it answers one (`NdNull` for
+// none) — never on an overflow or a result that is the null sentinel.
+fn fold_int(ops: Ops, op: integer, first: ir::Node, second: ir::Node) -> ir::Node {
+  lhs = lit(first);
+  rhs = lit(second);
+  if lhs == null || rhs == null {
+    return ir::NdNull;
+  }
+  folded: integer? = null;
+  if op == ops.mul_int {
+    folded = lhs! * rhs!;
+  } else if op == ops.add_int {
+    folded = lhs! + rhs!;
+  } else if op == ops.min_int {
+    folded = lhs! - rhs!;
+  } else if op == ops.eor_int {
+    folded = lhs! ^ rhs!;
+  } else if op == ops.land_int {
+    folded = lhs! & rhs!;
+  } else if op == ops.lor_int {
+    folded = lhs! | rhs!;
+  } else {
+    return ir::NdNull;
+  }
+  // An overflow answers the null sentinel, which is the operator's to report.
+  if folded == null {
+    return ir::NdNull;
+  }
+  if folded! >= -2147483648 && folded! <= 2147483647 { ir::NdInt { n: folded! } } else { ir::NdLong { n: folded } }
+}
+
+fn lit(n: ir::Node) -> integer? {
+  match scope_fn::unspan(n) {
+    NdInt { n: k } => k,
+    NdLong { n: l } => l,
+    _ => null
+  }
+}
+
+// Every literal-over-literal integer operation in `v` folded, innermost first.
+fn fold(ops: Ops, v: ir::Node) -> ir::Node {
+  kids = scope_fn::children(v);
+  v2 = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for k in kids { fold(ops, k) }]) };
+  match v2 {
+    NdCall { def_nr, args } => {
+      if len(args) == 2 {
+        r = fold_int(ops, def_nr, args[0]!, args[1]!);
+        if !(r is NdNull) {
+          return r;
+        }
+      }
+    },
+    _ => {}
+  }
+  v2
+}
+
+// The ranges of the fresh locals at one point of an inlined body (a `HashMap<u16, Range>`).
+struct Facts { has: vector<boolean>, lo: vector<integer>, hi: vector<integer> }
+
+fn copy_facts(x: Facts) -> Facts {
+  Facts { has: [for h in x.has { h }], lo: [for l in x.lo { l }], hi: [for h in x.hi { h }] }
+}
+
+fn put(x: Facts, v: integer, r: opt_range::Range?) {
+  if v < 0 || v >= len(x.has) {
+    return;
+  }
+  if r == null {
+    x.has[v] = false;
+  } else {
+    x.has[v] = true;
+    x.lo[v] = r!.lo;
+    x.hi[v] = r!.hi;
+  }
+}
+
+// What the reductions read and count while they walk one inlined body.
+struct Reduce {
+  ops: Ops,
+  p: opt_non_sentinel::Proof,
+  calls: opt_range::Calls,
+  nn: vector<boolean>,
+  count: integer
+}
+
+fn range_of(b: ir::Bundle, r: Reduce, x: Facts, v: ir::Node) -> opt_range::Range? {
+  rv = opt_range::empty_ranges(len(x.has));
+  for h in x.has {
+    if h {
+      opt_range::set_var(rv, h#index, opt_range::Range { lo: x.lo[h#index]!, hi: x.hi[h#index]! });
+    }
+  }
+  opt_range::range(b, r.p, r.calls, r.nn, rv, v, 0)
+}
+
+struct Counts { masks: integer, singles: integer, scales: integer }
+
+// `(R-MaskRange)` over `v` in evaluation order, `x` holding each local's range at this point.
+fn masks(b: ir::Bundle, r: Reduce, v: ir::Node, x: Facts, k: Counts) -> ir::Node {
+  match v {
+    NdSet { var, inner } => {
+      e = masks(b, r, inner, x, k);
+      put(x, var, range_of(b, r, x, e));
+      return ir::NdSet { var: var, inner: e };
+    },
+    NdBlock { block } => {
+      div = coalesce(b, r, v, x);
+      if !(div is NdNull) {
+        k.masks += 1;
+        return div;
+      }
+      bl = block[0]!;
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(bl, [for o in bl.operators { masks(b, r, o, x, k) }])] };
+    },
+    NdIf { cond, t, f } => {
+      c = masks(b, r, cond, x, k);
+      tf = copy_facts(x);
+      t2 = masks(b, r, t, tf, k);
+      ef = copy_facts(x);
+      e2 = masks(b, r, f, ef, k);
+      for h in x.has {
+        i = h#index;
+        if h && !(tf.has[i]! && ef.has[i]! && tf.lo[i]! == x.lo[i]! && tf.hi[i]! == x.hi[i]! && ef.lo[i]! == x.lo[i]! && ef.hi[i]! == x.hi[i]!) {
+          x.has[i] = false;
+        }
+      }
+      return ir::NdIf { cond: c, t: t2, f: e2 };
+    },
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: masks(b, r, inner, x, k) },
+    NdCall { def_nr, args } => {
+      na = [for a in args { masks(b, r, a, x, k) }];
+      // The reader clause: a local written through its address carries no range.
+      for a in na {
+        u = scope_fn::unspan(a);
+        of = ir_pass_tree::args_of(u);
+        if u is NdCall && len(of) == 1 && ir_pass_tree::def_name(b, ir_pass_tree::call_def(u)) == "OpCreateStack" {
+          match of[0]! {
+            NdVar { n } => put(x, n, null),
+            _ => {}
+          }
+        }
+      }
+      if def_nr == r.ops.land_int && len(na) == 2 {
+        keep = redundant_mask(b, r, x, na);
+        if keep >= 0 {
+          k.masks += 1;
+          return na[keep]!;
+        }
+      }
+      return ir::NdCall { def_nr: def_nr, args: na };
+    },
+    _ => {}
+  }
+  v
+}
+
+// The operand of `a & m` that the mask leaves unchanged: `m = 2^k - 1` and the operand lies in
+// `0 ..= m`; -1 for none.
+fn redundant_mask(b: ir::Bundle, r: Reduce, x: Facts, args: vector<ir::Node>) -> integer {
+  for m in [1, 0] {
+    o = 1 - m;
+    mask = match scope_fn::unspan(args[m]!) { NdInt { n } => n, NdLong { n } => n, _ => continue };
+    if mask == null || mask! < 0 {
+      continue;
+    }
+    // `(mask as u64).wrapping_add(1).is_power_of_two()`
+    pow2 = if mask! == 9223372036854775807 { true } else { ((mask! + 1) & mask!) == 0 };
+    if !pow2 {
+      continue;
+    }
+    rg = range_of(b, r, x, args[o]!);
+    if rg != null && rg!.lo >= 0 && rg!.hi <= mask! {
+      return o;
+    }
+  }
+  -1
+}
+
+// `{t = x / c (nullable); if t is not null then t else d}` as the plain `x / c`, when `x`
+// converts a ranged integer and `c` is a finite non-zero literal (`NdNull` for none).
+fn coalesce(b: ir::Bundle, r: Reduce, node: ir::Node, x: Facts) -> ir::Node {
+  bl = match node { NdBlock { block } => block[0]!, _ => return ir::NdNull };
+  body = [for o in bl.operators if !(o is NdLine) { o }];
+  if len(body) != 2 {
+    return ir::NdNull;
+  }
+  tmp = -1;
+  div = ir::NdNull;
+  match body[0]! {
+    NdSet { var, inner } => { tmp = var; div = inner; },
+    _ => return ir::NdNull
+  }
+  test = ir::NdNull;
+  then_arm = ir::NdNull;
+  match body[1]! {
+    NdIf { cond, t } => { test = cond; then_arm = t; },
+    _ => return ir::NdNull
+  }
+  dargs = ir_pass_tree::args_of(div);
+  if !ir_pass_tree::is_call(div, r.ops.div_float_nullable) || len(dargs) != 2 {
+    return ir::NdNull;
+  }
+  cargs = ir_pass_tree::args_of(dargs[0]!);
+  if !ir_pass_tree::is_call(dargs[0]!, r.ops.conv_float_from_int) || len(cargs) != 1 {
+    return ir::NdNull;
+  }
+  divisor = match scope_fn::unspan(dargs[1]!) { NdFloat { f } => f, _ => return ir::NdNull };
+  if !finite(divisor) || divisor == 0.0 || range_of(b, r, x, cargs[0]!) == null {
+    return ir::NdNull;
+  }
+  targs = ir_pass_tree::args_of(test);
+  if !ir_pass_tree::is_call(test, r.ops.conv_bool_from_float) || len(targs) != 1
+    || !(scope_fn::unspan(targs[0]!) is NdVar) || (ir_pass_tree::var_of(targs[0]!) ?? -1) != tmp
+    || !(scope_fn::unspan(then_arm) is NdVar) || (ir_pass_tree::var_of(then_arm) ?? -1) != tmp {
+    return ir::NdNull;
+  }
+  ir::NdCall { def_nr: r.ops.div_float, args: [dargs[0]!, dargs[1]!] }
+}
+
+// The exponent field of `f`'s bits; 2047 for a NaN (loft's null float).
+fn exponent(f: float) -> integer {
+  bits = f.bits();
+  if bits == null {
+    // `-0.0`, whose bits are the integer sentinel: exponent 0.
+    return 0;
+  }
+  (bits! >> 52) & 2047
+}
+
+fn finite(f: float) -> boolean {
+  exponent(f) != 2047
+}
+
+fn normal(f: float) -> boolean {
+  e = exponent(f);
+  e != 0 && e != 2047
+}
+
+// `(R-SingleUse)` on an inlined body: its last assignment, to a fresh local the result reads
+// once and FIRST, goes into that read.
+fn single_use(bl: ir::Block, fresh: vector<integer>, k: Counts) -> ir::Block {
+  n = len(bl.operators);
+  if n < 2 {
+    return bl;
+  }
+  x = -1;
+  e = ir::NdNull;
+  match bl.operators[n - 2]! {
+    NdSet { var, inner } => { x = var; e = inner; },
+    _ => return bl
+  }
+  if !fresh.contains(x) {
+    return bl;
+  }
+  ev: vector<integer> = [];
+  if !evaluation(bl.operators[n - 1]!, x, ev) || len(ev) == 0 || ev[0]! != 1 {
+    return bl;
+  }
+  reads = 0;
+  for y in ev {
+    if y == 1 {
+      reads += 1;
+    }
+  }
+  if reads != 1 {
+    return bl;
+  }
+  last = substitute(bl.operators[n - 1]!, x, e, Sub { done: false });
+  k.singles += 1;
+  ops = [for i in 0..n - 2 { bl.operators[i]! }];
+  ops += [last];
+  ir_pass_tree::with_operators(bl, ops)
+}
+
+// The evaluation of `v` as reads of `x` (1) and completed operators (2), in order; false for a
+// shape the single-use check does not follow.
+fn evaluation(v: ir::Node, x: integer, out: vector<integer>) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar { n } => {
+      if n == x {
+        out += [1];
+      }
+      true
+    },
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdCall { args } => {
+      for a in args {
+        if !evaluation(a, x, out) {
+          return false;
+        }
+      }
+      out += [2];
+      true
+    },
+    _ => false
+  }
+}
+
+struct Sub { done: boolean }
+
+// The one read of `x` in `v` replaced by `e`.
+fn substitute(v: ir::Node, x: integer, e: ir::Node, s: Sub) -> ir::Node {
+  if s.done {
+    return v;
+  }
+  match v {
+    NdVar { n } => {
+      if n == x {
+        s.done = true;
+        return e;
+      }
+      return v;
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { substitute(c, x, e, s) }])
+}
+
+// `(R-ScaleFold)` over `v`, innermost first.
+fn scales(r: Reduce, v: ir::Node, k: Counts) -> ir::Node {
+  kids = scope_fn::children(v);
+  v2 = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for c in kids { scales(r, c, k) }]) };
+  s = scale(r, v2);
+  if !(s is NdNull) {
+    k.scales += 1;
+    return s;
+  }
+  v2
+}
+
+fn float_of(v: ir::Node) -> float? {
+  match scope_fn::unspan(v) {
+    NdFloat { f } => f,
+    _ => null
+  }
+}
+
+fn scale(r: Reduce, v: ir::Node) -> ir::Node {
+  u = scope_fn::unspan(v);
+  op = ir_pass_tree::call_def(u);
+  args = ir_pass_tree::args_of(u);
+  if op < 0 || len(args) != 2 {
+    return ir::NdNull;
+  }
+  x = ir::NdNull;
+  c = 0.0;
+  m = 0.0;
+  // `x / c * m` (either operand order of the product) or `x * m / c`.
+  if op == r.ops.mul_float {
+    f0 = float_of(args[0]!);
+    f1 = float_of(args[1]!);
+    q = ir::NdNull;
+    if f0 == null && f1 != null {
+      q = args[0]!;
+      m = f1!;
+    } else if f0 != null && f1 == null {
+      q = args[1]!;
+      m = f0!;
+    } else {
+      return ir::NdNull;
+    }
+    dargs = ir_pass_tree::args_of(q);
+    if !ir_pass_tree::is_call(q, r.ops.div_float) || len(dargs) != 2 {
+      return ir::NdNull;
+    }
+    cc = float_of(dargs[1]!);
+    if cc == null {
+      return ir::NdNull;
+    }
+    x = dargs[0]!;
+    c = cc!;
+  } else if op == r.ops.div_float {
+    cc = float_of(args[1]!);
+    if cc == null {
+      return ir::NdNull;
+    }
+    c = cc!;
+    pargs = ir_pass_tree::args_of(args[0]!);
+    if !ir_pass_tree::is_call(args[0]!, r.ops.mul_float) || len(pargs) != 2 {
+      return ir::NdNull;
+    }
+    f0 = float_of(pargs[0]!);
+    f1 = float_of(pargs[1]!);
+    if f0 == null && f1 != null {
+      x = pargs[0]!;
+      m = f1!;
+    } else if f0 != null && f1 == null {
+      x = pargs[1]!;
+      m = f0!;
+    } else {
+      return ir::NdNull;
+    }
+  } else {
+    return ir::NdNull;
+  }
+  if !ir_pass_tree::is_call(x, r.ops.conv_float_from_int) || !scale_folds(c, m) {
+    return ir::NdNull;
+  }
+  ir::NdCall { def_nr: r.ops.div_float, args: [x, ir::NdFloat { f: (c / m) ?? 0.0 }] }
+}
+
+// `x / c * m` rounds as `x / (c / m)` for every integer conversion `x`: `m` a power of two of
+// at least 2, `c` finite and non-zero with `|c| < 2^1021`, and `c / m` exact and normal.
+fn scale_folds(c: float, m: float) -> boolean {
+  mb = m.bits();
+  power_of_two = m >= 2.0 && normal(m) && mb != null && (mb! & 4503599627370495) == 0;
+  q: float = (c / m) ?? 0.0;
+  if !power_of_two || !finite(c) || c == 0.0 || abs(c) >= float_from_bits((1021 + 1023) << 52) || !normal(q) {
+    return false;
+  }
+  // Exactness, so the BITS must agree — not a tolerance.
+  qm: float = (q * m) ?? 0.0;
+  qm.bits() == c.bits()
+}
+
+// The reductions on every inlined body in `v`.
+fn reduce_in(b: ir::Bundle, v: ir::Node, r: Reduce, base: Facts, fresh: vector<integer>, k: Counts) -> ir::Node {
+  kids = scope_fn::children(v);
+  v2 = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for c in kids { reduce_in(b, c, r, base, fresh, k) }]) };
+  bl = match v2 { NdBlock { block } => block[0]!, _ => return v2 };
+  if bl.name != "Inline" {
+    return v2;
+  }
+  ops = [for o in bl.operators { fold(r.ops, o) }];
+  if !env_on("LOFT_NO_MASK_RANGE") {
+    facts = copy_facts(base);
+    ops = [for o in ops { masks(b, r, o, facts, k) }];
+  }
+  nb = ir_pass_tree::with_operators(bl, ops);
+  if !env_on("LOFT_NO_SINGLE_USE") {
+    nb = single_use(nb, fresh, k);
+  }
+  if !env_on("LOFT_NO_SCALE_FOLD") {
+    nb = ir_pass_tree::with_operators(nb, [for o in nb.operators { scales(r, o, k) }]);
+  }
+  ir::NdBlock { block: [nb] }
+}
+
+fn blocked(n: ir::Node) -> boolean {
+  if n is NdYield || n is NdParallel {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if blocked(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn calls_a_leaf(n: ir::Node, caller: integer, leaf_of: vector<integer>) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr != caller && def_nr >= 0 && def_nr < len(leaf_of) && leaf_of[def_nr]! >= 0 { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls_a_leaf(c, caller, leaf_of) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: leaf_inline.rs fn rewrite_program — every admitted leaf call inlined and the bodies
+// reduced; answers how many calls were inlined.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if env_on("LOFT_NO_INLINE_LEAF") || b.open_world || profiled() {
+    return 0;
+  }
+  leaves: vector<Leaf> = [];
+  leaf_of: vector<integer> = [for _ in b.data.definitions { -1 }];
+  for d in b.data.definitions {
+    if d.def_type != 1 {
+      continue;
+    }
+    l = admit(b, d#index);
+    if l.ok {
+      leaf_of[d#index] = len(leaves);
+      leaves += [l];
+    } else if trace() && d.name.starts_with("n_") {
+      eprintln("inline-leaf: {d.name} declined: {l.why}");
+    }
+  }
+  if len(leaves) == 0 {
+    return 0;
+  }
+  ops = new_ops(b);
+  // The analysis memos are about one program, and this pass is the first to ask them.
+  r = Reduce { ops: ops, p: opt_non_sentinel::new_ir_proof(b), calls: opt_range::new_calls(), nn: [], count: 0 };
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) {
+      continue;
+    }
+    caller = d#index;
+    code = d.code[0]!;
+    if blocked(code) || !calls_a_leaf(code, caller, leaf_of) {
+      continue;
+    }
+    f = d.variables;
+    fresh: vector<integer> = [];
+    c = Inl { n: 0 };
+    top = match code { NdBlock { block } => block[0]!.scope, _ => 0 };
+    nc = inline_in(b, code, top, caller, leaves, leaf_of, f, fresh, c);
+    if c.n == 0 {
+      continue;
+    }
+    b.data.definitions[caller].code = [nc];
+    r.nn = opt_non_sentinel::non_sentinel_vars(b, r.p, caller);
+    rv = opt_range::range_vars(b, r.p, r.calls, caller, r.nn, []);
+    count = len(f.variables);
+    base = Facts { has: [for _ in 0..count { false }], lo: [for _ in 0..count { 0 }], hi: [for _ in 0..count { 0 }] };
+    for v in 0..count {
+      put(base, v, opt_range::var_range(rv, v));
+    }
+    k = Counts { masks: 0, singles: 0, scales: 0 };
+    nc = reduce_in(b, nc, r, base, fresh, k);
+    if trace() {
+      eprintln("inline-leaf: fn {d.name} — {c.n} call(s) inlined, {k.masks} mask/fallback(s), {k.singles} single use(s), {k.scales} scale fold(s)");
+    }
+    b.data.definitions[caller].code = [nc];
+    ir_pass_tree::relayout(b, caller);
+    total += c.n;
+  }
+  total
+}

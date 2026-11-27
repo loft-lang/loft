@@ -1,0 +1,4 @@
+// @PLN231 probe — a par worker that prints
+// Expect on both backends: four 'in worker' lines, then t=14
+fn noisy(x: integer) -> integer { println("in worker {x}"); x + 1 }
+fn main() { v = [1, 2, 3, 4]; t = 0; for item in v par(b=noisy(item), 2) { t += b; } println("t={t}"); }

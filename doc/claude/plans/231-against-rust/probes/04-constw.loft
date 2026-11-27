@@ -1,0 +1,5 @@
+// @PLN231 probe — a write through a const parameter
+// Expect on both backends: refused: Cannot modify const parameter 'c'
+struct S { x: integer }
+fn bad(c: const S) { c.x = 3; }
+fn main() { a = S { x: 1 }; bad(a); println("{a.x}"); }

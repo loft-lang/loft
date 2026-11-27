@@ -1,0 +1,321 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/loop_record.rs` transcribed (`@FR-R-LoopRecord`): a plain no-heap record
+// local declared and minted by a literal inside a loop keeps its store and its record across the
+// passes.  The records are `ir_loop_records::loop_records`'; this writes the answer into the IR:
+// the declaration before the outermost loop and one free after it, the per-pass declaration and
+// end-of-body free gone, a complete literal's mint taken only where the local holds no store
+// (the refill clause clearing each vector field instead), and an early exit's free followed by
+// `p = null`.
+
+use ir;
+use scope_fn;
+use lower;
+use el;
+use cgen_types;
+use opt_apart_records;
+use ir_pass_tree;
+use ir_buffer_owner;
+use ir_loop_buffer;
+use ir_loop_records;
+
+struct Ops {
+  database: integer,
+  database_np: integer,
+  free_a: integer,
+  free_b: integer,
+  free_c: integer,
+  set_int4: integer,
+  get_field: integer,
+  ref_is_null: integer,
+  clear_vector: integer,
+  free_ref: integer,
+}
+
+// One admitted record (`Rec`): the loop record, whether its literal is complete, and its
+// vector fields as `(byte offset, type number)` pairs.
+struct Rec {
+  lr: ir_loop_records::LoopRecord,
+  complete: boolean,
+  vec_off: vector<integer>,
+  vec_tp: vector<integer>,
+}
+
+fn rec_of(recs: vector<Rec>, v: integer) -> integer {
+  for r in recs {
+    if r.lr.v == v {
+      return r#index;
+    }
+  }
+  -1
+}
+
+fn var_of(args: vector<ir::Node>, i: integer) -> integer {
+  if i >= len(args) {
+    return -1;
+  }
+  ir_pass_tree::var_of(args[i]!) ?? -1
+}
+
+fn int_of(args: vector<ir::Node>, i: integer) -> integer? {
+  if i >= len(args) {
+    return null;
+  }
+  ir_pass_tree::int_of(args[i]!)
+}
+
+// port: loop_record.rs fn rewrite_program — every admitted loop record rewritten; answers how
+// many.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_LOOP_RECORD") ?? "0") != "0" || (env_variable("LOFT_NO_LOOP_BUFFER_REUSE") ?? "") != "" {
+    return 0;
+  }
+  ops = Ops {
+    database: lower::find(b, "OpDatabase") ?? -1,
+    database_np: lower::find(b, "OpDatabaseNP") ?? -1,
+    free_a: lower::find(b, "OpFreeRef") ?? -1,
+    free_b: lower::find(b, "OpFreeRefIfDistinct") ?? -1,
+    free_c: lower::find(b, "OpFreeRefTag") ?? -1,
+    set_int4: lower::find(b, "OpSetInt4") ?? -1,
+    get_field: lower::find(b, "OpGetField") ?? -1,
+    ref_is_null: lower::find(b, "OpRefIsNull") ?? -1,
+    clear_vector: lower::find(b, "OpClearVector") ?? -1,
+    free_ref: lower::find(b, "OpFreeRef") ?? -1,
+  };
+  apr = opt_apart_records::plan(b);
+  total = 0;
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || el::is_operator(d) || d.rust != "" || ir_loop_buffer::calls_a_generator(b, d.code[0]!) {
+      continue;
+    }
+    found = ir_loop_records::loop_records(b, d#index);
+    if len(found) == 0 {
+      continue;
+    }
+    recs = admit(b, d#index, found, apr, ops);
+    if len(recs) == 0 {
+      continue;
+    }
+    hv: vector<integer> = [];
+    hs: vector<integer> = [];
+    code = rewrite(d.code[0]!, recs, ops, hv, hs);
+    b.data.definitions[d#index].code = [code];
+    f = b.data.definitions[d#index]!.variables;
+    for v in hv {
+      f.variables[v].scope = hs[v#index]!;
+    }
+    if len(hv) == 0 {
+      continue;
+    }
+    ir_pass_tree::relayout(b, d#index);
+    total += len(hv);
+  }
+  total
+}
+
+// port: loop_record.rs fn admit — the admitted records of function `d` the rewrite takes.
+fn admit(b: ir::Bundle, d: integer, found: vector<ir_loop_records::LoopRecord>, apr: opt_apart_records::Plan, ops: Ops) -> vector<Rec> {
+  complete = ir_loop_records::complete_writes(b, d, 0).db_vars;
+  // A record another rule owns is left to it.
+  owned = ir_buffer_owner::owners(b, d, apr);
+  def = b.data.definitions[d]!;
+  out: vector<Rec> = [];
+  for lr in found {
+    v = lr.v;
+    if !(cgen_types::base(def.variables.variables[v]!.type_def[0] ?? ir::TyVoid) is TyReference) {
+      continue;
+    }
+    if ir_buffer_owner::owner_of(owned, v) != "" {
+      continue;
+    }
+    vo: vector<integer> = [];
+    vt: vector<integer> = [];
+    if lr.refill {
+      tp = record_type(b, def.code[0]!, v, ops);
+      if tp >= 0 {
+        fs = struct_fields(b, tp);
+        for fd in fs {
+          if fd.content >= 0 && fd.content < len(b.types) && ((b.types[fd.content]!.parts[0] ?? ir::PtBase) is PtVector) {
+            vo += [fd.position];
+            vt += [fd.content];
+          }
+        }
+      }
+    }
+    // The refill clause keeps its vectors only under a complete literal.
+    comp = false;
+    for c in complete {
+      if c == v {
+        comp = true;
+      }
+    }
+    if lr.refill && (!comp || len(vo) == 0) {
+      continue;
+    }
+    out += [Rec { lr: lr, complete: comp, vec_off: vo, vec_tp: vt }];
+  }
+  out
+}
+
+fn struct_fields(b: ir::Bundle, t: integer) -> vector<ir::DbField> {
+  if t < 0 || t >= len(b.types) {
+    return [];
+  }
+  match b.types[t]!.parts[0] ?? ir::PtBase {
+    PtStruct { fields } => fields,
+    _ => [],
+  }
+}
+
+// port: loop_record.rs fn record_type — the type number `v`'s mint names (the last walked), -1.
+fn record_type(b: ir::Bundle, n: ir::Node, v: integer, ops: Ops) -> integer {
+  t = record_type_in(b, n, v, ops);
+  if t == -2 { -1 } else { t }
+}
+
+// The last mint of `v` in `n` (-1 one that names no type), -2 none.
+fn record_type_in(b: ir::Bundle, n: ir::Node, v: integer, ops: Ops) -> integer {
+  tp = -2;
+  match n {
+    NdCall { def_nr, args } => {
+      if (def_nr == ops.database || def_nr == ops.database_np) && var_of(args, 0) == v {
+        t = int_of(args, 1);
+        tp = if t != null && t! >= 0 && t! <= 65535 { t! } else { -1 };
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    t = record_type_in(b, k, v, ops);
+    if t != -2 {
+      tp = t;
+    }
+  }
+  tp
+}
+
+// port: loop_record.rs fn rewrite — the statement lists under `v` (a block under its spans, and
+// again as the span's child, as `unspan_mut` and `for_each_child_mut` reach it); `hv`/`hs`
+// collect each record whose declaration moved, with the scope it moved to.
+fn rewrite(v: ir::Node, recs: vector<Rec>, ops: Ops, hv: vector<integer>, hs: vector<integer>) -> ir::Node {
+  w = with_statements(v, recs, ops, hv, hs);
+  kids = scope_fn::children(w);
+  if len(kids) == 0 {
+    return w;
+  }
+  ir_pass_tree::with_children(w, [for k in kids { rewrite(k, recs, ops, hv, hs) }])
+}
+
+fn with_statements(v: ir::Node, recs: vector<Rec>, ops: Ops, hv: vector<integer>, hs: vector<integer>) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_statements(inner, recs, ops, hv, hs) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, statements(block[0]!, recs, ops, hv, hs))] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, statements(block[0]!, recs, ops, hv, hs))] },
+    _ => v,
+  }
+}
+
+fn hoist(hv: vector<integer>, hs: vector<integer>, v: integer, scope: integer) {
+  for x in hv {
+    if x == v {
+      hs[x#index] = scope;
+      return;
+    }
+  }
+  hv += [v];
+  hs += [scope];
+}
+
+fn statements(bl: ir::Block, recs: vector<Rec>, ops: Ops, hv: vector<integer>, hs: vector<integer>) -> vector<ir::Node> {
+  scope = bl.scope;
+  out: vector<ir::Node> = [];
+  for stmt in bl.operators {
+    // The outermost loop of a record: its declaration before, its free after.
+    ls = match scope_fn::unspan(stmt) { NdLoop { block } => block[0]!.scope, _ => -1 };
+    mine: vector<integer> = [];
+    if ls >= 0 {
+      for r in recs {
+        if r.lr.loop_scope == ls {
+          mine += [r.lr.v];
+        }
+      }
+      // `sort_unstable`.
+      for i in 1..len(mine) {
+        j = i;
+        while j > 0 && mine[j - 1]! > mine[j]! {
+          t = mine[j - 1]!;
+          mine[j - 1] = mine[j]!;
+          mine[j] = t;
+          j -= 1;
+        }
+      }
+    }
+    for r in mine {
+      out += [ir::NdSet { var: r, inner: ir::NdNull }];
+      hoist(hv, hs, r, scope);
+    }
+    statement(stmt, scope, recs, ops, out);
+    for r in mine {
+      out += [ir::NdCall { def_nr: ops.free_ref, args: [ir::NdVar { n: r }] }];
+    }
+  }
+  out
+}
+
+fn is_free(ops: Ops, op: integer) -> boolean {
+  op >= 0 && (op == ops.free_a || op == ops.free_b || op == ops.free_c)
+}
+
+// port: loop_record.rs fn statement — `stmt` of a block of `scope` (or what replaces it) into
+// `out`.
+fn statement(stmt: ir::Node, scope: integer, recs: vector<Rec>, ops: Ops, out: vector<ir::Node>) {
+  match scope_fn::unspan(stmt) {
+    // The per-pass declaration, in the block that declared the record.
+    NdSet { var, inner } => {
+      ri = rec_of(recs, var);
+      if (scope_fn::unspan(inner) is NdNull) && ri >= 0 && recs[ri]!.lr.decl_block == scope {
+        return;
+      }
+    },
+    NdCall { def_nr: op, args: a } => {
+      v = var_of(a, 0);
+      ri = rec_of(recs, v);
+      // A free of the record: its end-of-body free goes; any other stays and nulls the local.
+      if is_free(ops, op) && v >= 0 && ri >= 0 {
+        if recs[ri]!.lr.decl_block != scope {
+          out += [stmt];
+          out += [ir::NdSet { var: v, inner: ir::NdNull }];
+        }
+        return;
+      }
+      // The mint of a complete literal: taken only where the local holds no store.
+      if (op == ops.database || op == ops.database_np) && op >= 0 && ri >= 0 && recs[ri]!.complete && recs[ri]!.lr.decl_block == scope {
+        r = recs[ri]!;
+        mint: vector<ir::Node> = [stmt];
+        keep: vector<ir::Node> = [];
+        for off in r.vec_off {
+          ftp = r.vec_tp[off#index]!;
+          mint += [ir::NdCall { def_nr: ops.set_int4, args: [ir::NdVar { n: v }, ir::NdInt { n: off }, ir::NdInt { n: 0 }] }];
+          keep += [ir::NdCall { def_nr: ops.clear_vector, args: [ir::NdCall { def_nr: ops.get_field, args: [ir::NdVar { n: v }, ir::NdInt { n: off }, ir::NdInt { n: ftp }] }] }];
+        }
+        other = if len(keep) == 0 { ir::NdNull } else { ir::NdBlock { block: [ir_pass_tree::block("loop record keep", keep, ir::TyVoid, 65535)] } };
+        out += [ir::NdIf { cond: ir::NdCall { def_nr: ops.ref_is_null, args: [ir::NdVar { n: v }] }, t: ir::NdBlock { block: [ir_pass_tree::block("loop record mint", mint, ir::TyVoid, 65535)] }, f: other }];
+        return;
+      }
+      // The literal's zero of a refill record's vector field: now in the mint's arm.
+      if op == ops.set_int4 && (int_of(a, 2) ?? -1) == 0 && int_of(a, 2) != null && ri >= 0 && recs[ri]!.complete && recs[ri]!.lr.decl_block == scope {
+        off = int_of(a, 1);
+        if off != null {
+          for o in recs[ri]!.vec_off {
+            if o == off! {
+              return;
+            }
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  out += [stmt];
+}

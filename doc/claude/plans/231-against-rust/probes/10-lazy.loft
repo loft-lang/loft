@@ -1,0 +1,9 @@
+// @PLN231 probe — a lazy chain from a hand-written generator adapter
+// Expect on both backends: make 0..2 only, then lazy t=6
+fn nums(n: integer) -> iterator<integer> { for i in 0..n { println("make {i}"); yield i; } }
+fn lmap(it: iterator<integer>, f: fn(integer) -> integer) -> iterator<integer> { for x in it { yield f(x); } }
+fn main() {
+  t = 0;
+  for y in lmap(nums(1000000), |x| { x * 2 }) { t += y; if t > 5 { break; } }
+  println("lazy t={t}");
+}

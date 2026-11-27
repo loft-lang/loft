@@ -1,0 +1,5 @@
+// @PLN231 probe — a user-declared compile-time function
+// Expect on both backends: refused, a syntax error at 'fn' (there is no const fn)
+const fn sq(x: integer) -> integer { x * x }
+const N = sq(7);
+fn main() { println("N={N}"); }

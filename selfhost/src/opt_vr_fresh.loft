@@ -215,10 +215,12 @@ pub struct Leaf {
   pub ptp: integer,
   pub fld: integer,
   pub off: integer,
+  // The viewed field's type (`LeafSource::Elem`'s `tp`), what the IR pass spells the leaf with.
+  pub tp: integer,
 }
 
 pub fn no_leaf() -> Leaf {
-  Leaf { kind: -1, elem: -1, root: no_root(), ptp: -1, fld: -1, off: 0 }
+  Leaf { kind: -1, elem: -1, root: no_root(), ptp: -1, fld: -1, off: 0, tp: 0 }
 }
 
 // --- The path state ----------------------------------------------------------------------------
@@ -821,7 +823,7 @@ pub fn fresh_leaf(b: ir::Bundle, ops: own::Ops, dmap: vector<opt_vr_disturb::DPl
     return no_leaf();
   }
   if len(last) == 1 {
-    return Leaf { kind: 1, elem: last[0]!, root: c.root, ptp: c.ptp, fld: c.fld, off: c.off };
+    return Leaf { kind: 1, elem: last[0]!, root: c.root, ptp: c.ptp, fld: c.fld, off: c.off, tp: c.tp };
   }
-  Leaf { kind: 2, elem: -1, root: c.root, ptp: c.ptp, fld: c.fld, off: c.off }
+  Leaf { kind: 2, elem: -1, root: c.root, ptp: c.ptp, fld: c.fld, off: c.off, tp: c.tp }
 }

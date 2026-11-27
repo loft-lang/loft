@@ -1,0 +1,15 @@
+// @PLN231 R11 probe — a record fetched through an accessor three times, an unrelated struct made between (loft#974)
+// Expect on both backends: 2 2 2 sink 0
+struct Item { limbs: vector<integer> }
+struct Bag { items: hash<Slot[name]> }
+struct Slot { name: text, item: Item }
+struct Sink { vals: vector<integer> }
+fn bag_get(b: Bag, n: text) -> Item? { s = b.items[n]; if s == null { return null; } s.item }
+fn main() {
+  b = Bag { items: [Slot { name: "one", item: Item { limbs: [1, 2] } }] };
+  a = bag_get(b, "one")?; r1 = len(a.limbs);
+  k = Sink { vals: [] };
+  c = bag_get(b, "one")?; r2 = len(c.limbs);
+  d = bag_get(b, "one")?; r3 = len(d.limbs);
+  println("{r1} {r2} {r3} sink {len(k.vals)}");
+}

@@ -222,6 +222,9 @@ struct Variable {
   // loft#2034 — `const` before the type; read after parsing by the literal hoist's alias gate,
   // the use analysis and library placement, so a warm load must keep it
   value_const: boolean,
+  // @PLN91 — a local the arm that consumed it moved out (`Function::is_arm_consumed`): read by
+  // the scope pass, so the loft port reads it from the image
+  arm_consumed: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
@@ -294,6 +297,7 @@ struct Definition {
   op_cold: boolean, // `#cold`: one numbered in the last class; neither = the class between
   no_prefill: text, // @FR-R-CompleteWrite the mints whose literal writes every field; "" = none
   width32: boolean, // @PLN204 the body is under the 32-bit regime (`Data::body_width32`)
+  value_struct: boolean, // @PLN91 a `value struct` (`Data::is_value_struct`), read by the scope pass
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

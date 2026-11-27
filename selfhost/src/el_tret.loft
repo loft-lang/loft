@@ -176,7 +176,7 @@ fn swap_type(t: ir::TypeT, a: integer, b: integer) -> ir::TypeT {
 
 // `Type::renumber_frame_deps`: each frame dep `from` becomes `to`, through a vector's element,
 // a `&`, a `?`, a rewrite, an iterator and a tuple's members; a function type's own dep only.
-fn renumber_type(t: ir::TypeT, from: integer, to: integer) -> ir::TypeT {
+pub fn renumber_type(t: ir::TypeT, from: integer, to: integer) -> ir::TypeT {
   match t {
     TyText { dep } => ir::TyText { dep: moved(dep, from, to) },
     TyReference { n, dep } => ir::TyReference { n: n, dep: moved(dep, from, to) },
@@ -203,7 +203,7 @@ fn moved(dep: vector<integer>, from: integer, to: integer) -> vector<integer> {
 
 // `Value::renumber_frame_var`: every frame variable `from` in `n` becomes `to`, its blocks'
 // result types too.
-fn renumber(n: ir::Node, from: integer, to: integer) -> ir::Node {
+pub fn renumber(n: ir::Node, from: integer, to: integer) -> ir::Node {
   match n {
     NdVar { n: v } => ir::NdVar { n: if v == from { to } else { v } },
     NdSet { var, inner } => ir::NdSet { var: if var == from { to } else { var }, inner: renumber(inner, from, to) },

@@ -200,7 +200,7 @@ pub fn view_leaf_plan(b: ir::Bundle, ops: own::Ops, dmap: vector<opt_vr_disturb:
         return out;
       }
       resolved[off#index] = true;
-      out += [opt_vr_layout::VView { d: d, exit: e, off: off, kind: src.kind, eoff: src.off, elem: src.elem, root_v: src.root.v, root_f: src.root.f, ptp: src.ptp, fld: src.fld }];
+      out += [opt_vr_layout::VView { d: d, exit: e, off: off, kind: src.kind, eoff: src.off, elem: src.elem, root_v: src.root.v, root_f: src.root.f, ptp: src.ptp, fld: src.fld, tp: src.tp }];
     }
   }
   for r in resolved {

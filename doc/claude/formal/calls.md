@@ -485,7 +485,16 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 ## Deviations
 
-**OPEN: 0.**  The closed record is in [calls-history.md](calls-history.md).
+**OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
+
+- **D-call-32** (loft#2659) — `(F-Ret)`: its exception names *"a `&T` return … an <!-- doc-lint: ok -->
+  explicit borrow of an addressable input"*, and the compiler refuses every `&` return type.
+  The return already records the borrow (`Deps { items: [0] }`, `(O-Move)`) and a local link
+  already carries the dependency the reshape refusals read; the caller binds the result as a
+  copy instead.  **Fix.**  Bind a `-> &T` call's result with the return's dependency mapped
+  onto the argument, and refuse a `&` return that depends on no parameter — or, by the owner's
+  ruling, take the exception out of `(F-Ret)`.  Open questions and probes:
+  [plans/231-against-rust](../plans/231-against-rust/README.md) R10, probes 20–30.
 
 > ⚠ **Both entries stood for three days over a fix that was already merged**, because an entry is
 > flipped by hand and nothing asked.  `rule_tags.py registers --issues` is what asks now: it reads

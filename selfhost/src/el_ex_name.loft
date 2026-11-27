@@ -375,13 +375,16 @@ pub fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir
   ex(ir::NdInsert { items: cond + [test] }, ir::TyBoolean)
 }
 
-// `Parser::is_repeatable_place`: a local, or a field read of one, which a test may read twice.
+// `Parser::is_repeatable_place`: a local, or a projection chain off one (a field, an element —
+// either IR spelling of a projection, a call or a stack tuple's `TupleGet`), which a test may
+// read twice.
 pub fn repeatable_place(e: el::El, n: ir::Node) -> boolean {
   at = n;
   while !(at is NdVar) {
     match at {
+      NdTupleGet { var: _ } => { return true; },
       NdCall { def_nr, args } => {
-        if el::def(e, def_nr).name != "OpGetField" || len(args) == 0 {
+        if !el_ex_base::projection_op(el::def(e, def_nr).name) || len(args) == 0 {
           return false;
         }
         at = el_ir::unspan(args[0]!);
@@ -476,6 +479,11 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
       uv = el_vars::add_variable(vars, name, ir::TyUnknown { n: 0 });
       el_vars::mark_user_named(vars, uv, "parse_var_inner");
     }
+    // (A type's spelling — a variant written above its enum, `Two` — leaves a stub of the name
+    // the declaration adopts in place (loft#801, loft#1047), as a construction's does.)
+    if looks_like_a_type(name) && el::def_nr(e, name) < 0 && e.at >= 0 && !el::pending_import_names(e, name) && el::any_source_nr(e, name) < 0 {
+      e.speculative += [el::add_def(e, name, el::pos_at(e, e.at), el::DT_UNKNOWN)];
+    }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
   el::refuse(e, "a name that is not a variable: {kind}");
@@ -485,6 +493,21 @@ pub fn global_name(e: el::El, vars: el_vars::Vars, source: integer, name: text) 
 // A name as a value: the variable it names (`Parser::parse_var`, the local case).
 pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text, into: boolean) -> Ex {
   if member != "" {
+    // An enum-qualified value (`Color::Red`, `Ch::Alpha`) is that enum's — as the lexer resolves
+    // it for Rust: read as the plain name with the qualifier's enum preferred (`enum_hint`).
+    qen = el::def_nr(e, name);
+    if !el::use_exists(e, name) && qen >= 0 && el::def(e, qen).def_type == el::DT_ENUM && el::variant_of(e, qen, member) >= 0 {
+      kept_hint = vars.enum_hint;
+      vars.enum_hint = qen;
+      qx = global_name(e, vars, -1, member);
+      vars.enum_hint = kept_hint;
+      return qx;
+    }
+    // (An enum declared below its qualified value, `Color::Green` above `enum Color`, has no
+    // definition on the first pass: the value is unknown there, the second pass resolves it.)
+    if e.first_pass && qen < 0 && !el::use_exists(e, name) {
+      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+    }
     if !el::use_exists(e, name) {
       el::refuse(e, "a qualified name");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -543,7 +566,9 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
           }
           return ex(got!, c.tp);
         }
-        return ex(got!, el::def(e, e.closure_rec).attributes[a]!.typedef[0]);
+        // (`t.depending(closure_param)`: a captured text read borrows the closure record, whose
+        // store holds it — `-> text["__closure", …]` where a lambda answers one.)
+        return ex(got!, el_types::with_deps(el::def(e, e.closure_rec).attributes[a]!.typedef[0], [e.closure_var]));
       }
     }
   }

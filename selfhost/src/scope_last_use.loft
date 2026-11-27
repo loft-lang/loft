@@ -1,0 +1,558 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/last_use.rs` transcribed (scope-pass-port.md step 4): Plan-57's last-use
+// reclaim — the vector stores (`__vdb_N`) whose data dies before their scope ends, their
+// null-init relocated down to the build and an early free before the next store's build.  The
+// store-identity tags (`tag_stores`) and the guards (`reclaim_unfreed_eligible`,
+// `last_use_guard`) run only under a switch and are not carried.
+
+use ir;
+use scope_fn;
+use scope_confinement;
+use ir_pass_tree;
+use opt_names;
+use own;
+
+// port: last_use.rs struct StoreLiveness — which store each local holds, and each store's
+// allocation, rebind-away and last read, in walk order.  Maps are indexed by variable (-1: none).
+struct Liveness {
+  db: integer,
+  gf: integer,
+  fr: integer,
+  seq: integer,
+  conditional: integer,
+  holds: vector<integer>,
+  alloc: vector<integer>,
+  dead: vector<integer>,
+  last_read: vector<integer>,
+  pinned: vector<integer>
+}
+
+fn get(m: vector<integer>, v: integer) -> integer {
+  if v < 0 || v >= len(m) { -1 } else { m[v] ?? -1 }
+}
+
+fn put(m: vector<integer>, v: integer, x: integer) {
+  while len(m) <= v {
+    m += [-1];
+  }
+  m[v] = x;
+}
+
+// port: last_use.rs fn binding_source — the store a `Set`'s value binds its local to, -1.
+fn binding_source(val: ir::Node, gf: integer, holds: vector<integer>) -> integer {
+  match scope_fn::unspan(val) {
+    NdCall { def_nr, args } => {
+      if def_nr != gf || len(args) == 0 {
+        return -1;
+      }
+      match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 }
+    },
+    NdVar { n } => get(holds, n),
+    _ => -1
+  }
+}
+
+// port: last_use.rs fn StoreLiveness::of
+fn liveness_of(code: ir::Node, db: integer, gf: integer, fr: integer) -> Liveness {
+  l = Liveness { db: db, gf: gf, fr: fr, seq: 0, conditional: 0, holds: [], alloc: [], dead: [], last_read: [], pinned: [] };
+  live_walk(l, code);
+  l
+}
+
+// port: last_use.rs fn StoreLiveness::dead_at — -1 for none.
+fn dead_at(l: Liveness, st: integer) -> integer {
+  if scope_fn::has(l.pinned, st) {
+    return -1;
+  }
+  d = get(l.dead, st);
+  if d >= 0 { d } else { get(l.last_read, st) }
+}
+
+fn conditional_walk(l: Liveness, node: ir::Node) {
+  l.conditional += 1;
+  live_walk(l, node);
+  l.conditional -= 1;
+}
+
+// port: last_use.rs fn StoreLiveness::walk
+fn live_walk(l: Liveness, node: ir::Node) {
+  l.seq += 1;
+  s = l.seq;
+  match node {
+    NdVar { n } => {
+      st = get(l.holds, n);
+      if st >= 0 {
+        put(l.last_read, st, s);
+      }
+    },
+    NdSet { var, inner } => {
+      if scope_fn::unspan(inner) is NdNull {
+        return;
+      }
+      live_walk(l, inner);
+      new_store = binding_source(inner, l.gf, l.holds);
+      old = get(l.holds, var);
+      if old >= 0 && old != new_store {
+        if l.conditional > 0 {
+          if !scope_fn::has(l.pinned, old) {
+            l.pinned += [old];
+          }
+        } else if get(l.dead, old) < 0 {
+          put(l.dead, old, s);
+        }
+      }
+      put(l.holds, var, new_store);
+    },
+    NdCall { def_nr, args } => {
+      if def_nr == l.fr && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar {
+        return;
+      }
+      if def_nr == l.db {
+        if len(args) > 0 {
+          match scope_fn::unspan(args[0]!) {
+            NdVar { n } => put(l.alloc, n, s),
+            _ => {}
+          }
+        }
+        return;
+      }
+      for a in args {
+        live_walk(l, a);
+      }
+    },
+    NdBlock { block } => {
+      for op in block[0].operators {
+        live_walk(l, op);
+      }
+    },
+    NdLoop { block } => {
+      for op in block[0].operators {
+        conditional_walk(l, op);
+      }
+    },
+    NdIf { cond, t, f } => {
+      live_walk(l, cond);
+      conditional_walk(l, t);
+      conditional_walk(l, f);
+    },
+    NdInsert { items } => {
+      for op in items {
+        live_walk(l, op);
+      }
+    },
+    NdTuple { items } => {
+      for op in items {
+        live_walk(l, op);
+      }
+    },
+    NdParallel { arms } => {
+      for op in arms {
+        live_walk(l, op);
+      }
+    },
+    NdReturn { inner } => live_walk(l, inner),
+    NdDrop { inner } => live_walk(l, inner),
+    NdYield { inner } => live_walk(l, inner),
+    NdSpan { inner } => live_walk(l, inner),
+    _ => {}
+  }
+}
+
+// `OpDatabase(Var(store), …)`.
+fn is_alloc_of(n: ir::Node, store: integer, db: integer) -> boolean {
+  match n {
+    NdCall { def_nr, args } => def_nr == db && len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == store, _ => false },
+    _ => false
+  }
+}
+
+// port: last_use.rs fn contains_alloc
+fn contains_alloc(node: ir::Node, store: integer, db: integer) -> boolean {
+  if is_alloc_of(node, store, db) {
+    return true;
+  }
+  for c in scope_fn::children(node) {
+    if contains_alloc(c, store, db) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: last_use.rs fn contains_alloc_unconditional — the allocation is reached from the body
+// outside every `if`, loop and fork.
+fn contains_alloc_unconditional(node: ir::Node, store: integer, db: integer) -> boolean {
+  match scope_fn::unspan(node) {
+    NdCall { args } => {
+      if is_alloc_of(scope_fn::unspan(node), store, db) {
+        return true;
+      }
+      for a in args {
+        if contains_alloc_unconditional(a, store, db) {
+          return true;
+        }
+      }
+      false
+    },
+    NdSet { inner } => contains_alloc_unconditional(inner, store, db),
+    NdBlock { block } => any_unconditional(block[0].operators, store, db),
+    NdReturn { inner } => contains_alloc_unconditional(inner, store, db),
+    NdDrop { inner } => contains_alloc_unconditional(inner, store, db),
+    NdYield { inner } => contains_alloc_unconditional(inner, store, db),
+    NdInsert { items } => any_unconditional(items, store, db),
+    NdTuple { items } => any_unconditional(items, store, db),
+    _ => false
+  }
+}
+
+fn any_unconditional(xs: vector<ir::Node>, store: integer, db: integer) -> boolean {
+  for o in xs {
+    if contains_alloc_unconditional(o, store, db) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: last_use.rs fn holder_retained — a holder in a value position that could keep the
+// store's data reachable past the early free; a holder as a call's FIRST argument is a read.
+fn holder_retained(node: ir::Node, holders: vector<integer>) -> boolean {
+  match node {
+    NdVar { n } => scope_fn::has(holders, n),
+    NdCall { args } => retained_args(args, holders),
+    NdCallRef { args } => retained_args(args, holders),
+    NdSet { inner } => holder_retained(inner, holders),
+    NdBlock { block } => any_retained(block[0].operators, holders),
+    NdLoop { block } => any_retained(block[0].operators, holders),
+    NdIf { cond, t, f } => holder_retained(cond, holders) || holder_retained(t, holders) || holder_retained(f, holders),
+    NdInsert { items } => any_retained(items, holders),
+    NdTuple { items } => any_retained(items, holders),
+    NdParallel { arms } => any_retained(arms, holders),
+    NdReturn { inner } => holder_retained(inner, holders),
+    NdYield { inner } => holder_retained(inner, holders),
+    NdDrop { inner } => holder_retained(inner, holders),
+    NdTuplePut { inner } => holder_retained(inner, holders),
+    NdIter { create, next, init } => holder_retained(create, holders) || holder_retained(next, holders) || holder_retained(init, holders),
+    NdSpan { inner } => holder_retained(inner, holders),
+    _ => false
+  }
+}
+
+fn retained_args(args: vector<ir::Node>, holders: vector<integer>) -> boolean {
+  for a in args {
+    if a#index == 0 && match scope_fn::unspan(a) { NdVar { n } => scope_fn::has(holders, n), _ => false } {
+      continue;
+    }
+    if holder_retained(a, holders) {
+      return true;
+    }
+  }
+  false
+}
+
+fn any_retained(xs: vector<ir::Node>, holders: vector<integer>) -> boolean {
+  for x in xs {
+    if holder_retained(x, holders) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: last_use.rs fn transitive_depers — every variable reaching store `st` through the dep
+// graph, in variable order.
+fn transitive_depers(f: ir::Function, st: integer) -> vector<integer> {
+  n = scope_fn::count(f);
+  reaches: vector<boolean> = [for _ in 0..n { false }];
+  added = true;
+  while added {
+    added = false;
+    for v in 0..n {
+      if reaches[v] ?? false {
+        continue;
+      }
+      hit = false;
+      for d in scope_fn::deps(f, v) {
+        if d != 65535 && (d / 32768) % 2 == 0 && (d == st || (d < n && (reaches[d] ?? false))) {
+          hit = true;
+        }
+      }
+      if hit {
+        reaches[v] = true;
+        added = true;
+      }
+    }
+  }
+  [for v in 0..n if reaches[v] ?? false { v }]
+}
+
+// port: last_use.rs fn reclaim_safe — store `st` may be freed early, relocated, and lose its
+// scope-exit free.  `Function::is_ref_home` is not in the image: `check` refuses a body with a
+// stored reference wherever the plan acts (`stored_reference`).
+fn reclaim_safe(code: ir::Node, f: ir::Function, st: integer) -> boolean {
+  if !scope_fn::name(f, st).starts_with("__vdb") {
+    return false;
+  }
+  if scope_fn::is_skip_free(f, st) || scope_fn::is_captured(f, st) || scope_fn::tp(f, st) is TyRefVar {
+    return false;
+  }
+  if scope_confinement::guard_escapes(code, st) {
+    return false;
+  }
+  if bound_to_a_captured_local(code, f, st) {
+    return false;
+  }
+  depers = transitive_depers(f, st);
+  user_locals = 0;
+  for v in depers {
+    if scope_fn::is_argument(f, v) || scope_fn::is_captured(f, v) || scope_fn::is_skip_free(f, v) || scope_fn::tp(f, v) is TyRefVar || scope_confinement::guard_escapes(code, v) {
+      return false;
+    }
+    if !scope_fn::name(f, v).starts_with("_") {
+      user_locals += 1;
+      if len(scope_fn::deps(f, v)) != 1 && !scope_confinement::confine_reassign_safe(code, v) {
+        return false;
+      }
+    }
+  }
+  if user_locals > 1 {
+    return false;
+  }
+  holders: vector<integer> = [for v in depers if !scope_fn::name(f, v).starts_with("_") { v }];
+  holders += [st];
+  !holder_retained(code, holders)
+}
+
+// port: last_use.rs fn bound_to_a_captured_local — `Set(c, <call>(Var(st), …))` with `c` captured.
+fn bound_to_a_captured_local(code: ir::Node, f: ir::Function, st: integer) -> boolean {
+  match code {
+    NdSet { var, inner } => if scope_fn::is_captured(f, var) {
+      match scope_fn::unspan(inner) {
+        NdCall { args } => if len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n } => n == st, _ => false } {
+          return true;
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(code) {
+    if bound_to_a_captured_local(c, f, st) {
+      return true;
+    }
+  }
+  false
+}
+
+// The reclaim plan: the owning stores, and each dead store with the sibling whose build it
+// must be freed before.
+pub struct Plan {
+  pub owning: vector<integer>,
+  pub intent_st: vector<integer>,
+  pub intent_later: vector<integer>
+}
+
+// port: last_use.rs fn reclaim_free_intent
+pub fn reclaim_free_intent(code: ir::Node, f: ir::Function, db: integer, gf: integer, fr: integer, drop_bearing: vector<integer>) -> Plan {
+  plan = Plan { owning: [], intent_st: [], intent_later: [] };
+  body_scope = match scope_fn::unspan(code) { NdBlock { block } => block[0].scope, _ => -1 };
+  if body_scope < 0 {
+    return plan;
+  }
+  live = liveness_of(code, db, gf, fr);
+  for st in 0..len(live.alloc) {
+    if (live.alloc[st] ?? -1) < 0 {
+      continue;
+    }
+    if st < scope_fn::count(f) && f.variables[st].scope == body_scope && !scope_fn::has(drop_bearing, st)
+      && contains_alloc_unconditional(code, st, db) && reclaim_safe(code, f, st) {
+      plan.owning += [st];
+    }
+  }
+  for st in plan.owning {
+    d = dead_at(live, st);
+    if d < 0 {
+      continue;
+    }
+    later = -1;
+    for w in plan.owning {
+      aw = get(live.alloc, w);
+      if w != st && aw > d && (later < 0 || aw < get(live.alloc, later)) {
+        later = w;
+      }
+    }
+    if later >= 0 {
+      plan.intent_st += [st];
+      plan.intent_later += [later];
+    }
+  }
+  plan
+}
+
+// port: last_use.rs fn drop_bearing_stores — the locals whose record type has a drop cascade.
+pub fn drop_bearing_stores(b: ir::Bundle, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  for v in 0..scope_fn::count(f) {
+    d = own::heap_def_nr(scope_fn::base(scope_fn::tp(f, v)));
+    if d != null && opt_names::drop_cascade_nr(b, d!) != opt_names::NONE {
+      out += [v];
+    }
+  }
+  out
+}
+
+// A top-level `OpFreeRef(Var(v))` of a variable in `set`, -1 otherwise.
+fn freed_var(op: ir::Node, fr: integer) -> integer {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => if def_nr == fr && len(args) > 0 {
+      match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 }
+    } else {
+      -1
+    },
+    _ => -1
+  }
+}
+
+// port: last_use.rs fn lastuse_reclaim — each relocatable store's null-init moved in front of
+// its build, and each dead store freed before the next one is built (its scope-exit free
+// dropped).  Answers the rewritten body.
+pub fn lastuse_reclaim(code: ir::Node, f: ir::Function, db: integer, gf: integer, fr: integer, drop_bearing: vector<integer>, if_distinct: integer) -> ir::Node {
+  plan = reclaim_free_intent(code, f, db, gf, fr, drop_bearing);
+  if len(plan.owning) == 0 {
+    return code;
+  }
+  ops: vector<ir::Node> = [];
+  match code {
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return code; }
+  }
+  reloc: vector<integer> = [];
+  for st in plan.owning {
+    has_init = false;
+    has_alloc = false;
+    for o in ops {
+      if scope_confinement::is_var_null_init(o, st) {
+        has_init = true;
+      }
+      if contains_alloc(o, st, db) {
+        has_alloc = true;
+      }
+    }
+    if has_init && has_alloc {
+      reloc += [st];
+    }
+  }
+  // The relocatable null-inits taken out (by store), and the scope-exit frees of the stores
+  // freed early dropped.
+  saved_st: vector<integer> = [];
+  saved_ni: vector<ir::Node> = [];
+  kept: vector<ir::Node> = [];
+  for op in ops {
+    taken = -1;
+    for st in reloc {
+      if taken < 0 && scope_confinement::is_var_null_init(op, st) {
+        taken = st;
+      }
+    }
+    if taken >= 0 {
+      at = -1;
+      for x in saved_st {
+        if x == taken {
+          at = x#index;
+        }
+      }
+      if at >= 0 {
+        saved_ni[at] = op;
+      } else {
+        saved_st += [taken];
+        saved_ni += [op];
+      }
+      continue;
+    }
+    fv = freed_var(op, fr);
+    if fv >= 0 && scope_fn::has(plan.intent_st, fv) {
+      continue;
+    }
+    kept += [op];
+  }
+  out: vector<ir::Node> = [];
+  for op0 in kept {
+    op = op0;
+    allocs_here: vector<integer> = [for st in plan.owning if contains_alloc(op0, st, db) { st }];
+    // `@FR-H-FreeNull`, `@FR-H-FreeTwice` — an early return ahead of a relocated store's
+    // build frees a store that does not exist yet: those frees are dropped.
+    pending: vector<integer> = [for st in saved_st if st >= 0 && !scope_fn::has(allocs_here, st) { st }];
+    if len(pending) > 0 {
+      op = strip_frees_of(op, pending, fr, if_distinct);
+    }
+    for st in allocs_here {
+      for i in 0..len(plan.intent_later) {
+        if plan.intent_later[i] == st {
+          out += [ir::NdCall { def_nr: fr, args: [ir::NdVar { n: plan.intent_st[i]! }] }];
+        }
+      }
+    }
+    for st in allocs_here {
+      for i in 0..len(saved_st) {
+        if saved_st[i] == st {
+          out += [saved_ni[i]!];
+          saved_st[i] = -1;
+        }
+      }
+    }
+    out += [op];
+  }
+  // A null-init whose build was not matched goes back to the head (`HashMap` order in Rust;
+  // the reloc filter makes it unreachable).
+  for i in 0..len(saved_st) {
+    if saved_st[i] >= 0 {
+      head = [saved_ni[i]!];
+      head += out;
+      out = head;
+    }
+  }
+  match code {
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: out, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => code
+  }
+}
+
+// port: last_use.rs fn strip_frees_of — every free of a variable in `vars` dropped from each
+// early RETURN's scope-exit list inside `node`.
+fn strip_frees_of(node: ir::Node, vars: vector<integer>, fr: integer, if_distinct: integer) -> ir::Node {
+  n = node;
+  match node {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      k = len(ops);
+      if k > 0 && scope_fn::unspan(ops[k - 1]!) is NdReturn {
+        n = ir_pass_tree::with_children(node, [for op in ops if !is_free_of(op, vars, fr, if_distinct) { op }]);
+      }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k > 0 && scope_fn::unspan(items[k - 1]!) is NdReturn {
+        n = ir::NdInsert { items: [for op in items if !is_free_of(op, vars, fr, if_distinct) { op }] };
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for c in kids { strip_frees_of(c, vars, fr, if_distinct) }])
+}
+
+fn is_free_of(op: ir::Node, vars: vector<integer>, fr: integer, if_distinct: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => (def_nr == fr || def_nr == if_distinct) && len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n } => scope_fn::has(vars, n), _ => false },
+    _ => false
+  }
+}

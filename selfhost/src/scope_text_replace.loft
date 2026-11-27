@@ -1,0 +1,432 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/text_replace.rs` transcribed (scope-pass-port.md step 3):
+// `@FR-H-TextReplace`, which text-field assignments release the text they replace, decided by
+// `check` after its loop on the settled bodies.  A site whose place is owned by a local is
+// decided in its own frame; one owned by a parameter asks the greatest fixpoint over every
+// call of the function (`safe_params`).  A caller the pass refused has no settled body, so the
+// fixpoint is taken twice — its calls refuting, and its calls holding — and a site the two
+// answer differently is refused by name.
+
+use ir;
+use scope_fn;
+use scope_args;
+use scope_scan_set;
+
+struct CallRec {
+  callee: integer,
+  caller: integer,
+  args: vector<ir::Node>,
+  clean: boolean,
+  // The caller has no settled body: what its call says is not known.
+  unknown: boolean
+}
+
+// port: text_replace.rs fn admit — over the functions `check` covers; `settled[d]` is true where
+// `d` was laid out.  Rewrites each declined site of a settled function to `OpSetText` and returns
+// the settled functions whose sites the refused callers decide.
+pub fn admit(b: ir::Bundle, settled: vector<boolean>) -> vector<integer> {
+  unsettled: vector<integer> = [];
+  replace = scope_fn::def_nr(b, "OpSetTextReplace");
+  set = scope_fn::def_nr(b, "OpSetText");
+  if replace < 0 || set < 0 || replace >= len(b.data.definitions) || set >= len(b.data.definitions) {
+    return unsettled;
+  }
+  fresh: vector<integer> = [];
+  for d in b.data.definitions {
+    if d.def_type == 1 && len(d.code) > 0 && d.source != 0 {
+      fresh += [d#index];
+    }
+  }
+  if len(fresh) == 0 {
+    return unsettled;
+  }
+  in_fresh: vector<boolean> = [for d in b.data.definitions { false }];
+  for g in fresh {
+    in_fresh[g] = true;
+  }
+  escaped: vector<boolean> = [for d in b.data.definitions { false }];
+  calls: vector<CallRec> = [];
+  for g in fresh {
+    code = b.data.definitions[g]!.code[0]!;
+    mark_fn_refs(code, escaped);
+    collect_calls(b, code, false, g, in_fresh, !(settled[g] ?? false), calls);
+  }
+  // A refused function's settled body may call a hook or a cascade its parser body does not
+  // (the drop hooks at its scope exits, `lease_calls`' copy hooks): an unknown call of each.
+  any_unsettled = false;
+  for g in fresh {
+    if !(settled[g] ?? false) {
+      any_unsettled = true;
+    }
+  }
+  if any_unsettled {
+    for g in fresh {
+      nm = b.data.definitions[g]!.name;
+      if nm.ends_with("_OpDrop") || nm.ends_with("_OpDropAll") || nm.ends_with("_OpCopy") || nm.ends_with("_OpCopyAll") {
+        calls += [CallRec { callee: g, caller: g, args: [], clean: false, unknown: true }];
+      }
+    }
+  }
+  lo = safe_params(b, fresh, settled, replace, escaped, calls, false);
+  hi = safe_params(b, fresh, settled, replace, escaped, calls, true);
+  for g in fresh {
+    if !(settled[g] ?? false) {
+      continue;
+    }
+    d = b.data.definitions[g]!;
+    if !any_call(d.code[0]!, replace) {
+      continue;
+    }
+    at = Site { fn_nr: g, lo: lo, hi: hi, replace: replace, set: set, undecided: false };
+    code = visit(b, d.code[0]!, false, at, d.variables);
+    if at.undecided {
+      unsettled += [g];
+      continue;
+    }
+    b.data.definitions[g].code = [code];
+  }
+  unsettled
+}
+
+struct Site {
+  fn_nr: integer,
+  lo: vector<integer>,
+  hi: vector<integer>,
+  replace: integer,
+  set: integer,
+  undecided: boolean
+}
+
+fn any_call(n: ir::Node, d: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == d { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if any_call(c, d) {
+      return true;
+    }
+  }
+  false
+}
+
+fn mark_fn_refs(n: ir::Node, out: vector<boolean>) {
+  match n {
+    NdFnRef { def_nr } => if def_nr >= 0 && def_nr < len(out) { out[def_nr] = true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    mark_fn_refs(c, out);
+  }
+}
+
+// port: text_replace.rs fn visit — the node with each declined replace turned into a set.  A
+// `CallRef`, `Parallel` or `Iter` evaluates its parts under a held argument; every other node
+// passes `under_call` on.  (Each variant is rebuilt in place, as `scope_wrapper` does: a generic
+// children-then-rebuild walk freed one store twice, `doc/claude/plans/91-self-host/scope-pass-port.md`.)
+fn visit(b: ir::Bundle, n: ir::Node, u: boolean, at: Site, f: ir::Function) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: visit(b, inner, u, at, f) },
+    NdCall { def_nr, args } => {
+      d = def_nr;
+      if def_nr == at.replace && (u || !admitted(b, args, at, f)) {
+        d = at.set;
+      }
+      held = u;
+      out: vector<ir::Node> = [];
+      for a in args {
+        out += [visit(b, a, held, at, f)];
+        held = held || borrows_text(b, a, f);
+      }
+      ir::NdCall { def_nr: d, args: out }
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { visit(b, x, u, at, f) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { visit(b, x, u, at, f) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: visit(b, inner, u, at, f) },
+    NdReturn { inner } => ir::NdReturn { inner: visit(b, inner, u, at, f) },
+    NdDrop { inner } => ir::NdDrop { inner: visit(b, inner, u, at, f) },
+    NdYield { inner } => ir::NdYield { inner: visit(b, inner, u, at, f) },
+    NdIf { cond, t, f: e } => ir::NdIf { cond: visit(b, cond, u, at, f), t: visit(b, t, u, at, f), f: visit(b, e, u, at, f) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { visit(b, x, u, at, f) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { visit(b, x, true, at, f) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { visit(b, x, u, at, f) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: visit(b, inner, u, at, f) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: visit(b, create, true, at, f), next: visit(b, next, true, at, f), init: visit(b, init, true, at, f) },
+    NdParallel { arms } => ir::NdParallel { arms: [for x in arms { visit(b, x, true, at, f) }] },
+    _ => n
+  }
+}
+
+// port: text_replace.rs fn borrows_text
+fn borrows_text(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  match n {
+    NdCall { def_nr } => {
+      r = b.data.definitions[def_nr]!.returned[0] ?? ir::TyVoid;
+      if scope_fn::is_text(r) {
+        return true;
+      }
+    },
+    NdVar { n: x } => if scope_fn::is_argument(f, x) && scope_fn::is_text(scope_fn::tp(f, x)) {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if borrows_text(b, c, f) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: use_analysis.rs fn place_root — -1 for none.
+fn place_root(b: ir::Bundle, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => v,
+    _ => scope_scan_set::projection_root_var(b, n)
+  }
+}
+
+// port: text_replace.rs `Facts::owner_of` — -1 for a chain that branches or cycles.
+fn owner_of(f: ir::Function, v: integer) -> integer {
+  at = v;
+  n = scope_fn::count(f);
+  for i in 0..n + 1 {
+    if at < 0 || at >= n {
+      return -1;
+    }
+    ds = scope_fn::deps(f, at);
+    if len(ds) == 0 {
+      return at;
+    }
+    if len(ds) > 1 {
+      return -1;
+    }
+    at = ds[0]!;
+  }
+  -1
+}
+
+// port: text_replace.rs fn admitted — notes an answer the two fixpoints disagree on.
+fn admitted(b: ir::Bundle, args: vector<ir::Node>, at: Site, f: ir::Function) -> boolean {
+  if len(args) == 0 {
+    return false;
+  }
+  root = place_root(b, args[0]!);
+  if root < 0 {
+    return false;
+  }
+  owner = owner_of(f, root);
+  if owner < 0 {
+    return false;
+  }
+  if owner >= scope_fn::count(f) || !scope_fn::is_argument(f, owner) {
+    return owner < scope_fn::count(f);
+  }
+  key = at.fn_nr * 65536 + owner;
+  in_lo = scope_fn::has(at.lo, key);
+  if in_lo != scope_fn::has(at.hi, key) {
+    at.undecided = true;
+  }
+  in_lo
+}
+
+// port: text_replace.rs fn safe_params — `unknown_holds` says whether a call from a refused
+// caller keeps a parameter safe (the upper fixpoint) or strikes it (the lower one).  Pairs are
+// `f * 65536 + v`.
+fn safe_params(b: ir::Bundle, fresh: vector<integer>, settled: vector<boolean>, replace: integer, escaped: vector<boolean>, calls: vector<CallRec>, unknown_holds: boolean) -> vector<integer> {
+  safe: vector<integer> = [];
+  for f in fresh {
+    if !(settled[f] ?? false) || (escaped[f] ?? false) || !has_calls(calls, f) {
+      continue;
+    }
+    def = b.data.definitions[f]!;
+    if !value_only_text_params(def, replace) {
+      continue;
+    }
+    for x in def.variables.variables {
+      if x.argument && !scope_fn::is_text(x.type_def[0] ?? ir::TyVoid) {
+        safe += [f * 65536 + x#index];
+      }
+    }
+  }
+  loop_on = true;
+  while loop_on {
+    struck: vector<integer> = [];
+    for k in safe {
+      if !holds(b, k / 65536, k % 65536, calls, safe, unknown_holds) {
+        struck += [k];
+      }
+    }
+    if len(struck) == 0 {
+      loop_on = false;
+    } else {
+      // Through a temp: `safe = [for k in safe …]` in a function that returns `safe` answers
+      // an empty vector (a loft defect, scope-pass-port.md § Built, step 3).
+      kept = [for k in safe if !scope_fn::has(struck, k) { k }];
+      safe = kept;
+    }
+  }
+  safe
+}
+
+fn has_calls(calls: vector<CallRec>, f: integer) -> boolean {
+  for c in calls {
+    if c.callee == f {
+      return true;
+    }
+  }
+  false
+}
+
+// port: text_replace.rs fn holds
+fn holds(b: ir::Bundle, f: integer, v: integer, calls: vector<CallRec>, safe: vector<integer>, unknown_holds: boolean) -> boolean {
+  def = b.data.definitions[f]!;
+  nm = scope_fn::name(def.variables, v);
+  idx = -1;
+  for a in def.attributes {
+    if idx < 0 && a.name == nm {
+      idx = a#index;
+    }
+  }
+  if idx < 0 {
+    return false;
+  }
+  for c in calls {
+    if c.callee != f {
+      continue;
+    }
+    if c.unknown {
+      if unknown_holds {
+        continue;
+      }
+      return false;
+    }
+    if !c.clean || len(c.args) != len(def.attributes) {
+      return false;
+    }
+    cf = b.data.definitions[c.caller]!.variables;
+    r = place_root(b, c.args[idx]!);
+    o = if r < 0 { -1 } else { owner_of(cf, r) };
+    if o < 0 {
+      return false;
+    }
+    if o < scope_fn::count(cf) && scope_fn::is_argument(cf, o) && !scope_fn::has(safe, c.caller * 65536 + o) {
+      return false;
+    }
+    if o >= scope_fn::count(cf) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: text_replace.rs fn collect_calls
+fn collect_calls(b: ir::Bundle, n: ir::Node, under_call: boolean, caller: integer, fresh: vector<boolean>, unknown: boolean, out: vector<CallRec>) {
+  match n {
+    NdSpan { inner } => collect_calls(b, inner, under_call, caller, fresh, unknown, out),
+    NdCall { def_nr, args } => {
+      if def_nr >= 0 && (fresh[def_nr] ?? false) {
+        out += [CallRec { callee: def_nr, caller: caller, args: args, clean: !under_call, unknown: unknown }];
+      }
+      f = b.data.definitions[caller]!.variables;
+      held = under_call;
+      for a in args {
+        collect_calls(b, a, held, caller, fresh, unknown, out);
+        held = held || borrows_text(b, a, f);
+      }
+    },
+    NdCallRef => for c in scope_fn::children(n) { collect_calls(b, c, true, caller, fresh, unknown, out); },
+    NdParallel => for c in scope_fn::children(n) { collect_calls(b, c, true, caller, fresh, unknown, out); },
+    NdIter => for c in scope_fn::children(n) { collect_calls(b, c, true, caller, fresh, unknown, out); },
+    _ => for c in scope_fn::children(n) { collect_calls(b, c, under_call, caller, fresh, unknown, out); }
+  }
+}
+
+// port: text_replace.rs fn value_only_text_params
+fn value_only_text_params(def: ir::Definition, replace: integer) -> boolean {
+  f = def.variables;
+  for x in f.variables {
+    if !x.argument || !scope_fn::is_text(x.type_def[0] ?? ir::TyVoid) {
+      continue;
+    }
+    w = ReadAfterRelease { param: x#index, replace: replace, read_after: false };
+    rar_value(w, def.code[0]!, false);
+    if w.read_after {
+      return false;
+    }
+  }
+  true
+}
+
+struct ReadAfterRelease {
+  param: integer,
+  replace: integer,
+  read_after: boolean
+}
+
+// port: text_replace.rs `ReadAfterRelease::value`
+fn rar_value(w: ReadAfterRelease, n: ir::Node, released: boolean) -> boolean {
+  match n {
+    NdSpan { inner } => { return rar_value(w, inner, released); },
+    NdSet { var, inner } => {
+      after = rar_value(w, inner, released);
+      if var == w.param {
+        w.read_after = true;
+      }
+      return after;
+    },
+    NdIf { cond, t, f } => {
+      at = rar_value(w, cond, released);
+      x = rar_value(w, t, at);
+      y = rar_value(w, f, at);
+      return x || y;
+    },
+    NdLoop => {
+      once = rar_children(w, n, released);
+      return rar_children(w, n, once);
+    },
+    NdCall { def_nr, args } => {
+      at = released;
+      for a in args {
+        if def_nr == w.replace && a#index == 2 && match scope_fn::unspan(a) { NdVar { n: x } => x == w.param, _ => false } {
+          continue;
+        }
+        at = rar_value(w, a, at);
+      }
+      return at || def_nr == w.replace;
+    },
+    _ => {}
+  }
+  names = match n {
+    NdVar { n: x } => x == w.param,
+    NdTupleGet { var } => var == w.param,
+    NdTuplePut { var } => var == w.param,
+    NdIter { var } => var == w.param,
+    NdCallRef { var } => var == w.param,
+    _ => false
+  };
+  if names && released {
+    w.read_after = true;
+  }
+  rar_children(w, n, released)
+}
+
+fn rar_children(w: ReadAfterRelease, n: ir::Node, released: boolean) -> boolean {
+  at = released;
+  for c in scope_fn::children(n) {
+    at = rar_value(w, c, at);
+  }
+  at
+}

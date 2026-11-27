@@ -211,6 +211,17 @@ fn var_named(f: ir::Function, nm: text) -> integer {
 
 // `value_records(data, stores, false)`: the program's plan.
 pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layout::ValueRecords {
+  plan_sites(b, w, ops, false)
+}
+
+// `value_records_twinned`: the plan the IR's own pass starts from — a site that consumes an
+// admitted function's RECORD does not decline it (the pass serves that site with a twin).
+// `LOFT_NO_VR_TWIN_SITES=1` restores the declining gate.
+pub fn plan_twinned(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layout::ValueRecords {
+  plan_sites(b, w, ops, (env_variable("LOFT_NO_VR_TWIN_SITES") ?? "0") == "0")
+}
+
+fn plan_sites(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops, twin_sites: boolean) -> opt_vr_layout::ValueRecords {
   vr = opt_vr_layout::no_records();
   vr.asked = true;
   n = len(b.data.definitions);
@@ -354,7 +365,14 @@ pub fn plan(b: ir::Bundle, w: opt_writes::Writes, ops: own::Ops) -> opt_vr_layou
       locals = opt_vr_locals::value_locals_in(b, ops, caller, vr, admitted2, sp2);
       own_d = if admitted2[caller]! >= 0 { caller } else { -1 };
       c = opt_vr_shape::Ctx { b: b, ops: ops, d: caller, admitted: admitted2, params: vr.params, locals: locals, own: own_d, sites: vr.sites, sp: sp2 };
-      opt_vr_sites::site_walk(c, cdef.code[0]!, if own_d >= 0 { opt_vr_sites::POS_TAIL } else { opt_vr_sites::POS_OPERAND }, declined);
+      // A twinned plan's operand sites keep the record form (`value_records_twinned`).
+      top = if own_d >= 0 { opt_vr_sites::POS_TAIL } else { opt_vr_sites::POS_OPERAND };
+      if twin_sites {
+        kept_sites: vector<boolean> = [for _ in 0..n { false }];
+        opt_vr_sites::site_walk(c, cdef.code[0]!, top, kept_sites);
+      } else {
+        opt_vr_sites::site_walk(c, cdef.code[0]!, top, declined);
+      }
       if len(vr.views) > 0 {
         opt_vr_view::view_sites_declined(b, dmap, caller, vr.views, admitted2, locals, vr, declined);
       }

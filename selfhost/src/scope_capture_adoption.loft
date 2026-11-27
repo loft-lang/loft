@@ -1,0 +1,271 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/capture_adoption.rs`, the part `check` runs after its loop
+// (`mark_borrowed_captures`), transcribed where the pass can decide it (scope-pass-port.md
+// step 3).  Which closure-record captures a record BORROWS is decided on the settled body of
+// the frame that builds the record; a capture that holds no store
+// (`capture_attr_is_cascade_relevant`) never gets a verdict, so a record with no such capture
+// is never marked and its cascade keeps every walk.  A cascade of a record WITH such a capture
+// is refused before the loop by name, and so is every cascade that calls one.  The rest of the
+// marking — `prune_empty_cascades` (an effectless cascade retired, every call of it dropped)
+// and `cascade_before_record_frees` — runs on the settled bodies, three-valued: a cascade the
+// pass refused has no settled body, so what depends on whether it is pruned is refused too.
+
+use ir;
+use scope_fn;
+use opt_names;
+
+// port: capture_adoption.rs fn capture_attr_is_cascade_relevant
+pub fn capture_attr_is_cascade_relevant(b: ir::Bundle, record: integer, a: integer) -> boolean {
+  at = b.data.definitions[record]!.attributes[a];
+  if at == null {
+    return false;
+  }
+  match scope_fn::base(at!.typedef[0] ?? ir::TyVoid) {
+    TyReference { dep } => len(dep) > 0,
+    _ => false
+  }
+}
+
+// The drop cascades whose final form a frame's capture verdicts decide: the cascade of every
+// closure record with a capture that holds a store, and every cascade that calls one.  Indexed
+// by definition, true where decided by a frame.
+pub fn frame_decided_cascades(b: ir::Bundle) -> vector<boolean> {
+  out: vector<boolean> = [for d in b.data.definitions { false }];
+  for d in b.data.definitions {
+    if !d.name.starts_with("__closure_") {
+      continue;
+    }
+    relevant = false;
+    for a in d.attributes {
+      if capture_attr_is_cascade_relevant(b, d#index, a#index) {
+        relevant = true;
+      }
+    }
+    c = opt_names::drop_cascade_nr(b, d#index);
+    if relevant && c != opt_names::NONE {
+      out[c] = true;
+    }
+  }
+  // A cascade that calls one decided by a frame (through other cascades) is decided too.
+  changed = true;
+  while changed {
+    changed = false;
+    for d in b.data.definitions {
+      i = d#index;
+      if out[i] ?? false || d.def_type != 1 || len(d.code) == 0 || !d.name.contains("OpDrop") {
+        continue;
+      }
+      if calls_marked(d.code[0]!, out) {
+        out[i] = true;
+        changed = true;
+      }
+    }
+  }
+  out
+}
+
+fn calls_marked(n: ir::Node, marked: vector<boolean>) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr >= 0 && (marked[def_nr] ?? false) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls_marked(c, marked) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn prune_empty_cascades, over the settled bodies; `settled[d]` is
+// false where the pass refused `d` (no settled body).  Returns the definitions whose result
+// the pass cannot settle (a call of a cascade whose pruning is undecided); renames each pruned
+// cascade `<name>_retired` and drops every call of one elsewhere.
+pub fn prune_empty_cascades(b: ir::Bundle, settled: vector<boolean>) -> vector<integer> {
+  cand: vector<boolean> = [];
+  for d in b.data.definitions {
+    cand += [d.def_type == 1 && d.name.ends_with("_OpDropAll") && len(d.code) > 0];
+  }
+  // The least fixed point with every undecided cascade taken as NOT pruned, and with every one
+  // taken as pruned: a cascade pruned in both is pruned, in neither is kept, else undecided.
+  lo = fixed_point(b, cand, settled, false);
+  hi = fixed_point(b, cand, settled, true);
+  undecided: vector<boolean> = [];
+  for d in b.data.definitions {
+    i = d#index;
+    known = (settled[i] ?? false) && (lo[i] ?? false) == (hi[i] ?? false);
+    undecided += [(cand[i] ?? false) && !known];
+  }
+  unsettled: vector<integer> = [];
+  for d in b.data.definitions {
+    i = d#index;
+    if !(settled[i] ?? false) {
+      continue;
+    }
+    if (undecided[i] ?? false) || calls_marked(d.code[0]!, undecided) {
+      unsettled += [i];
+    }
+  }
+  for d in b.data.definitions {
+    i = d#index;
+    if (settled[i] ?? false) && !(lo[i] ?? false) && !scope_fn::has(unsettled, i) && calls_marked(d.code[0]!, lo) {
+      b.data.definitions[i].code = [drop_calls(d.code[0]!, lo)];
+    }
+  }
+  for d in b.data.definitions {
+    i = d#index;
+    if (lo[i] ?? false) && (settled[i] ?? false) {
+      b.data.definitions[i].name = "{d.name}_retired";
+    }
+  }
+  unsettled
+}
+
+fn fixed_point(b: ir::Bundle, cand: vector<boolean>, settled: vector<boolean>, unsettled_pruned: boolean) -> vector<boolean> {
+  pruned: vector<boolean> = [for d in b.data.definitions { unsettled_pruned && (cand[d#index] ?? false) && !(settled[d#index] ?? false) }];
+  changed = true;
+  while changed {
+    changed = false;
+    for d in b.data.definitions {
+      i = d#index;
+      if (pruned[i] ?? false) || !(cand[i] ?? false) || !(settled[i] ?? false) {
+        continue;
+      }
+      top = scope_fn::unspan(d.code[0]!);
+      is_cascade = match top { NdBlock { block } => block[0].name == "drop_cascade", _ => false };
+      if is_cascade && effectless(top, pruned) {
+        pruned[i] = true;
+        changed = true;
+      }
+    }
+  }
+  pruned
+}
+
+fn effectless(n: ir::Node, pruned: vector<boolean>) -> boolean {
+  match scope_fn::unspan(n) {
+    NdNull => true,
+    NdCall { def_nr } => def_nr >= 0 && (pruned[def_nr] ?? false),
+    NdIf { t, f } => effectless(t, pruned) && effectless(f, pruned),
+    NdBlock { block } => {
+      for o in block[0].operators {
+        if !effectless(o, pruned) {
+          return false;
+        }
+      }
+      true
+    },
+    NdLoop { block } => {
+      for o in block[0].operators {
+        if !effectless(o, pruned) {
+          return false;
+        }
+      }
+      true
+    },
+    NdInsert { items } => {
+      for o in items {
+        if !effectless(o, pruned) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+// `drop_calls`: every call of a pruned cascade becomes `Null`.
+fn drop_calls(n: ir::Node, pruned: vector<boolean>) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr } => if def_nr >= 0 && (pruned[def_nr] ?? false) { return ir::NdNull; },
+    _ => {}
+  }
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: drop_calls(inner, pruned) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { drop_calls(x, pruned) }] },
+    NdBlock { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { drop_calls(x, pruned) }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      bl.operators = [for x in bl.operators { drop_calls(x, pruned) }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: drop_calls(inner, pruned) },
+    NdReturn { inner } => ir::NdReturn { inner: drop_calls(inner, pruned) },
+    NdDrop { inner } => ir::NdDrop { inner: drop_calls(inner, pruned) },
+    NdYield { inner } => ir::NdYield { inner: drop_calls(inner, pruned) },
+    NdIf { cond, t, f } => ir::NdIf { cond: drop_calls(cond, pruned), t: drop_calls(t, pruned), f: drop_calls(f, pruned) },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { drop_calls(x, pruned) }] },
+    NdCallRef { var, args } => ir::NdCallRef { var: var, args: [for x in args { drop_calls(x, pruned) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { drop_calls(x, pruned) }] },
+    NdTuplePut { var, idx, inner } => ir::NdTuplePut { var: var, idx: idx, inner: drop_calls(inner, pruned) },
+    NdIter { var, create, next, init } => ir::NdIter { var: var, create: drop_calls(create, pruned), next: drop_calls(next, pruned), init: drop_calls(init, pruned) },
+    NdParallel { arms } => ir::NdParallel { arms: [for x in arms { drop_calls(x, pruned) }] },
+    _ => n
+  }
+}
+
+// `cascade_before_record_frees` would patch a statement of `d`: a free of a closure-record
+// local whose type keeps a cascade, or a bind of a displaced one (`___oldrec_N`).
+pub fn owes_record_cascade(b: ir::Bundle, d: ir::Definition) -> boolean {
+  f = d.variables;
+  holds = false;
+  for x in f.variables {
+    match x.type_def[0] ?? ir::TyVoid {
+      TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__closure_") && opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
+        holds = true;
+      },
+      _ => {}
+    }
+  }
+  holds && patched(b, d.code[0]!, f)
+}
+
+fn patched(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => if len(args) == 1 && b.data.definitions[def_nr]!.name == "OpFreeRef" {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: v } => if v < scope_fn::count(f) {
+          match scope_fn::base(scope_fn::tp(f, v)) {
+            TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__closure_") && opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
+              return true;
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    },
+    NdSet { var, inner } => if !(scope_fn::unspan(inner) is NdNull) && var < scope_fn::count(f) && strip_underscores(scope_fn::name(f, var)).starts_with("oldrec") {
+      match scope_fn::base(scope_fn::tp(f, var)) {
+        TyReference { n: r } => if opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
+          return true;
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if patched(b, c, f) {
+      return true;
+    }
+  }
+  false
+}
+
+// `trim_start_matches('_')`.
+fn strip_underscores(t: text) -> text {
+  i = 0;
+  while i < len(t) && t[i] == '_' {
+    i += 1;
+  }
+  t[i..]
+}

@@ -1,0 +1,5 @@
+// @PLN231 probe — an interface method with a default body
+// Expect on both backends: refused: a syntax error at the body
+interface Named { fn name(self: Self) -> text { "default" } }
+struct A { n: integer }
+fn main() { println("ok"); }

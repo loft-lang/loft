@@ -129,6 +129,10 @@ pub struct El {
   // second pass names it as the function starts, so a caller sees it whatever the body's
   // delivery then does — a refused callee included.
   pub owed_buffer: vector<integer>,
+  // The function the second pass is reading hands one of its parameters back from a tail (a
+  // bare name in a tail or an arm): Rust's first pass gave its result that borrow, so a call of
+  // it inside its own body gives no store away (`call_gives_away_its_store`).
+  pub self_view_tail: boolean,
   // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
   // shared with the lambdas its lambdas make; cleared as each pass starts.
   pub lambda_roots: vector<text>,
@@ -166,6 +170,9 @@ pub struct El {
   pub null_widened: vector<integer>,
   // The definitions declared `value struct`: a comparison of two is spelled field by field.
   pub value_structs: vector<integer>,
+  // `Attribute::lexeme` (@PLN35): the `#lexeme` fields of token-enum variants, `"<def>:<field>"`
+  // — parse-time only, as Rust's is (no image carries it).
+  pub lexeme_fields: vector<text>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
   // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
@@ -186,6 +193,9 @@ pub struct El {
   // `Parser::pass2_bodies`: the generic templates whose second-pass body has been read
   pub bodies2: vector<integer>,
   pub stale: vector<StaleInstance>,
+  // Generic instances registered by their signature only, at a call this port refuses (Rust
+  // mints them there): every later call of one is refused too, never lowered to a body-less def.
+  pub refused_instances: vector<integer>,
   // The lambda being read: the enclosing function's locals it captures, its closure record and
   // the `__closure` parameter they are read through (-1 where there is none yet).
   pub captures: vector<Capture>,
@@ -212,6 +222,9 @@ pub struct El {
   pub name_only: vector<integer>,
   // The forward references' stubs a declaration adopted this pass (`Data::adopted_stubs`).
   pub adopted: vector<integer>,
+  // The stubs a CONSTRUCTION or a bare type-spelled name left (`speculative_type_refs`): never
+  // reported on their own — the construction's second pass does.
+  pub speculative: vector<integer>,
   // The standard library's `#loft"…"` operator templates, by definition (`create.loft` writes
   // `fill.loft` from them; the Rust compiler skips the annotation).
   pub loft_ops: vector<LoftOp>
@@ -282,6 +295,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     at: -1,
     null_widened: [],
     value_structs: [],
+    lexeme_fields: [],
     slot_links: [],
     subject_sites: [],
     subject_names: [],
@@ -291,6 +305,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     type_vars: [],
     bodies2: [],
     stale: [],
+    refused_instances: [],
     captures: [],
     shared_vecs: [],
     closure_rec: -1,
@@ -305,6 +320,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     loading: [],
     name_only: [],
     adopted: [],
+    speculative: [],
     loft_ops: []
   }
 }
@@ -371,6 +387,29 @@ pub fn refuse(el: El, what: text) {
 // ── positions ─────────────────────────────────────────────────────────────────────────────
 
 // `Lexer::pos` while token `i` is the parser's peek: the scan cursor after it.
+// The token after the `)` that closes the call starting at token `from` (the parser's peek once
+// the call is read).
+pub fn past_call(e: El, from: integer) -> integer {
+  at = from;
+  while at < len(e.p.src) && !(e.p.src[at] is LParen) {
+    at += 1;
+  }
+  depth = 0;
+  while at < len(e.p.src) {
+    t = e.p.src[at];
+    if t is LParen {
+      depth += 1;
+    } else if t is RParen {
+      depth -= 1;
+      if depth == 0 {
+        return at + 1;
+      }
+    }
+    at += 1;
+  }
+  at
+}
+
 pub fn pos_at(el: El, i: integer) -> ir::Position {
   j = if i >= len(el.p.src) { len(el.p.src) - 1 } else { i };
   ir::Position { file: el.file, line: el.p.eline[j] ?? 0, pos: el.p.ecol[j] ?? 0 }
@@ -400,9 +439,53 @@ fn key(source: integer, name: text) -> text {
 }
 
 // `Data::source_nr`: the definition `name` of `source`, or -1.
+// A name a `use` of this source imports but has not applied yet (`pending`, applied after
+// the file): Rust's `use` makes it visible at once, so it is no forward reference.
+pub fn pending_import_names(el: El, name: text) -> boolean {
+  for pi in el.pending {
+    if pi.for_source == el.source {
+      if pi.star && source_nr(el, pi.lib_source, name) >= 0 {
+        return true;
+      }
+      for im in pi.names {
+        if im.bind == name {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
 pub fn source_nr(el: El, source: integer, name: text) -> integer {
   e = el.names[key(source, name)];
   if e == null { -1 } else { e.nr }
+}
+
+// `def_names.insert_if_absent(name, source, nr)`: `nr` keyed as `name` of `source`, unless a
+// definition already is.
+pub fn name_in(el: El, source: integer, name: text, nr: integer) {
+  k = key(source, name);
+  if el.names[k] == null {
+    el.names += [DefName { key: k, nr: nr }];
+  }
+}
+
+// `vector_def`'s global wrapper: definition `d`, made under the requesting source, is the
+// standard library's — its name bound under source 0 (where absent, `insert_if_absent`), the
+// requesting source's binding dropped, so every file finds the one wrapper.
+pub fn make_global(el: El, d: integer) {
+  src = def(el, d).source;
+  nm = def(el, d).name;
+  el.b.data.definitions[d].source = STD_SOURCE;
+  if src != STD_SOURCE {
+    if el.names[key(src, nm)] != null && el.names[key(src, nm)]!.nr == d {
+      el.names[key(src, nm)] = null;
+    }
+    if el.names[key(STD_SOURCE, nm)] == null {
+      el.names += [DefName { key: key(STD_SOURCE, nm), nr: d }];
+    }
+  }
 }
 
 // A definition moved to another key of its source (`def_names.remove` / `insert`).
@@ -774,6 +857,11 @@ pub fn load_base(el: El, base: ir::Bundle, upto: integer, types_upto: integer) {
       break;
     }
     el.b.data.definitions += [d];
+    // (A row Rust minted for THIS program — past the empty program's types — is not the
+    // library's: the definition arrives without it, and the port mints it where Rust does.)
+    if d.known_type != NO_TYPE && d.known_type >= types_upto {
+      el.b.data.definitions[d#index].known_type = NO_TYPE;
+    }
   }
   for t in base.types {
     if t#index >= types_upto {

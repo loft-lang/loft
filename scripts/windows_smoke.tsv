@@ -145,6 +145,7 @@ selfhost/bench/cgen_run.sh	--help
 selfhost/bench/cgen_survey.py	--help
 selfhost/bench/fill_speed.sh	--help
 selfhost/bench/measure.py	--help
+selfhost/bench/passes_survey.py	--help
 selfhost/bench/run_image_bytecode.py	--help
 selfhost/bench/run_image_libtests.py	--help
 selfhost/bench/run_image_survey.py	--help

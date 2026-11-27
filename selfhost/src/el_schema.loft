@@ -31,13 +31,13 @@ pub const NO_TYPE = 65535;
 
 // `typedef::fill_all`, the part a plain struct reaches: every struct the file declared that has
 // no type number yet is registered, in definition order, then the schema is finished.
-pub fn fill_all(e: el::El) {
+pub fn fill_all(e: el::El, start_def: integer = 0) {
   // `actual_types_deferred`: the forward references this file made resolve to what their stubs
   // became; a stub nothing adopted is the undefined type Rust reports.
   for d in 0..len(e.b.data.definitions) {
     df = el::def(e, d);
     if df.source == e.source {
-      if df.def_type == el::DT_UNKNOWN && e.first_pass && !e.default {
+      if df.def_type == el::DT_UNKNOWN && e.first_pass && !e.default && !e.speculative.contains(d) {
         el::refuse(e, "an undefined type, or one declared in another file of a cycle");
       }
       if df.def_type == el::DT_FUNCTION || df.def_type == el::DT_STRUCT || (df.def_type == el::DT_ENUM_VALUE && len(df.attributes) > 0) {
@@ -92,16 +92,26 @@ pub fn fill_all(e: el::El) {
   // it, at the position the lexer has reached: the end of the file.
   eof = el::pos_at(e, len(e.p.src) - 1);
   for d in e.b.data.definitions {
-    if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || d.source != e.source {
+    // (Rust's loop asks the definitions from this pass's `start_def` on; another source's own
+    // were asked at its file's end.  A generic instance and its variants live in the standard
+    // library's source but are this file's when this pass minted them: `Bag<integer>`'s
+    // `items: vector<(integer, integer)>` takes its wrapper here — one minted before this file's
+    // pass began does not, its fields' vectors are in another source.)
+    instance_part = d#index >= start_def && (d.instance_of >= 0 || (d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 && el::def(e, d.parent).instance_of >= 0));
+    if !(d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE) || (d.source != e.source && !instance_part) {
       continue;
     }
     for a in d.attributes {
       match a.typedef[0] {
         TyVector { inner } => {
           nm = el_types::elem_name(e, inner);
-          if nm != "" && el::def_nr(e, "main_vector<{nm}>") < 0 {
+          if nm != "" && wants_vector_def(e, nm) {
             make_vector_def(e, inner, nm, eof, false, store: false);
           }
+          // A tuple element (`vector_wrapper_name` of a tuple, `vector_def` with
+          // `ensure_tuple_defs`): the `__tuple<…>` record first, then `vector<(…)>` owned by it
+          // and `main_vector<(…)>`, as a literal of it makes them (`tuple_vector_rows`).
+          tuple_wrapper(e, inner, eof, typed: false);
         },
         _ => {}
       }
@@ -113,7 +123,9 @@ pub fn fill_all(e: el::El) {
     if len([for ba in d.attributes if (ba.typedef[0] ?? ir::TyVoid) == ir::TyUnknown { n: 0 } { 1 }]) > 0 {
       continue;
     }
-    if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE {
+    // (`is_template_part`: a template's own variant is laid out nowhere; its instances' are.)
+    template_part = d.def_type == el::DT_ENUM_VALUE && d.parent >= 0 && el::def(e, d.parent).def_type == el::DT_TYPE_TEMPLATE;
+    if (d.def_type == el::DT_STRUCT || d.def_type == el::DT_ENUM_VALUE && len(d.attributes) > 0) && d.known_type == NO_TYPE && !template_part {
       fill_database(e, d#index);
       // @PLN25 E2: a struct's `__nullable<S>` variants are laid out right after it, so their
       // type numbers follow `S` and precede any later struct that holds one.
@@ -199,7 +211,13 @@ fn copy_unknown_fields(e: el::El, d: integer) {
           el::set_returned(e, d, el::def(e, n).returned[0] ?? ir::TyUnknown { n: n });
         }
       },
-      _ => {}
+      // (…and under a `?` or as a vector's element, as an attribute's: `-> X?`, `-> vector<X>`.)
+      _ => {
+        rr = resolved_stub(e, el::def(e, d).returned[0] ?? ir::TyVoid);
+        if rr != null {
+          el::set_returned(e, d, rr!);
+        }
+      }
     }
   }
 }
@@ -279,6 +297,14 @@ fn keyed_content_known(e: el::El, t: ir::TypeT) -> boolean {
 // wrapper struct a vector local's store is (one field, `vector`), both at `pos`; `typed` gives
 // the wrapper its record type, as a construct does (the schema's own pass leaves it unknown,
 // and makes the `vector<T>` store type at once instead — `vector_store_type`).
+// `Data::vector_def` makes two definitions under two rules: `vector<T>` where this source (or
+// the standard library) has none, `main_vector<T>` where no source has one — it is global.  A
+// program's first `vector<lib::Pair>` makes its own `vector<Pair>` beside the library's and finds
+// the library's wrapper.
+pub fn wants_vector_def(e: el::El, nm: text) -> boolean {
+  el::def_nr(e, "vector<{nm}>") < 0 || el::def_nr(e, "main_vector<{nm}>") < 0
+}
+
 pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true, store: boolean = true) {
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
@@ -287,7 +313,7 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     e.b.data.definitions[vd].parent = match t {
       TyReference { n } => n,
       TyEnum { n } => n,
-      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), TyFloat => el::source_nr(e, 0, "float"), TyBoolean => el::source_nr(e, 0, "boolean"), TyText { dep: _ } => el::source_nr(e, 0, "text"), _ => -1 },
+      TyOptional { inner } => match inner { TyEnum { n } => n, TyReference { n } => n, TyInteger { spec: _ } => el::source_nr(e, 0, "integer"), TyFloat => el::source_nr(e, 0, "float"), TyBoolean => el::source_nr(e, 0, "boolean"), TyText { dep: _ } => el::source_nr(e, 0, "text"), TyCharacter => el::source_nr(e, 0, "character"), TyVector { inner: _ } => el::source_nr(e, 0, "vector"), _ => -1 },
       TyInteger { spec: _ } => el::source_nr(e, 0, "integer"),
       // `type_def_nr` of any vector is the library's `vector`; a function value's is `i32`, the
       // four-byte number it is stored as.
@@ -296,6 +322,10 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
       TyIterator { step: _ } => el::source_nr(e, 0, "iterator"),
       _ => el::source_nr(e, 0, nm)
     };
+  }
+  // (The global wrapper another source made is this one's too: its rows were made with it.)
+  if el::def_nr(e, "main_vector<{nm}>") >= 0 {
+    return;
   }
   // A narrow integer's element and `vector<…>` store types are made with the definitions, ahead
   // of every struct the schema fills.
@@ -320,7 +350,9 @@ pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typ
     vector_store_type(e, t, nm);
   }
   md = el::add_def(e, "main_vector<{nm}>", pos, el::DT_STRUCT);
-  e.b.data.definitions[md].source = 0;
+  // (Global, as Rust's `vector_def` makes it: source 0 and bound there, so a program's
+  // `vector<lib::Pair>` finds the wrapper its library made.)
+  el::make_global(e, md);
   if typed {
     e.b.data.definitions[md].returned = [ir::TyReference { n: md, dep: [] }];
   }
@@ -424,6 +456,64 @@ pub fn nullable_enum_for(e: el::El, sd: integer) -> integer {
   el_types::nullable_enum_for(e, sd, el::pos_at(e, len(e.p.src) - 1))
 }
 
+// `vector_def` for a TUPLE element (`vector_wrapper_name` of a tuple, `ensure_tuple_defs`): the
+// `__tuple<…>` records of the element, inner first, then `vector<(…)>` owned by the element's
+// and `main_vector<(…)>`, at `pos`, where they are not made yet — as a literal of it makes them
+// (`tuple_vector_rows`).  Nothing for an element that is no tuple, or one naming a variable.
+// `typed`: the parser's `vector_def` (a bind, an instance) types the wrapper; the schema's own
+// field pass leaves it unknown, as `make_vector_def` documents.
+pub fn tuple_wrapper(e: el::El, inner: ir::TypeT, pos: ir::Position, typed: boolean = true) {
+  match inner {
+    TyTuple { elems: te } => {
+      tsp = el_types::tuple_spelling_e(e, te, ", ");
+      // (A record with borrows, an enum, a nullable or a vector member is spelled by its
+      // `Type::name` all the same: `vector<(P, Hue)>`, `vector<(integer, integer?)>`.)
+      if tsp == "" && el_types::nameable_members(e, te) {
+        tsp = join([for m in te { el_types::key_name(e, el_types::without_deps(m)) }], ", ");
+      }
+      if tsp != "" && el::def_nr(e, "main_vector<({tsp})>") < 0 && !el_types::any_names_type_var(e, te) {
+        for m in te {
+          tuple_wrapper_records(e, m, pos);
+        }
+        ttd = el_types::tuple_def(e, te, pos);
+        make_vector_def(e, inner, "({tsp})", pos, typed, store: false);
+        tvd = el::def_nr(e, "vector<({tsp})>");
+        if tvd >= 0 && ttd >= 0 {
+          e.b.data.definitions[tvd].parent = ttd;
+        }
+      }
+      // On the second pass, once the record's row is laid out, `check_vector`'s
+      // `vector<__tuple<…>>` under the row's own name, at the same place (`tuple_vector_rows`).
+      ttd2 = el_types::tuple_def_of(e, te);
+      if !e.first_pass && ttd2 >= 0 {
+        vname = "vector<{el::def(e, ttd2).name}>";
+        vk = schema_type(e, vname);
+        if vk >= 0 && el::def_nr(e, vname) < 0 {
+          cv = el::add_def(e, vname, pos, el::DT_VECTOR);
+          e.b.data.definitions[cv].parent = ttd2;
+          e.b.data.definitions[cv].known_type = vk;
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// The `__tuple<…>` records a tuple member holds, inner first (`ensure_tuple_defs`).
+fn tuple_wrapper_records(e: el::El, t: ir::TypeT, pos: ir::Position) {
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        tuple_wrapper_records(e, m, pos);
+      }
+      el_types::tuple_def(e, elems, pos);
+    },
+    TyOptional { inner } => tuple_wrapper_records(e, inner, pos),
+    TyVector { inner } => tuple_wrapper_records(e, inner, pos),
+    _ => {}
+  }
+}
+
 // A `main_vector<T>` wrapper made on the second pass (by a parameter's type) and asked for
 // before the pass ends: laid out now, the wrapper's row then its vector's.
 pub fn fill_wrapper(e: el::El, d: integer) {
@@ -456,7 +546,18 @@ fn fill_database(e: el::El, d: integer) {
   def = el::def(e, d);
   // `main_vector<unknown>` — a first-pass literal's wrapper whose element was not typed yet — is
   // never laid out: its field's content has no definition (`fill_database` skips it).
-  if def.name == "main_vector<unknown>" {
+  // (Nor is `main_vector<vector>`, a literal of such literals' wrapper, while its element is
+  // the library's untyped `vector`.)
+  if def.name == "main_vector<unknown>" || (def.name == "main_vector<vector>" && len(def.attributes) > 0 && el_types::is_unknown(def.attributes[0]!.typedef[0])) {
+    return;
+  }
+  // @PLN165 D5 — an OPEN instance (`Box<T>` inside a template) gets a ROW and no layout: the
+  // fieldless entry a type variable's placeholder has, a variant named by its instance.
+  if el_types::is_open_instance(e, d) {
+    if def.known_type == NO_TYPE {
+      rn = if def.def_type == el::DT_ENUM_VALUE { "__typevar_{el::def(e, def.parent).name}::{def.name}" } else { "__typevar_{def.name}" };
+      e.b.data.definitions[d].known_type = structure(e, rn, 0);
+    }
     return;
   }
   // A type variable's placeholder (`is_type_var_placeholder`: a struct with no fields answering
@@ -469,8 +570,27 @@ fn fill_database(e: el::El, d: integer) {
     reg = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
   }
   if schema_type(e, reg) >= 0 {
-    el::refuse(e, "a struct named like a type the schema already has");
-    return;
+    // @P379: a second definition of a name the schema has is registered qualified — for an enum
+    // INSTANCE's variant (bare-named, so every instance's `Leaf` is `Leaf`; the standard
+    // library's source, which no `use` names) as `src<source>::<name>`, else under its parent
+    // enum's row (`variant_parent_qualified_name`).  Any other repeat stays refused: a library's
+    // same-named type (qualified by its `use` name) is not carried, and a second definition the
+    // port made where Rust reuses one (a `main_vector<lib::T>` minted twice) must not be laid out.
+    instance_variant = def.def_type == el::DT_ENUM_VALUE && def.parent >= 0 && el::def(e, def.parent).instance_of >= 0;
+    if def.source != el::STD_SOURCE || !instance_variant {
+      el::refuse(e, "a struct named like a type the schema already has");
+      return;
+    }
+    q = "src{def.source}::{def.name}";
+    if schema_type(e, q) >= 0 && def.def_type == el::DT_ENUM_VALUE && el::def(e, def.parent).known_type != NO_TYPE {
+      pq = "{e.b.types[el::def(e, def.parent).known_type].name}::{def.name}";
+      q = if schema_type(e, pq) >= 0 { q } else { pq };
+    }
+    if schema_type(e, q) >= 0 {
+      el::refuse(e, "a struct named like a type the schema already has");
+      return;
+    }
+    reg = q;
   }
   // The structure first, then each field's content — a narrow Part is made after it.  A
   // variant's record carries its ordinal and is linked into its enum's values.
@@ -546,6 +666,20 @@ fn fill_database(e: el::El, d: integer) {
         match vti {
           TyTuple { elems: vte } => { vtd = el_types::tuple_def_of(e, vte); },
           TyFunction { args: _ } => { vtd = el::source_nr(e, 0, "i32"); },
+          // (A generator handle's is the library's `iterator`: `vector<iterator>`.)
+          TyIterator { step: _ } => { vtd = el::source_nr(e, 0, "iterator"); },
+          // (A nullable vector's is its vector's, named from the vector and parented on the
+          // element it holds: `vector<vector<Ent>>`, parent `Ent`.)
+          TyOptional { inner: ovi } => match el_types::base(ovi) {
+            TyVector { inner: ove } => {
+              ovk = el_types::type_key_name(e, el_types::base(ovi));
+              if ovk != "" {
+                vtn = "vector<{ovk}>";
+                vtd = match el_types::base(ove) { TyReference { n: oen } => oen, TyEnum { n: oen } => oen, _ => if el::source_nr(e, 0, el_types::elem_name(e, el_types::base(ove))) >= 0 { el::source_nr(e, 0, el_types::elem_name(e, el_types::base(ove))) } else { el::source_nr(e, 0, "vector") } };
+              }
+            },
+            _ => {}
+          },
           TyReference { n: vrn, dep: vrd } => { if len(vrd) == 0 && el_types::type_var(e, vti) < 0 { vtd = vrn; } },
           TyEnum { n: ven } => { if el_types::type_var(e, vti) < 0 { vtd = ven; } },
           TyVector { inner: _ } => {
@@ -720,6 +854,18 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
     TyFloat => known(e, "float"),
     TySingle => known(e, "single"),
     TyCharacter => known(e, "character"),
+    // (A generator handle is stored as the 12-byte `DbRef` it is: the library's `type iterator`
+    // takes that row the first time a layout asks for it, as Rust's `fill_database` gives it.)
+    TyIterator { step: _ } => {
+      itd = el::source_nr(e, 0, "iterator");
+      if itd < 0 {
+        return -1;
+      }
+      if el::def(e, itd).known_type == NO_TYPE {
+        e.b.data.definitions[itd].known_type = dbref(e);
+      }
+      el::def(e, itd).known_type
+    },
     // A struct with no row yet is filled here, as Rust's `fill_database` fills a field's type
     // when it meets one — which numbers it after the struct whose field it is.
     // A pointer field (`reference<T>`, a non-empty dep) is the 12-byte `DbRef` row.
@@ -743,6 +889,22 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if inner is TyTuple {
         tc = content_type(e, inner);
         return if tc < 0 { -1 } else { vector_type(e, tc) };
+      }
+      // (A nullable vector element is stored as the vector it holds, its null the empty handle:
+      // `vector<vector<Ent>?>` is laid out as `vector<vector<Ent>>`.)
+      match inner {
+        TyOptional { inner: ov } => {
+          if el_types::base(ov) is TyVector {
+            oc = content_type(e, el_types::base(ov));
+            return if oc < 0 { -1 } else { vector_type(e, oc) };
+          }
+        },
+        _ => {}
+      }
+      // (…and a generator handle's by the `DbRef` row it is stored as.)
+      if inner is TyIterator {
+        ic = content_type(e, inner);
+        return if ic < 0 { -1 } else { vector_type(e, ic) };
       }
       nm = el_types::elem_name(e, inner);
       if nm == "" {

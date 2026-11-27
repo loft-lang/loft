@@ -1,0 +1,16 @@
+// @PLN231 probe — a calculation fault is a value
+// Expect on both backends: four 'true' lines, then 'still running'
+fn main() {
+  big = 9223372036854775807;
+  o = big + 1;
+  println("overflow null: {o == null}");
+  v = [1, 2, 3];
+  e = v[99];
+  println("oob null: {e == null}");
+  p = "abc" as integer ?? -1;
+  println("parse null: {p == -1}");
+  z = 0;
+  d = 7 / z;
+  println("div0 null: {d == null}");
+  println("still running");
+}

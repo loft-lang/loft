@@ -6313,14 +6313,23 @@ impl<'a> FnWriter<'a> {
         // only an owning rebind frees what it displaces.  Declined, such a rebind fell to
         // `call_copy`, a copy where the interpreter adopts a fresh answer.  @PLN220.
         // `LOFT_C_OWN_JOIN=1` joins owning rebinds only.
+        let rb = (!first && join.is_some())
+            .then(|| crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x));
         let rebind_joins = rebind_owned
-            || (!first
-                && join.is_some()
-                && !crate::keys::c_own_join()
-                && matches!(
-                    crate::bind_lowering::re_bind(self.cx.data, self.d, self.vars, var, x).arm,
-                    crate::bind_lowering::ReArm::Join { .. }
-                ));
+            || (!crate::keys::c_own_join()
+                && rb.is_some_and(|rb| matches!(rb.arm, crate::bind_lowering::ReArm::Join { .. })));
+        // `@FR-O-Move` — a rebind whose value reads the variable (`__ref_N = f(x, __ref_N)`, a
+        // join arm's owning call handed its own buffer) frees what it displaces AFTER the bind
+        // and only where the new value names another store: `bind_lowering`'s stashed free
+        // (`DisplacedFree::Stash`), which the bytecode writer's `free_stashed` emits.  Without it
+        // the store the previous pass left in the variable was dropped whenever this pass's
+        // answer was a copy or a store the callee made — one record per pass of a loop (the
+        // self-hosted `without_terminal_copies`; C only).  `LOFT_C_NO_STASHED_JOIN_FREE=1`
+        // drops it again.
+        let stashed_free = !rebind_owned
+            && rebind_joins
+            && rb.is_some_and(|rb| rb.free == crate::bind_lowering::DisplacedFree::Stash)
+            && !crate::env_once!(std::env::var_os("LOFT_C_NO_STASHED_JOIN_FREE").is_some());
         if let Some((tp, base)) = join.filter(|_| first || rebind_joins) {
             // OpBindOrCopy: a result in the base's store is a view, copied into a fresh store;
             // any other is the callee's fresh store, adopted.
@@ -6363,6 +6372,16 @@ impl<'a> FnWriter<'a> {
                 let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
                 if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
                     keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
+                }
+                self.line(
+                    ind,
+                    &format!("if ({}) loft_free_ref(cx, {old});", keep.join(" && ")),
+                );
+            } else if let Some(rb) = rb.filter(|_| stashed_free) {
+                // `free_stashed`'s witnesses: the entry's, else the call's hidden buffer.
+                let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
+                if let Some(w) = rb.entry_w.or(rb.buffer_witness) {
+                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(w)));
                 }
                 self.line(
                     ind,

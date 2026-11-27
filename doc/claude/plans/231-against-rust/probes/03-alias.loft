@@ -1,0 +1,14 @@
+// @PLN231 probe — a bind copies, a parameter is shared, const reads
+// Expect on both backends: a.x=1 b.x=5 / a.x=2 / 2
+struct S { x: integer }
+fn bump(s: S) { s.x += 1; }
+fn peek(c: const S) -> integer { c.x }
+fn main() {
+  a = S { x: 1 };
+  b = a;
+  b.x = 5;
+  println("copy on bind: a.x={a.x} b.x={b.x}");
+  bump(a);
+  println("param shared: a.x={a.x}");
+  println("const read: {peek(a)}");
+}

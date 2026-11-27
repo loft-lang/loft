@@ -27,6 +27,21 @@ pub fn unrewritten(t: ir::TypeT) -> ir::TypeT {
   }
 }
 
+// `Type::has_unknown`: an unresolved stub anywhere in the type — under a `?`, a link, a tuple
+// member or a vector's element — not the top alone as `is_unknown` asks.
+pub fn has_unknown(t: ir::TypeT) -> boolean {
+  if is_unknown(t) {
+    return true;
+  }
+  match t {
+    TyOptional { inner } => has_unknown(inner),
+    TyRefVar { inner } => has_unknown(inner),
+    TyVector { inner } => has_unknown(inner),
+    TyTuple { elems } => len([for x in elems if has_unknown(x) { 1 }]) > 0,
+    _ => false
+  }
+}
+
 pub fn is_unknown(t: ir::TypeT) -> boolean {
   // `Type::is_unknown`: a vector of an unknown element, and the placeholder `Reference(0)`, too.
   match t {
@@ -296,7 +311,7 @@ pub fn elem_name(e: el::El, t: ir::TypeT) -> text {
     // the enum's records, null the zero tag.
     // A nullable plain integer, float or boolean is named the same way (`vector<integer?>`):
     // stored as the scalar it is, null its sentinel.
-    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: ons } => if elem_name(e, inner) == "integer" { "integer?" } else if narrow_width(ons) > 0 { "{elem_name(e, inner)}?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", _ => "" },
+    TyOptional { inner } => match inner { TyEnum { n, is_ref } => if !starts_with(el::def(e, n).name, "__nullable<") { "{el::def(e, n).name}?" } else { "" }, TyInteger { spec: ons } => if elem_name(e, inner) == "integer" { "integer?" } else if narrow_width(ons) > 0 { "{elem_name(e, inner)}?" } else { "" }, TyFloat => "float?", TyBoolean => "boolean?", TyText { dep: _ } => "text?", TyCharacter => "character?", _ => "" },
     // A vector of vectors: its element is named as the inner vector's own type.
     TyVector { inner } => if elem_name(e, inner) == "" { "" } else { "vector<{elem_name(e, inner)}>" },
     // A function value is named as its type is spelled (`fn(integer) -> integer`).
@@ -376,6 +391,8 @@ pub fn nullable_scalar_elem(e: el::El, t: ir::TypeT) -> text {
       TyBoolean => "boolean",
       // (A `text?` element is stored as a `text`, null the text sentinel.)
       TyText { dep: _ } => "text",
+      // (…and a `character?` one as a `character`, its vector the one Rust makes for it.)
+      TyCharacter => "character",
       _ => ""
     },
     _ => ""
@@ -637,8 +654,15 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
           return null;
         }
         if !carried_step(step!) {
+          // Refused, but answered as Rust answers it — the iterator of that element — so the
+          // calls and matches over it register what Rust registers (register, then refuse).
           el::refuse(e, "an iterator of an element other than a plain scalar, a text, a record or a tuple of those");
-          return null;
+          // (Not a keyed element's: its `yield [..]` would be read as a vector literal before the
+          // keyed one Rust lowers it to, minting a `vector<R>` Rust never has — try 2826e069f.)
+          sb = base(step!);
+          if sb is TyHash || sb is TySorted || sb is TyIndex || sb is TyRadix || sb is TyTrie {
+            return null;
+          }
         }
         return ir::TyIterator { step: step!, inner: ir::TyNull };
       }
@@ -649,7 +673,9 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         if inner == null {
           return null;
         }
-        rd = match inner! { TyReference { n } => n, _ => -1 };
+        // (`sub_nr`: the definition the element names — a record, or an enum such as an enum
+        // template's instance, `reference<Tree<T>>`; the result is a `Reference` to it either way.)
+        rd = match inner! { TyReference { n } => n, TyEnum { n } => n, _ => -1 };
         if rd < 0 {
           el::refuse(e, "a `reference<…>` of something other than a record");
           return null;
@@ -657,6 +683,11 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
         ctx = if e.context >= 0 { el::def(e, e.context).def_type } else { el::DT_UNKNOWN };
         field = ctx == el::DT_STRUCT || ctx == el::DT_ENUM_VALUE || ctx == el::DT_TYPE_TEMPLATE;
         r = ir::TyReference { n: rd, dep: if field { [MARKER] } else { [] } };
+        // A reference to an enum is registered with Rust's type and refused: its reads are not
+        // ported (Rust reads the element as a reference, `OpVectorRefNullable`; try 67a732976).
+        if inner! is TyEnum {
+          el::refuse(e, "a `reference<…>` of an enum");
+        }
         return if nullable { ir::TyOptional { inner: r } } else { r };
       }
       // `parse_type_inner`'s `integer` arm: `limit(lo, hi)` names the range, and `not null`
@@ -681,6 +712,31 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
       }
       // (`not null`, deprecated, changes nothing of a type that is no integer: `text not null`
       // is `text`.)
+      // `parse_type_inner`'s `D-Template` arm: a template's arguments read and its instance
+      // minted, as Rust registers it (register, then refuse: nothing reads it through here yet).
+      if member == "" && len(args) > 0 && len(keys) == 0 && len(dl) == 0 && limit == null && assoc == "" {
+        tpl = el::def_nr(e, name);
+        if tpl >= 0 && el::def(e, tpl).def_type == el::DT_TYPE_TEMPLATE {
+          ats: vector<ir::TypeT> = [];
+          for a in args {
+            at_t = parse_type(e, a);
+            if at_t != null {
+              ats += [at_t!];
+            }
+          }
+          if len(ats) == len(args) {
+            inst = instance_def(e, tpl, ats);
+            // Refused, but answered as Rust answers it — the instance's own type — so the sites
+            // around the type (a vector over it, a typed local, a field) register what Rust
+            // registers there (register, then refuse).
+            if inst >= 0 && len(keys) == 0 && member == "" {
+              el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
+              it = el::def(e, inst).returned[0] ?? ir::TyVoid;
+              return if nullable { ir::TyOptional { inner: it } } else { it };
+            }
+          }
+        }
+      }
       if (member != "" && qual < 0) || len(args) > 0 || len(keys) > 0 || len(dl) > 0 || limit != null || assoc != "" {
         el::refuse(e, "a type with arguments, keys, a limit or a member: {name}");
         return null;
@@ -825,12 +881,40 @@ pub fn tuple_member(t: ir::TypeT) -> text {
 }
 
 // `tuple_spelling` where a member may be a plain struct, named by its definition.
+// Members whose `Type::name` is the spelling Rust writes for them in a vector's name: a scalar of
+// any width, a text, a declared struct or enum, a type variable (its `__typevar_` row), a nullable
+// one of those, a vector or a tuple of them — never a variant's record or an unresolved type.
+pub fn nameable_members(e: el::El, elems: vector<ir::TypeT>) -> boolean {
+  for m in elems {
+    ok = match without_deps(m) {
+      TyOptional { inner } => nameable_members(e, [inner]),
+      TyInteger { spec: _ } => true,
+      TyFloat => true,
+      TySingle => true,
+      TyBoolean => true,
+      TyCharacter => true,
+      TyText { dep: _ } => true,
+      TyEnum { n } => el::def(e, n).def_type == el::DT_ENUM,
+      TyReference { n } => (el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") && type_var(e, m) < 0) || is_type_var_placeholder(e, n),
+      TyVector { inner } => nameable_members(e, [inner]),
+      TyTuple { elems: inner } => nameable_members(e, inner),
+      _ => false
+    };
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
 pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text {
   r = "";
   for t in elems {
     m = tuple_member(t);
     if m == "" {
-      m = match t { TyReference { n, dep } => if n >= 0 && len(dep) == 0 && el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") { el::def(e, n).name } else { "" }, _ => "" };
+      // (A type variable's placeholder is spelled as its row is registered, `__typevar_<name>`,
+      // as `elem_name` spells a bare one: `vector<(__typevar_T#4, __typevar_U#1)>`.)
+      m = match t { TyReference { n, dep } => if n >= 0 && len(dep) == 0 && el::def(e, n).def_type == el::DT_STRUCT && !starts_with(el::def(e, n).name, "__") { if type_var(e, t) >= 0 { "__typevar_{el::def(e, n).name}" } else { el::def(e, n).name } } else { "" }, _ => "" };
     }
     // A narrow integer member is spelled by its range (`integer(0, 255)`).
     if m == "" {
@@ -839,6 +923,14 @@ pub fn tuple_spelling_e(e: el::El, elems: vector<ir::TypeT>, sep: text) -> text 
     // A tuple member is spelled as the tuple it is, its own members `, `-joined.
     if m == "" {
       m = match t { TyTuple { elems: ie } => { isp = tuple_spelling_e(e, ie, ", "); if isp == "" { "" } else { "({isp})" } }, _ => "" };
+    }
+    // A struct-enum member by its enum's name (`(integer, En)`), as `Type::name` spells it.
+    if m == "" {
+      m = match t { TyEnum { n: sen, is_ref: ser } => if ser && sen >= 0 { el::def(e, sen).name } else { "" }, _ => "" };
+    }
+    // A vector member as its type is named (`vector<integer>`).
+    if m == "" {
+      m = match t { TyVector { inner: vi } => { vn = elem_name(e, vi); if vn == "" { "" } else { "vector<{vn}>" } }, _ => "" };
     }
     if m == "" {
       return "";
@@ -954,7 +1046,7 @@ fn any_unresolved(ts: vector<ir::TypeT>) -> boolean {
 
 // port: data.rs mentions_type_var
 // Does `t` name a type variable's placeholder, or an open instance, anywhere in it?
-fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
+pub fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
   match t {
     TyReference { n } => is_type_var_placeholder(e, n) || is_open_instance(e, n),
     TyEnum { n } => is_open_instance(e, n),
@@ -969,7 +1061,7 @@ fn names_type_var(e: el::El, t: ir::TypeT) -> boolean {
   }
 }
 
-fn any_names_type_var(e: el::El, ts: vector<ir::TypeT>) -> boolean {
+pub fn any_names_type_var(e: el::El, ts: vector<ir::TypeT>) -> boolean {
   for t in ts {
     if names_type_var(e, t) {
       return true;
@@ -990,7 +1082,7 @@ pub fn is_type_var_placeholder(e: el::El, d: integer) -> boolean {
 
 // port: data.rs is_open_instance
 // An instance of a generic struct, or a tuple record, whose arguments still name a type variable.
-fn is_open_instance(e: el::El, d: integer) -> boolean {
+pub fn is_open_instance(e: el::El, d: integer) -> boolean {
   if d < 0 || d >= len(e.b.data.definitions) {
     return false;
   }
@@ -1210,9 +1302,13 @@ pub fn hook(e: el::El, t: integer) -> integer {
 }
 
 // The type's own hook `h` (`OpDrop`, `OpCopy` — `copy_hook_nr`), or -1.
+// `Data::drop_hook_nr`: the hook is looked up in the TYPE's source first — a library's
+// `fn OpDrop(self: H)` is that library's, wherever the program asks about `H`.
 pub fn hook_of(e: el::El, t: integer, h: text) -> integer {
   nm = el::def(e, t).name;
-  el::def_nr(e, "t_{len(nm)}{nm}_{h}")
+  key = "t_{len(nm)}{nm}_{h}";
+  own = el::source_nr(e, el::def(e, t).source, key);
+  if own >= 0 { own } else { el::def_nr(e, key) }
 }
 
 // `owns_droppable_walk`: a value of definition `t` holds a droppable — its own hook, a field's,
@@ -1362,5 +1458,455 @@ pub fn type_key_name(e: el::El, t: ir::TypeT) -> text {
       "({join(parts, ", ")})"
     },
     _ => ""
+  }
+}
+
+// ---- Generic type instances (@PLN165 D3–D8; plans/91-self-host/generic-instance-registration.md)
+
+// port: data.rs declared_identity
+// Definition `d` as an instance key names it: bare for the standard library's and the program's
+// own, and for a name spelled from other types (`<`, `#`); `<library>::<name>` for a library's.
+fn declared_identity(e: el::El, d: integer) -> text {
+  df = el::def(e, d);
+  if df.source == el::STD_SOURCE || df.source == el::MAIN_SOURCE || df.name.contains("<") || df.name.contains("#") {
+    df.name
+  } else {
+    "{el::source_label(e, df.source)}::{df.name}"
+  }
+}
+
+// port: data.rs identity_spelling (element keys on, the default)
+// What tells one binding of a type variable from another in an instance's key: the whole type,
+// all the way down — a type variable by its placeholder's name (`T#4`), as the erasing arm's
+// `declared_identity` spells it.  "" for a shape this port does not spell yet (a function type,
+// a sorted or index collection, a trie): no instance is minted for it.
+pub fn identity_spelling(e: el::El, t: ir::TypeT) -> text {
+  match t {
+    TyInteger { spec } => if spec.forced_size > 0 { "{key_name(e, t)}s{spec.forced_size}" } else { key_name(e, t) },
+    TyOptional { inner } => {
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "{s}?" }
+    },
+    TyRewritten { inner } => identity_spelling(e, inner),
+    TyRefVar { inner } => {
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "&{s}" }
+    },
+    TyVector { inner } => if is_unknown(inner) { key_name(e, t) } else { 
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "vector<{s}>" }
+    },
+    TyIterator { step: _, inner } => {
+      s = identity_spelling(e, inner);
+      if s == "" { "" } else { "iterator<{s}>" }
+    },
+    TyTuple { elems } => tuple_identity(e, elems),
+    TyReference { n } => if starts_with(el::def(e, n).name, "__tuple<") { tuple_identity(e, [for a in el::def(e, n).attributes { a.typedef[0] ?? ir::TyVoid }]) } else { declared_identity(e, n) },
+    TyEnum { n } => declared_identity(e, n),
+    TyHash { n, names } => "hash<{declared_identity(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TyRadix { n, names } => "spatial<{declared_identity(e, n)},[{join([for k in names { "\"{k.name}\"" }], ", ")}]>",
+    TyText { dep: _ } => "text",
+    TyBoolean => "boolean",
+    TyFloat => "float",
+    TySingle => "single",
+    TyCharacter => "character",
+    _ => ""
+  }
+}
+
+// port: data.rs tuple_identity
+fn tuple_identity(e: el::El, members: vector<ir::TypeT>) -> text {
+  parts: vector<text> = [];
+  for m in members {
+    s = identity_spelling(e, m);
+    if s == "" {
+      return "";
+    }
+    parts += [s];
+  }
+  "__tuple<{join(parts, ",")}>"
+}
+
+// A template's variable bound to a type: the header holder and its argument.
+pub struct TypeBinding { pub holder: integer, pub bound: ir::TypeT }
+
+// port: data.rs close_open
+// `t` with `bindings` applied and every OPEN instance it writes closed — replaced by the instance
+// its arguments name once the bindings decide them (`Tree<text>`'s `kids: vector<Tree<T>>` is
+// `vector<Tree<text>>`).  A bound value is not walked again, so an open instance a binding brings
+// in stays as it is, as Rust's collect-before-apply has it.
+pub fn close_open(e: el::El, t: ir::TypeT, bindings: vector<TypeBinding>) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => {
+      for b in bindings {
+        if b.holder == n {
+          return b.bound;
+        }
+      }
+      if is_open_instance(e, n) && el::def(e, n).instance_of >= 0 {
+        inst = instance_def(e, el::def(e, n).instance_of, [for a in el::def(e, n).instance_args { close_open(e, a, bindings) }]);
+        if inst >= 0 {
+          return match el::def(e, inst).returned[0] ?? ir::TyVoid { TyEnum { n: en, is_ref } => ir::TyEnum { n: en, is_ref: is_ref, dep: dep }, _ => ir::TyReference { n: inst, dep: dep } };
+        }
+      }
+      t
+    },
+    TyEnum { n, is_ref, dep } => {
+      if is_open_instance(e, n) && el::def(e, n).instance_of >= 0 {
+        inst = instance_def(e, el::def(e, n).instance_of, [for a in el::def(e, n).instance_args { close_open(e, a, bindings) }]);
+        if inst >= 0 {
+          return ir::TyEnum { n: inst, is_ref: is_ref, dep: dep };
+        }
+      }
+      t
+    },
+    TyOptional { inner } => ir::TyOptional { inner: close_open(e, inner, bindings) },
+    TyRefVar { inner } => ir::TyRefVar { inner: close_open(e, inner, bindings) },
+    TyRewritten { inner } => ir::TyRewritten { inner: close_open(e, inner, bindings) },
+    TyVector { inner, dep } => ir::TyVector { inner: close_open(e, inner, bindings), dep: dep },
+    TyIterator { step, inner } => ir::TyIterator { step: close_open(e, step, bindings), inner: close_open(e, inner, bindings) },
+    TyTuple { elems } => ir::TyTuple { elems: [for m in elems { close_open(e, m, bindings) }] },
+    TyFunction { args, result, dep, consts } => ir::TyFunction { args: [for a in args { close_open(e, a, bindings) }], result: close_open(e, result, bindings), dep: dep, consts: consts },
+    _ => t
+  }
+}
+
+// port: data.rs stored_ref_read (`@FR-E-Eq`, @C91)
+// What a read of a stored `reference<E>` field hands on: for a struct-enum `E`, a value of `E`
+// (its deps, the pointer marker included, unchanged); anything else as it is.  The field keeps
+// its `Reference` former.
+pub fn stored_ref_read(e: el::El, t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyReference { n, dep } => {
+      enum_ref = dep.contains(MARKER) && n >= 0 && n < len(e.b.data.definitions) && match el::def(e, n).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => is_ref, _ => false };
+      if enum_ref { ir::TyEnum { n: n, is_ref: true, dep: dep } } else { t }
+    },
+    TyOptional { inner } => ir::TyOptional { inner: stored_ref_read(e, inner) },
+    _ => t
+  }
+}
+
+// `Type::any_node` asking for definition `h`: does `t` name it anywhere.
+fn names_def(t: ir::TypeT, h: integer) -> boolean {
+  match t {
+    TyReference { n } => n == h,
+    TyEnum { n } => n == h,
+    TyOptional { inner } => names_def(inner, h),
+    TyRefVar { inner } => names_def(inner, h),
+    TyRewritten { inner } => names_def(inner, h),
+    TyVector { inner } => names_def(inner, h),
+    TyIterator { step, inner } => names_def(step, h) || names_def(inner, h),
+    TyTuple { elems } => len([for m in elems if names_def(m, h) { 1 }]) > 0,
+    TyFunction { args, result } => names_def(result, h) || len([for a in args if names_def(a, h) { 1 }]) > 0,
+    _ => false
+  }
+}
+
+// port: data.rs type_mentions
+// Does `t` name `h` — directly, or through an open instance's own arguments (`Box<Inner<T>>`
+// mentions `T` through `Inner<T>`)?
+fn type_mentions(e: el::El, t: ir::TypeT, h: integer) -> boolean {
+  if names_def(t, h) {
+    return true;
+  }
+  for r in named_defs(e, t) {
+    if r >= 0 && r < len(e.b.data.definitions) && r != h && is_open_instance(e, r) {
+      for a in el::def(e, r).instance_args {
+        if type_mentions(e, a, h) {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+// The definitions `t` names at any depth — a record, an enum, or a tuple's record by its name.
+fn named_defs(e: el::El, t: ir::TypeT) -> vector<integer> {
+  out: vector<integer> = [];
+  match t {
+    TyReference { n } => { out += [n]; },
+    TyEnum { n } => { out += [n]; },
+    TyOptional { inner } => { out += named_defs(e, inner); },
+    TyRefVar { inner } => { out += named_defs(e, inner); },
+    TyRewritten { inner } => { out += named_defs(e, inner); },
+    TyVector { inner } => { out += named_defs(e, inner); },
+    TyIterator { step, inner } => { out += named_defs(e, step); out += named_defs(e, inner); },
+    TyTuple { elems } => {
+      td = el::def_nr(e, tuple_name(e, elems));
+      if td >= 0 {
+        out += [td];
+      }
+      for m in elems {
+        out += named_defs(e, m);
+      }
+    },
+    TyFunction { args, result } => {
+      for a in args {
+        out += named_defs(e, a);
+      }
+      out += named_defs(e, result);
+    },
+    _ => {}
+  }
+  out
+}
+
+// port: data.rs open_instances_named_by
+// The open instances template `g`'s own types name — its parameters, result and variables, and
+// what those instances name in turn (their arguments, fields and variants' fields).
+fn open_instances_named_by(e: el::El, g: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  if g < 0 || g >= len(e.b.data.definitions) {
+    return out;
+  }
+  types: vector<ir::TypeT> = [for a in el::def(e, g).attributes { a.typedef[0] ?? ir::TyVoid }];
+  types += [el::def(e, g).returned[0] ?? ir::TyVoid];
+  types += [for v in el::def(e, g).variables.variables { v.type_def[0] ?? ir::TyVoid }];
+  walked = 0;
+  while true {
+    for tp in types {
+      for d in named_defs(e, tp) {
+        if is_open_instance(e, d) && !out.contains(d) {
+          out += [d];
+        }
+      }
+    }
+    if walked == len(out) {
+      return out;
+    }
+    types = [];
+    wi = walked;
+    while wi < len(out) {
+      d = out[wi] ?? -1;
+      types += el::def(e, d).instance_args;
+      for a in el::def(e, d).attributes {
+        at = a.typedef[0] ?? ir::TyVoid;
+        types += [at];
+        v = match base(at) { TyEnum { n } => n, TyReference { n } => n, _ => -1 };
+        if v >= 0 && v != d && el::def(e, v).def_type == el::DT_ENUM_VALUE {
+          types += [for va in el::def(e, v).attributes { va.typedef[0] ?? ir::TyVoid }];
+        }
+      }
+      wi += 1;
+    }
+    walked = len(out);
+  }
+  out
+}
+
+// port: data.rs is_foreign_self_reference
+// Open instance `d` of ANOTHER template than `g`, named by that template's own fields (or its
+// variants' fields): `vector<B<T>>` inside `enum B<T>`.
+fn is_foreign_self_reference(e: el::El, d: integer, g: integer) -> boolean {
+  x = el::def(e, d).instance_of;
+  if x < 0 || x == g || x >= len(e.b.data.definitions) {
+    return false;
+  }
+  for a in el::def(e, x).attributes {
+    if names_def(a.typedef[0] ?? ir::TyVoid, d) {
+      return true;
+    }
+  }
+  c = 0;
+  while c < len(e.b.data.definitions) {
+    if el::def(e, c).parent == x {
+      for a in el::def(e, c).attributes {
+        if names_def(a.typedef[0] ?? ir::TyVoid, d) {
+          return true;
+        }
+      }
+    }
+    c += 1;
+  }
+  false
+}
+
+// port: data.rs open_instance_bindings (@PLN165 D5)
+// Each OPEN instance whose arguments mention a variable this monomorph binds is closed — minted at
+// the bound arguments, in creation order, so a nested one finds its inner argument paired — as
+// Rust does before declaring the monomorph, predicting its result and ranking it — each with the
+// lexer past the call, where a tuple it closes is made (`at`, else the call at `e.at`).  A tuple or a
+// foreign self-reference closes only where the template's own types name it (loft#2546).  The
+// pairs are not carried: the port substitutes each type where it reads it (`close_open`).
+pub fn open_instance_bindings(e: el::El, g: integer, vars: vector<integer>, bounds: vector<ir::TypeT>, at: integer = -1) {
+  own = open_instances_named_by(e, g);
+  binds: vector<TypeBinding> = [for h in vars { TypeBinding { holder: h, bound: bounds[h#index] ?? ir::TyVoid } }];
+  n = len(e.b.data.definitions);
+  d = 0;
+  while d < n {
+    if is_open_instance(e, d) {
+      tuple_record = el::def(e, d).instance_of < 0;
+      if own.contains(d) || !(tuple_record || is_foreign_self_reference(e, d, g)) {
+        hit = false;
+        for a in el::def(e, d).instance_args {
+          for h in vars {
+            if type_mentions(e, a, h) {
+              hit = true;
+            }
+          }
+        }
+        if hit {
+          args = [for a in el::def(e, d).instance_args { close_open(e, a, binds) }];
+          bound = if tuple_record { tuple_def(e, args, if at >= 0 { el::pos_at(e, at) } else if e.at >= 0 { el::pos_at(e, el::past_call(e, e.at)) } else { ir::Position { ..el::def(e, d).position } }) } else { instance_def(e, el::def(e, d).instance_of, args) };
+          if bound >= 0 && bound != d {
+            binds += [TypeBinding { holder: d, bound: el::def(e, bound).returned[0] ?? ir::TyReference { n: bound, dep: [] } }];
+          }
+        }
+      }
+    }
+    d += 1;
+  }
+}
+
+// The tuple shapes `t` holds, innermost first (`copy_instance_field`'s walk, reversed).
+fn tuples_in(t: ir::TypeT) -> vector<vector<ir::TypeT>> {
+  out: vector<vector<ir::TypeT>> = [];
+  match t {
+    TyTuple { elems } => {
+      for m in elems {
+        out += tuples_in(m);
+      }
+      out += [elems];
+    },
+    TyOptional { inner } => { out += tuples_in(inner); },
+    TyRefVar { inner } => { out += tuples_in(inner); },
+    TyRewritten { inner } => { out += tuples_in(inner); },
+    TyVector { inner } => { out += tuples_in(inner); },
+    TyIterator { step, inner } => { out += tuples_in(step); out += tuples_in(inner); },
+    TyFunction { args, result } => { for a in args { out += tuples_in(a); } out += tuples_in(result); },
+    _ => {}
+  }
+  out
+}
+
+// port: data.rs copy_instance_field
+// Give instance `d` the template field `f`: its type with the bindings applied and every open
+// instance in it closed, each tuple it holds registered first (innermost first), and the field's
+// flags.
+fn copy_instance_field(e: el::El, d: integer, field: ir::Attribute, bindings: vector<TypeBinding>) {
+  // A copy first: `field` may view the template's own attribute, and closing an open instance
+  // below mints definitions, which moves that storage.
+  f = ir::Attribute { ..field };
+  tp = close_open(e, f.typedef[0] ?? ir::TyVoid, bindings);
+  for s in tuples_in(tp) {
+    tuple_def(e, s, el::def(e, d).position);
+  }
+  a = el::attribute(f.name, tp);
+  a.mutable = f.mutable;
+  a.constant = f.constant;
+  a.const_field = f.const_field;
+  a.pub_field = f.pub_field;
+  a.value_const = f.value_const;
+  a.init = f.init;
+  a.nullable = f.nullable;
+  a.hidden = f.hidden;
+  a.value = f.value;
+  e.b.data.definitions[d].attributes += [a];
+}
+
+// port: data.rs instance_def
+// The instance of type template `template` at `args` (`Box<integer>`): an ordinary struct (or, for
+// an enum template, an enum with its variants) named `<template><args>` by the arguments'
+// identities, in the standard library's source, its fields the template's with each variable
+// replaced by its argument.  Idempotent.  -1 (Rust's `u32::MAX`) for an argument count the
+// template does not take, an argument not resolved yet or `never` (the pass after mints it),
+// an argument this port cannot spell, or past the nesting bound.  An argument naming a type
+// variable mints an OPEN instance.  Not carried: `refused_type_templates` (`D-Regular`) and
+// the catch-up of an open instance minted while its template is still read.
+pub fn instance_def(e: el::El, template: integer, args: vector<ir::TypeT>) -> integer {
+  params = el::def(e, template).type_params;
+  if len(params) != len(args) || any_unresolved(args) {
+    return -1;
+  }
+  plain: vector<ir::TypeT> = [];
+  spelled: vector<text> = [];
+  for a in args {
+    if a is TyNever {
+      return -1;
+    }
+    w = without_deps(a);
+    s = identity_spelling(e, w);
+    if s == "" {
+      return -1;
+    }
+    plain += [w];
+    spelled += [s];
+  }
+  name = "{declared_identity(e, template)}<{join(spelled, ",")}>";
+  have = el::source_nr(e, el::STD_SOURCE, name);
+  if have < 0 {
+    have = el::def_nr(e, name);
+  }
+  if have >= 0 {
+    return have;
+  }
+  // `MAX_INSTANCE_NESTING`: deeper than this an instance's arguments stop being spelled.
+  if len(name.split('<')) - 1 > 48 {
+    return -1;
+  }
+  position = ir::Position { ..el::def(e, template).position };
+  enum_mixed = match el::def(e, template).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => if is_ref { 1 } else { 0 }, _ => -1 };
+  d = el::add_def(e, name, position, if enum_mixed >= 0 { el::DT_ENUM } else { el::DT_STRUCT });
+  e.b.data.definitions[d].source = el::STD_SOURCE;
+  el::name_in(e, el::STD_SOURCE, name, d);
+  e.b.data.definitions[d].returned = [if enum_mixed >= 0 { ir::TyEnum { n: d, is_ref: enum_mixed == 1, dep: [] } } else { ir::TyReference { n: d, dep: [] } }];
+  e.b.data.definitions[d].instance_of = template;
+  e.b.data.definitions[d].instance_args = plain;
+  bindings: vector<TypeBinding> = [];
+  for p in params {
+    bindings += [TypeBinding { holder: p, bound: plain[p#index]! }];
+  }
+  if enum_mixed >= 0 {
+    fill_enum_instance(e, template, d, bindings);
+    return d;
+  }
+  fi = 0;
+  while fi < len(el::def(e, template).attributes) {
+    ft = el::def(e, template).attributes[fi]!.typedef[0] ?? ir::TyVoid;
+    if !(ft is TyRoutine) {
+      copy_instance_field(e, d, el::def(e, template).attributes[fi]!, bindings);
+    }
+    fi += 1;
+  }
+  d
+}
+
+// port: data.rs fill_enum_instance
+// An enum instance is the enum and each of its variants, minted together: the variant list (each
+// a constant attribute typed as the instance, its discriminant kept) and one variant definition
+// per template variant, bare-named and parented to the instance, its payload fields closed.
+fn fill_enum_instance(e: el::El, template: integer, d: integer, bindings: vector<TypeBinding>) {
+  for a in el::def(e, template).attributes {
+    match a.typedef[0] ?? ir::TyVoid {
+      TyEnum { n, is_ref } => {
+        if n == template {
+          va = el::attribute(a.name, ir::TyEnum { n: d, is_ref: is_ref, dep: [] });
+          va.constant = true;
+          va.value = a.value;
+          e.b.data.definitions[d].attributes += [va];
+        }
+      },
+      _ => {}
+    }
+  }
+  position = ir::Position { ..el::def(e, d).position };
+  v = 0;
+  count = len(e.b.data.definitions);
+  while v < count {
+    if el::def(e, v).parent == template && el::def(e, v).def_type == el::DT_ENUM_VALUE {
+      vname = "{el::def(e, v).name}";
+      mixed = match el::def(e, v).returned[0] ?? ir::TyVoid { TyEnum { is_ref } => is_ref, _ => false };
+      vd = el::add_def(e, vname, position, el::DT_ENUM_VALUE);
+      e.b.data.definitions[vd].source = el::STD_SOURCE;
+      e.b.data.definitions[vd].parent = d;
+      e.b.data.definitions[vd].returned = [ir::TyEnum { n: d, is_ref: mixed, dep: [] }];
+      fi = 0;
+      while fi < len(el::def(e, v).attributes) {
+        copy_instance_field(e, vd, el::def(e, v).attributes[fi]!, bindings);
+        fi += 1;
+      }
+    }
+    v += 1;
   }
 }

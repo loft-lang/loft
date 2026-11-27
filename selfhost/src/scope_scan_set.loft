@@ -1,0 +1,1045 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/scan_set.rs` `scan_set` transcribed: one assignment, in Rust's order of
+// decisions.  A scalar, text or RECORD binding (scope-pass-port.md step 2) runs every decision as
+// Rust does — the transition frees, the ownership memo (`owned_refs`), the construction and view
+// backings, the call and literal buffer pairings, the dep strips, the lift viewers, the kept
+// local's displaced free.  The facts of passes refused before the scan (the owner witness, the
+// per-path hand-off flags, the handle views, the materialised views, the drop-bearing records'
+// hand-offs) are empty, and every reader asks them as Rust does.  A collection, tuple, generator
+// handle or `&` binding refuses the function by name; a fn-ref takes the generic legs.
+
+use ir;
+use own;
+use binds;
+use scope_fn;
+use scope_scan;
+use scope_args;
+use scope_branches;
+use scope_backings;
+use scope_capture_builds;
+use scope_drops;
+use scope_witness;
+use scope_buffers;
+
+// port: scan_set.rs fn scan_set
+pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::Node, f: ir::Function) -> ir::Node {
+  sc = scope_scan::get(s.var_scope, ov);
+  if sc >= 0 && s.scope != sc && !scope_fn::has(s.stack, sc) {
+    existing = scope_scan::get(s.var_mapping, ov);
+    if existing >= 0 {
+      cs = scope_scan::get(s.var_scope, existing);
+      if cs >= 0 && cs != s.scope && !scope_fn::has(s.stack, cs) {
+        nv = scope_branches::split_variable(s, f, ov, [value]);
+        scope_scan::put(s.var_mapping, ov, nv);
+      }
+    } else {
+      nv = scope_branches::split_variable(s, f, ov, [value]);
+      scope_scan::put(s.var_mapping, ov, nv);
+    }
+  }
+  v = scope_scan::mapped(s, ov);
+  if v != ov {
+    if scope_scan::get(s.split_from, v) < 0 {
+      scope_scan::put(s.split_from, v, ov);
+      scope_scan::put(s.split_count, v, 0);
+    }
+    scope_scan::put(s.split_count, v, scope_scan::get(s.split_count, v) + 1);
+  }
+  t = scope_fn::tp(f, v);
+  // A fn-ref binding takes the generic legs below (its deps reserved, its first bind registered
+  // with its closure record after it); its rebind and scope-end releases are `convert`'s
+  // (`fnref_call_rebind`) and `get_free_vars`'.
+  // A vector binding (step 4) takes the record legs with its own: the backing its bind fills
+  // (`bind_backing`), the call-buffer pairing of a vector-shaped first bind.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) {
+    // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox, the
+    // keyed materialise copies, the generator handle frees.
+    scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
+    if !scope_scan::in_scope(s, v) {
+      scope_scan::register_binding(s, v, f);
+    }
+    return scope_fn::v_set(v, scope_scan::scan(s, b, value, f));
+  }
+  // `views_to_materialise` (the respelled element read), `handle_views` (the tagged handle
+  // leaves) and the owner witness of a split copy read facts the phase leaves empty.
+  copy = copy_temp_held_bind(s, b, ov, v, value, f);
+  if copy != null {
+    return scope_scan::scan(s, b, copy!, f);
+  }
+  // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value branch is
+  // written out per arm (`sink_set_into_arms`).  The droppable-owning first bind is refused by
+  // the phase (`drops::drop_hook`).
+  writes_out = (scope_scan::in_scope(s, v) || (scope_fn::has(s.multi_assigned, ov) && every_arm_tail_is_var(value)))
+    && scope_args::is_value_branch(value)
+    && !(t is TyRefVar)
+    && scope_fn::is_record(t);
+  if writes_out {
+    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch");
+  }
+  // #316 — capture BEFORE put_scope below: an ownership-transition free only applies to a
+  // REassignment.
+  was_in_scope = scope_scan::in_scope(s, v);
+  value_null = value is NdNull;
+  displaced = scope_drops::no_pre_post();
+  // `displaced_drop` answers none for a value with no record (`heap_def_nr`), so the oracle
+  // `rhs_owned` reads is asked only of a record binding.
+  if was_in_scope && !value_null && scope_fn::is_record(t) {
+    rhs_owned = ref_rhs_owned(s, b, value) || copy_flagged_on_target(s, v, value) || var_bind_copies(b, f, v, value);
+    displaced = scope_drops::displaced_drop(s, b, v, rhs_owned, f);
+  }
+  // An UNCONDITIONAL reassignment retires the hand-off of the record it displaces.
+  if was_in_scope && !value_null && scope_scan::get(s.var_scope, v) == s.scope && !scope_fn::has(s.arm_lift_temps, v) {
+    scope_scan::set_remove(s.drop_transferred, v);
+  }
+  // A redundant re-init `Set(v, Null)` for an already-in-scope var is elided (a keyed
+  // collection's `Set(s, Null)` is a CLEAR, but keyed bindings refuse above).
+  if was_in_scope && value_null {
+    return ir::NdInsert { items: [] };
+  }
+  transition_free: ir::Node? = null;
+  // The TUPLE transition, the keyed generator walk and the generator HANDLE's frame release
+  // are reached only for those kinds, which refuse above.
+  // loft#1126 / @FR-O-Latest — `v = f(…, v, …)` with `v` at `f`'s hidden buffer position, where
+  // `f` mints a store of its own.  `Function::entry_witness` is minted only for a hidden return
+  // buffer, which the phase refuses.
+  bare_record = match t { TyReference => true, TyEnum { is_ref } => is_ref, _ => false };
+  if was_in_scope && bare_record && scope_fn::proxy_says_owned(f, v)
+    && scope_scan::get(s.owned_refs, v) == len(s.loops)
+    && scope_witness::displaces_owned_through_fresh_callee(b, value, v, ov)
+    && binds::entry_witness(f, v) == null {
+    transition_free = scope_drops::free_ref(s, v);
+  }
+  // A `??` hoist that OWNS its subject is re-bound on every pass of a loop.
+  if transition_free == null && was_in_scope && scope_fn::name(f, v).starts_with("__ncc_") && scope_fn::is_record(t) && scope_fn::proxy_says_owned(f, v) {
+    transition_free = scope_drops::free_ref(s, v);
+  }
+  // loft#1128 — the PATH-SENSITIVE half: the transition free GUARDED on the return buffer's
+  // runtime witness.
+  if transition_free == null && was_in_scope && s.rbuf_flag >= 0 && s.rbuf_buf == v && bare_record
+    && scope_fn::proxy_says_owned(f, v)
+    && scope_witness::displaces_owned_through_fresh_callee(b, value, v, ov)
+    && binds::entry_witness(f, v) == null {
+    transition_free = ir::NdIf { cond: ir::NdVar { n: s.rbuf_flag }, t: scope_drops::free_ref(s, v), f: ir::NdNull };
+  }
+  // loft#1200 — `local_owns` is empty while `τ?` has a buffer, and asked as Rust does.
+  lo = scope_scan::get(s.local_owns, ov);
+  if transition_free == null && was_in_scope && lo >= 0 && scope_witness::mints_a_store_the_target_does_not_hold(b, value, v, ov) {
+    transition_free = ir::NdIf { cond: ir::NdVar { n: lo }, t: scope_drops::free_ref(s, v), f: ir::NdNull };
+  }
+  // loft#1202 — a record local that OWNED a store and is then assigned a VIEW.
+  bare_with_deps = match t {
+    TyReference { dep } => len(dep) > 0,
+    TyEnum { is_ref, dep } => is_ref && len(dep) > 0,
+    _ => false
+  };
+  if was_in_scope && bare_with_deps && !scope_fn::is_skip_free(f, v)
+    && scope_scan::get(s.owned_refs, v) == len(s.loops)
+    && !ref_rhs_owned(s, b, value)
+    && !scope_fn::reads_var(value, v) && !scope_fn::reads_var(value, ov) {
+    cb = scope_scan::get(s.construction_backing, v);
+    if cb >= 0 {
+      tf_ops: vector<ir::Node> = [];
+      hook = scope_drops::drop_hook(s, b, f, v);
+      if hook != null {
+        tf_ops += [hook!];
+      }
+      tf_ops += [scope_drops::free_ref(s, v)];
+      tf_ops += [scope_fn::v_set(cb, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+      transition_free = ir::NdInsert { items: tf_ops };
+    } else {
+      transition_free = scope_drops::free_ref(s, v);
+    }
+  }
+  // Track the LATEST assignment's ownership for this var.
+  if scope_fn::is_record(t) {
+    if copy_flagged_on_target(s, v, value) || var_bind_copies(b, f, v, value) || ref_rhs_owned(s, b, value) {
+      scope_scan::put(s.owned_refs, v, len(s.loops));
+    } else {
+      scope_scan::unput(s.owned_refs, v);
+    }
+  }
+  handoff_disarm: vector<ir::Node> = [];
+  // A handle view's flag (`handle_views`) is empty.
+  w = scope_backings::delivered_work_ref(b, value, f);
+  if w >= 0 && w != v && !scope_fn::proxy_says_owned(f, v) {
+    scope_scan::put(s.construction_backing, v, w);
+  } else if w >= 0 && w != v {
+    // …and where the construction READS the binding, the reuse gives up.
+    if scope_drops::drop_hook(s, b, f, v) != null || scope_fn::reads_var(value, v) || scope_fn::reads_var(value, ov) {
+      handoff_disarm += [scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+    }
+    scope_scan::unput(s.construction_backing, v);
+  } else {
+    scope_scan::unput(s.construction_backing, v);
+  }
+  // D-heap-3 (loft#1506) — the member a view-bound local NAMES, retired from both ends.
+  scope_scan::unput(s.view_backing, v);
+  for i in 0..len(s.view_backing) {
+    x = s.view_backing[i]!;
+    if x >= 0 && x / 4294967296 == v {
+      s.view_backing[i] = -1;
+    }
+  }
+  pr = field_projection_root(value, s.ops.get_field);
+  if pr >= 0 {
+    base = pr / 4294967296;
+    if base != v && !scope_fn::is_argument(f, base) {
+      scope_scan::put(s.view_backing, v, pr);
+    }
+  }
+  // The tuple member backings and call mints are a tuple's, which refuses above.
+  // remember the scope of the variable
+  depend: vector<integer> = [];
+  pending = scope_fn::deps(f, v);
+  seen: vector<integer> = [];
+  while len(pending) > 0 {
+    d = pending[len(pending) - 1]!;
+    pending = pending[0..len(pending) - 1];
+    if scope_fn::has(seen, d) {
+      continue;
+    }
+    seen += [d];
+    if d >= scope_fn::count(f) {
+      continue;
+    }
+    // A `par` loop's result variable (`_r_par<N>`) is a loop variable: unregistered.
+    if !scope_scan::in_scope(s, d) && !scope_fn::name(f, d).starts_with("_r_par") {
+      // `function.was_loop_var(d)` is not in the image: a dep that is not a text temp may be a
+      // loop's variable, which Rust leaves unregistered.
+      if !scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d) {
+        scope_scan::refuse(s, "scan_set: a dep that may be a loop variable (variables::was_loop_var, not in the image)");
+      }
+      depend += [d];
+      scope_scan::put_scope(s, d);
+      s.var_order += [d];
+      pending += scope_fn::deps(f, d);
+    }
+  }
+  first_binding = !scope_scan::in_scope(s, v);
+  if first_binding {
+    scope_scan::register_binding(s, v, f);
+  }
+  if scope_fn::base(scope_fn::tp(f, v)) is TyVector {
+    bb = scope_backings::bind_backing_of(value, f, s.ops.get_field);
+    if bb >= 0 {
+      scope_scan::put(s.bind_backing, v, bb);
+    } else {
+      scope_scan::unput(s.bind_backing, v);
+    }
+  }
+  unspanned = scope_fn::unspan(value);
+  publishes_through_ref = t is TyRefVar;
+  record_target = binds::first_bind_shape(t);
+  while record_target is TyRefVar {
+    match record_target {
+      TyRefVar { inner } => { record_target = scope_fn::base(inner); },
+      _ => {}
+    }
+  }
+  record_shaped = match record_target { TyReference => true, TyEnum { is_ref } => is_ref, _ => false };
+  vector_shaped = record_target is TyVector;
+  // @PLN157 § V-af — the arms of a value branch (or a diverging `??` block) that end in
+  // buffer-delivering calls: each arm's buffer is `v`'s witness.
+  branch = unspanned is NdIf;
+  arm_calls: vector<ir::Node> = [];
+  if record_shaped && !publishes_through_ref {
+    arm_calls = if branch { scope_buffers::tail_calls(unspanned) } else { scope_buffers::coalesce_tail_calls(unspanned) };
+  }
+  if len(arm_calls) > 0 {
+    v_scope = scope_of(s, v);
+    for c in arm_calls {
+      match c {
+        NdCall { def_nr: fn_nr, args } => {
+          d = b.data.definitions[fn_nr];
+          if d == null || !binds::is_loft_defined(d!) {
+            continue;
+          }
+          for arg in args {
+            av = match scope_fn::unspan(arg) { NdVar { n } => n, _ => -1 };
+            if av < 0 {
+              continue;
+            }
+            nm = scope_fn::name(f, av);
+            if !(nm.starts_with("__ref_") || nm.starts_with("__rref_")) || av == v {
+              continue;
+            }
+            av_scope = scope_of(s, av);
+            same_scope_coalesce = !branch && v_scope == av_scope;
+            if v_scope <= av_scope && v_scope != scope_fn::NONE && !same_scope_coalesce {
+              if branch {
+                scope_scan::put_if_absent(s.paired_witness, av, v);
+              }
+            } else if v_scope != scope_fn::NONE && av_scope != scope_fn::NONE && v_scope >= av_scope {
+              scope_scan::list_add(s.witness_buffer, v, av);
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  // loft#1643 — a NULLABLE record local whose one real bind follows its null on every pass.
+  nullable_first_adopt = !record_shaped && !publishes_through_ref && t is TyOptional && scope_fn::is_record(t) && scope_fn::has(s.null_led_first, ov);
+  if (record_shaped || vector_shaped || nullable_first_adopt) && (unspanned is NdCall || unspanned is NdCallRef) {
+    fn_nr = binds::callee_of(b, scope_scan::defs(s, b), unspanned);
+    if fn_nr != null && binds::is_loft_defined(b.data.definitions[fn_nr!]!) {
+      callee = b.data.definitions[fn_nr!]!;
+      adopts_fresh_store = binds::return_adopts_fresh_store(callee);
+      scope_scan::oracle_guard(s, unspanned);
+      adopts_minted = binds::adopts_minted_at_bind(b, s.own_ops, f, v, unspanned);
+      // @PLN85 `local_source` — `displaced_owned_slots` names a slot whose OWNED store a later
+      // borrow or join displaces; it needs a second bind of the slot.
+      if record_shaped && !publishes_through_ref && len(scope_fn::deps(f, v)) > 0 && !scope_fn::is_skip_free(f, v) && scope_fn::has(s.multi_assigned, ov) {
+        scope_scan::refuse(s, "use_analysis::displaced_owned_slots: a record slot bound again (Ownership::reassign_sites_of)");
+      }
+      if record_shaped && !adopts_fresh_store && !publishes_through_ref {
+        if view_elision_candidate(s, b, f, v, unspanned) {
+          scope_scan::refuse(s, "use_analysis::view_elision_bind: a read-only record bound from a borrowing call (read_only_record_locals)");
+        } else {
+          // `gen_set_first_ref_call_copy` copies into a FRESH store `v` owns: strip its deps so
+          // the scope exit frees it.
+          for d in scope_fn::deps(f, v) {
+            scope_fn::make_independent(f, v, d);
+          }
+        }
+      }
+      pair_call_buffers(s, f, v, unspanned, adopts_fresh_store, adopts_minted, publishes_through_ref, vector_shaped);
+    }
+  }
+  // @PLN85 — a return-buffer PARAMETER bound from a call that returns its own buffer.
+  ot = scope_fn::tp(f, ov);
+  ot_heap = ot is TyVector || ot is TyReference || match ot { TyEnum { is_ref } => is_ref, _ => false };
+  if ot_heap && scope_fn::is_argument(f, ov) && names_hidden_attr(b.data.definitions[s.d_nr]!, scope_fn::name(f, ov)) {
+    match unspanned {
+      NdCall { def_nr: fn_nr, args } => {
+        callee = b.data.definitions[fn_nr]!;
+        if callee.name.starts_with("n_") && len(callee.code) > 0 && !(callee.code[0]! is NdNull) && !binds::return_adopts_fresh_store(callee) {
+          for arg in args {
+            av = match arg { NdVar { n } => n, NdSet { var } => var, _ => -1 };
+            if av >= 0 {
+              nm = scope_fn::name(f, av);
+              if nm.starts_with("__ref_") || nm.starts_with("__rref_") {
+                scope_scan::put_if_absent(s.paired_witness, av, ov);
+              }
+            }
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  // loft#1317 — an inline record literal minted into a work-ref and aliased into the local.
+  if scope_fn::is_record(t) {
+    adopted: vector<integer> = [];
+    scope_capture_builds::adopted_work_refs(b, unspanned, f, s.ops.database, adopted);
+    v_scope = scope_of(s, v);
+    for av in adopted {
+      if av == v || v_scope == scope_fn::NONE {
+        continue;
+      }
+      av_scope = scope_of(s, av);
+      if v_scope <= av_scope {
+        scope_scan::put_if_absent(s.literal_buffer, av, v);
+      } else if av_scope != scope_fn::NONE && (scope_fn::has(s.literal_moves, ov) || scope_fn::has(s.literal_moves, v)) && scope_backings::construction_work_ref(unspanned, f) == av {
+        // loft#2594 — a MOVE, not a pairing.
+        s.moved_local = ov;
+        s.moved_av = av;
+      } else if av_scope != scope_fn::NONE {
+        scope_scan::list_add(s.witness_buffer, v, av);
+        f.variables[v].buffer_witnessed = true;
+      }
+    }
+  }
+  // @PLN130 F2 — the materialise copy of a view live across a reshape: `views_to_materialise`
+  // is empty (the phase refuses where the view walk could fill it).
+  // The var-to-var deep copy owns its store.
+  match unspanned {
+    NdVar { n: src } => if var_copy_owns(b, f, v, src) {
+      for d in scope_fn::deps(f, v) {
+        scope_fn::make_independent(f, v, d);
+      }
+    },
+    _ => {}
+  }
+  // A value BLOCK that ends in a local record hands the binding that local as an arm would.
+  local_tail = match unspanned {
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && scope_fn::unspan(block[0].operators[k - 1]!) is NdVar && own::heap_def_nr(block[0].result[0] ?? ir::TyVoid) != null
+    },
+    _ => false
+  };
+  s.first_set = if was_in_scope { scope_fn::NONE } else { v };
+  if scope_args::is_value_branch(value) || local_tail {
+    scope_args::arm_tails_need_binding(s, b, value, v, f);
+  }
+  s.first_set = scope_fn::NONE;
+  // A branch JOIN hands over each arm's construction.
+  if scope_backings::delivered_work_ref(b, value, f) < 0 && scope_fn::proxy_says_owned(f, v) && scope_drops::drop_hook(s, b, f, v) != null {
+    for cw in scope_backings::construction_work_refs(b, value, f) {
+      if cw != v {
+        handoff_disarm += [scope_fn::v_set(cw, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+      }
+    }
+  }
+  if first_binding {
+    s.binding_now += [v];
+  }
+  prefix_from = len(s.prefix_released);
+  built_before = captures_built_in_value(s, value);
+  if len(built_before) > 0 && all_witnessed(s, built_before) {
+    k = 0;
+    while k < len(built_before) {
+      s.prefix_released += [built_before[k]!];
+      k += 2;
+    }
+  }
+  outer_hoists = s.value_hoists;
+  s.value_hoists = [];
+  s.place_operand = scope_fn::name(f, v).starts_with("__place_") && unspanned is NdCall;
+  scanned = scope_scan::scan(s, b, value, f);
+  s.place_operand = false;
+  viewed = s.value_hoists;
+  s.value_hoists = outer_hoists;
+  if ends_in_if(value) {
+    for tv in branch_tail_vars(value) {
+      if tv != v && scope_fn::name(f, tv).starts_with("_ncr_") && scope_scan::in_scope(s, tv) && !scope_fn::has(viewed, tv) {
+        viewed += [tv];
+      }
+    }
+  }
+  match unspanned {
+    NdBlock { block } => if block[0].name == "nullable_slot_read" {
+      for d in scope_fn::depend(block[0].result[0] ?? ir::TyVoid) {
+        if d != v && scope_fn::name(f, d).starts_with("__ref_") && !scope_fn::has(viewed, d) {
+          viewed += [d];
+        }
+      }
+    },
+    _ => {}
+  }
+  note_lift_viewers(s, v, viewed);
+  s.prefix_released = s.prefix_released[0..prefix_from];
+  if first_binding {
+    k = len(s.binding_now);
+    s.binding_now = s.binding_now[0..k - 1];
+  }
+  delivered = scope_backings::delivered_work_ref(b, value, f) >= 0;
+  if !delivered {
+    match scanned {
+      NdSpan { pos, inner } => {
+        match inner {
+          NdInsert { items } => if len(items) >= 2 {
+            ops: vector<ir::Node> = [for x in items[0..len(items) - 1] { x }];
+            ops += [ir::NdSpan { pos: pos, inner: items[len(items) - 1]! }];
+            scanned = ir::NdInsert { items: ops };
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  ls: vector<ir::Node> = [];
+  set_value = scanned;
+  match scanned {
+    NdInsert { items } => {
+      if len(items) >= 2 {
+        ls = [for x in items[0..len(items) - 1] { x }];
+        set_value = items[len(items) - 1]!;
+      }
+    },
+    _ => {}
+  }
+  // The keyed and collection materialise copies are empty.  loft#1106 `nullable_join_first_bind`
+  // answers none while `τ?` has a buffer; loft#1248 a closure call's join and loft#2078 an
+  // unresolved one make the local an owner.
+  if callref_join_first_bind(s, b, t, set_value) || (!scope_fn::is_argument(f, v) && opaque_callref_record(s, b, t, set_value)) {
+    for d in scope_fn::deps(f, v) {
+      scope_fn::make_independent(f, v, d);
+    }
+  } else if scope_fn::base(t) is TyVector && scope_fn::unspan(set_value) is NdCallRef {
+    // The collection twins (`callref_collection_join_base`, `callref_delivers_collection`): a
+    // vector bound from a fn-ref call — a witness by store identity, or the deps stripped for
+    // a delivered copy — is not transcribed.
+    scope_scan::refuse(s, "use_analysis::callref_collection_join_base: a vector bound from a fn-ref call");
+  }
+  prefix: vector<ir::Node> = [];
+  lifts = [for l in scope_scan::list_of(s.lift_viewers, v) if l != v { l }];
+  if transition_free == null && was_in_scope && len(lifts) > 0 && scope_fn::is_record(t) && !scope_fn::reads_var(value, v) && !scope_fn::reads_var(value, ov) {
+    transition_free = ir::NdInsert { items: [for l in lifts { ir::NdIf { cond: distinct(s, v, l), t: ir::NdNull, f: scope_fn::v_set(v, ir::NdNull) } }] };
+  } else if transition_free == null && was_in_scope && len(lifts) > 0 && scope_fn::is_record(t) && !scope_fn::is_skip_free(f, v) && len(scope_fn::deps(f, v)) == 0 {
+    transition_free = ir::NdInsert { items: [for l in lifts { ir::NdIf { cond: distinct(s, v, l), t: ir::NdNull, f: scope_fn::v_set(l, ir::NdNull) } }] };
+  } else if len(lifts) > 0 && transition_free != null {
+    fr = transition_free!;
+    for l in lifts {
+      fr = ir::NdIf { cond: distinct(s, v, l), t: fr, f: scope_fn::v_set(v, ir::NdNull) };
+    }
+    transition_free = fr;
+  }
+  // #316 — the ownership-transition free runs FIRST, declining while `v` names a frame
+  // temporary's store (`view_temps`).
+  if transition_free != null {
+    fr = transition_free!;
+    for vt in scope_scan::list_of(s.view_temps, v) {
+      if vt != v {
+        fr = ir::NdIf { cond: distinct(s, v, vt), t: fr, f: ir::NdNull };
+      }
+    }
+    prefix += [fr];
+  }
+  // The collection join's witness snapshot is a collection's.
+  for d in depend {
+    if d == v {
+      continue;
+    }
+    if scope_fn::tp(f, d) is TyText {
+      prefix += [scope_fn::v_set(d, ir::NdText { s: "" })];
+    } else {
+      prefix += [scope_fn::v_set(d, ir::NdNull)];
+    }
+    scope_scan::put_scope(s, d);
+  }
+  // loft#1128 — keep the runtime witness in step with what `v` now holds, unless the call
+  // delivers into the buffer.  loft#1200's per-local witness (`local_owns`, empty while `τ?`
+  // has a buffer).
+  witness_update: vector<ir::Node> = [];
+  if s.rbuf_flag >= 0 && s.rbuf_buf == v && !delivers_into_buffer(b, value, v, ov) {
+    witness_update += [scope_fn::v_set(s.rbuf_flag, ir::NdBoolean { b: ref_rhs_owned(s, b, value) })];
+  }
+  if lo >= 0 {
+    sole = scope_witness::mints_a_store_the_target_does_not_hold(b, value, v, ov);
+    witness_update += [scope_fn::v_set(lo, ir::NdBoolean { b: sole })];
+  }
+  // loft#1515 — the per-path hand-off flags (`handed_off`) and a copy that inherits one: the
+  // map is empty, and `copy_moves_drop_from` answers none without a drop cascade.
+  hv = scope_scan::get(s.handed_off, v);
+  if hv >= 0 && !scope_fn::has(s.handle_views, v) {
+    witness_update += [scope_fn::v_set(hv, ir::NdBoolean { b: false })];
+  }
+  // The owner witness's releases and pointer (`witness_ops`) and a closure build's hand-off of a
+  // witnessed capture: the owner witness is empty.
+  // `@FR-B-View` — a local bound ONCE to a projection of a lifted call result views the lift.
+  root = -1;
+  if !scope_fn::has(s.multi_assigned, ov) && len(scope_fn::deps(f, v)) == 0 && scope_fn::is_dbref(scope_fn::base(t)) {
+    root = lifted_view_root(b, set_value);
+  }
+  if root >= 0 && root != v && root < scope_fn::count(f) && scope_fn::name(f, root).starts_with("__lift_") {
+    set_deps(f, v, [root]);
+  } else if scope_fn::has(s.multi_assigned, ov) && scope_fn::is_dbref(scope_fn::base(t)) {
+    r2 = call_view_root(b, set_value);
+    if r2 >= 0 && r2 != v && r2 < scope_fn::count(f) && scope_fn::name(f, r2).starts_with("__lift_") {
+      note_lift_viewers(s, v, [r2]);
+    }
+  }
+  kept = kept_displaced_free(s, b, v, was_in_scope, set_value, f);
+  if kept.some {
+    displaced.some = true;
+    displaced.pre += kept.pre;
+    displaced.post += kept.post;
+  }
+  if len(prefix) == 0 && len(ls) == 0 && len(witness_update) == 0 && !displaced.some && len(handoff_disarm) == 0 {
+    return scope_fn::v_set(v, set_value);
+  }
+  all = displaced.pre;
+  all += prefix;
+  all += ls;
+  all += [scope_fn::v_set(v, set_value)];
+  all += handoff_disarm;
+  all += witness_update;
+  all += displaced.post;
+  ir::NdInsert { items: all }
+}
+
+// port: scan_set.rs fn delivers_into_buffer — `v` at the callee's buffer position and the
+// callee fills the buffer it is handed.
+fn delivers_into_buffer(b: ir::Bundle, value: ir::Node, v: integer, ov: integer) -> boolean {
+  match scope_fn::unspan(value) {
+    NdCall { def_nr, args } => {
+      def = b.data.definitions[def_nr]!;
+      if binds::return_adopts_fresh_store(def) {
+        return false;
+      }
+      idx = binds::hidden_return_buffer_attr(def);
+      if idx == null {
+        return false;
+      }
+      a = args[idx!];
+      a != null && match scope_fn::unspan(a!) { NdVar { n } => n == v || n == ov, _ => false }
+    },
+    _ => false
+  }
+}
+
+fn distinct(s: scope_scan::Scopes, a: integer, c: integer) -> ir::Node {
+  ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: a }, ir::NdVar { n: c }] }
+}
+
+// `self.var_scope.get(&v).copied().unwrap_or(u16::MAX)`
+fn scope_of(s: scope_scan::Scopes, v: integer) -> integer {
+  x = scope_scan::get(s.var_scope, v);
+  if x < 0 { scope_fn::NONE } else { x }
+}
+
+// `function.depend(v, dep)` — the dep list replaced.
+fn set_deps(f: ir::Function, v: integer, deps: vector<integer>) {
+  f.variables[v].type_def = [with_deps(scope_fn::tp(f, v), deps)];
+}
+
+fn with_deps(t: ir::TypeT, d: vector<integer>) -> ir::TypeT {
+  match t {
+    TyReference { n } => ir::TyReference { n: n, dep: d },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: d },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: d },
+    TyOptional { inner } => ir::TyOptional { inner: with_deps(inner, d) },
+    _ => t
+  }
+}
+
+// `def.attributes().iter().any(|a| a.hidden && a.name == nm)`
+fn names_hidden_attr(d: ir::Definition, nm: text) -> boolean {
+  for a in d.attributes {
+    if a.hidden && a.name == nm {
+      return true;
+    }
+  }
+  false
+}
+
+// port: scan_set.rs fn ref_rhs_ownership — `Owned` (and `Unknown`) is owned, a borrow or a join
+// is a view.
+fn ref_rhs_owned(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node) -> boolean {
+  match scope_scan::ownership(s, b, value) {
+    Owned => true,
+    Unknown => true,
+    _ => false
+  }
+}
+
+// port: scan_set.rs fn copy_flagged_on_target — a copy off a parameter written in an arm with a
+// per-path flag on the target (`per_path_pairs`, `handed_off`: empty).
+fn copy_flagged_on_target(s: scope_scan::Scopes, v: integer, value: ir::Node) -> boolean {
+  match scope_fn::unspan(value) {
+    NdVar { n: src } => scope_fn::has(s.per_path_pairs, v * 65536 + src) && scope_scan::get(s.handed_off, v) >= 0,
+    _ => false
+  }
+}
+
+// port: scan_set.rs fn var_bind_copies — `v = src` copies a record into a `v` that owns it.
+fn var_bind_copies(b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
+  src = match scope_fn::unspan(value) { NdVar { n } => n, _ => -1 };
+  if src < 0 {
+    return false;
+  }
+  if own::heap_def_nr(scope_fn::tp(f, v)) == null || !scope_fn::proxy_says_owned(f, v) {
+    return false;
+  }
+  if own::record_copy_source(b, f, v, src) == null {
+    return false;
+  }
+  // `lease::copy_reach(…).refused` — `@FR-H-Copy-Refuse` refuses a copy of a record holding a
+  // droppable; without a drop cascade (the phase refuses one) nothing is refused.
+  true
+}
+
+// port: handoff.rs fn var_copy_owns
+fn var_copy_owns(b: ir::Bundle, f: ir::Function, v: integer, src: integer) -> boolean {
+  d = record_def(scope_fn::tp(f, v));
+  sd = record_def(scope_fn::tp(f, src));
+  if d < 0 || sd < 0 {
+    return false;
+  }
+  own::copies_as(b, d, sd) && !scope_fn::is_captured(f, v) && !scope_fn::is_skip_free(f, v)
+}
+
+// `Type::Reference(d, _) | Type::Enum(d, true, _)` through `base()`, -1 otherwise.
+fn record_def(t: ir::TypeT) -> integer {
+  match scope_fn::base(t) {
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  }
+}
+
+// port: scan_set.rs fn copy_temp_held_bind — an OWNING record local bound more than once, handed
+// a block whose value is another variable, takes a COPY of it: `{…}; ov = r`.
+fn copy_temp_held_bind(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, v: integer, value: ir::Node, f: ir::Function) -> ir::Node? {
+  return_buffer = scope_fn::is_argument(f, v) && names_hidden_attr(b.data.definitions[s.d_nr]!, scope_fn::name(f, v));
+  t = scope_fn::tp(f, v);
+  bare_record = match t { TyReference => true, TyEnum { is_ref } => is_ref, _ => false };
+  if !scope_fn::has(s.multi_assigned, ov)
+    || scope_fn::is_compiler_generated(f, v)
+    || (scope_fn::is_argument(f, v) && !return_buffer)
+    || (scope_fn::is_skip_free(f, v) && scope_scan::get(s.owner_witness, v) < 0 && !return_buffer)
+    || !bare_record
+    || len(scope_fn::deps(f, v)) > 0 {
+    return null;
+  }
+  ops: vector<ir::Node> = [];
+  match scope_fn::unspan(value) {
+    NdBlock { block } => { ops = block[0].operators; },
+    NdInsert { items } => { ops = items; },
+    _ => { return null; }
+  }
+  k = len(ops);
+  if k == 0 {
+    return null;
+  }
+  r = match scope_fn::unspan(ops[k - 1]!) { NdVar { n } => n, _ => -1 };
+  if r < 0 {
+    return null;
+  }
+  if r == v || r == ov || ((scope_scan::get(s.owner_witness, v) >= 0 || return_buffer) && scope_fn::is_compiler_generated(f, r)) {
+    return null;
+  }
+  for op in ops[0..k - 1] {
+    match scope_fn::unspan(op) {
+      NdSet { var: x } => if x != r { return null; },
+      _ => {}
+    }
+  }
+  out: vector<ir::Node> = [for op in ops[0..k - 1] { op }];
+  out += [scope_fn::v_set(ov, ir::NdVar { n: r })];
+  ir::NdInsert { items: out }
+}
+
+// port: scan_set.rs fn every_arm_tail_is_var
+fn every_arm_tail_is_var(value: ir::Node) -> boolean {
+  match scope_fn::unspan(value) {
+    NdIf { t, f } => every_arm_tail_is_var(t) && every_arm_tail_is_var(f),
+    NdBlock { block } => {
+      if block[0].name == "ncc" {
+        return false;
+      }
+      k = len(block[0].operators);
+      k > 0 && every_arm_tail_is_var(block[0].operators[k - 1]!)
+    },
+    NdVar => true,
+    _ => false
+  }
+}
+
+// port: returns.rs fn projection_root — the variable an `OpGetField` chain reads a member of,
+// with its path, as `base << 32 | offset << 16 | depth`; -1 for none.
+fn field_projection_root(expr: ir::Node, get_field: integer) -> integer {
+  match scope_fn::unspan(expr) {
+    NdCall { def_nr, args } => {
+      if def_nr != get_field || len(args) < 2 {
+        return -1;
+      }
+      off = match scope_fn::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+      if off < 0 || off > 65535 {
+        return -1;
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: src } => src * 4294967296 + off * 65536,
+        _ => {
+          inner = field_projection_root(args[0]!, get_field);
+          if inner < 0 {
+            return -1;
+          }
+          src = inner / 4294967296;
+          outer = (inner / 65536) % 65536;
+          depth = inner % 65536;
+          if outer + off > 65535 || depth + 1 > 65535 {
+            return -1;
+          }
+          src * 4294967296 + (outer + off) * 65536 + depth + 1
+        }
+      }
+    },
+    _ => -1
+  }
+}
+
+// `@PLN157 § V-g` — `view_elision_bind` short of its `read_only` fact: a bare record local bound
+// once from a loft call whose return borrows a value-const parameter this frame never assigns.
+fn view_elision_candidate(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, value: ir::Node) -> boolean {
+  if !(scope_fn::tp(f, v) is TyReference) {
+    return false;
+  }
+  if scope_fn::is_argument(f, v) || scope_fn::is_skip_free(f, v) || scope_fn::is_captured(f, v) || scope_fn::has(s.multi_assigned, v) {
+    return false;
+  }
+  match value {
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr];
+      if d == null || !binds::is_loft_defined(d!) {
+        return false;
+      }
+    },
+    _ => { return false; }
+  }
+  base = own::base_of(scope_scan::ownership(s, b, value));
+  if base == null || base! == scope_fn::NONE || !scope_fn::is_argument(f, base!) {
+    return false;
+  }
+  x = f.variables[base!];
+  x != null && x!.value_const && !scope_fn::has(s.multi_assigned, base!) && !scope_fn::has(s.assigned, base!)
+}
+
+// port: scan.rs fn pair_call_buffers — the `__ref_N` buffers a call hands its loft callee,
+// paired with the variable its result is bound to.
+fn pair_call_buffers(s: scope_scan::Scopes, f: ir::Function, v: integer, value: ir::Node, adopts_fresh: boolean, adopts_minted: boolean, publishes_through_ref: boolean, vector_shaped: boolean) {
+  if !(adopts_fresh || adopts_minted || publishes_through_ref || vector_shaped) {
+    return;
+  }
+  match value {
+    NdCall { args } => {
+      for arg in args {
+        av = match scope_fn::unspan(arg) { NdVar { n } => n, NdSet { var } => var, _ => -1 };
+        if av < 0 {
+          continue;
+        }
+        nm = scope_fn::name(f, av);
+        if !(nm.starts_with("__ref_") || nm.starts_with("__rref_")) {
+          continue;
+        }
+        av_scope = scope_of(s, av);
+        v_scope = scope_of(s, v);
+        if av == v {
+          continue;
+        }
+        if adopts_minted && !adopts_fresh {
+          scope_scan::set_add(s.minted_pairs, av);
+        }
+        vector_alias_only = vector_shaped && !adopts_fresh && !publishes_through_ref;
+        if !vector_alias_only && ((publishes_through_ref && scope_fn::is_argument(f, v)) || (v_scope <= av_scope && v_scope != scope_fn::NONE)) {
+          scope_scan::put_if_absent(s.paired_witness, av, v);
+        } else if v_scope != scope_fn::NONE && av_scope != scope_fn::NONE && v_scope > av_scope {
+          scope_scan::list_add(s.witness_buffer, v, av);
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: scan_set.rs fn captures_built_in_value — `(record, capture)` of every
+// `OpSetDbRef(rec, _, c)` in the value, flattened.
+fn captures_built_in_value(s: scope_scan::Scopes, value: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  captures_walk(s, value, out);
+  out
+}
+
+fn captures_walk(s: scope_scan::Scopes, n: ir::Node, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if def_nr == s.ops.set_dbref && len(args) >= 3 {
+      rec = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
+      c = match scope_fn::unspan(args[2]!) { NdVar { n: x } => x, _ => -1 };
+      if rec >= 0 && c >= 0 {
+        out += [rec, c];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    captures_walk(s, c, out);
+  }
+}
+
+// Every capture of the flattened pairs has an owner witness.
+fn all_witnessed(s: scope_scan::Scopes, pairs: vector<integer>) -> boolean {
+  k = 1;
+  while k < len(pairs) {
+    if scope_scan::get(s.owner_witness, pairs[k]!) < 0 {
+      return false;
+    }
+    k += 2;
+  }
+  true
+}
+
+// port: use_analysis.rs fn projection_root / place_root — the root variable of a projection.
+fn projection_root_var(b: ir::Bundle, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdTupleGet { var } => var,
+    NdCall { def_nr, args } => {
+      if !scope_args::def_name(b, def_nr).starts_with("OpGet") || len(args) == 0 {
+        return -1;
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: x } => x,
+        _ => projection_root_var(b, args[0]!)
+      }
+    },
+    _ => -1
+  }
+}
+
+// port: scan_set.rs fn lifted_view_root
+fn lifted_view_root(b: ir::Bundle, value: ir::Node) -> integer {
+  r = projection_root_var(b, value);
+  if r >= 0 { r } else { call_view_root(b, value) }
+}
+
+// port: scan_set.rs fn call_view_root — the argument a DECLARED view answers into.
+fn call_view_root(b: ir::Bundle, value: ir::Node) -> integer {
+  match scope_fn::unspan(value) {
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr]!;
+      if binds::is_loft_defined(d) || d.name.starts_with("Op") {
+        return -1;
+      }
+      for dep in scope_fn::depend(d.returned[0] ?? ir::TyVoid) {
+        if dep >= len(args) || dep >= len(d.attributes) || d.attributes[dep]!.name.starts_with("__") {
+          continue;
+        }
+        r = match scope_fn::unspan(args[dep]!) { NdVar { n } => n, _ => lifted_view_root(b, args[dep]!) };
+        if r >= 0 {
+          return r;
+        }
+      }
+      -1
+    },
+    _ => -1
+  }
+}
+
+// port: use_analysis.rs fn callref_join_first_bind, asked as a yes/no.
+fn callref_join_first_bind(s: scope_scan::Scopes, b: ir::Bundle, t: ir::TypeT, value: ir::Node) -> boolean {
+  if !scope_fn::is_record(t) || !(scope_fn::unspan(value) is NdCallRef) {
+    return false;
+  }
+  match scope_scan::ownership(s, b, value) {
+    Join { base } => base != scope_fn::NONE,
+    _ => false
+  }
+}
+
+// port: use_analysis.rs fn opaque_callref_record, asked as a yes/no.
+fn opaque_callref_record(s: scope_scan::Scopes, b: ir::Bundle, t: ir::TypeT, value: ir::Node) -> boolean {
+  if !scope_fn::is_record(t) || !(scope_fn::unspan(value) is NdCallRef) {
+    return false;
+  }
+  binds::callee_of(b, scope_scan::defs(s, b), value) == null
+}
+
+// port: scan_set.rs fn kept_displaced_free — the pre/post pair releasing what a KEPT local
+// (`buffer_witnessed`, loft#1522's veto) held before a rebind.
+fn kept_displaced_free(s: scope_scan::Scopes, b: ir::Bundle, v: integer, was_in_scope: boolean, value: ir::Node, f: ir::Function) -> scope_drops::PrePost {
+  x = f.variables[v];
+  if !was_in_scope || value is NdNull || x == null || !x!.buffer_witnessed || len(scope_fn::deps(f, v)) > 0 || scope_fn::is_skip_free(f, v) {
+    return scope_drops::no_pre_post();
+  }
+  av = -1;
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0].name == "Object" {
+      k = len(block[0].operators);
+      if k > 0 {
+        match scope_fn::unspan(block[0].operators[k - 1]!) {
+          NdVar { n } => { av = n; },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  if av < 0 {
+    // `literal_buffer.iter().find_map(|(&b, &w)| (w == v).then_some(b))` — a hash map's order:
+    // several buffers paired with one local would pick an arbitrary one.
+    found: vector<integer> = [];
+    for w in s.literal_buffer {
+      if w == v {
+        found += [w#index];
+      }
+    }
+    if len(found) > 1 {
+      scope_scan::refuse(s, "scan_set::kept_displaced_free: a kept local paired with two literal buffers (hash order)");
+    }
+    if len(found) == 0 {
+      return scope_drops::no_pre_post();
+    }
+    av = found[0]!;
+  }
+  snap = scope_scan::new_lift_var(s, f, scope_fn::without_deps(scope_fn::tp(f, v)));
+  f.variables[snap].skip_free = true;
+  pre = [scope_fn::v_set(snap, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: v }] })];
+  free = ir::NdIf {
+    cond: distinct(s, snap, av),
+    t: ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: snap }, ir::NdVar { n: v }] },
+    f: ir::NdNull
+  };
+  scope_drops::PrePost { some: true, pre: pre, post: [free], waits: false }
+}
+
+// port: scan_set.rs fn note_lift_viewers
+fn note_lift_viewers(s: scope_scan::Scopes, v: integer, lifts: vector<integer>) {
+  if len(lifts) == 0 {
+    return;
+  }
+  for l in lifts {
+    if l != v {
+      scope_scan::list_add(s.lift_viewers, v, l);
+    }
+  }
+  for l in lifts {
+    if l != v {
+      lpos = scope_scan::position(s.var_order, l);
+      if lpos >= 0 {
+        scope_scan::remove_at(s.var_order, lpos);
+        at = scope_scan::position(s.var_order, v);
+        if at < 0 {
+          at = lpos;
+        }
+        out: vector<integer> = [];
+        for y in s.var_order {
+          if y#index == at {
+            out += [l];
+          }
+          out += [y];
+        }
+        if at >= len(s.var_order) {
+          out += [l];
+        }
+        s.var_order.clear();
+        s.var_order += out;
+      }
+    }
+  }
+}
+
+fn ends_in_if(v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdIf => true,
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      k > 0 && ends_in_if(block[0].operators[k - 1]!)
+    },
+    NdInsert { items } => {
+      k = len(items);
+      k > 0 && ends_in_if(items[k - 1]!)
+    },
+    _ => false
+  }
+}
+
+// port: join_rewrite.rs fn branch_tail_vars
+pub fn branch_tail_vars(n: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  tail_walk(n, out);
+  out
+}
+
+fn tail_walk(n: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
+    NdIf { t, f } => {
+      tail_walk(t, out);
+      tail_walk(f, out);
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name != "join-arm-owner" && bl.name != "ncc" && len(bl.operators) > 0 {
+        tail_walk(bl.operators[len(bl.operators) - 1]!, out);
+      }
+    },
+    NdInsert { items } => if len(items) > 0 { tail_walk(items[len(items) - 1]!, out); },
+    _ => {}
+  }
+}
