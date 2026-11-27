@@ -95,30 +95,7 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
       // left unknown, a record written whole shared, a written scalar or text in its cell — so
       // its fields, and the cascade a captured store asks for, are Rust's.  (A written capture
       // no cell can name keeps its own type: nothing is minted that Rust does not have.)
-      rcaps: vector<el::Capture> = [];
-      rwritten: vector<text> = [];
-      for c in cnames {
-        cv = el_vars::var(vars, c);
-        ct = el_vars::tp(vars, cv);
-        match ct {
-          TyRefVar { inner: rvi } => {
-            if record_type(e, rvi) || el_types::base(rvi) is TyVector || el_convert::plain_scalar(el_types::base(rvi)) || (el_types::base(rvi) is TyText && !(rvi is TyOptional)) {
-              ct = rvi;
-            }
-          },
-          _ => {}
-        }
-        if el_types::is_unknown(ct) {
-          rcaps += [el::Capture { name: c, tp: if (ct is TyUnknown) { ct } else { ir::TyUnknown { n: 0 } } }];
-          continue;
-        }
-        wr = writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]);
-        if wr && !(record_type(e, ct) && !(ct is TyOptional)) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) && el_cell::cell_name(e, ct) != "" {
-          rwritten += [c];
-        }
-        rcaps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
-      }
-      rd = build_closure_record(e, vars, rec_nm, rcaps, body!, rwritten);
+      rd = first_pass_record(e, vars, rec_nm, cnames, body!);
       e.b.data.definitions[ld].closure_record = rd;
       // `synthesize_closure_record` registers each capture's tuple records as it lays the
       // capture's field out (`ensure_tuple_defs`), so they keep Rust's numbers though the
@@ -157,6 +134,42 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
     }
   }
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
+}
+
+// The closure record as Rust's first pass lays it out (`synthesize_closure_record`), from the plan
+// its capture loop makes: a link peeled to what it shares, a capture pass 1 cannot type left
+// unknown, a record written whole shared, a written scalar or text in its cell.  (Shared by a
+// refused lambda and the lambdas nested in it.)
+fn first_pass_record(e: el::El, vars: el_vars::Vars, rec_nm: text, cnames: vector<text>, body: integer) -> integer {
+  rcaps: vector<el::Capture> = [];
+  rwritten: vector<text> = [];
+  for c in cnames {
+    cv = el_vars::var(vars, c);
+    // (A name of the enclosing lambda's own is untyped on Rust's first pass too.)
+    if cv < 0 {
+      rcaps += [el::Capture { name: c, tp: ir::TyUnknown { n: 0 } }];
+      continue;
+    }
+    ct = el_vars::tp(vars, cv);
+    match ct {
+      TyRefVar { inner: rvi } => {
+        if record_type(e, rvi) || el_types::base(rvi) is TyVector || el_convert::plain_scalar(el_types::base(rvi)) || (el_types::base(rvi) is TyText && !(rvi is TyOptional)) {
+          ct = rvi;
+        }
+      },
+      _ => {}
+    }
+    if el_types::is_unknown(ct) {
+      rcaps += [el::Capture { name: c, tp: if (ct is TyUnknown) { ct } else { ir::TyUnknown { n: 0 } } }];
+      continue;
+    }
+    wr = writes_a_name(e, body, [el::Capture { name: c, tp: ct }]);
+    if wr && !(record_type(e, ct) && !(ct is TyOptional)) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) && el_cell::cell_name(e, ct) != "" {
+      rwritten += [c];
+    }
+    rcaps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
+  }
+  build_closure_record(e, vars, rec_nm, rcaps, body, rwritten)
 }
 
 // Where a lambda's definition stands: where the lexer is past its `)`, on the `->` or on the
@@ -201,10 +214,11 @@ fn register_nested_lambdas(e: el::El, vars: el_vars::Vars, n: integer, root: tex
           if e.first_pass && el::def_nr(e, nm) < 0 {
             ld = el::add_def(e, nm, el::pos_at(e, lambda_after(e, lat, lret, lb)), el::DT_FUNCTION);
             register_nested_lambdas(e, vars, lb!, root, scope + own + scope_names(e, lb!));
-            if len(names_captured_in(e, vars, lb!, own, scope)) > 0 {
-              end = match e.p.nodes[lb!] { SBlock { end: be } => be, _ => 0 };
-              rd = el::add_def(e, rec_nm, el::pos_at(e, end + 1), el::DT_STRUCT);
-              e.b.data.definitions[rd].returned = [ir::TyReference { n: rd, dep: [] }];
+            ncap = names_captured_in(e, vars, lb!, own, scope);
+            if len(ncap) > 0 {
+              // (Its record laid out as the enclosing refused lambda's: the captures the
+              // function's frame types get their fields, the outer lambda's own stay unknown.)
+              rd = first_pass_record(e, vars, rec_nm, ncap, lb!);
               e.b.data.definitions[ld].closure_record = rd;
             }
           } else {
