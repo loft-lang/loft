@@ -600,7 +600,7 @@ pub fn to_default(e: el::El, t: ir::TypeT) -> ir::Node {
       if inner is TyText {
         return el_ir::cl(e, "OpConvTextFromNull", []);
       }
-      nl = if inner is TyInteger || inner is TyFloat || inner is TySingle { el_convert::null_of(e, inner) } else { null };
+      nl = if inner is TyInteger || inner is TyFloat || inner is TySingle || inner is TyBoolean || inner is TyCharacter { el_convert::null_of(e, inner) } else { null };
       if nl == null {
         el::refuse(e, "an omitted field of this type: a nullable {type_kind(inner)}");
         return ir::NdNull;
