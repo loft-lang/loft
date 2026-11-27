@@ -284,9 +284,29 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
   }
   if outer_call >= 0 && len(ls) == len(args) {
     copy_written_text_operands(s, b, outer_call, preamble, ls, f);
+    // `copy_written_vector_operands`: a vector operand of an element read that a later
+    // operand may write is copied into a `__lift_N` first.
+    cn = def_name(b, outer_call);
+    if len(ls) >= 3 && (cn == "OpGetVector" || cn == "OpGetVectorNullable" || cn == "OpVectorRef" || cn == "OpVectorRefNullable") {
+      match scope_fn::unspan(ls[0]!) {
+        NdVar { n: x } => if vector_link(scope_fn::tp(f, x)) {
+          scope_scan::refuse(s, "args::copy_written_vector_operands: a vector read beside an operand that may write it");
+        },
+        _ => {}
+      }
+    }
     keep_viewed_displaced(s, b, outer_call, ls, f);
   }
   Scanned { preamble: preamble, ls: ls, postamble: postamble }
+}
+
+// `matches!(tp.peel_link(), Type::Vector(..))`.
+fn vector_link(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyVector => true,
+    TyRefVar { inner } => vector_link(inner),
+    _ => false
+  }
 }
 
 // port: data.rs fn returns_borrowed_view
