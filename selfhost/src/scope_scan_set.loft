@@ -9,7 +9,7 @@
 // local's displaced free.  The facts of passes refused before the scan (the owner witness, the
 // per-path hand-off flags, the handle views, the materialised views, the drop-bearing records'
 // hand-offs) are empty, and every reader asks them as Rust does.  A collection, tuple, generator
-// handle, fn-ref or `&` binding refuses the function by name.
+// handle or `&` binding refuses the function by name; a fn-ref takes the generic legs.
 
 use ir;
 use own;
