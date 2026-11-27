@@ -748,6 +748,25 @@ pub fn lambda_vector_copy(e: el::El, code: ir::Node, rb: integer, result: ir::Ty
     return code;
   }
   lit = match el_ir::unspan(bl.operators[-1]) { NdBlock { block } => literal_backing_store(block[0]) >= 0, _ => false };
+  // A tail that reads a vector CAPTURE whole (`fn() -> vector<integer> { w }`, the closure's
+  // pointer field) is copied into the buffer (`borrow_tail_copy`): the caller gets its own store.
+  cap_tail = calls(e, el_ir::unspan(bl.operators[-1]), "OpGetDbRef") && match el_ir::unspan(bl.operators[-1]) { NdCall { args: cta } => len(cta) == 2 && el_ir::unspan(cta[0]!) == ir::NdVar { n: e.closure_var }, _ => false };
+  if cap_tail && e.closure_var >= 0 {
+    celem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+    crec = element_content(e, celem);
+    if crec >= 0 {
+      cb = ir::NdVar { n: rb };
+      cown = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+      bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [cb]), el_ir::cl(e, "OpAppendVector", [cb, bl.operators[-1], ir::NdInt { n: crec }]), cb], cown, "borrow_tail_copy_104");
+      bl.result = [el_types::without_deps(el_types::base(result))];
+      cba = attr_nr(el::def(e, e.context), "__retbuf");
+      cret = el::def(e, e.context).returned[0];
+      if cba >= 0 && !el_types::deps(cret).contains(cba) {
+        e.b.data.definitions[e.context].returned = [el_types::with_deps(cret, el_types::deps(cret) + [cba])];
+      }
+      return ir::NdBlock { block: [bl] };
+    }
+  }
   if !lit {
     // A branch tail or a whole vector handed back is delivered into the lambda's buffer too
     // (`materialize_vector_arms_into`, `borrow_tail_copy`), the buffer's own type borrowing it:
