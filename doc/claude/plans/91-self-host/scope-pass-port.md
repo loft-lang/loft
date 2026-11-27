@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 556 of 1 189 programs agree; 345 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 3 leaks, none the scope pass's answer (step 7) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 7): 1 260 of 2 282 programs, 32 729 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 619 of 1 189 programs agree; 284 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 8) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 8): 1 440 of 2 282 programs, 33 677 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -422,6 +422,74 @@ A loft defect met, a leak, both backends, worked around in `reassoc_walk`: a loc
 join of a parameter and a call's fresh record is not released where the function answers another
 value — `node = if deep { rebuild(n, A { x: 7 }) } else { n }; r = alt(node); if r != null { r! }
 else { node }` leaves one `S` store at exit (`--interpret` and `--native-c`).
+
+**Step 8 (2026-11-28) — the image facts, the borrow sources, `rebind_place`, `host_store`, the
+`@FR-H-RefHome` legs, the `&` bindings.**  Four facts the scope pass reads are now in the image,
+each written by `ir_store`, read back by `ir_read` and set by the loft elaborator where it has
+them: `Variable.was_loop_var` (byte 64; the record stride 64 → 72; `el_vars::stored` sets it off
+`loop_vars`), `Variable.place_buffer` and `Variable.ref_home` (bytes 65, 66) and
+`Definition.ref_evacuations` (four integers each, at byte 200; the definition's flags move up
+by 4).  The last three are `stored_reference_homes`' marks, which the loft elaborator does not
+make: it refuses the hoisted homes and the placements (`el_refhome`), but not every evacuation,
+so a program whose parser records one and which the elaborator accepts reads none on the whole
+path — owed to the elaborator, not seen on the corpus yet.
+`scope_phase::loopish_in` and the par-variable name test are gone.
+
+New files, each a Rust module transcribed whole: `scope_host_store.loft` (`host_store.rs`, the
+write-back and literal clauses, after the loop in definition order; a decision that reads a
+refused callee's body refuses its function), `scope_host_result.loft` (`host_result::admit`;
+its rewrite is not transcribed, so a function it admits refuses), `scope_rebind_place.loft`
+(`rebind_place.rs`, after `literal_append`, on the body put in place first because the oracle
+reads the definition's own code), `scope_stored_refs.loft` (`keep_placed_results`,
+`insert_evacuations`).  In `scan_args`, `inline_built_borrow_source` (`hoist_built_block`) and
+`unnameable_borrow_source` (`lift_view_deps`, `own::bracket_can_name`) replace the superset
+refusal.  `own::displaced_owned_slots` (`reassign_sites_of`'s owned-then-borrowed slots) feeds
+`scan_set`'s `local_source` strip; the right-hand sides it classifies take the stale-callee
+guard.  `last_use::reclaim_safe` and `store_confinement` read `is_ref_home`.  Three refusals
+were wider than the legs behind them and are narrowed by measurement: a `&` binding to a record
+or vector takes the record and vector legs (`publishes_through_ref`), a `&` local releases
+nothing at a scope exit (no arm of the sweep matches `RefVar`), and a value-form reassignment
+beside the written-out rule is carried but where the binding is the frame's promoted buffer or
+an arm is a `??` chain (those still differ: the construction work-refs a promoted buffer takes
+over, and a sink the port declines where Rust writes the arms out, `c131` `rb = rs as Circle`).
+
+`Variable::viewed` is still not in the image: `rebind_place` asks the callee's parameter viewers
+twice (current and parse-time deps; then every multiply-bound local added) and refuses where the
+answers differ.  Carrying `rebind_place` exposed a lag behind Rust: `join_rewrite`'s owner block
+for a minting call arm declines a callee answering a borrowed view (loft#2665), now ported.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 7 | 1 260 / 2 282 | 32 729 / 40 088 | 0 | 556 |
+| + `was_loop_var` in the image | 1 288 | 32 791 | 0 | 574 |
+| + the borrow sources, `host_store`, `host_result`'s admission | 1 313 | 32 901 | 0 | 578 |
+| + `rebind_place` | 1 349 | 33 208 | 0 | 590 |
+| + `place_buffer`, `ref_home`: `keep_placed_results`, the reclaim and confinement legs | 1 366 | 33 359 | 0 | |
+| + `ref_evacuations`: `insert_evacuations` | 1 386 | 33 449 | 0 | |
+| + the value-form reassignment, narrowed | 1 396 | 33 485 | 0 | 602 |
+| + `displaced_owned_slots` | 1 408 | 33 533 | 0 | |
+| + `&` bindings to a record or vector, `&` locals at a scope exit | 1 440 / 2 282 | 33 677 / 40 088 | 0 | 619 |
+
+No definition that agreed was lost at any step (`--verdicts` compared after each); the whole
+path lost no program either, and its faults and leak are step 7's.  Whole-path runs and their
+images must come from one `loft` binary: a rebuild with a new image layout mid-run faults every
+program (the runner refuses the image), so the gates here ran a frozen copy of the binary.
+
+Sole refusal families now (scope gate, programs): the view walk's materialise legs 44,
+`owner_witness_locals` (a record local whose assignments mix ownership) 22, `place_result` 22,
+the value-form reassignment (promoted buffer, `??` arm) 9, `callref_collection_join_base` 8, a
+fn-ref return's join hooks 4, then 3 each: `return_field`, `keep_viewed_displaced`,
+`construct_elide`'s `Variable::viewed`, `amp_writeback_owned_copy`.  By first refusal the
+stale-callee summary leads (346 programs), then closure records 143, tuple bindings 132,
+`return_field` 123, closure cascades 121.  `Variable::viewed` is now the one parse-time fact
+three ports approximate (`construct_elide`, `rebind_place`'s callee viewers): the next image
+fact to add.
+
+A loft defect met, both backends (a lint, so the front end): `dead-assignment` calls an init
+dead when a `while` body assigns the variable unconditionally, though a loop that runs no turn
+reads the init — `hit = false; k = 0; while k < len(v) { k += 1; hit = true; } hit` warns on
+`hit = false` (removing it as told breaks the empty case).  Worked around in
+`scope_host_store::literal_clause` (a count).
 
 ## Passes
 
