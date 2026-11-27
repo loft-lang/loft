@@ -94,7 +94,7 @@ flag, and a call returning a part of parameter 0 is already typed `Reference(…
   `-> &T` call to its argument's place, or the refusals and the materialisation never see the
   link.  `@FR-B-Ref-Reshape` has 12 citing sites and `@FR-B-Disturb` 23.
 - **Lints.**  `lost-write` (`use_analysis.rs` `warn_lost_temp_writes`, `report_lost_field_writes`)
-  skips a `&` callee, and its fix text names `-> &T`.  `double-move`
+  skips a `&` callee, and offers `-> &T` as a CONDITIONAL fix that names its cost (Q8).  `double-move`
   (`report_returned_parameter_member`) must not fire for it.  The needless-`&` parameter lint
   counts a parameter a `-> &T` names as used.
 - **Store records** (`@FR-O-Move`).  A `-> &T` callee is the `Arg`/`Slot` summary
@@ -156,7 +156,7 @@ emit byte-for-byte what it does now: the phase gates below prove it.
 | **B1** | Parse a return `&`, and refuse a `-> &T` whose places name no parameter, or more than one lifetime (Q4) | B1 refusal cells (a local, a fresh value, a literal, two parameters' places) fail without the callee check, and the accepted branch cells (one parameter, several containers) pass; every other program's IR byte-identical (`introspect_diff.sh`, both writers) | S |
 | **B2** | A `-> &T` call in place positions: an argument, a field write, a method chain | A's cells for those rows pass on both backends, leak- and strict-checked; byte-identical elsewhere | M |
 | **B3** | Binds: `e = first(s)` as a view, `e = &first(s)` as a link, the dependency mapped onto the argument, and the reshape refusals and materialisation reaching it — for a branching body, the union of the containers its return sites reach | A's bind and grow rows; `ownership_drop_gate` on both backends; the poison and stack sweeps; `own_sweep.py` reads CAUGHT with the new arm switched off | M |
-| **B4** | Lints and records: `lost-write` and `double-move` skip a `&` callee, the needless-`&` lint, the store-records reading | a cell per lint proving silence on `-> &T` and the warning kept on `-> T`; the records checker matches the runtime on A's cells | S |
+| **B4** | Lints and records: `lost-write` and `double-move` skip a `&` callee, `lost-write`'s conditional `-> &T` fix (Q8), the needless-`&` lint, the store-records reading | a cell per lint proving silence on `-> &T` and the warning kept on `-> T`; the records checker matches the runtime on A's cells | S |
 | **B5** | A fn-ref type `fn(S) -> &E` (Q7): the type names the parameter, assignment checks it, a call through it binds as B3 does; generics and interface methods take B's path per instance and per implementation | A's fn-ref, generic and interface cells on both backends; a capture-place lambda refused | S |
 | **C** | Scalar and text places (`-> &integer`, `-> &text`), after B (Q5, decided): a `RefVar` return on both backends, the text kind fixed per function or twinned per kind | A's scalar and text rows; the C sweep in strict mode on clang | M–MH |
 | **D** | The self-host port mirrors B (and C) | gate E agrees on A's cells; no agreeing program lost | S–M |
@@ -213,6 +213,16 @@ Each records the owner's decision, the recommendation it took, and what was meas
    B's last step (B5).  A generator's `&` stays refused as its parameters are
    (`@FR-G-NoRefParam`).
 
+8. **`lost-write`'s `-> &T` cure.**  **Decided (owner, 2026-11-27): offered as a CONDITIONAL fix
+   that names its cost.**  Changing `first` from `-> Enemy` to `-> &Enemy` changes every caller,
+   not only the one that warned: under Q2 a plain bind `e = first(s)` becomes a view where it was
+   a copy, so a caller that wrote to a private copy starts writing the element.  The fix reads
+   *"declare the return `-> &Enemy`, if every caller of `first` means to reach the element: a
+   plain bind of its result then views the element instead of copying it"*, beside "pass the
+   element itself" — the shape the existing `&` parameter fix already carries.  Not offered only
+   when provably safe: a library's callers are not all visible, and a fix that comes and goes with
+   distant code confuses.
+
 ## Cross-arc dependencies
 
 - [@PLN231](https://github.com/loft-lang/plans/issues/231) found this (R10, probes 18–30; its
@@ -227,8 +237,10 @@ Each records the owner's decision, the recommendation it took, and what was meas
 - `tests/docs/08-struct.loft`: a worked accessor (regenerated with `gendoc`).
 - `formal/binding.md`: the return clause (Q6) and `(B-Ref-AnnotationOnly)`'s note.
 - `formal/calls.md`: `(F-Ret)` cites it, and D-call-32 closes.
-- `DIAGNOSTICS.md`: `lost-write`'s fix column names `-> &T`; the refusal gets a code if it
-  becomes one.
+- `DIAGNOSTICS.md`: `lost-write`'s fix column names `-> &T` with its cost (Q8); the refusal gets a
+  code if it becomes one.
+- `LOFT_DECLARATIONS.md` / `LOFT.md`: changing an accessor from `-> T` to `-> &T` changes what
+  a plain bind of every call gives (a view where it was a copy) — said where the form is taught.
 - `@F21` on loft-lang/features (references `&T`): the return form, then
   `make features-fetch && make features-gen`.
 - `CHANGELOG.md`: New.
