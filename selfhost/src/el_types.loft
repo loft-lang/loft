@@ -1602,6 +1602,25 @@ fn names_def(t: ir::TypeT, h: integer) -> boolean {
   }
 }
 
+// port: data.rs type_mentions
+// Does `t` name `h` — directly, or through an open instance's own arguments (`Box<Inner<T>>`
+// mentions `T` through `Inner<T>`)?
+fn type_mentions(e: el::El, t: ir::TypeT, h: integer) -> boolean {
+  if names_def(t, h) {
+    return true;
+  }
+  for r in named_defs(e, t) {
+    if r >= 0 && r < len(e.b.data.definitions) && r != h && is_open_instance(e, r) {
+      for a in el::def(e, r).instance_args {
+        if type_mentions(e, a, h) {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
 // The definitions `t` names at any depth — a record, an enum, or a tuple's record by its name.
 fn named_defs(e: el::El, t: ir::TypeT) -> vector<integer> {
   out: vector<integer> = [];
@@ -1722,7 +1741,7 @@ pub fn open_instance_bindings(e: el::El, g: integer, vars: vector<integer>, boun
         hit = false;
         for a in el::def(e, d).instance_args {
           for h in vars {
-            if names_def(a, h) {
+            if type_mentions(e, a, h) {
               hit = true;
             }
           }
