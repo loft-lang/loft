@@ -1900,6 +1900,16 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
     x = expression(e, vars, rhs!);
     sd = struct_ref(e, el_types::base(x.tp));
+    // (`null` into a `S?` parameter rebinds it to the null sentinel, after the same free and
+    // detach.)
+    if x.tp is TyNull && el_vars::tp(vars, v) is TyOptional {
+      el_vars::drop_use(vars, v);
+      if e.first_pass {
+        return ex(el_ir::v_set(v, x.code), ir::TyVoid);
+      }
+      norig = el_vars::rebind_witness(vars, v);
+      return ex(ir::NdInsert { items: [el_ir::cl(e, "OpFreeRefIfDistinct", [ir::NdVar { n: v }, ir::NdVar { n: norig }]), el_ir::cl(e, "OpInitRefSentinel", [ir::NdVar { n: v }]), el_ir::v_set(v, el_ir::cl(e, "OpNullRefSentinel", []))] }, ir::TyVoid);
+    }
     if !e.first_pass && (sd < 0 || !el_ex_bind::copies_as(e, struct_ref(e, pt0), sd)) {
       el::refuse(e, "a rebound parameter given another type: {type_kind(x.tp)}");
       return ex(ir::NdNull, ir::TyVoid);
