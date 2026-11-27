@@ -23,19 +23,56 @@ pub fn no_delivery() -> Delivered {
   Delivered { sources: [] }
 }
 
-// port: free_vars.rs fn text_buffer_in_frame — `Some` only for a text return whose deps name
-// an attribute; such a return is refused below, so the type is handed on as it is.
-fn text_buffer_in_frame(s: scope_scan::Scopes, b: ir::Bundle, tp: ir::TypeT) -> boolean {
-  scope_fn::is_text(tp) && len(scope_fn::depend(tp)) > 0
+// port: free_vars.rs fn text_buffer_in_frame — `tp` with a dep on the hidden TEXT buffer
+// renumbered from the attribute index to the argument variable it is; `tp` itself where no dep
+// names it (Rust's `None`).  A tuple's members are renumbered one by one in Rust: refused here.
+fn text_buffer_in_frame(s: scope_scan::Scopes, d: ir::Definition, tp: ir::TypeT, f: ir::Function) -> ir::TypeT {
+  bufs: vector<integer> = [];
+  for a in d.attributes {
+    if is_text_buffer_attr(a) {
+      bufs += [a#index];
+    }
+  }
+  if len(bufs) == 0 {
+    return tp;
+  }
+  args: vector<integer> = [for v in f.variables if v.argument { v#index }];
+  if len(d.attributes) != len(args) {
+    return tp;
+  }
+  if scope_fn::base(tp) is TyTuple {
+    scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a tuple return naming a text buffer");
+    return tp;
+  }
+  raw = scope_fn::depend(tp);
+  hit = false;
+  frame: vector<integer> = [];
+  for r in raw {
+    if r != scope_fn::NONE && (r / 32768) % 2 == 0 && scope_fn::has(bufs, r) {
+      hit = true;
+      frame += [args[r]!];
+    } else {
+      frame += [r];
+    }
+  }
+  if !hit {
+    return tp;
+  }
+  match tp {
+    TyText => ir::TyText { dep: frame },
+    TyOptional { inner } => if inner is TyText { ir::TyOptional { inner: ir::TyText { dep: frame } } } else { tp },
+    _ => {
+      scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a non-text return naming a text buffer");
+      tp
+    }
+  }
 }
 
 // port: free_vars.rs fn free_vars
-pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr: ir::Node, f: ir::Function, tp: ir::TypeT, to_scope: integer) -> vector<ir::Node> {
+pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr: ir::Node, f: ir::Function, tp0: ir::TypeT, to_scope: integer) -> vector<ir::Node> {
   def = b.data.definitions[s.d_nr]!;
   def_ret = def.returned[0] ?? ir::TyVoid;
-  if to_scope == 1 && "{tp}" == "{def_ret}" && text_buffer_in_frame(s, b, tp) {
-    scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a text return naming its buffer");
-  }
+  tp = if to_scope == 1 && "{tp0}" == "{def_ret}" { text_buffer_in_frame(s, def, tp0, f) } else { tp0 };
   if is_return {
     // loft#1476 — the closure records a return delivers on some path.
     for v in 0..scope_fn::count(f) {

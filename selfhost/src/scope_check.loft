@@ -17,6 +17,7 @@ use scope_phase;
 use scope_args;
 use scope_wrapper;
 use scope;
+use scope_pure;
 
 // port: scopes.rs fn check — the program's own functions (source 1), each laid out or refused
 // by name.
@@ -25,13 +26,14 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   all_reasons = (env_variable("LOFT_SCOPE_ALL_REASONS") ?? "0") != "0";
   ops = scope_scan::ops_of(b);
   iops = scope::ops_of(b);
+  free = scope_pure::effect_free(b);
   for d in b.data.definitions {
     if d.def_type != 1 || len(d.code) == 0 || d.source != 1 {
       continue;
     }
     d_nr = d#index;
     orig_code = d.code[0]!;
-    why = program_rewrites(b, orig_code, d.variables);
+    why = program_rewrites(b, free, orig_code, d.variables);
     if why == "" {
       why = join_rewrites(b, orig_code, d.variables);
     }
@@ -45,7 +47,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why != "" {
       if all_reasons {
         all: vector<text> = [];
-        for r in [program_rewrites(b, orig_code, d.variables), join_rewrites(b, orig_code, d.variables)] {
+        for r in [program_rewrites(b, free, orig_code, d.variables), join_rewrites(b, orig_code, d.variables)] {
           if r != "" {
             all += [r];
           }
@@ -79,10 +81,10 @@ pub fn check(b: ir::Bundle) -> vector<text> {
 // `LOFT_MOVE_ELIDE`), and the post-loop ones on the settled bodies: `text_replace::admit`,
 // `buffer_detach`, `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
 // and closures, refused where they are bound).
-fn program_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
-  calls: vector<text> = [];
+fn program_rewrites(b: ir::Bundle, free: vector<boolean>, code: ir::Node, f: ir::Function) -> text {
+  calls: vector<integer> = [];
   w = Trigger { why: "" };
-  triggers(b, code, f, calls, w);
+  triggers(b, free, code, f, calls, w);
   w.why
 }
 
@@ -94,18 +96,14 @@ fn note(w: Trigger, why: text) {
   }
 }
 
-fn triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<text>, w: Trigger) {
+fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, calls: vector<integer>, w: Trigger) {
   match n {
     NdCall { def_nr, args } => {
       nm = scope_args::def_name(b, def_nr);
-      d = b.data.definitions[def_nr];
-      if d != null && (nm.starts_with("n_") || nm.starts_with("t_")) && len(d!.code) > 0 {
-        key = "{def_nr}(";
-        for a in args {
-          key += "{scope_fn::unspan(a)},";
-        }
+      key = scope_pure::reuse_key(b, free, def_nr);
+      if key >= 0 {
         if calls.contains(key) {
-          note(w, "pure_reuse::reuse_in_block: a loft call made twice on the same arguments");
+          note(w, "pure_reuse::reuse_in_block: an effect-free call made twice");
         }
         calls += [key];
       }
@@ -119,7 +117,7 @@ fn triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<text>, w:
     _ => {}
   }
   for c in scope_fn::children(n) {
-    triggers(b, c, f, calls, w);
+    triggers(b, free, c, f, calls, w);
   }
 }
 
@@ -186,20 +184,44 @@ fn settled_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
 fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
   lp = in_loop;
   match n {
-    NdLoop => { lp = true; },
+    NdLoop { block } => {
+      lp = true;
+      // `vec_copy`: a walk of a vector whose body pushes its element into a target.
+      if contains_call(b, n, "OpGetVectorNullable") && contains_call(b, n, "OpPush") {
+        note(w, "vec_copy::rewrite: a vector copied one element at a time");
+      }
+    },
+    NdBlock { block } => {
+      // `repeat_run`: four or more consecutive pushes of one constant into one target.
+      run = 0;
+      prev = "";
+      for op in block[0].operators {
+        u = scope_fn::unspan(op);
+        cur = match u {
+          NdCall { def_nr } => {
+            nm = scope_args::def_name(b, def_nr);
+            if nm == "OpPushFloat" || nm == "OpPushInt" || nm == "OpPushSingle" || nm == "OpPushInt4" { "{u}" } else { "" }
+          },
+          _ => ""
+        };
+        if cur != "" && cur == prev {
+          run += 1;
+        } else {
+          run = if cur == "" { 0 } else { 1 };
+        }
+        prev = cur;
+        if run >= 4 {
+          note(w, "repeat_run::rewrite: a run of one constant pushed");
+        }
+      }
+    },
     NdCall { def_nr } => {
       nm = scope_args::def_name(b, def_nr);
       if nm == "OpAppendVector" {
         note(w, "compact::rewrite / slice_into::rewrite: a vector appended to");
       }
-      if nm == "OpPushFloat" || nm == "OpPushInt" || nm == "OpPushSingle" || nm == "OpPushInt4" {
-        note(w, "repeat_run::rewrite: a constant pushed");
-      }
       if nm == "OpPushByte" {
         note(w, "byte_copy::rewrite: a byte pushed");
-      }
-      if nm == "OpGetVectorNullable" {
-        note(w, "vec_copy::rewrite: a vector element read");
       }
       if nm == "n_text_from_bytes" {
         note(w, "slice_text::rewrite: text from bytes");
@@ -213,4 +235,18 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
   for c in scope_fn::children(n) {
     settled_triggers(b, c, lp, w);
   }
+}
+
+// A call of an operator whose name starts with `prefix` anywhere in `n`.
+fn contains_call(b: ir::Bundle, n: ir::Node, prefix: text) -> boolean {
+  match n {
+    NdCall { def_nr } => if scope_args::def_name(b, def_nr).starts_with(prefix) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if contains_call(b, c, prefix) {
+      return true;
+    }
+  }
+  false
 }

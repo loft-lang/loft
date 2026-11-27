@@ -42,7 +42,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       }
       continue;
     }
-    if scope_fn::is_plain(t) {
+    if scope_fn::is_plain(t) || scope_fn::is_plain_link(t) {
       continue;
     }
     // `outer_collection_backing`, `outer_tuple_backings`, the owner witness, the store

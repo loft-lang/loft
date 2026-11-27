@@ -189,6 +189,15 @@ pub fn is_plain(t: ir::TypeT) -> boolean {
   }
 }
 
+// A `&` link to a scalar or a text: no release is ever owed for one (`get_free_vars` matches
+// none of its arms, `scan_set`'s store branches read `base()`, which keeps the `&`).
+pub fn is_plain_link(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyRefVar { inner } => is_plain(inner) || is_text(inner),
+    _ => false
+  }
+}
+
 // The kind of value a refusal names.
 pub fn kind_name(t: ir::TypeT) -> text {
   match base(t) {
