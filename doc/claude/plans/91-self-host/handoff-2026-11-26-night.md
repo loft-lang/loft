@@ -157,6 +157,11 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   else { null } }` (probe dn1), where Rust types the `null` arm `integer?`, joins to `integer?` and
   narrows the whole `if` with an outer `dn4cast(OpRangeDefault(if …))`; the port types the arm
   `u8?` and casts nothing.
+- A struct pattern binding a VECTOR field (`B { v, n }`): Rust binds a view of the subject's
+  field, `v#1: vector<integer>["b"]`, `skip_free` (`mark_field_capture_view`).  Ported and agreeing
+  on probes sv1/sv2, held: B-Disturb/a-view-is-copied-only-where-it-is-live-across-a-disturbance
+  then meets the eb1 Rust defect, which is wider than format holes — `for x in [Node {…}, …]`'s
+  element temp is `ref(boolean)` too (a vector literal not bound to a local).
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
