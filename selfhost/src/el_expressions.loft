@@ -291,6 +291,24 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   if !e.first_pass && keyed_kind(el_types::base(result)) && el_types::base(b.tp) is TyVector {
     el::refuse(e, "a vector literal answered as a keyed collection");
   }
+  // A struct enum's `E?` field answered at the tail leaves its slot as the pointer
+  // (`read_through_enum_slot`, `@FR-L-Null-Which`): `if OpGetInt4(h, pos) == 0 nullref else …`.
+  if !e.first_pass && result is TyOptional && el_types::struct_enum_def(el_types::base(result)) >= 0 {
+    match b.code {
+      NdBlock { block: sbk } => {
+        sbl = sbk[0];
+        if len(sbl.operators) > 0 {
+          stail = sbl.operators[len(sbl.operators) - 1]!;
+          sread = el_ex_into::enum_slot_read(e, stail, result);
+          if !(sread == stail) {
+            sbl.operators = sbl.operators[0..len(sbl.operators) - 1] + [sread];
+            b = ex(ir::NdBlock { block: [sbl] }, b.tp);
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   // A text local at the tail is what the body answers: the result borrows that local — a
   // returned `___tret_N` too (`t = Type::Text(frame1(ret))`).
   tt = if ret_bound >= 0 { ir::TyText { dep: [ret_bound] } } else { b.tp };
