@@ -86,6 +86,16 @@ pub fn binds_to_itself(e: el::El, g: integer, types: vector<ir::TypeT>) -> boole
       }
     }
     if !own && el_types::type_var(e, el_types::base(t)) >= 0 {
+      // (Rust's `instantiate_template` mints the OPEN instance there, read on the second pass
+      // of the template that calls it — `i_3U#2_n_hole` for `relay<U>` calling `hole(u)`:
+      // registered, then refused.)
+      if !e.first_pass {
+        ob = el_ex_object::template_binding(e, g, types);
+        onm = if ob == null { "" } else { el_ex_object::instance_name(e, g, ob!, open: true) };
+        if onm != "" && el::def_nr(e, onm) < 0 {
+          e.refused_instances += [signature_instance(e, g, ob!, onm)];
+        }
+      }
       el::refuse(e, "a generic called at another generic's type variable");
       return false;
     }

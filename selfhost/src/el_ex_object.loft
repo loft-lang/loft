@@ -3925,10 +3925,13 @@ pub fn template_binding(e: el::El, d: integer, types: vector<ir::TypeT>) -> Bind
 
 // `Data::mangle_instance`: `i_<LEN><spelling>_<template>`, the bound types' identity spellings
 // joined by `#` — "" for a bound type this port spells no identity for.
-pub fn instance_name(e: el::El, d: integer, b: Binding) -> text {
+pub fn instance_name(e: el::El, d: integer, b: Binding, open: boolean = false) -> text {
   spelling = "";
   for t in b.types {
-    sp = el_dispatch::identity(e, t);
+    // (An OPEN instance — bound to another template's variable — spells that variable by its
+    // placeholder's name, `U#2`: `i_3U#2_n_hole`.)
+    tvp = if open { el_types::type_var(e, el_types::base(t)) } else { -1 };
+    sp = if tvp >= 0 { match el_types::base(t) { TyReference { n: tvn } => el::def(e, tvn).name, _ => "" } } else { el_dispatch::identity(e, t) };
     if sp == "" {
       return "";
     }
