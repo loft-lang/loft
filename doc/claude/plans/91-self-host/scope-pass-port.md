@@ -10,7 +10,7 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 | layer | measured | command |
 |---|---|---|
 | front (the whole loft path) | 52 of 1188 programs agree; 842 stop at the scope pass, 286 at the elaborator, 8 other | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the slice: 142 of 2277 programs, 19 878 of 37 762 definitions agree; the transcription (`LOFT_SCOPE_PORT=1`, step 2): 238 programs, 24 435 of 39 960 definitions (libraries' included), 140 differ | `scope_survey.py` |
+| scope gate (Rust's parsed image in, per definition) | the slice: 142 of 2277 programs, 19 878 of 37 762 definitions agree; the transcription (`LOFT_SCOPE_PORT=1`, step 3): 256 programs, 24 744 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -163,6 +163,59 @@ Step 3's order — the families by definitions where they are the only blocker:
 | heap arguments | ≈470 | `inline_struct_return` 365 |
 | a stale callee summary | 260 | shrinks with every family carried |
 | keyed, generators, `text_replace`, `pure_reuse`, tuples | 200, 190, 180, 120, 65 | |
+
+**Step 3 (2026-11-27) — fn-refs, value structs, text replace, the cascades' deciders.**  New
+files: `scope_value_struct.loft` (`value_struct::value_struct_copy`, run by `check` before the
+loop on the parser's bodies; a summary it asks of a body a refused pre-loop rewrite would change
+is refused), `scope_text_replace.loft` (`text_replace::admit` after the loop, on the settled
+bodies), `scope_capture_adoption.loft` (the decidable part of `mark_borrowed_captures`:
+`capture_attr_is_cascade_relevant`, `prune_empty_cascades`, the `cascade_before_record_frees`
+trigger).  A fn-ref local in a frame with no closure record of its own is carried:
+`register_binding`'s record order, `closure_keep::fnref_call_rebind` (`__fdisp_N`, in
+`scope_convert.loft`), `get_free_vars`' fn-ref release; a frame `closure_keep_set` gates (a
+holder shared) is refused.  The image's `Variable.arm_consumed` and `Definition.value_struct`
+are read.
+
+Two post-loop decisions read facts of OTHER functions' settled bodies, which a refused function
+does not have.  Each is taken twice — the refused functions' unknowns read one way, then the
+other — and a definition the two answers disagree on is refused by name: the pruned cascades
+(a call of a cascade whose pruning is undecided), and `safe_params` (a text-field write through
+a parameter whose refused callers decide it; a hook or cascade counts as called by any refused
+body, which may hold the call its parser body lacks).
+
+A closure record's cascade is final only once the building frame's capture verdicts are in, and
+every closure record with a cascade has a capture that holds a store, so all of them (1 037
+definitions, the largest sole refusal) wait for the closure frames to be carried: those frames
+are refused for the whole closure machinery (`capture_builds`, `closure_keep`, the closure
+record's drop hook and hand-offs, `stored_refs`, the captured owner witness) and mostly for
+vectors as well.  4 struct cascades the slice and step 2 agreed on are now refused: each calls a
+closure cascade whose pruning a refused frame decides (they agreed because Rust did not prune).
+
+The survey pairs a definition only Rust's image holds — a retired cascade (`<name>_retired`), a
+`shared_call` variant (`<callee>__given_<f>`) — with the refusal that decides it.
+
+| pass | programs agree | definitions agree (step-1 set) | all definitions | unscoped | differ |
+|---|---|---|---|---|---|
+| step 2 | 238 / 2277 | 22 622 / 37 762 | 24 435 / 39 960 | 15 524 | 1 |
+| step 3 | 256 / 2277 | 22 926 / 37 762 | 24 744 / 39 960 | 15 216 | 0 |
+
+Overlap with the slice: 18 898 under both, 980 only under the slice — 438 closure cascades,
+112 generator returns, 90 `pure_reuse`, 55 tuple returns, 47 `loop_kernel_rewrite`, 41 vector
+return buffers, 36 `copy_view`, 33 keyed returns, 24 fn-ref returns; step 3 of the plan is not
+yet due.  Sole refusals now: the closure cascades 1 037, `inline_struct_return` 390, a stale
+callee summary 269, `copy_view` 306 (195 join, 111 variable), the view walk 153, `pure_reuse`
+120, `drop_hook` 87, a `&` variable 84, `rebind_place` 70.
+
+Two loft defects met, both backends, worked around in the transcription (not filed yet):
+- silent: `fn keep() -> vector<integer> { v: vector<integer> = [1, 2, 3]; v = [for k in v { k }]; v }`
+  answers `[]`, not `[1,2,3]` (in `main`, without the return, it answers right);
+- a double free: `enum Node { Leaf { n: integer }, Span { pos: Pos, inner: Node }, Set { var:
+  integer, inner: Node } }` with `struct Pos { file: text, line: integer }`, walked by
+  `kids(n)` (`[inner]`), `[for c in kids { visit(c) }]` and a rebuild `Set { var: var, inner:
+  ks[0]! }` where `visit` answers `Span { pos: pos, inner: visit(inner) }` — "a store was freed
+  twice" on `Set { 1, Span { Pos { "f", 3 }, Leaf { 7 } } }`.
+
+The walks rebuild each variant in place, as `scope_wrapper` does.
 
 ## Passes
 
