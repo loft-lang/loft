@@ -2753,7 +2753,24 @@ pub fn plain_fmt() -> Fmt {
 pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> Fmt? {
   f = plain_fmt();
   i = from;
+  // (`@FR-F-Spec-Fill`, loft#2428: the spec is read character by character — a two-character
+  // token the lexer pairs (`=>`, `->`, `>>`) is a fill and a flag, or two flags, never one fill.)
   if i < to {
+    sp2 = lex::spell(e.p.src[i]!);
+    if len(sp2) == 2 && !(sp2[0] >= 'a' && sp2[0] <= 'z') && !(sp2[0] >= '0' && sp2[0] <= '9') && sp2 != "}}" {
+      c0 = sp2[0];
+      c1 = sp2[1];
+      if !spec_flag(f, c0) {
+        f.pad = c0 as integer;
+      }
+      if !spec_flag(f, c1) {
+        el::refuse(e, "a format spec this port does not read: a width written as an expression");
+        return null;
+      }
+      i += 1;
+    }
+  }
+  if i < to && i == from {
     c = pad_char(e.p.src[i]!);
     if c >= 0 {
       f.pad = c;
@@ -2764,25 +2781,15 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
       i += 1;
     }
   }
+  // (Flags are read by their spelling: the lexer's split of a paired token, `>>`, is no `Gt`.)
   while i < to {
-    t = e.p.src[i]!;
-    if t is Lt {
-      f.dir = -1;
-    } else if t is Caret {
-      f.dir = 0;
-    } else if t is Gt {
-      f.dir = 1;
-    } else if t is Plus {
-      f.plus = true;
-    } else if t is Hash {
-      f.note = true;
-    } else if t is Dot {
-      f.float = true;
-    } else {
+    fsp = lex::spell(e.p.src[i]!);
+    if len(fsp) != 1 || !spec_flag(f, fsp[0]) {
       break;
     }
     i += 1;
   }
+  wstart = i;
   if i < to {
     match e.p.src[i]! {
       Int { v, zero } => {
@@ -2800,7 +2807,9 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
         i += 1;
       },
       Ident { name } => {
-        if radix_for(name) == null {
+        // (A name the width expression goes on past is read there, once.)
+        whole = i + 1 >= to || match e.p.src[i + 1]! { Ident { name: rn0 } => radix_for(rn0) != null, _ => false };
+        if radix_for(name) == null && whole {
           f.width = el_ex_name::name_expression(e, vars, name, "", false).code;
           i += 1;
         }
@@ -2820,11 +2829,138 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
       _ => {}
     }
   }
+  // (A width written as an expression, `{vr:<2+3}` / `{vr:>w*2}`: Rust parses it as an integer
+  // expression, unfolded — `OpAddInt(2i32, 3i32)`.  Read here over the hole's tokens, a closing
+  // radix letter kept apart.)
+  if i < to {
+    wend = to;
+    match e.p.src[to - 1]! {
+      Ident { name: rn } => { if radix_for(rn) != null && to - 1 > i { wend = to - 1; } },
+      _ => {}
+    }
+    restart = i;
+    i = wstart;
+    wp = WidthParse { at: i, end: wend, ok: true };
+    wx = width_sum(e, vars, wp);
+    if wp.ok && wp.at == wend && wx != null {
+      f.width = wx!;
+      i = wend;
+      if i < to {
+        match e.p.src[i]! { Ident { name: rn2 } => { f.radix = radix_for(rn2) ?? f.radix; i += 1; }, _ => {} }
+      }
+    } else {
+      i = restart;
+    }
+  }
   if i < to {
     el::refuse(e, "a format spec this port does not read: a width written as an expression");
     return null;
   }
   f
+}
+
+// A width expression's cursor over the hole's tokens.
+struct WidthParse { at: integer, end: integer, ok: boolean }
+
+fn width_sum(e: el::El, vars: el_vars::Vars, w: WidthParse) -> ir::Node? {
+  l: ir::Node? = width_product(e, vars, w);
+  while l != null && w.ok && w.at < w.end {
+    op = lex::spell(e.p.src[w.at]!);
+    if op != "+" && op != "-" {
+      break;
+    }
+    w.at += 1;
+    r = width_product(e, vars, w);
+    if r == null {
+      w.ok = false;
+      return null;
+    }
+    lv = l!;
+    rv = r!;
+    nm = if op == "+" { "OpAddInt" } else { "OpMinInt" };
+    l = el_ir::cl(e, nm, [lv, rv]);
+  }
+  l
+}
+
+fn width_product(e: el::El, vars: el_vars::Vars, w: WidthParse) -> ir::Node? {
+  l: ir::Node? = width_atom(e, vars, w);
+  while l != null && w.ok && w.at < w.end {
+    op = lex::spell(e.p.src[w.at]!);
+    if op != "*" && op != "/" && op != "%" {
+      break;
+    }
+    w.at += 1;
+    r = width_atom(e, vars, w);
+    if r == null {
+      w.ok = false;
+      return null;
+    }
+    lv = l!;
+    rv = r!;
+    nm = if op == "*" { "OpMulInt" } else if op == "/" { "OpDivInt" } else { "OpRemInt" };
+    l = el_ir::cl(e, nm, [lv, rv]);
+  }
+  l
+}
+
+fn width_atom(e: el::El, vars: el_vars::Vars, w: WidthParse) -> ir::Node? {
+  if w.at >= w.end {
+    w.ok = false;
+    return null;
+  }
+  t = e.p.src[w.at]!;
+  match t {
+    Int { v } => { w.at += 1; return ir::NdInt { n: v }; },
+    Ident { name } => {
+      nx = el_ex_name::name_expression(e, vars, name, "", false);
+      if !(el_types::base(nx.tp) is TyInteger) && !el_types::is_unknown(nx.tp) {
+        w.ok = false;
+        return null;
+      }
+      w.at += 1;
+      // (Copied out of the call's answer before it is returned.)
+      nc: ir::Node = ir::NdVar { n: match el_ir::unspan(nx.code) { NdVar { n: nvn } => nvn, _ => -1 } };
+      if match el_ir::unspan(nx.code) { NdVar { n: _ } => false, _ => true } {
+        w.ok = false;
+        return null;
+      }
+      return nc;
+    },
+    _ => {}
+  }
+  if lex::spell(t) == "(" {
+    w.at += 1;
+    inner = width_sum(e, vars, w);
+    if inner == null || w.at >= w.end || lex::spell(e.p.src[w.at]!) != ")" {
+      w.ok = false;
+      return null;
+    }
+    w.at += 1;
+    return inner;
+  }
+  w.ok = false;
+  null
+}
+
+// A spec flag character applied to `f` — `<` `^` `>` the alignment, `+`, `#`, `.` — or false.
+fn spec_flag(f: Fmt, c: character) -> boolean {
+  if c == '<' {
+    f.dir = -1;
+  } else if c == '^' {
+    f.dir = 0;
+  } else if c == '>' {
+    f.dir = 1;
+  } else if c == '+' {
+    f.plus = true;
+  } else if c == '#' {
+    f.note = true;
+  } else if c == '.' {
+    f.float = true;
+  } else {
+    return false;
+  }
+  true
 }
 
 // The punctuation token that opens a spec pads the hole with its first byte — any but `SKIP_TOKEN`
