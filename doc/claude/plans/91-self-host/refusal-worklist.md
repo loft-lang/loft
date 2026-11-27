@@ -222,7 +222,10 @@ instances; Rust-only definitions 267), one to four per program.  What each open 
   Measured: Rust mints the one `main_vector<unknown>` at the FIRST pass-1 literal whose element
   is unknown — in 947 a field append into a struct declared below (689:70), not `h += [Rec947 …]`
   (32:80), because Rust types the local `h` by `Rec947`'s stub there while the port's pass-1 `h`
-  has no element yet.  The gap is the port's pass-1 typing of such a local, not the literal rule.
+  has no element yet.  The gap is the port's pass-1 typing of such a local, not the literal rule:
+  that `h` is declared `hash<Rec947[id]>` with `Rec947` below, so its `h += [Rec947 { … }]` is a
+  KEYED append Rust never reads as a vector literal; the port's pass-1 `h` is untyped (the keyed
+  type over a stub answers nothing), so a keyed-destination exception cannot see it either.
 - a lambda argument's tuple record on the first pass (`last(v, |x| { (x, x + 1, x + 2) })`):
   making it there shifted later second-pass rows of the same program — needs Rust's exact moment.
 - cross-library keyed tuples and instances (2435).
