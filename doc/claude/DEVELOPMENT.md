@@ -182,6 +182,15 @@ on their own branches at the same time: no step waits on them, and none touches 
    That is the dev loop's checks plus what only the PR's run otherwise makes (the patch
    receipts' merge, the allocation pins, the platform census).  A miss there costs a whole
    run, where `find_problems.sh --changed`, the debugging loop, runs only tests.
+   **Before it pushes, it reruns the last run's failures — and only those**: one per failure
+   SIGNATURE (the first line of the panic or the refusal), read from each failed job's log
+   (nextest's `FAIL` lines, cargo's `failures:` block, the suite's `FAIL <cell>`, the receipts
+   job's stale patches, each patch its own signature).  When most of a run is red the failures
+   share one cause — a wrong directory, a missing tool, a pin — and one representative shows it
+   at the cost of a test, not of a local CI; past 12 signatures it stops and says to find the
+   common cause.  A job with no test failure in its log failed in its setup or a script step
+   (checkout, apt, a toolchain), and the informational mirrors of main's nightly cannot be cured
+   by the PR: both are listed, not rerun.  A failure still red refuses the push.
    **This push is part of the cycle the PR was asked for: it is made without asking**, as soon
    as the run has finished, so the PR never waits on a fix that is ready.  `pr_push.py` moves
    the PR's head forward locally (`git fetch . HEAD:<head>`, refused unless it is a

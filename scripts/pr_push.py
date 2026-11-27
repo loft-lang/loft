@@ -63,6 +63,131 @@ def in_flight(checks):
     return out
 
 
+# ---- the last run's failures, rechecked before the push ------------------------------------
+#
+# A fix pushed to a PR is meant for a red its last run showed, so that red is rerun here, and
+# only that: not the gate.  The failures are grouped by their SIGNATURE (the first line of the
+# panic or the refusal), and one test per signature is rerun: when most of a run is red the
+# failures share one cause (a wrong directory, a missing tool, a pin), which one representative
+# shows as well as all of them would, at the cost of a test instead of a CI.  A job with no test
+# failure in its log failed in its setup or a script step (checkout, apt, a toolchain); it and
+# the informational mirrors of main's nightly are listed, never rerun.
+
+MAX_RERUNS = 12
+
+TS = r"^\S+Z "  # a GitHub log line's timestamp
+
+
+def failures_of(log):
+    """(kind, name, signature) for each failure a job's log names."""
+    import re
+    ansi = re.compile(r"\x1b\[[0-9;]*m")
+    lines = [ansi.sub("", re.sub(TS, "", l)) for l in log.splitlines()]
+    out, msg = [], {}
+    for i, l in enumerate(lines):
+        m = re.search(r"thread '([^']+)' \(\d+\) panicked at", l)
+        if m and i + 1 < len(lines):
+            msg[m.group(1)] = lines[i + 1].strip()
+    in_block = False
+    for l in lines:
+        if l.strip() == "failures:":
+            in_block = True
+            continue
+        if in_block:
+            m = re.match(r"^\s{4,}(\S+::\S+)\s*$", l)
+            if m:
+                out.append(("cargo", m.group(1), msg.get(m.group(1), "")))
+            elif l.strip().startswith("test result:"):
+                in_block = False
+    for l in lines:
+        m = re.search(r"\bFAIL \[\s*[\d.]+s\] (?:\(\d+/\d+\) )?(\S+) (\S+)\s*$", l)
+        if m:
+            out.append(("nextest", f"{m.group(1)} {m.group(2)}", msg.get(m.group(2), "")))
+        m = re.match(r"^\s*FAIL\s+(interpret|c|native)\s+(\S+\.loft)\s+\(", l)
+        if m:
+            out.append(("suite", f"{m.group(1)} {m.group(2)}", ""))
+        m = re.match(r"^- (\S+\.patch): (.*)$", l)
+        if m:
+            # Each stale receipt is its own cause (its own patch against its own lines): no
+            # signature groups two of them.
+            out.append(("receipt", m.group(1), m.group(1)))
+    seen, uniq = set(), []
+    for f in out:
+        if (f[0], f[1]) not in seen:
+            seen.add((f[0], f[1]))
+            uniq.append(f)
+    return uniq
+
+
+def rerun_one(kind, name, loft):
+    """Rerun one failure locally; True when it passes now."""
+    if kind == "receipt":
+        return run("git", "apply", "--check", f"tests/falsified/{name}").returncode == 0
+    if kind == "cargo":
+        for target in (["--lib"], ["--tests"]):
+            r = run("cargo", "test", "--release", *target, name, "--", "--exact")
+            if "0 passed; 0 failed" not in r.stdout:
+                return r.returncode == 0
+        return False
+    if kind == "nextest":
+        binary, test = name.split(" ", 1)
+        binary = binary.split("::")[-1]
+        r = run("cargo", "test", "--release", "--test", binary, test, "--", "--exact")
+        return r.returncode == 0
+    if kind == "suite":
+        import importlib.machinery
+        import os
+        suite = os.environ.get("LOFT_SUITE_DIR") or str(ROOT.parent / "loft-suite")
+        runner = importlib.machinery.SourceFileLoader(
+            "loft_suite_runner", str(Path(suite) / "loft-suite")).load_module()
+        mode, cell = name.split(" ", 1)
+        res = runner.run_cell(loft, str(Path(suite) / cell), mode, 300)
+        return bool(res.ok)
+    return False
+
+
+def recheck_last_run(pr):
+    """Rerun one failure per signature of the PR's last run; False when one still fails."""
+    r = run("gh", "pr", "checks", str(pr), "--json", "name,state,link")
+    try:
+        checks = json.loads(r.stdout or "[]")
+    except json.JSONDecodeError:
+        checks = []
+    failed = [c for c in checks if c.get("state") == "FAILURE"]
+    if not failed:
+        print("the last run has no failed check: nothing to recheck")
+        return True
+    groups, listed = {}, []
+    for c in failed:
+        if "(informational)" in c["name"]:
+            listed.append(f"{c['name']} (mirrors main)")
+            continue
+        job = c.get("link", "").rstrip("/").split("/")[-1]
+        log = run("gh", "api", f"repos/loft-lang/loft/actions/jobs/{job}/logs").stdout
+        found = failures_of(log)
+        if not found:
+            listed.append(f"{c['name']} (no test failure in its log: setup or a script step)")
+            continue
+        for kind, name, sig in found:
+            groups.setdefault(sig or name, []).append((kind, name))
+    for line in listed:
+        print(f"  listed, not rerun: {line}")
+    total = sum(len(v) for v in groups.values())
+    print(f"the last run: {total} failure(s) in {len(groups)} signature(s); rerunning one of each")
+    loft = str(ROOT / "target" / "release" / "loft")
+    still = []
+    for n, (sig, members) in enumerate(sorted(groups.items(), key=lambda kv: -len(kv[1]))):
+        if n >= MAX_RERUNS:
+            print(f"  … {len(groups) - MAX_RERUNS} more signature(s) not rerun: find their common cause")
+            break
+        k, name = members[0]
+        ok = rerun_one(k, name, loft)
+        print(f"  {'ok  ' if ok else 'RED '} {k} {name}" + (f"  (+{len(members) - 1} sharing: {sig[:70]})" if len(members) > 1 else ""))
+        if not ok:
+            still.append(name)
+    return not still
+
+
 def covered(head, pr_head):
     """Did `after.py fix --pr` pass on HEAD over a diff reaching back to the PR's head?"""
     f = STATE / "last-pr"
@@ -77,6 +202,8 @@ def main():
     ap.add_argument("pr", type=int)
     ap.add_argument("--dry-run", action="store_true", help="make every check, push nothing")
     ap.add_argument("--watch", action="store_true", help="after the push, wait on the new run")
+    ap.add_argument("--no-recheck", action="store_true",
+                    help="skip rerunning the last run's failures (one per signature)")
     args = ap.parse_args()
     sys.stdout.reconfigure(line_buffering=True)
 
@@ -104,6 +231,8 @@ def main():
     if not ancestor("origin/main", head):
         sys.exit("HEAD is not current on origin/main: rebase first (CLAUDE.md § Branch policy rule 6)")
     print(f"PR #{args.pr}: run finished; {head[:9]} fast-forwards {pr_head[:9]} and is current on main")
+    if not args.no_recheck and not recheck_last_run(args.pr):
+        sys.exit("a failure of the last run is still red here: fix it on this branch, then run this again")
 
     if covered(head, pr_head):
         print("after.py fix --pr passed on this HEAD")
