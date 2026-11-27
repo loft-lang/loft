@@ -5,7 +5,7 @@
 # moves it, with the reason.
 suite	68ac5a33046779b02f142268ea468e2d8af075df
 
-layer	elab	agree	1691	of	2282
+layer	elab	agree	1692	of	2282
 elab	refused	lib/process/tests/command.loft
 elab	refused	lib/process/tests/lines.loft
 elab	refused	lib/process/tests/run.loft
@@ -336,7 +336,6 @@ elab	refused	loft-suite/rules/ownership/O-Latest/a-rebound-vector-local-releases
 elab	refused	loft-suite/rules/ownership/O-Move/1101-a-projection-bound-to-a-local-then-returned.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1202-a-captured-record-enum-is-not-the-callers-to-take.loft
 elab	refused	loft-suite/rules/ownership/O-Move/1625-an-explicit-return-of-an-element-records-its-borrow.loft
-elab	differ	loft-suite/rules/ownership/O-Move/2664-a-join-arm-call-handed-its-own-buffer-frees-what-the-last-pass-left.loft
 elab	refused	loft-suite/rules/ownership/O-Move/a-member-of-a-tuple-argument-handed-back-is-the-callers.loft
 elab	refused	loft-suite/rules/ownership/O-NoDiverge/1328-a-fn-ref-rebind-frees-the-store-it-displaces-a-records-or-a-vectors.loft
 elab	refused	loft-suite/rules/ownership/O-Oracle/1318-a-call-shaped-argument-names-the-store-a-fn-ref-may-hand-back.loft
