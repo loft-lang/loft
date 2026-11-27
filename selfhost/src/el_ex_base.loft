@@ -2311,6 +2311,22 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
     // Refused, but `vector<…>` and `main_vector<…>` are registered first, as Rust's `vector_def`
     // registers them for any element: every definition after them keeps Rust's number.
     rn = registration_name(e, t);
+    // The element's own vector, which Rust's `parse_vector` of the first nested literal with
+    // items registers at its `]` (`[null, [1.5f]]` against `vector<single>?`: `vector<single>`):
+    // ahead of the outer pair where nothing declared the outer one (the inner `]` comes first),
+    // after it where a declaration registered the outer pair before the literal was read.
+    it = match t { TyOptional { inner } => inner, _ => t };
+    ie = match it { TyVector { inner } => inner, _ => ir::TyVoid };
+    inm = el_types::elem_name(e, ie);
+    if inm == "" && !(ie is TyVoid) {
+      inm = registration_name(e, ie);
+    }
+    nested = match e.p.nodes[lit] { SVecLit { items } => [for x in items if match e.p.nodes[x] { SVecLit { items: xi } => len(xi) > 0, _ => false } { x }], _ => [] };
+    inner_pos = if len(nested) > 0 { el::pos_at(e, closing_bracket(e, match e.p.nodes[nested[0]!] { SVecLit { at } => at, _ => 0 })) } else { el::pos_at(e, 0) };
+    inner_first = !declared && inm != "" && len(nested) > 0;
+    if inner_first && el_schema::wants_vector_def(e, inm) {
+      el_schema::make_vector_def(e, ie, inm, inner_pos, true, narrow_early: false);
+    }
     if rn != "" && el::def_nr(e, "vector<{rn}>") < 0 {
       rtok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
       rat = closing_bracket(e, rtok);
@@ -2318,18 +2334,9 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
         rat = rtok - 1;
       }
       el_schema::make_vector_def(e, t, rn, el::pos_at(e, rat), true, narrow_early: false);
-      // …and the element's own vector, which Rust's `parse_vector` of the first nested literal
-      // with items registers at its `]` (`[null, [1.5f]]` against `vector<single>?`: `vector<single>`).
-      it = match t { TyOptional { inner } => inner, _ => t };
-      ie = match it { TyVector { inner } => inner, _ => ir::TyVoid };
-      inm = el_types::elem_name(e, ie);
-      if inm != "" && el_schema::wants_vector_def(e, inm) {
-        nested = match e.p.nodes[lit] { SVecLit { items } => [for x in items if match e.p.nodes[x] { SVecLit { items: xi } => len(xi) > 0, _ => false } { x }], _ => [] };
-        if len(nested) > 0 {
-          ntok = match e.p.nodes[nested[0]!] { SVecLit { at } => at, _ => 0 };
-          el_schema::make_vector_def(e, ie, inm, el::pos_at(e, closing_bracket(e, ntok)), true, narrow_early: false);
-        }
-      }
+    }
+    if !inner_first && inm != "" && len(nested) > 0 && el_schema::wants_vector_def(e, inm) {
+      el_schema::make_vector_def(e, ie, inm, inner_pos, true, narrow_early: false);
     }
     el::refuse(e, "a vector of this element type: {type_kind(t)}");
     return null;
