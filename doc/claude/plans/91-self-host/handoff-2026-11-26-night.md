@@ -62,6 +62,9 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   mapping gives nothing for a parameter argument.  The same call NOT at the tail agrees (`fr5`).
   `call_ref` keeps such a call refused (`crt_borrows`); start from Rust's ref_return over a
   CallRef tail.
+- **Scoring is the tester's** (owner, 2026-11-27): a porter's try is the commit, the targeted
+  probes that show its shape agrees and the verdicts it should move — no `score_par.sh` runs
+  over program lists.  The tools below are the tester's to run.
 - **Score a try per DEFINITION** (the tester's gate), not per program: a change that registers
   or reorders definitions shifts numbers in refused programs too.  `defcmp.sh BASE NEW FILE`
   (c035ae98 scratchpad) counts the differing `#N` headers, `defbody.py BASE NEW FILE…` the
