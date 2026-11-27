@@ -2023,6 +2023,23 @@ fn enum_attribute(e: el::El, d: integer, name: text, tp: ir::TypeT, nr: integer)
 }
 
 
+// A type in an interface member's signature: `Self.<Name>` is the interface's associated type
+// (`<Interface>.<Name>`, registered above); anything else as any type is read.
+fn iface_type(e: el::El, d: integer, tn: integer) -> ir::TypeT? {
+  match e.p.nodes[tn] {
+    STy { name: sn, assoc: sm } => {
+      if sn == "Self" && sm != "" && d >= 0 {
+        ad = el::def_nr(e, "{el::def(e, d).name}.{sm}");
+        if ad >= 0 {
+          return ir::TyReference { n: ad, dep: [] };
+        }
+      }
+    },
+    _ => {}
+  }
+  el_types::parse_type(e, tn)
+}
+
 // `interface Name { member… }`                                     Parser::parse_interface
 fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>, end: integer) {
   nt = el::name_tok(e, at, name);
@@ -2046,9 +2063,21 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
         if e.first_pass && d >= 0 {
           an = "{el::def(e, d).name}.{aname}";
           if el::def_nr(e, an) < 0 {
-            ad = el::add_def(e, an, el::pos_at(e, mat + 2 + if len(abounds) > 0 { 2 * len(abounds) } else { 0 }), el::DT_STRUCT);
+            apos = el::pos_at(e, mat + 2 + if len(abounds) > 0 { 2 * len(abounds) } else { 0 });
+            ad = el::add_def(e, an, apos, el::DT_STRUCT);
             el::set_returned(e, ad, ir::TyReference { n: ad, dep: [] });
             e.b.data.definitions[ad].parent = d;
+            // (A bounded associated type carries its bounds' method stubs, as a bounded type
+            // variable does: `t_14Source.Rows#g1_width` for `type Rows: Cursor`.)
+            for ab in abounds {
+              abd = el::def_nr(e, ab);
+              if abd >= 0 && el::def(e, abd).def_type == el::DT_INTERFACE {
+                e.b.data.definitions[ad].bounds += [abd];
+              }
+            }
+            if len(el::def(e, ad).bounds) > 0 {
+              _ = bound_stubs(e, ad, apos);
+            }
           }
         }
         el::refuse(e, "an interface's associated type");
@@ -2066,7 +2095,7 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
                   el::refuse(e, "an interface method parameter with a `&`, a default, a capability or no type");
                   return;
                 }
-                pt = el_types::parse_type(e, tp ?? 0);
+                pt = iface_type(e, d, tp ?? 0);
                 if pt == null {
                   return;
                 }
@@ -2079,7 +2108,7 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
           }
           rt: ir::TypeT = ir::TyVoid;
           if ret != null {
-            r = el_types::parse_type(e, ret ?? 0);
+            r = iface_type(e, d, ret ?? 0);
             if r == null {
               return;
             }
