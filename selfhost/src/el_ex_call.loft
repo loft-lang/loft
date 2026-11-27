@@ -2834,7 +2834,7 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
       // element's plain vector too, `vector<vector<integer>>` for a `vector<vector<integer>?>` —
       // then refused: register, then refuse.)
       pin = match inner { TyOptional { inner: oi } => oi, _ => ir::TyVoid };
-      pvn = if fbn != "" { fbn } else if pin is TyVector { el_types::elem_name(e, pin) } else { "" };
+      pvn = if fbn != "" { fbn } else if pin is TyVector || pin is TySingle || pin is TyCharacter { el_types::elem_name(e, pin) } else { "" };
       if pvn != "" && el::def_nr(e, "vector<{pvn}>") < 0 {
         // (At the lexer's place past the format string: the placeholder, its `}` and the closing
         // quote read.)
