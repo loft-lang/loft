@@ -1541,11 +1541,15 @@ pub fn logical(e: el::El, vars: el_vars::Vars, is_or: boolean, l: integer, r: in
         return ex(ir::NdNull, ir::TyBoolean);
       }
     }
+    // Bound to a name of its own first: `a = condition(e, a)!` leaked `a`'s old record on both
+    // backends (loft#2669).
     if !el_types::is_unknown(a.tp) && !(el_types::base(a.tp) is TyBoolean) {
-      a = el_ex_pattern::condition(e, a)!;
+      ca = el_ex_pattern::condition(e, a)!;
+      a = ca;
     }
     if !el_types::is_unknown(b.tp) && !(el_types::base(b.tp) is TyBoolean) {
-      b = el_ex_pattern::condition(e, b)!;
+      cb = el_ex_pattern::condition(e, b)!;
+      b = cb;
     }
   }
   second = b.code;
