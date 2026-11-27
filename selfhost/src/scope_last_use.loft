@@ -11,7 +11,7 @@
 use ir;
 use scope_fn;
 use scope_confinement;
-use opt_decode_view;
+use ir_pass_tree;
 use opt_names;
 use own;
 
@@ -532,7 +532,7 @@ fn strip_frees_of(node: ir::Node, vars: vector<integer>, fr: integer, if_distinc
       ops = block[0].operators;
       k = len(ops);
       if k > 0 && scope_fn::unspan(ops[k - 1]!) is NdReturn {
-        n = opt_decode_view::with_children(node, [for op in ops if !is_free_of(op, vars, fr, if_distinct) { op }]);
+        n = ir_pass_tree::with_children(node, [for op in ops if !is_free_of(op, vars, fr, if_distinct) { op }]);
       }
     },
     NdInsert { items } => {
@@ -547,7 +547,7 @@ fn strip_frees_of(node: ir::Node, vars: vector<integer>, fr: integer, if_distinc
   if len(kids) == 0 {
     return n;
   }
-  opt_decode_view::with_children(n, [for c in kids { strip_frees_of(c, vars, fr, if_distinct) }])
+  ir_pass_tree::with_children(n, [for c in kids { strip_frees_of(c, vars, fr, if_distinct) }])
 }
 
 fn is_free_of(op: ir::Node, vars: vector<integer>, fr: integer, if_distinct: integer) -> boolean {

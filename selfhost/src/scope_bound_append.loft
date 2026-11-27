@@ -14,7 +14,6 @@ use ir;
 use scope_fn;
 use scope_args;
 use binds;
-use opt_decode_view;
 use ir_pass_tree;
 
 fn is_len(b: ir::Bundle, d: integer) -> boolean {
@@ -70,7 +69,7 @@ fn serve_lengths(b: ir::Bundle, v: ir::Node, k: integer, dst: integer, kl: integ
   if len(kids) == 0 {
     return v;
   }
-  opt_decode_view::with_children(v, [for c in kids { serve_lengths(b, c, k, dst, kl, b0) }])
+  ir_pass_tree::with_children(v, [for c in kids { serve_lengths(b, c, k, dst, kl, b0) }])
 }
 
 // port: bound_append.rs fn mentions — the `Var(x)` and `Set(x, _)` nodes in `v`.
@@ -223,13 +222,13 @@ fn rewrite_in(b: ir::Bundle, v: ir::Node, d_nr: integer, snap: ir::Node) -> ir::
   if len(kids) == 0 {
     return v;
   }
-  opt_decode_view::with_children(v, [for c in kids { rewrite_in(b, c, d_nr, snap) }])
+  ir_pass_tree::with_children(v, [for c in kids { rewrite_in(b, c, d_nr, snap) }])
 }
 
 fn rewrite_ops(b: ir::Bundle, v: ir::Node, operators: vector<ir::Node>, d_nr: integer, snap: ir::Node) -> ir::Node {
   ops = [for x in operators { x }];
   while rewrite_block(b, ops, d_nr, snap) {}
-  opt_decode_view::with_children(v, [for op in ops { rewrite_in(b, op, d_nr, snap) }])
+  ir_pass_tree::with_children(v, [for op in ops { rewrite_in(b, op, d_nr, snap) }])
 }
 
 // An `OpAppendVector(_, Var(_), …)` anywhere in `n`.
