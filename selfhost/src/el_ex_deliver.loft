@@ -44,6 +44,19 @@ fn bind_local(vars: el_vars::Vars, tail: ir::Node) -> integer {
   }
 }
 
+// The `return`s in `ops` that answer a slice's own `iter_vec` build.
+fn slice_returns(ops: vector<ir::Node>) -> integer {
+  r = 0;
+  for op in ops {
+    match el_ir::unspan(op) {
+      NdReturn { inner } => { if match el_ir::unspan(inner) { NdBlock { block: sb } => sb[0].name == "iter_vec", _ => false } { r += 1; } },
+      _ => {}
+    }
+    r += slice_returns(el_ir::children(op));
+  }
+  r
+}
+
 pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer, result: ir::TypeT) -> ir::Node {
   // A literal tail is read against the result's element (`-> vector<u8> { [104, 101] }` holds
   // bytes): a tail built at another element than the result names is not carried.
@@ -111,7 +124,8 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
       // (A dense result's exit that answers the buffer — a parameter copied in — is not carried
       // under a `null` tail: its result's borrow is the `τ?` road's alone.)
       dense_buf = !(result is TyOptional) && el_ex_copy::buffer_returns(nmids, rb) > 0;
-      if !dense_buf && el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) + el_ex_copy::buffer_returns(nmids, rb) {
+      // (A slice exit, `return a[0..k]`, is a fresh build of its own as a literal is.)
+      if !dense_buf && el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + slice_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) + el_ex_copy::buffer_returns(nmids, rb) {
         null_exits = true;
         // (An exit answering the buffer makes the body borrow what it handed back.)
         if el_ex_copy::buffer_returns(nmids, rb) > 0 {
