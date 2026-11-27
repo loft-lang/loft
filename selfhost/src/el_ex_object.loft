@@ -1659,6 +1659,16 @@ fn call_ref_at(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>
       el::refuse(e, "a call through a function value with too many arguments");
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
+    // A `&T` argument of the function type takes `convert`'s `RefVar` arm, as a direct call's
+    // `&` parameter does: a local is linked, a link is forwarded as it is.
+    if pt is TyRefVar {
+      l = el_ex_link::link_argument(e, vars, x.code, x.tp, pt);
+      if l == null {
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      list += [l!];
+      continue;
+    }
     c = stored(e, vars, x, pt);
     if c == null {
       refuse_known(e, x.tp, "an argument to a function value of another type: {type_kind(x.tp)} for {type_kind(pt)}");
