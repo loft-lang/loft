@@ -131,7 +131,7 @@ pub fn par_for(e: el::El, vars: el_vars::Vars, w: Walk, par: integer, body: inte
   i = ir::NdVar { n: idx };
   // (A function value stays in its variable, set first thing in the body; any other result is
   // read where the body names it.)
-  code = if ln.label == " fn" { match b.code { NdBlock { block: fbl } => { fb0 = fbl[0]; fb0.operators = [el_ir::v_set(bv, lane_read(e, ln, i))] + fb0.operators; ir::NdBlock { block: [fb0] } }, _ => b.code } } else { el_ir::replace_var(b.code, bv, lane_read(e, ln, i)) };
+  code = if ln.label == " fn" { match b.code { NdBlock { block: fbl } => { fb0 = fbl[0]; fb0.operators = [el_ir::v_set(bv, lane_read(e, ln, i))] + fb0.operators; ir::NdBlock { block: [fb0] } }, _ => b.code } } else { rc = el_ir::replace_var(b.code, bv, lane_read(e, ln, i)); rc };
   row = el_ir::cl(e, "OpGetVectorNullable", [v, ir::NdInt { n: es }, i]);
   // A body variable BOUND to the element holds a borrowed view of the input vector, as the loop
   // variable did before the element read replaces it: the loop does not own what it looks at,

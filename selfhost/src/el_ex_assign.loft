@@ -450,12 +450,17 @@ fn block_body(e: el::El, vars: el_vars::Vars, n: integer, context: text, result:
       if !e.first_pass {
         g = el_convert::guard_discharge(e, vars, l[-1] ?? ir::NdNull, result);
       }
+      // (`@FR-W-Store`, asked by `convert` before the fit.)  Bound to a local first: the call
+      // unwrapped inside the vector literal leaked the record it built, on both backends.
+      w32: ir::Node? = null;
+      if g == null && !e.first_pass && el_convert::narrowing_store(el_types::base(t), el_types::base(result)) {
+        w32 = el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result);
+      }
       if g != null {
         l = l[..-1] + [g!];
         discharged = true;
-      } else if !e.first_pass && el_convert::narrowing_store(el_types::base(t), el_types::base(result)) && el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result) != null {
-        // (`@FR-W-Store`, asked by `convert` before the fit.)
-        l = l[..-1] + [el_convert::width32_store(e, l[-1] ?? ir::NdNull, t, result)!];
+      } else if w32 != null {
+        l = l[..-1] + [w32!];
         converted = true;
       } else if !e.first_pass && el_convert::narrowing_int(el_types::base(t), el_types::base(result)) && !el_convert::value_fits(e, vars, l[-1] ?? ir::NdNull, el_types::base(result)) {
         // (`convert` asks the narrowing before its equal-types accept: a `u32` result guards a
