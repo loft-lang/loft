@@ -158,17 +158,64 @@ pub fn arm_tails_need_binding(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node,
       false
     },
     NdCall => {
-      if !plain_or_text(value_type(b, n, f)) {
+      if !plain_or_text(value_type(b, n, f)) && call_arm_binds(s, b, n, bound) {
         scope_scan::refuse(s, "arm_lift::arm_bind: a heap call's value as a branch arm");
       }
       false
     },
-    NdVar => {
-      if !plain_or_text(value_type(b, n, f)) && bound != scope_fn::NONE && bound >= 0 {
+    NdVar { n: x } => {
+      if !plain_or_text(value_type(b, n, f)) && var_arm_binds(s, x, bound, f) {
         scope_scan::refuse(s, "arm_lift::arm_bind: a heap local as a branch arm");
       }
       false
     },
+    _ => false
+  }
+}
+
+// port: arm_lift.rs fn call_arm_bind — a named call's arm takes a binding of its own where it
+// answers a record the caller must copy (a borrowed or joined return), or an owned one where no
+// binding is named.  The view walk's projection arm needs a materialised binding, which the
+// phase refuses before the scan.
+fn call_arm_binds(s: scope_scan::Scopes, b: ir::Bundle, tail: ir::Node, bound: integer) -> boolean {
+  d = match scope_fn::unspan(tail) { NdCall { def_nr } => b.data.definitions[def_nr], _ => null };
+  if d == null || !binds::is_loft_defined(d!) {
+    return false;
+  }
+  record = match scope_fn::base(d!.returned[0] ?? ir::TyVoid) {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  };
+  if !record {
+    return false;
+  }
+  match scope_scan::ownership(s, b, tail) {
+    Owned => bound == scope_fn::NONE || bound < 0,
+    Unknown => false,
+    _ => true
+  }
+}
+
+// port: arm_lift.rs fn arm_bind's `Var` arm — a plain variable a plain bind copies takes a
+// binding of its own.  A compiler temp answers none unless it is a `??` hoist
+// (`whole_value_hoists`, read here as every hoist: a superset); the materialised views are none.
+fn var_arm_binds(s: scope_scan::Scopes, x: integer, bound: integer, f: ir::Function) -> boolean {
+  if bound == scope_fn::NONE || bound < 0 || x == bound {
+    return false;
+  }
+  nm = scope_fn::name(f, x);
+  if scope_fn::is_compiler_generated(f, x) && !(nm.starts_with("__ncc_") || nm.starts_with("_ncr_")) {
+    return false;
+  }
+  whole_into_view = len(scope_fn::deps(f, bound)) > 0;
+  if scope_fn::has(s.multi_assigned, bound) && !whole_into_view && (s.first_set != bound || scope_fn::has(s.owner_witness, bound)) {
+    return false;
+  }
+  match scope_fn::base(scope_fn::tp(f, x)) {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    TyVector => true,
     _ => false
   }
 }
