@@ -34,6 +34,14 @@ use el_ex_deliver;
 use el_ex_loop;
 
 // One parsed arm: its condition (null for a wildcard), its code and its type.
+// The pattern a `name @ <pattern>` capture tests, or -1 for any other pattern.
+fn capture_of(e: el::El, pn: integer) -> integer {
+  match e.p.nodes[pn] {
+    PCap { pat: cp, at_sign: cat } => if cat && cp != null { cp! } else { -1 },
+    _ => -1
+  }
+}
+
 pub struct MArm {
   pub cond: ir::Node?,
   pub code: ir::Node,
@@ -440,6 +448,23 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
           binds = [el_ir::v_set(bvar, ir::NdVar { n: v })];
           aliases = bnames;
           wild = true;
+          binding_arm = true;
+        } else if scalar_subject && len(pats) == 1 && capture_of(e, pats[0]!) >= 0 {
+          // `v @ <pattern>`: the pattern's test, the subject bound in a `binding_arm` as a bare
+          // name binds it (`parse_match_pattern`'s `@` capture).
+          cpat = capture_of(e, pats[0]!);
+          c = el_ex_pattern::pattern_cond(e, vars, cpat, v, st, enum_subject);
+          if c == null {
+            if !(e.p.nodes[cpat] is PWild) {
+              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+            }
+            wild = true;
+          }
+          cond = c;
+          bnames: vector<el_vars::VarName> = [];
+          bvar = pattern_bind(vars, match e.p.nodes[pats[0]!] { PCap { name: cpn } => cpn, _ => "" }, st, bnames);
+          binds = [el_ir::v_set(bvar, ir::NdVar { n: v })];
+          aliases = bnames;
           binding_arm = true;
         } else {
           for pn in pats {
