@@ -571,13 +571,13 @@ void loft_crt_append_text(int64_t store, int64_t rec, int64_t pos, const char *v
     if (t) loft_format_text(cx, t, loft_crt_str(cx, val, bytes), width, (int) dir, (uint8_t) token);
 }
 
-/* The null text's one byte appended to the text the reference names: what a Rust native's
- * destination form writes for an absent answer (`STRING_NULL`), so an empty destination reads
- * back as null. */
+/* The null text appended to the text the reference names, which makes it null: what a Rust
+ * native's destination form writes for an absent answer (`text_null::put`).  Absence is an
+ * identity (`@C171`), never the one NUL byte it once was. */
 void loft_crt_ref_text_append_null(int64_t s, int64_t r, int64_t p) {
     loft_cx *cx = &loft_main_cx;
     loft_text *t = (loft_text *) loft_place(cx, loft_crt_ref(cx, s, r, p), 0);
-    if (t) loft_text_concat(cx, t, loft_lit(cx, "", 1));
+    if (t) loft_text_concat(cx, t, loft_null_text(cx));
 }
 
 /* `OpClearStackText`: the text the reference `(s, r, p)` names emptied, its buffer kept. */
