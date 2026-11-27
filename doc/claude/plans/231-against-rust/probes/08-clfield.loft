@@ -1,0 +1,8 @@
+// @PLN231 probe — a capturing closure in a struct field
+// Expect on both backends: field closure: 4
+struct H { f: fn(integer) -> integer }
+fn main() {
+  k = 3;
+  h = H { f: fn(x: integer) -> integer { x + k } };
+  println("field closure: {h.f(1)}");
+}

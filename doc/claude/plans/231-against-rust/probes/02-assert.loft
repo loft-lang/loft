@@ -1,0 +1,7 @@
+// @PLN231 probe — an explicit failure halts; --production logs it
+// Expect on both backends: 'before', then the assertion error; with --production 'after assert' too
+fn main() {
+  println("before");
+  assert(1 == 2, "boom");
+  println("after assert");
+}

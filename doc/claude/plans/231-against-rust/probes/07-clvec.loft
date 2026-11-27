@@ -1,0 +1,7 @@
+// @PLN231 probe — a capturing closure as a vector element
+// Expect on both backends: refused: cannot be stored in a collection
+fn main() {
+  k = 3;
+  fs = [fn(x: integer) -> integer { x + k }];
+  println("{fs[0](1)}");
+}

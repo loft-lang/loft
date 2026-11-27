@@ -1,0 +1,5 @@
+// @PLN231 probe — the same adapter, generic
+// Expect on both backends: generic lazy t=30
+fn lmap<T, U>(it: iterator<T>, f: fn(T) -> U) -> iterator<U> { for x in it { yield f(x); } }
+fn nums(n: integer) -> iterator<integer> { for i in 0..n { yield i; } }
+fn main() { t = 0; for y in lmap(nums(5), |x| { x * 3 }) { t += y; } println("generic lazy t={t}"); }

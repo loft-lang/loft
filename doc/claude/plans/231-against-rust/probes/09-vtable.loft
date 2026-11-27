@@ -1,0 +1,8 @@
+// @PLN231 probe — a vector of structs whose fn fields capture
+// Expect on both backends: area 4 / area 6
+struct Shape { area: fn(float) -> float, size: float }
+fn main() {
+  k = 3.0;
+  shapes = [Shape { area: |s| { s * s }, size: 2.0 }, Shape { area: |s| { s * k }, size: 2.0 }];
+  for s in shapes { println("area {s.area(s.size)}"); }
+}
