@@ -216,7 +216,10 @@ instances; Rust-only definitions 270), one to four per program.  What each open 
   has no content type (`c = -1`), so it refuses before its `check_vector` arm.  Giving it the
   `iterator` definition's known type (Rust's `vector_element_type`) panics: the port's own type
   table has no entry at that index (`e.b.types[content] is null`) — the standard library's
-  `iterator` row is not carried in the port's schema, which this group needs first.
+  `iterator` row is not carried in the port's schema, which this group needs first.  Measured:
+  the std image's `iterator` definition (447) carries `known_type = 101` while the port starts with
+  100 types and no `iterator` row — the image numbers a row it does not hand over; settle on the
+  Rust side (the image writer, or where Rust's stores mint that row) before porting the fill.
 - the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
   deferred stubs) — no port twin.
 - forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
