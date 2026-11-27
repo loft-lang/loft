@@ -1087,8 +1087,10 @@ fn publish(e: el::El, it: integer, before: integer) {
     _ => ""
   };
   if nm != "" {
+    // (The stub adopted may be another file's — a module this one imports constructed the type
+    // above it, loft#797 — and keeps that file's source: it is published all the same.)
     t = el::source_nr(e, e.source, nm);
-    if t >= 0 && el::def(e, t).source == e.source && el::def(e, t).def_type != el::DT_UNKNOWN {
+    if t >= 0 && el::def(e, t).source != el::STD_SOURCE && el::def(e, t).def_type != el::DT_UNKNOWN {
       e.b.data.definitions[t].pub_visible = true;
     }
   }
