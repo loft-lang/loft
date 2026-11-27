@@ -389,8 +389,8 @@ int64_t loft_crt_slot_text(char *out, int64_t cap, int64_t store, int64_t at, in
     loft_cx *cx = &loft_main_cx;
     loft_str v;
     if (arg) {
-        loft_str *a = (loft_str *) loft_crt_slot_at(cx, store, at);
-        v = a->p ? *a : loft_lit(cx, "", 0);
+        /* A view with no pointer is the null text (`@C171`, `Str::is_null`). */
+        v = *(loft_str *) loft_crt_slot_at(cx, store, at);
     } else {
         v = loft_view(cx, (loft_text *) loft_crt_slot_at(cx, store, at));
     }
@@ -432,10 +432,14 @@ void loft_crt_slot_text_free(int64_t store, int64_t at) {
     loft_text_free(cx, (loft_text *) loft_crt_slot_at(cx, store, at));
 }
 
-/* An argument's slot: a view of a copy of `val` (the null text's one byte too). */
+/* An argument's slot: a view of a copy of `val`, or the null text's view (no pointer). */
 void loft_crt_set_slot_arg(int64_t store, int64_t at, const char *val, int64_t bytes) {
     loft_cx *cx = &loft_main_cx;
     loft_str v = loft_crt_str(cx, val, bytes);
+    if (loft_str_is_null(cx, v)) {
+        *(loft_str *) loft_crt_slot_at(cx, store, at) = v;
+        return;
+    }
     char *copy = (char *) malloc(v.len + 1);
     if (!copy) { fputs("loft: out of memory\n", stderr); abort(); }
     memcpy(copy, v.p, v.len);
@@ -517,7 +521,7 @@ void loft_crt_stack_code_bytes(int64_t store, int64_t at, const char *code, int6
     memcpy(loft_crt_slot_at(cx, store, at), code + from, (size_t) n);
 }
 
-/* `OpConvTextFromNull`: the null text's view (the one byte "\0") pushed at `at`. */
+/* `OpConvTextFromNull`: the null text's view (no pointer, `@C171`) pushed at `at`. */
 void loft_crt_stack_str_null(int64_t store, int64_t at) {
     loft_cx *cx = &loft_main_cx;
     *(loft_str *) loft_crt_slot_at(cx, store, at) = loft_null_text(cx);
@@ -686,13 +690,13 @@ void loft_crt_text_walk_step(int64_t store, int64_t sp, int64_t c, int64_t index
 /* The text a frame slot holds — a local's (`arg` 0) or a view (1) — as `State::local_text`. */
 static loft_str loft_crt_local_text(loft_cx *cx, int64_t store, int64_t at, int64_t arg) {
     if (arg) {
-        loft_str *a = (loft_str *) loft_crt_slot_at(cx, store, at);
-        return a->p ? *a : loft_lit(cx, "", 0);
+        /* A view with no pointer is the null text (`@C171`, `Str::is_null`): kept as it is. */
+        return *(loft_str *) loft_crt_slot_at(cx, store, at);
     }
     return loft_view(cx, (loft_text *) loft_crt_slot_at(cx, store, at));
 }
 
-/* OpTextEndJump's size: the byte length of the text at `at`, the null text's one byte included. */
+/* OpTextEndJump's size: the byte length of the text at `at`, 0 for the null text. */
 int64_t loft_crt_local_text_len(int64_t store, int64_t at, int64_t arg) {
     loft_cx *cx = &loft_main_cx;
     return (int64_t) loft_crt_local_text(cx, store, at, arg).len;
