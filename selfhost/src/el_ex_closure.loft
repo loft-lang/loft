@@ -63,7 +63,7 @@ fn ensure_tuple_defs(e: el::El, t: ir::TypeT, pos: ir::Position) {
   }
 }
 
-fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text) -> Ex {
+fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text, ret: integer? = null) -> Ex {
   if e.context < 0 || body == null {
     el::refuse(e, why);
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -137,6 +137,25 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
     register_nested_lambdas(e, vars, body!, root, []);
   }
   el::refuse(e, why);
+  // (A lambda that writes its signature out answers it all the same, as Rust types the
+  // `fn(…) -> …` before the body: `xs.map(fn(x: integer) -> Shape { cap })` maps to `vector<Shape>`.)
+  if ret != null {
+    rt = el_types::parse_type(e, ret!);
+    args: vector<ir::TypeT> = [];
+    typed = rt != null;
+    for pn in params {
+      match e.p.nodes[pn] {
+        SParam { tp: ptp } => {
+          pt = if ptp != null { el_types::parse_type(e, ptp!) } else { null };
+          if pt == null { typed = false; } else { args += [pt!]; }
+        },
+        _ => { typed = false; }
+      }
+    }
+    if typed {
+      return ex(ir::NdNull, ir::TyFunction { args: args, result: rt!, dep: [], consts: 0 });
+    }
+  }
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
@@ -324,7 +343,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         // A local's, whose lambda the bind may know, is not carried yet.)
         fn_cap = el_types::base(ct) is TyFunction;
         if !heap && !scalar_cap && !fn_cap {
-          return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: of this type {type_kind(ct)}");
+          return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: of this type {type_kind(ct)}", ret: if short { null } else { ret });
         }
         caps += [el::Capture { name: c, tp: el_types::without_deps(ct) }];
       }
