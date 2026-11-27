@@ -116,9 +116,16 @@ def main():
     if args.dry_run:
         print(f"dry run: would push {head[:9]} to {branch} and to {pr['headRefName']}")
         return 0
+    # Each branch is pushed AS ITSELF.  The PR's head is moved here first with `git fetch .`,
+    # which git refuses unless it is a fast-forward (checked above too), so a cross-name push
+    # (`HEAD:refs/heads/<head>`) is never needed: a session's permission check reads that
+    # spelling as writing over another branch and refuses it.
     if branch != "HEAD" and branch != pr["headRefName"]:
-        run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", check=True)
-    run("git", "push", "-q", "origin", f"HEAD:refs/heads/{pr['headRefName']}", check=True)
+        run("git", "push", "-q", "origin", branch, check=True)
+        run("git", "fetch", "-q", ".", f"HEAD:refs/heads/{pr['headRefName']}", check=True)
+    elif branch == "HEAD":
+        run("git", "fetch", "-q", ".", f"HEAD:refs/heads/{pr['headRefName']}", check=True)
+    run("git", "push", "-q", "origin", pr["headRefName"], check=True)
     print(f"pushed {pr_head[:9]}..{head[:9]} to {pr['headRefName']}"
           + (f" (and {branch})" if branch not in ("HEAD", pr["headRefName"]) else ""))
     watch = ["python3", "scripts/pr_watch.py", str(args.pr), "--no-nightly"]

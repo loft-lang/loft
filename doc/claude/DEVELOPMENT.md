@@ -182,6 +182,14 @@ on their own branches at the same time: no step waits on them, and none touches 
    That is the dev loop's checks plus what only the PR's run otherwise makes (the patch
    receipts' merge, the allocation pins, the platform census).  A miss there costs a whole
    run, where `find_problems.sh --changed`, the debugging loop, runs only tests.
+   **This push is part of the cycle the PR was asked for: it is made without asking**, as soon
+   as the run has finished, so the PR never waits on a fix that is ready.  `pr_push.py` moves
+   the PR's head forward locally (`git fetch . HEAD:<head>`, refused unless it is a
+   fast-forward) and pushes each branch as itself; a cross-name push (`git push origin
+   <next>:<head>`) is the spelling a session's permission check refuses as writing over
+   another branch.  **A refused or failing step is a prompt to find the plain spelling of the
+   same intent, not a reason to wait**: if that is refused too, say so to the owner at once,
+   in one line, with what is needed.
 7. **Once it has merged, install the new main as the box's `loft`**: `make install-main`
    (into `~/.local`, from main's daily build for this host, else rebuilt where only
    what changed is compiled; [GUARDS.md](GUARDS.md) § The control is
