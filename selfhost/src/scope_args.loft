@@ -194,6 +194,46 @@ pub fn is_null_init_preamble(ops: vector<ir::Node>, f: ir::Function) -> boolean 
   true
 }
 
+// port: args.rs fn is_null_slot_mint — the guarded mint `Parser::null_local_slot` emits for
+// `var`: `if OpRefIsNull(var) { … } else null`.
+fn is_null_slot_mint(s: scope_scan::Scopes, op: ir::Node, var: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdIf { cond } => match scope_fn::unspan(cond) {
+      NdCall { def_nr, args } => def_nr == s.ops.ref_is_null && len(args) == 1 && match args[0]! { NdVar { n } => n == var, _ => false },
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// args.rs `is_slot_hoisted` (in `scan_args`): guarded mints of the variable the final
+// `OpCreateStack` names.
+fn is_slot_hoisted(s: scope_scan::Scopes, ops: vector<ir::Node>) -> boolean {
+  k = len(ops);
+  if k < 2 {
+    return false;
+  }
+  match ops[k - 1]! {
+    NdCall { def_nr, args } => {
+      if def_nr != s.ops.create_stack || len(args) != 1 {
+        return false;
+      }
+      match args[0]! {
+        NdVar { n: v } => {
+          for op in ops[0..k - 1] {
+            if !is_null_slot_mint(s, op, v) {
+              return false;
+            }
+          }
+          true
+        },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
 // port: args.rs fn scan_args
 pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function, outer_call: integer) -> Scanned {
   preamble: vector<ir::Node> = [];
@@ -245,6 +285,18 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
         }
         if is_null_init_preamble(items, f) || p135 || p179 {
           scope_scan::refuse(s, "args::scan_args: a hoisted argument preamble (A5.6 / P135 / P179)");
+        } else if is_slot_hoisted(s, items) {
+          // @C118 — the guarded mints of a null collection local a `&` links to hoist like
+          // the materialisations, so the argument stays the bare `OpCreateStack(Var)`.
+          for op in items[0..k - 1] {
+            preamble += [op];
+          }
+          last = items[k - 1]!;
+          if inline_struct_return(s, b, last, outer_call, f) {
+            scope_scan::refuse(s, "inline_returns::inline_struct_return: a heap value an argument builds");
+          }
+          ls += [last];
+          continue;
         }
         if k > 0 && inline_struct_return(s, b, items[k - 1]!, outer_call, f) {
           scope_scan::refuse(s, "inline_returns::inline_struct_return: a heap value an argument builds");

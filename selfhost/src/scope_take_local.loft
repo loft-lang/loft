@@ -1,0 +1,378 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/take_local.rs` transcribed: `(R-MoveLast)`'s LOCAL clause, a vector local
+// rebound from another local that is DEAD after the rebind takes that local's store instead of
+// copying it.  The rebind group `OpDatabase(W, tp); x = OpGetField(W, 0, ft); OpSetInt4(W, 0,
+// 0); OpAppendVector(x, y, et)` becomes one `Insert` that gives `y`'s store up into `W`
+// (`OpCopyRecord`'s free-source form), nulls `y`'s witness and `y`.  Admitted only where `y`
+// owns its store through its own witness, minted earlier in the same statement list with the
+// same wrapper type, and is named only between that mint and the rebind, there only as the
+// destination of a write and the rebind's one read.  Run by `check` on the settled body, after
+// `(R-Compact)`.
+
+use ir;
+use scope_fn;
+
+// `keys::COPY_FREE_SOURCE`: free the source store after the copy.
+COPY_FREE_SOURCE = 32768;
+
+struct Ops {
+  database: integer,
+  get_field: integer,
+  set_int4: integer,
+  append: integer,
+  free_ref: integer,
+  free_if_distinct: integer,
+  copy: integer,
+  // The ops that write INTO a vector named by their first argument; -1 where the stdlib lacks
+  // one.
+  writes: vector<integer>
+}
+
+// port: take_local.rs fn Ops::lookup — null where an op the rewrite emits is missing.
+fn lookup(b: ir::Bundle) -> Ops? {
+  o = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    set_int4: scope_fn::def_nr(b, "OpSetInt4"),
+    append: scope_fn::def_nr(b, "OpAppendVector"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    copy: scope_fn::def_nr(b, "OpCopyRecord"),
+    writes: [for nm in ["OpAppendVector", "OpPreAllocVector", "OpNewRecord", "OpFinishRecord"] { scope_fn::def_nr(b, nm) }]
+  };
+  if o.database < 0 || o.get_field < 0 || o.set_int4 < 0 || o.append < 0 || o.free_ref < 0 || o.free_if_distinct < 0 || o.copy < 0 {
+    return null;
+  }
+  o
+}
+
+fn is_var(val: ir::Node, dst: integer) -> boolean {
+  match scope_fn::unspan(val) { NdVar { n } => n == dst, _ => false }
+}
+
+fn int(val: ir::Node?) -> integer? {
+  if val == null {
+    return null;
+  }
+  match scope_fn::unspan(val!) { NdInt { n } => n, _ => null }
+}
+
+// A mint group at `s[at..at + 3]`.
+struct Mint {
+  wit: integer,
+  local: integer,
+  tp: integer,
+  ft: integer
+}
+
+// port: take_local.rs fn mint_group — `(witness, local, wrapper type, field type)`, or null.
+fn mint_group(stmts: vector<ir::Node>, at: integer, o: Ops) -> Mint? {
+  if at + 2 >= len(stmts) {
+    return null;
+  }
+  wit = -1;
+  tp = 0;
+  match scope_fn::unspan(stmts[at]!) {
+    NdCall { def_nr, args } => {
+      if def_nr != o.database || len(args) != 2 {
+        return null;
+      }
+      match args[0]! { NdVar { n } => { wit = n; }, _ => { return null; } }
+      match args[1]! { NdInt { n } => { tp = n; }, _ => { return null; } }
+    },
+    _ => { return null; }
+  }
+  local = -1;
+  ft = 0;
+  match scope_fn::unspan(stmts[at + 1]!) {
+    NdSet { var, inner } => {
+      local = var;
+      match scope_fn::unspan(inner) {
+        NdCall { def_nr: getter, args: ga } => {
+          if getter != o.get_field || len(ga) == 0 || !is_var(ga[0]!, wit) || int(ga[1]) != 0 {
+            return null;
+          }
+          f = int(ga[2]);
+          if f == null {
+            return null;
+          }
+          ft = f!;
+        },
+        _ => { return null; }
+      }
+    },
+    _ => { return null; }
+  }
+  match scope_fn::unspan(stmts[at + 2]!) {
+    NdCall { def_nr: arg, args: za } => {
+      if arg != o.set_int4 || len(za) == 0 || !is_var(za[0]!, wit) {
+        return null;
+      }
+    },
+    _ => { return null; }
+  }
+  Mint { wit: wit, local: local, tp: tp, ft: ft }
+}
+
+// The rebind group: a mint group, then the append of another variable into what it minted.
+struct Shape {
+  mint: Mint,
+  src: integer
+}
+
+// port: take_local.rs fn rebind_shape
+fn rebind_shape(stmts: vector<ir::Node>, at: integer, o: Ops) -> Shape? {
+  m = mint_group(stmts, at, o);
+  if m == null || at + 3 >= len(stmts) {
+    return null;
+  }
+  match scope_fn::unspan(stmts[at + 3]!) {
+    NdCall { def_nr, args } => {
+      if def_nr != o.append || len(args) != 3 || !is_var(args[0]!, m!.local) {
+        return null;
+      }
+      match scope_fn::unspan(args[1]!) {
+        NdVar { n } => Shape { mint: m!, src: n },
+        _ => null
+      }
+    },
+    _ => null
+  }
+}
+
+// The statement lists of `n`: a block's, a loop's, an insert's.
+fn list_of(n: ir::Node) -> vector<ir::Node>? {
+  match n {
+    NdBlock { block } => block[0].operators,
+    NdLoop { block } => block[0].operators,
+    NdInsert { items } => items,
+    _ => null
+  }
+}
+
+// port: take_local.rs fn has_rebind_shape
+fn has_rebind_shape(n: ir::Node, o: Ops) -> boolean {
+  l = list_of(n);
+  if l != null {
+    ls = l!;
+    for at in 0..len(ls) - 3 {
+      if rebind_shape(ls, at, o) != null {
+        return true;
+      }
+    }
+  }
+  for c in scope_fn::children(n) {
+    if has_rebind_shape(c, o) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: take_local.rs fn names — how many nodes name `x`: a `Var`, or a `Set` of it.
+fn names(n: ir::Node, dst: integer) -> integer {
+  count = match n {
+    NdVar { n: x } => if x == dst { 1 } else { 0 },
+    NdSet { var } => if var == dst { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(n) {
+    count += names(c, dst);
+  }
+  count
+}
+
+// The null inits and the frees of `wit` in `n`.
+fn allowed_mentions(n: ir::Node, wit: integer, o: Ops) -> integer {
+  count = match n {
+    NdSet { var, inner } => if var == wit && scope_fn::unspan(inner) is NdNull { 1 } else { 0 },
+    NdCall { def_nr, args } => if (def_nr == o.free_ref || def_nr == o.free_if_distinct) && len(args) > 0 && is_var(args[0]!, wit) { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(n) {
+    count += allowed_mentions(c, wit, o);
+  }
+  count
+}
+
+// port: take_local.rs fn foreign_witness_mentions
+fn foreign_witness_mentions(code: ir::Node, wit: integer, o: Ops) -> integer {
+  names(code, wit) - allowed_mentions(code, wit, o)
+}
+
+struct Plan {
+  tp: integer,
+  wit: integer,
+  wy: integer,
+  dst: integer,
+  src: integer,
+  ft: integer
+}
+
+// port: take_local.rs fn admit
+fn admit(stmts: vector<ir::Node>, at: integer, whole: ir::Node, f: ir::Function, o: Ops) -> Plan? {
+  sh = rebind_shape(stmts, at, o);
+  if sh == null {
+    return null;
+  }
+  wit = sh!.mint.wit;
+  dst = sh!.mint.local;
+  tp = sh!.mint.tp;
+  src = sh!.src;
+  if !scope_fn::name(f, wit).starts_with("__vdb_") || src == dst {
+    return null;
+  }
+  // `y` owns its store through its own witness, minted earlier in this list.
+  dy = scope_fn::deps(f, src);
+  if len(dy) != 1 {
+    return null;
+  }
+  wy = dy[0]!;
+  if wy == wit || !scope_fn::name(f, wy).starts_with("__vdb_") {
+    return null;
+  }
+  mint_at = -1;
+  j = at - 1;
+  while j >= 0 {
+    m = mint_group(stmts, j, o);
+    if m != null && m!.wit == wy && m!.local == src {
+      mint_at = j;
+      break;
+    }
+    j -= 1;
+  }
+  if mint_at < 0 {
+    return null;
+  }
+  if mint_group(stmts, mint_at, o)!.tp != tp {
+    return null;
+  }
+  // Each witness: only its one mint group (3 mentions), null inits and frees.
+  if foreign_witness_mentions(whole, wit, o) != 3 || foreign_witness_mentions(whole, wy, o) != 3 {
+    return null;
+  }
+  if !source_run(stmts[mint_at..at + 4], whole, src, o) {
+    return null;
+  }
+  Plan { tp: tp, wit: wit, wy: wy, dst: dst, src: src, ft: sh!.mint.ft }
+}
+
+fn null_sets(n: ir::Node, src: integer) -> integer {
+  count = match n {
+    NdSet { var, inner } => if var == src && scope_fn::unspan(inner) is NdNull { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(n) {
+    count += null_sets(c, src);
+  }
+  count
+}
+
+// The writes INTO `src` (a write op naming it first) and the appends reading it (`reads`).
+struct Uses {
+  ok: integer,
+  reads: integer
+}
+
+fn count_uses(n: ir::Node, src: integer, o: Ops, u: Uses) {
+  match n {
+    NdCall { def_nr, args } => {
+      if o.writes.contains(def_nr) && len(args) > 0 && is_var(args[0]!, src) {
+        u.ok += 1;
+      }
+      if def_nr == o.append && len(args) > 1 && is_var(args[1]!, src) {
+        u.ok += 1;
+        u.reads += 1;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    count_uses(c, src, o, u);
+  }
+}
+
+// port: take_local.rs fn source_run — every mention of `y` lies in `run` (null inits aside),
+// as the destination of a write or the rebind's one read.
+fn source_run(run: vector<ir::Node>, whole: ir::Node, src: integer, o: Ops) -> boolean {
+  inside = 0;
+  for v in run {
+    inside += names(v, src);
+  }
+  if names(whole, src) != inside + null_sets(whole, src) {
+    return false;
+  }
+  u = Uses { ok: 0, reads: 0 };
+  for v in run {
+    count_uses(v, src, o, u);
+  }
+  // The mint's own `Set(y, …)` is the one more.
+  u.ok + 1 == inside && u.reads == 1
+}
+
+// port: take_local.rs fn rewrite_list
+fn rewrite_list(stmts: vector<ir::Node>, whole: ir::Node, f: ir::Function, o: Ops) -> vector<ir::Node> {
+  s = stmts;
+  at = 0;
+  while at + 3 < len(s) {
+    p = admit(s, at, whole, f, o);
+    if p != null {
+      pl = p!;
+      group = [
+        ir::NdCall { def_nr: o.database, args: [ir::NdVar { n: pl.wit }, ir::NdInt { n: pl.tp }] },
+        ir::NdCall { def_nr: o.copy, args: [ir::NdVar { n: pl.wy }, ir::NdVar { n: pl.wit }, ir::NdInt { n: COPY_FREE_SOURCE + pl.tp }] },
+        scope_fn::v_set(pl.wy, ir::NdNull),
+        scope_fn::v_set(pl.dst, ir::NdCall { def_nr: o.get_field, args: [ir::NdVar { n: pl.wit }, ir::NdInt { n: 0 }, ir::NdInt { n: pl.ft }] }),
+        scope_fn::v_set(pl.src, ir::NdNull)
+      ];
+      out: vector<ir::Node> = [for x in s[0..at] { x }];
+      out += [ir::NdInsert { items: group }];
+      out += [for x in s[at + 4..] { x }];
+      s = out;
+    }
+    at += 1;
+  }
+  s
+}
+
+// port: take_local.rs fn visit — the lists first, then their statements; through a span, an
+// `if`, a `Set`, a `Return`, a `Drop`.
+fn visit(n: ir::Node, whole: ir::Node, f: ir::Function, o: Ops) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      ops = rewrite_list(block[0].operators, whole, f, o);
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: [for x in ops { visit(x, whole, f, o) }], result: [for t in bl.result { t }], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      ops = rewrite_list(block[0].operators, whole, f, o);
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: [for x in ops { visit(x, whole, f, o) }], result: [for t in bl.result { t }], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      ops = rewrite_list(items, whole, f, o);
+      ir::NdInsert { items: [for x in ops { visit(x, whole, f, o) }] }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: visit(inner, whole, f, o) },
+    NdIf { cond, t, f: e } => ir::NdIf { cond: visit(cond, whole, f, o), t: visit(t, whole, f, o), f: visit(e, whole, f, o) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: visit(inner, whole, f, o) },
+    NdReturn { inner } => ir::NdReturn { inner: visit(inner, whole, f, o) },
+    NdDrop { inner } => ir::NdDrop { inner: visit(inner, whole, f, o) },
+    _ => n
+  }
+}
+
+// port: take_local.rs fn rewrite — every admitted rebind of a settled body.
+pub fn rewrite(b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  if (env_variable("LOFT_NO_TAKE_LOCAL") ?? "0") != "0" {
+    return code;
+  }
+  op = lookup(b);
+  if op == null || !has_rebind_shape(code, op!) {
+    return code;
+  }
+  visit(code, code, f, op!)
+}

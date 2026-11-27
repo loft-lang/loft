@@ -1,0 +1,151 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/buffer_detach.rs` transcribed (scope-pass-port.md step 4): `@FR-O-Owner`,
+// a literal buffer (`__vdb_N`) whose store a local OWNER takes over is set to the null sentinel
+// after its last use in that block, so its next mint is a fresh store.  Run by `check` after the
+// per-function loop on the bodies it laid out, as Rust's does.
+
+use ir;
+use scope_fn;
+use scope_args;
+use opt_decode_view;
+
+// port: data.rs fn Value::reads_var — a node of `n` names `v`: a `Var`, and the targets of a
+// `Set`, `TupleGet`, `TuplePut`, `FnRefDnr`, `CallRef`, `Iter` and `FnRef`.
+fn names_var(n: ir::Node, v: integer) -> boolean {
+  here = match n {
+    NdVar { n: x } => x == v,
+    NdSet { var } => var == v,
+    NdTupleGet { var } => var == v,
+    NdTuplePut { var } => var == v,
+    NdFnRefDnr { n: x } => x == v,
+    NdCallRef { var } => var == v,
+    NdIter { var } => var == v,
+    NdFnRef { var } => var == v,
+    _ => false
+  };
+  if here {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if names_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The variables a free (`OpFreeRef`, `OpFreeRefIfDistinct`) releases anywhere in `n`.
+fn freed_vars(b: ir::Bundle, n: ir::Node, out: vector<integer>) {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      if (nm == "OpFreeRef" || nm == "OpFreeRefIfDistinct") && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: w } => if !scope_fn::has(out, w) { out += [w]; },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    freed_vars(b, c, out);
+  }
+}
+
+// port: buffer_detach.rs fn owner_takes_buffer — `Set(w, OpGetField(__vdb_N, 0, …))` with `w` a
+// local OWNER (no dep on the buffer): `w * 65536 + buffer`, -1 for none.
+fn owner_takes_buffer(b: ir::Bundle, n: ir::Node, f: ir::Function) -> integer {
+  match scope_fn::unspan(n) {
+    NdSet { var: w, inner } => {
+      match scope_fn::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if scope_args::def_name(b, def_nr) != "OpGetField" || len(args) < 2 {
+            return -1;
+          }
+          bv = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+          zero = match scope_fn::unspan(args[1]!) { NdInt { n } => n == 0, _ => false };
+          if bv < 0 || !zero || w == bv || !scope_fn::name(f, bv).starts_with("__vdb") || scope_fn::name(f, w).starts_with("__")
+            || scope_fn::is_argument(f, w) || scope_fn::has(scope_fn::deps(f, w), bv) {
+            return -1;
+          }
+          w * 65536 + bv
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+fn owned_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, freed: vector<integer>, out: vector<integer>) {
+  t = owner_takes_buffer(b, n, f);
+  if t >= 0 && scope_fn::has(freed, t / 65536) && !scope_fn::has(out, t % 65536) {
+    out += [t % 65536];
+  }
+  for c in scope_fn::children(n) {
+    owned_walk(b, c, f, freed, out);
+  }
+}
+
+// `code.map_nodes`: each block's statements first, then the children of the rewritten node.
+fn detach_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, freed: vector<integer>, owned: vector<integer>, sentinel: integer) -> ir::Node {
+  node = n;
+  match n {
+    NdBlock { block } => {
+      ops = [for x in block[0].operators { x }];
+      at = 0;
+      while at < len(ops) {
+        t = owner_takes_buffer(b, ops[at]!, f);
+        if t < 0 || !scope_fn::has(freed, t / 65536) || !scope_fn::has(owned, t % 65536) {
+          at += 1;
+          continue;
+        }
+        bv = t % 65536;
+        last = at;
+        j = len(ops) - 1;
+        while j >= at {
+          if names_var(ops[j]!, bv) {
+            last = j;
+            break;
+          }
+          j -= 1;
+        }
+        out: vector<ir::Node> = [for x in ops[0..last + 1] { x }];
+        out += [scope_fn::v_set(bv, ir::NdCall { def_nr: sentinel, args: [] })];
+        out += [for x in ops[last + 1..] { x }];
+        ops = out;
+        at = last + 2;
+      }
+      node = opt_decode_view::with_children(n, ops);
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(node);
+  if len(kids) == 0 {
+    return node;
+  }
+  opt_decode_view::with_children(node, [for c in kids { detach_walk(b, c, f, freed, owned, sentinel) }])
+}
+
+// port: buffer_detach.rs fn detach_owned_buffers, for one function laid out this load.
+pub fn detach_owned_buffers(b: ir::Bundle, d_nr: integer) {
+  sentinel = scope_fn::def_nr(b, "OpNullRefSentinel");
+  d = b.data.definitions[d_nr]!;
+  if sentinel < 0 || d.def_type != 1 || len(d.code) == 0 {
+    return;
+  }
+  code = d.code[0]!;
+  f = d.variables;
+  freed: vector<integer> = [];
+  freed_vars(b, code, freed);
+  owned: vector<integer> = [];
+  owned_walk(b, code, f, freed, owned);
+  if len(owned) == 0 {
+    return;
+  }
+  b.data.definitions[d_nr].code = [detach_walk(b, code, f, freed, owned, sentinel)];
+}

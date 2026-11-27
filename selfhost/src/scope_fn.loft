@@ -352,6 +352,7 @@ fn copy_var(v: ir::Variable) -> ir::Variable {
   n.owner_witness = v.owner_witness;
   n.rebind_orig = v.rebind_orig;
   n.scope = v.scope;
+  n.arm_consumed = v.arm_consumed;
   n
 }
 

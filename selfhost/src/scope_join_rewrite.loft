@@ -7,7 +7,8 @@
 // owner block the parser gives it in a view-typed join (`{ __ref_N = call; __ref_N }`), before
 // any analysis reads the function.  The copy that HANDS a release over (into a place a
 // droppable-owning container reaches, or an appended element of a droppable type) is written
-// out per arm in Rust; it needs a type with a drop cascade, refused here by name.
+// out per arm in Rust; it needs a type with a drop cascade, refused here by name.  And
+// `reassociate_coalesce_chains`: a `??` chain the author grouped is written right-associated.
 
 use ir;
 use own;
@@ -218,4 +219,178 @@ fn own_calls(b: ir::Bundle, node: ir::Node, f: ir::Function) -> ir::Node {
     },
     _ => node
   }
+}
+
+// ── reassociate_coalesce_chains (`@FR-H-Move`, loft#1612) ──
+
+// The operators a chain rewrite reads: the presence tests of a record (`OpConvBoolFromRef`) and
+// a collection (`OpNot(OpVectorIsNull(v))`).
+struct Chain {
+  present: integer,
+  not_op: integer,
+  vec_null: integer,
+  counter: integer
+}
+
+// A chain's presence test of `v`, in both spellings.
+fn is_present(c: Chain, cond: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(cond) {
+    NdCall { def_nr, args } => {
+      if len(args) != 1 {
+        return false;
+      }
+      if def_nr == c.present {
+        return match scope_fn::unspan(args[0]!) { NdVar { n } => n == v, _ => false };
+      }
+      if def_nr == c.not_op && c.not_op >= 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdCall { def_nr: inner, args: ia } => {
+            return inner == c.vec_null && c.vec_null >= 0 && len(ia) == 1 && match scope_fn::unspan(ia[0]!) { NdVar { n } => n == v, _ => false };
+          },
+          _ => {}
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// One operand of a chain, with the temp the hoisted form gave it (-1: none).
+struct Operand {
+  node: ir::Node,
+  tmp: integer
+}
+
+// port: join_rewrite.rs fn operands — the operands of a hoisted `??` chain, in order; false
+// where `val` is not one.
+fn operands(c: Chain, val: ir::Node, out: vector<Operand>) -> boolean {
+  match scope_fn::unspan(val) {
+    NdIf { cond, t: head, f: alt } => {
+      hv = match scope_fn::unspan(head) { NdVar { n } => n, _ => -1 };
+      if hv < 0 || !is_present(c, cond, hv) {
+        return false;
+      }
+      out += [Operand { node: head, tmp: -1 }];
+      if !operands(c, alt, out) {
+        out += [Operand { node: alt, tmp: -1 }];
+      }
+      true
+    },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name != "ncc" || len(bl.operators) != 2 {
+        return false;
+      }
+      tmp = -1;
+      subject = ir::NdNull;
+      match scope_fn::unspan(bl.operators[0]!) {
+        NdSet { var, inner } => {
+          tmp = var;
+          subject = inner;
+        },
+        _ => { return false; }
+      }
+      match scope_fn::unspan(bl.operators[1]!) {
+        NdIf { cond, t: held, f: rest } => {
+          if !is_present(c, cond, tmp) || !match scope_fn::unspan(held) { NdVar { n } => n == tmp, _ => false } {
+            return false;
+          }
+          if !operands(c, subject, out) {
+            out += [Operand { node: subject, tmp: tmp }];
+          }
+          out += [Operand { node: rest, tmp: -1 }];
+          true
+        },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: join_rewrite.rs fn right_assoc — the chain written right-associated.
+fn right_assoc(c: Chain, ops: vector<Operand>, tp: ir::TypeT, f: ir::Function) -> ir::Node {
+  k = len(ops);
+  acc = ops[k - 1]!.node;
+  i = k - 2;
+  while i >= 0 {
+    o = ops[i]!;
+    match scope_fn::unspan(o.node) {
+      NdVar { n: x } => {
+        acc = ir::NdIf { cond: ir::NdCall { def_nr: c.present, args: [ir::NdVar { n: x }] }, t: o.node, f: acc };
+      },
+      _ => {
+        held = o.tmp;
+        if held < 0 {
+          c.counter += 1;
+          held = scope_fn::add_temp_var(f, "__ncc_a{c.counter}", tp);
+          f.variables[held].skip_free = true;
+        }
+        acc = ir::NdBlock { block: [ir::Block { name: "ncc", operators: [
+          scope_fn::v_set(held, o.node),
+          ir::NdIf { cond: ir::NdCall { def_nr: c.present, args: [ir::NdVar { n: held }] }, t: ir::NdVar { n: held }, f: acc }
+        ], result: [tp], scope: 0, var_size: 0 }] };
+      }
+    }
+    i -= 1;
+  }
+  acc
+}
+
+// A `sunk arm` block holding `op`.
+fn sunk_arm(op: ir::Node) -> ir::Node {
+  ir::NdBlock { block: [ir::Block { name: "sunk arm", operators: [op], result: [ir::TyVoid], scope: 0, var_size: 0 }] }
+}
+
+// The rewrite of one `Set(dest, <hoisted chain>)`, or null.
+fn reassoc(c: Chain, n: ir::Node, f: ir::Function) -> ir::Node? {
+  dest = -1;
+  val = ir::NdNull;
+  match n {
+    NdSet { var, inner } => {
+      dest = var;
+      val = inner;
+    },
+    _ => { return null; }
+  }
+  if !scope_fn::is_record(scope_fn::tp(f, dest)) && !(scope_fn::base(scope_fn::tp(f, dest)) is TyVector) {
+    return null;
+  }
+  dest_tp = scope_fn::tp(f, dest);
+  match scope_fn::unspan(val) {
+    NdBlock { block } => if block[0].name != "ncc" { return null; },
+    _ => { return null; }
+  }
+  ops: vector<Operand> = [];
+  if !operands(c, val, ops) {
+    return null;
+  }
+  if match scope_fn::unspan(ops[0]!.node) { NdVar { n: x } => x == dest, _ => false } {
+    rest = right_assoc(c, ops[1..], dest_tp, f);
+    return ir::NdIf {
+      cond: ir::NdCall { def_nr: c.present, args: [ir::NdVar { n: dest }] },
+      t: sunk_arm(ir::NdInsert { items: [] }),
+      f: sunk_arm(scope_fn::v_set(dest, rest))
+    };
+  }
+  scope_fn::v_set(dest, right_assoc(c, ops, dest_tp, f))
+}
+
+// Post-order: the children first, then the node itself.
+fn reassoc_walk(c: Chain, n: ir::Node, f: ir::Function) -> ir::Node {
+  kids = scope_fn::children(n);
+  node = if len(kids) == 0 { n } else { rebuild(n, [for x in kids { reassoc_walk(c, x, f) }]) };
+  r = reassoc(c, node, f);
+  if r != null { r! } else { node }
+}
+
+// port: join_rewrite.rs fn reassociate_coalesce_chains — a `??` chain the author grouped,
+// rewritten right-associated before any analysis reads the function.  Adds its temps to `f`.
+pub fn reassociate_coalesce_chains(b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  c = Chain { present: scope_fn::def_nr(b, "OpConvBoolFromRef"), not_op: scope_fn::def_nr(b, "OpNot"), vec_null: scope_fn::def_nr(b, "OpVectorIsNull"), counter: 0 };
+  if c.present < 0 {
+    return code;
+  }
+  reassoc_walk(c, code, f)
 }

@@ -28,6 +28,8 @@ use scope_text_replace;
 use scope_confinement;
 use scope_last_use;
 use scope_bound_append;
+use scope_buffer_detach;
+use scope_take_local;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -84,16 +86,17 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     d_nr = d#index;
     // A join copied into a container gives its bare call arms an owner before any analysis.
     jr = scope_join_rewrite::write_out_joined_copies(b, d.code[0]!, d.variables);
-    orig_code = jr.code;
+    vars = scope_fn::copy_function(d.variables);
+    orig_code = scope_join_rewrite::reassociate_coalesce_chains(b, jr.code, vars);
     why = program[d_nr] ?? "";
     if why == "" {
       why = jr.why;
     }
     if why == "" {
-      why = join_rewrites(b, orig_code, d.variables);
+      why = join_rewrites(vars);
     }
     stale = stale_callees(b, d_nr, orig_code, refused_nrs);
-    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale, [], []);
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], []);
     if why == "" {
       why = ph.why;
     }
@@ -101,7 +104,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     // with it read as an owner from the start.  The rescans below carry the set.
     late = ph.late;
     if why == "" && len(late) > 0 {
-      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale, [], late);
+      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late);
       why = ph.why;
       for v in ph.late {
         if !late.contains(v) {
@@ -124,7 +127,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
             scope_scan::put(cmap, c.local, c.block);
           }
         }
-        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale, cmap, late);
+        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, cmap, late);
         why = ph.why;
         for c in confined {
           ph.code = scope_confinement::relocate_null_init(ph.code, c.vdb, c.block);
@@ -163,7 +166,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why != "" {
       if all_reasons {
         all: vector<text> = [];
-        for r in [program[d_nr] ?? "", jr.why, join_rewrites(b, orig_code, d.variables)] {
+        for r in [program[d_nr] ?? "", jr.why, join_rewrites(vars)] {
           if r != "" {
             all += [r];
           }
@@ -185,8 +188,10 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       refused_nrs += [d_nr];
       continue;
     }
+    // `(R-MoveLast)`'s local clause, after `(R-Compact)` (refused above where it would fire).
+    code = scope_take_local::rewrite(b, ph.code, ph.function);
     // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
-    code = scope_wrapper::rewrite(b, ph.code);
+    code = scope_wrapper::rewrite(b, code);
     b.data.definitions[d_nr].variables = ph.function;
     b.data.definitions[d_nr].code = [code];
     // `compute_function_intervals`, `assign_function_slots`.
@@ -195,6 +200,13 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     scope::assign_slots(f, iv, scope::range_aliases(code, f, iops), scope::local_start(f));
     b.data.definitions[d_nr].code = [scope::zero_var_size(code)];
     settled[d_nr] = true;
+  }
+  // `@FR-O-Owner` — a literal buffer whose store a local owner takes over is detached, now that
+  // the deps say who owns and the frees say who releases.
+  for d in b.data.definitions {
+    if d.source != 0 && (settled[d#index] ?? false) {
+      scope_buffer_detach::detach_owned_buffers(b, d#index);
+    }
   }
   // After the loop: the cascades left with nothing to do are retired, and every call of one
   // dropped (`prune_empty_cascades`); `cascade_before_record_frees` runs a record's cascade
@@ -275,16 +287,88 @@ fn callees(n: ir::Node, out: vector<integer>) {
 // The whole-program rewrites `check` runs on the parser's bodies before the loop, each refused
 // where its trigger is in this body: `pure_reuse`, `elide_borrows`,
 // `move_elide`, `value_struct_copy` (`spent::record_all` records facts only), and the post-loop ones on the settled bodies: `text_replace::admit`,
-// `buffer_detach`, `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
+// `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
 // and closures, refused where they are bound).
 fn program_rewrites(b: ir::Bundle, free: vector<boolean>, code: ir::Node, f: ir::Function) -> text {
   calls: vector<integer> = [];
   w = Trigger { why: "" };
   triggers(b, free, code, f, calls, w);
+  if w.why == "" && elide_borrows_candidate(b, code, f) {
+    note(w, "move_elide::elide_borrows: a vector local filled once from a variable (use_analysis::elision_plans)");
+  }
   w.why
 }
 
-struct Trigger { why: text }
+// The copy idioms `use_analysis::elision_plans` reads, gathered as `collect_uses` does: the
+// buffer each local is defined from (`def_vdb`), the buffers minted (`database_vars`), and
+// each local's appends with the base of their source (`append_src`).
+struct Idiom { vdb: vector<integer>, minted: vector<integer>, appends: vector<integer>, based: vector<boolean> }
+
+fn idioms(b: ir::Bundle, n: ir::Node, gf: integer, db: integer, app: integer, u: Idiom) {
+  match n {
+    NdSet { var, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr, args } => if def_nr == gf && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) { NdVar { n: x } => if var < len(u.vdb) { u.vdb[var] = x; }, _ => {} }
+      },
+      _ => {}
+    },
+    NdCall { def_nr, args } => {
+      if def_nr == db && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) { NdVar { n: x } => { u.minted += [x]; }, _ => {} }
+      }
+      if def_nr == app && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: v } => if v < len(u.appends) {
+            u.appends[v] = (u.appends[v] ?? 0) + 1;
+            src = if len(args) > 1 { scope_fn::unspan(args[1]!) } else { ir::NdNull };
+            u.based[v] = match src {
+              NdVar => true,
+              NdCall { def_nr: g, args: ga } => g == gf && len(ga) > 0 && scope_fn::unspan(ga[0]!) is NdVar,
+              _ => false
+            };
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    idioms(b, c, gf, db, app, u);
+  }
+}
+
+// `move_elide::elide_borrows` (default on): a LOCAL vector filled by exactly one append from a
+// variable or a field of one into a fresh buffer may be bound in place of its copy — a superset
+// of the plans `use_analysis::elision_plans` makes, refused by name.
+fn elide_borrows_candidate(b: ir::Bundle, code: ir::Node, f: ir::Function) -> boolean {
+  gf = scope_fn::def_nr(b, "OpGetField");
+  db = scope_fn::def_nr(b, "OpDatabase");
+  app = scope_fn::def_nr(b, "OpAppendVector");
+  n = scope_fn::count(f);
+  u = Idiom { vdb: [for _ in 0..n { -1 }], minted: [], appends: [for _ in 0..n { 0 }], based: [for _ in 0..n { false }] };
+  idioms(b, code, gf, db, app, u);
+  for v in 0..n {
+    if (u.appends[v] ?? 0) == 1 && (u.based[v] ?? false) && !scope_fn::is_argument(f, v) && (u.vdb[v] ?? -1) >= 0 && u.minted.contains(u.vdb[v] ?? -1) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Trigger { why: text, f: ir::Function, has_loop: boolean }
+
+fn has_loop(n: ir::Node) -> boolean {
+  if n is NdLoop {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if has_loop(c) {
+      return true;
+    }
+  }
+  false
+}
 
 fn note(w: Trigger, why: text) {
   if w.why == "" {
@@ -321,47 +405,18 @@ fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, 
   }
 }
 
-// `write_out_joined_copies`, `reassociate_coalesce_chains`, `retain_shared_handles` — the
-// rewrites `check` runs on each body before its scan.
-fn join_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
+// `retain_shared_handles` — the one rewrite `check` runs on each body before its scan that is
+// not carried (`write_out_joined_copies` and `reassociate_coalesce_chains` are
+// `scope_join_rewrite`'s).
+fn join_rewrites(f: ir::Function) -> text {
   for v in f.variables {
     if scope_fn::base(v.type_def[0] ?? ir::TyVoid) is TyIterator {
       return "handles::retain_shared_handles: a generator handle";
     }
   }
-  w = Trigger { why: "" };
-  join_triggers(b, code, w);
-  w.why
+  ""
 }
 
-fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
-  match n {
-    // `write_out_joined_copies` is `scope_join_rewrite`'s.
-    NdIf { cond } => {
-      match scope_fn::unspan(cond) {
-        NdCall { def_nr, args } => {
-          nm = scope_args::def_name(b, def_nr);
-          if nm == "OpConvBoolFromRef" && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar {
-            note(w, "join_rewrite::reassociate_coalesce_chains: a record `??`");
-          }
-          if nm == "OpNot" && len(args) == 1 {
-            match scope_fn::unspan(args[0]!) {
-              NdCall { def_nr: inner } => if scope_args::def_name(b, inner) == "OpVectorIsNull" {
-                note(w, "join_rewrite::reassociate_coalesce_chains: a vector `??`");
-              },
-              _ => {}
-            }
-          }
-        },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    join_triggers(b, c, w);
-  }
-}
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
 // is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
@@ -393,6 +448,8 @@ fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Fun
     }
   }
   record_triggers(b, code, f, hidden, w);
+  w.f = f;
+  w.has_loop = has_loop(code);
   settled_triggers(b, code, false, w);
   w.why
 }
@@ -434,10 +491,31 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
         }
       }
     },
-    NdCall { def_nr } => {
+    NdCall { def_nr, args } => {
       nm = scope_args::def_name(b, def_nr);
-      if nm == "OpAppendVector" {
-        note(w, "compact::rewrite / slice_into::rewrite: a vector appended to");
+      if nm == "OpAppendVector" && len(args) > 1 {
+        src = scope_fn::unspan(args[1]!);
+        // `(R-SliceInto)`: a slice VALUE (its block) appended to a place.
+        if src is NdBlock || src is NdInsert {
+          note(w, "slice_into::rewrite: a slice value appended to a place");
+        }
+        // `(R-MoveLast)`'s host clause: a literal's vector field takes a local vector.
+        if src is NdVar && match scope_fn::unspan(args[0]!) { NdCall { def_nr: g } => scope_args::def_name(b, g) == "OpGetField", _ => false } {
+          match src {
+            NdVar { n: t } => if !scope_fn::is_argument(w.f, t) && scope_fn::base(scope_fn::tp(w.f, t)) is TyVector {
+              note(w, "literal_host::rewrite: a vector local appended into a literal's field");
+            },
+            _ => {}
+          }
+        }
+        // `(R-Compact)`: the rebind `V = t` of a local `t` built in a counted loop appends
+        // from `t`.
+        match src {
+          NdVar { n: t } => if w.has_loop && !scope_fn::is_argument(w.f, t) && scope_fn::base(scope_fn::tp(w.f, t)) is TyVector {
+            note(w, "compact::rewrite: a vector local appended whole beside a loop");
+          },
+          _ => {}
+        }
       }
       if nm == "OpPushByte" {
         note(w, "byte_copy::rewrite: a byte pushed");
