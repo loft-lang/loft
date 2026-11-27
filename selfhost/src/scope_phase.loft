@@ -17,7 +17,8 @@ use scope_args;
 pub struct Phase {
   pub code: ir::Node,
   pub function: ir::Function,
-  pub why: text
+  pub why: text,
+  pub whys: vector<text>
 }
 
 // port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
@@ -53,7 +54,8 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     sunk: [],
     assigned: assigned_in(orig_code),
     owned_refs: [],
-    why: ""
+    why: "",
+    whys: []
   };
   function = scope_fn::copy_function(orig_vars);
   pre_scan_refusals(s, b, d_nr, orig_code, function);
@@ -100,7 +102,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
       function.variables[v#index].scope = v;
     }
   }
-  Phase { code: code, function: function, why: s.why }
+  Phase { code: code, function: function, why: s.why, whys: s.whys }
 }
 
 // `body_block_mut`, with `ops` put in front of its operators.
@@ -140,6 +142,12 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
     if v.name.starts_with("___clos_") {
       scope_scan::refuse(s, "capture_builds::capture_build_backings: a closure record");
     }
+  }
+  // `capture_adoption::mark_borrowed_captures` (after the loop) rewrites a closure record's
+  // drop cascade: the release of a capture the record borrows is dropped, a cascade it no
+  // longer needs is retired.
+  if d.name.contains("__closure_") && d.name.contains("OpDrop") {
+    scope_scan::refuse(s, "capture_adoption::mark_borrowed_captures: a closure record's drop cascade");
   }
   if has_block(code, "fn_ref_with_closure") {
     scope_scan::refuse(s, "closure_keep::closure_keep_set: a closure built");

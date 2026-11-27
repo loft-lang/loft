@@ -106,13 +106,19 @@ pub struct Scopes {
   // reader asks them as Rust does.
   pub owned_refs: vector<integer>,
   // The first refusal met, "" while the scan is in its domain.
-  pub why: text
+  pub why: text,
+  // Every refusal met, in order (`LOFT_SCOPE_ALL_REASONS=1` reports them all: what ranks the
+  // modules to transcribe next).
+  pub whys: vector<text>
 }
 
 // Refuse the function: `module::function` and the shape it was asked about.
 pub fn refuse(s: Scopes, why: text) {
   if s.why == "" {
     s.why = why;
+  }
+  if !s.whys.contains(why) {
+    s.whys += [why];
   }
 }
 

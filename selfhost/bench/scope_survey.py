@@ -90,8 +90,11 @@ def one(loft, defs, scoped, std, path, tmp, env, i):
     want = own_definitions(o.stdout.splitlines())
     fns = {}
     for name in sorted(set(mine) | set(want)):
-        if name.split("#")[0] in unscoped:
-            fns[name] = ("unscoped", unscoped[name.split("#")[0]])
+        # A repeated name carries a `#N` suffix (`own_definitions`); a name may hold `#` of its
+        # own (`t_18Circle#Tri#integer_tag`), so the whole name is looked up first.
+        base = name if name in unscoped else re.sub(r"#\d+$", "", name)
+        if base in unscoped:
+            fns[name] = ("unscoped", unscoped[base])
         elif mine.get(name) == want.get(name):
             fns[name] = ("agree", "")
         else:

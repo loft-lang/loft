@@ -22,6 +22,7 @@ use scope;
 // by name.
 pub fn check(b: ir::Bundle) -> vector<text> {
   refused: vector<text> = [];
+  all_reasons = (env_variable("LOFT_SCOPE_ALL_REASONS") ?? "0") != "0";
   ops = scope_scan::ops_of(b);
   iops = scope::ops_of(b);
   for d in b.data.definitions {
@@ -42,6 +43,20 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       why = settled_rewrites(b, ph.code, ph.function);
     }
     if why != "" {
+      if all_reasons {
+        all: vector<text> = [];
+        for r in [program_rewrites(b, orig_code, d.variables), join_rewrites(b, orig_code, d.variables)] {
+          if r != "" {
+            all += [r];
+          }
+        }
+        all += ph.whys;
+        r = settled_rewrites(b, ph.code, ph.function);
+        if r != "" {
+          all += [r];
+        }
+        why = all.join(" | ");
+      }
       refused += ["{d.name}: {why}"];
       continue;
     }
