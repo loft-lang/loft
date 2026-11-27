@@ -2511,8 +2511,6 @@ pub fn name_fields(e: el::El, d: integer, fields: vector<integer>) {
   }
 }
 
-// The right side of a `+=`: `h += [R { … }]` appends to `h` whatever its type, a keyed
-// collection's included (one this pass may not type yet), and is no vector literal of its own.
 // Is `target` the value a body ends in, through its last statement and the arms of an `if` or a
 // `match` there?  (Such a literal is typed by the function's declared result.)
 fn in_tail(e: el::El, body: integer, target: integer) -> boolean {
@@ -2551,12 +2549,34 @@ fn in_tail(e: el::El, body: integer, target: integer) -> boolean {
   }
 }
 
+// The right side of a `+=` into a local declared keyed: `h += [R { … }]` with
+// `h: hash<R[id]>` (a type this pass may not resolve yet) is a keyed append, no vector literal
+// of its own.  (Into a declared vector it is one: `o: vector<Memo>`, probed.)  The declaration is
+// the nearest `let` of that name before the `+=`.
 fn appended_literal(e: el::El, n: integer) -> boolean {
   for x in e.p.nodes {
     match x {
-      SAssign { op: aop, e: arhs } => {
+      SAssign { op: aop, target: at, e: arhs } => {
         if aop == "+=" && arhs != null && arhs! == n {
-          return true;
+          tn = match e.p.nodes[at] { SName { name: an, member: am } => if am == "" { an } else { "" }, _ => "" };
+          if tn == "" {
+            return false;
+          }
+          keyed = false;
+          for y in e.p.nodes {
+            if y#index >= x#index {
+              break;
+            }
+            match y {
+              SLet { name: ln, tp: lt } => {
+                if ln == tn {
+                  keyed = lt != null && match e.p.nodes[lt!] { STy { name: tyn } => tyn == "hash" || tyn == "sorted" || tyn == "index" || tyn == "spatial" || tyn == "radix" || tyn == "trie", _ => false };
+                }
+              },
+              _ => {}
+            }
+          }
+          return keyed;
         }
       },
       _ => {}
@@ -2841,7 +2861,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         bd = el::def_nr(e, bn);
         lp = el::pos_at(e, ut);
         // (An unnamed `{…}` is typed by its place, which Rust knows.)
-        bn != "" && (bd < 0 || (el::def(e, bd).def_type == el::DT_UNKNOWN && !append && !appended_literal(e, n)) || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
+        bn != "" && (bd < 0 || (el::def(e, bd).def_type == el::DT_UNKNOWN && !appended_literal(e, n)) || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
       },
       // (A name bound off a value whose type only a stub names — `match s { Sq { w } => [w, w] }`
       // with `enum Shape` below — is no more typed on Rust's first pass.)
