@@ -2815,6 +2815,21 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         e.b.data.definitions[um].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] })];
       }
     }
+    // (A literal of such literals — `[[Fyle { … }], …]` — has the library's `vector` for its
+    // element on the first pass: `vector_def` names it `vector<vector>`, its wrapper beside it,
+    // at the literal's `]`.)
+    nested_unknown = len(items) > 0 && match e.p.nodes[items[0]] { SVecLit { items: nvi } => len(nvi) > 0, _ => false } && el::def_nr(e, "main_vector<unknown>") >= 0;
+    if e.first_pass && ut >= 0 && nested_unknown && el::def_nr(e, "vector<vector>") < 0 {
+      vvat = el::pos_at(e, closing_bracket(e, ut));
+      vvd = el::add_def(e, "vector<vector>", vvat, el::DT_VECTOR);
+      e.b.data.definitions[vvd].parent = el::source_nr(e, 0, "vector");
+      if el::def_nr(e, "main_vector<vector>") < 0 {
+        vvm = el::add_def(e, "main_vector<vector>", vvat, el::DT_STRUCT);
+        el::make_global(e, vvm);
+        e.b.data.definitions[vvm].returned = [ir::TyReference { n: vvm, dep: [] }];
+        e.b.data.definitions[vvm].attributes += [el::attribute("vector", ir::TyVector { inner: ir::TyVector { inner: ir::TyUnknown { n: 0 }, dep: [] }, dep: [] })];
+      }
+    }
     return refused_build();
   }
   // `parse_item`: each later item is converted to the element the first set
