@@ -4600,6 +4600,42 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         } else {
             None
         };
+        // (I-Comp) for a destination that KEEPS its store: a non-rebind argument — the NRVO
+        // return buffer a local tail-returned is renamed onto — has no fresh store to defer,
+        // and `create_vector` empties it in place before the build.  The loop's reads then go
+        // to a snapshot taken before that clear: its ops lead the build and their count is
+        // `build_snapshot_len`, after which `create_vector` puts the clear, as it does for a
+        // literal's snapshot.
+        let mut in_place_snapshot: Vec<Value> = Vec::new();
+        if deferred.is_none()
+            && !self.first_pass
+            && vec != u16::MAX
+            && self.vars.is_argument(vec)
+            && self.comprehension_reads_target(
+                vec,
+                is_var,
+                &[&fill, &create_iter, &for_next, &if_step, &body],
+            )
+        {
+            let mut parts = [
+                &mut fill,
+                &mut create_iter,
+                &mut for_next,
+                &mut if_step,
+                &mut body,
+            ];
+            if let Some(snapshot) = self.snapshot_read_destination(
+                vec,
+                &Value::Var(vec),
+                is_var,
+                false,
+                in_t,
+                &mut parts,
+                false,
+            ) {
+                in_place_snapshot = snapshot;
+            }
+        }
         // The container the loop appends through: the deferred store's own handle, or the
         // destination itself when nothing reads it back.
         let vec_expr = &match &deferred {
@@ -4821,6 +4857,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         if !is_var && !is_field {
             ls.push(Value::Var(vec));
+        }
+        if !in_place_snapshot.is_empty() {
+            self.build_snapshot_len = in_place_snapshot.len();
+            for (i, op) in in_place_snapshot.into_iter().enumerate() {
+                ls.insert(i, op);
+            }
         }
         *val = if block || (!is_var && !is_field) {
             v_block(ls, tp.clone(), "Vector comprehension")

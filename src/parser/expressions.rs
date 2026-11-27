@@ -6467,7 +6467,18 @@ use a separate collection or add after the loop"
         }
         if amp_vector_replace {
             let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
-            *code = Value::Insert(vec![clear, code.clone()]);
+            // After the build's snapshot of the destination, when it took one
+            // (`build_snapshot_len`): the clear is the detach the snapshot must precede, as
+            // `create_vector` places it — ahead of the snapshot, the build reads its own
+            // emptied destination (`(I-Comp)`).
+            *code = match code {
+                Value::Insert(ls) if snapshot_len > 0 && snapshot_len <= ls.len() => {
+                    let mut ls = std::mem::take(ls);
+                    ls.insert(snapshot_len, clear);
+                    Value::Insert(ls)
+                }
+                _ => Value::Insert(vec![clear, code.clone()]),
+            };
         }
         // @P376 — POISON an errored whole-RHS that resolves to `Unknown` (pass 2)
         // so the assigned variable doesn't cascade.  In the final pass an Unknown
