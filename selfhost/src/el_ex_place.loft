@@ -2240,7 +2240,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     at = el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]);
     return ex(ir::NdInsert { items: [el_ir::v_set(f, el_ir::cl(e, "OpGetText", [at, ir::NdInt { n: 0 }])), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code]), el_ir::cl(e, "OpSetTextReplace", [at, ir::NdInt { n: 0 }, ir::NdVar { n: f }])] }, ir::TyVoid);
   }
-  if stack || (el_types::base(vt) is TyText && !(vt is TyOptional)) {
+  // (A `text?` local appends as a text one does: `OpAppendText`, the local keeping its `?`.)
+  if stack || el_types::base(vt) is TyText {
     if bin != "+" {
       el::refuse(e, "a text compound assignment other than `+=`");
       return ex(ir::NdNull, ir::TyVoid);
