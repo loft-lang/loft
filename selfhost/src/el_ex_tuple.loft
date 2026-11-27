@@ -709,6 +709,19 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
         rroot = place_root(e, x.code);
         return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, rsd).known_type }]), el_types::with_deps(mt, if rroot >= 0 { [rroot] } else { [] }));
       }
+      // So is a struct-enum member, its record inline in the element (`OpGetField(…, pos, E)`).
+      sed = match el_types::base(mt) { TyEnum { n: sen, is_ref: ser } => if ser { sen } else { -1 }, _ => -1 };
+      if td >= 0 && elem_read && index >= 0 && index < len(ee) && sed >= 0 && !(mt is TyOptional) {
+        // (A view of the vector's local, on both passes.)
+        euw = unbox_cursor(e, vars, td, x.code);
+        eroot = place_root(e, x.code);
+        // (On the first pass a field read too, offsets unsettled: a match takes it as a place
+        // and holds no subject, as on the second.)
+        if e.first_pass {
+          return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]), el_types::with_deps(mt, if eroot >= 0 { [eroot] } else { [] }));
+        }
+        return ex(el_ir::cl(e, "OpGetField", [x.code, ir::NdInt { n: field_position(e, td, "_{index}") }, ir::NdInt { n: el::def(e, sed).known_type }]), el_types::with_deps(mt, if eroot >= 0 { [eroot] } else { [] }));
+      }
       // A vector member of an element is its field the same way, a view of the vector's local.
       if td >= 0 && elem_read && index >= 0 && index < len(ee) && mt is TyVector {
         vuw = unbox_cursor(e, vars, td, x.code);

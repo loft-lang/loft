@@ -3309,7 +3309,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         // A record member is copied into its slot of the element (`set_field`), a vector member
         // appended into its field.
         narrow = match elems[m#index] ?? ir::TyVoid { TyInteger { spec: ns } => el_types::narrow_width(ns) > 0, _ => false };
-        if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow || el_types::base(elems[m#index] ?? ir::TyVoid) is TyVector {
+        if struct_ref(e, elems[m#index] ?? ir::TyVoid) >= 0 || narrow || el_types::base(elems[m#index] ?? ir::TyVoid) is TyVector || el_convert::struct_enum(el_types::base(elems[m#index] ?? ir::TyVoid)) {
           ls += [el_ex_object::set_field(e, td, m#index, at, m)];
         } else {
           ls += [el_ir::cl(e, el_ex_object::tuple_set_op(elems[m#index] ?? ir::TyVoid), [at, ir::NdInt { n: fs[m#index]!.position }, m])];
