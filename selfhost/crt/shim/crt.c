@@ -623,6 +623,13 @@ int64_t loft_crt_store_live(int64_t nr) {
     return nr >= 0 && nr < cx->nstores && cx->stores[nr].live ? 1 : 0;
 }
 
+/* Does live store `nr` hold nothing but its root record (`Store::holds_only_root`)?  A store that
+ * is not live answers 0. */
+int64_t loft_crt_store_only_root(int64_t nr) {
+    loft_cx *cx = &loft_main_cx;
+    return nr >= 0 && nr < cx->nstores && cx->stores[nr].live && loft_st_holds_only_root(cx, &cx->stores[nr]) ? 1 : 0;
+}
+
 /* The type a typed mint gave store `nr`'s root (`Store::known_type`), 65535 for none. */
 int64_t loft_crt_store_known(int64_t nr) {
     loft_cx *cx = &loft_main_cx;
