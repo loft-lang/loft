@@ -325,9 +325,16 @@ fn lane(ret: ir::TypeT) -> Lane {
 }
 
 // `par_elem_size`: the stride of a plain scalar, a text or a record element; -1 for any other.
+// `par_elem_size`: a narrow integer its width (`vector_narrow_width`, 4 included), a function its
+// 4-byte number, a nested vector its handle, any other element its type's store size — a
+// `τ?` element its base's (`type_elm`), no narrow width asked.
 fn element_size(e: el::El, elem: ir::TypeT) -> integer {
   match elem {
-    TyInteger { spec } => if spec.forced_size == 4 { -1 } else { el_ex_base::elem_size(elem) },
+    TyInteger { spec: _ } => el_ex_base::elem_size(elem),
+    TyFunction => 4,
+    // (A tuple element is its record's store size: `(integer, integer)` strides 16.)
+    TyTuple { elems: _ } => if e.first_pass { 4 } else { el_ex_base::element_stride(e, elem) },
+    TyOptional { inner } => if el_ex_base::elem_size(elem) > 0 { el_ex_base::elem_size(elem) } else { element_size(e, inner) },
     TyReference { n: _ } => if e.first_pass { 0 } else { el_ex_base::record_size(e, elem) },
     TyFloat => 8,
     TySingle => 4,
