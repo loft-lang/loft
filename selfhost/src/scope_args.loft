@@ -17,11 +17,6 @@ use scope_join_rewrite;
 use scope_buffers;
 use own;
 
-pub struct Scanned {
-  pub preamble: vector<ir::Node>,
-  pub ls: vector<ir::Node>,
-  pub postamble: vector<ir::Node>
-}
 
 // The type of the value a node answers, where the node says it: a variable, a call, a call
 // through a fn-ref, a value block, a literal.  `TyUnknown` where it does not.
@@ -767,6 +762,7 @@ fn hoist_insert(s: scope_scan::Scopes, b: ir::Bundle, items: vector<ir::Node>, f
   if !(is_a56 || is_p135 || is_p179 || is_slot_hoisted(s, items)) {
     return false;
   }
+  final_val = items[k - 1]!;
   if is_p179 && amp_writeback_applies(b, items, arg_idx, outer_call, f) {
     scope_scan::refuse(s, "args::amp_writeback_owned_copy: a computed `&` place the callee rebinds");
   }
@@ -784,7 +780,6 @@ fn hoist_insert(s: scope_scan::Scopes, b: ir::Bundle, items: vector<ir::Node>, f
       }
     }
   }
-  final_val = items[k - 1]!;
   tp = scope_inline_returns::inline_struct_return(s, b, final_val, outer_call, f);
   if tp != null {
     host_store_site(s, b, outer_call, arg_idx, final_val);
@@ -814,10 +809,9 @@ fn host_store_site(s: scope_scan::Scopes, b: ir::Bundle, outer_call: integer, ar
 }
 
 // port: args.rs fn scan_args
-pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function, outer_call: integer) -> Scanned {
-  preamble: vector<ir::Node> = [];
-  ls: vector<ir::Node> = [];
-  postamble: vector<ir::Node> = [];
+// The three lists are the caller's, filled here: a struct of nodes handed back through the
+// scan's recursion is the shape loft double-frees (scope-pass-port.md § Built, step 3).
+pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function, outer_call: integer, preamble: vector<ir::Node>, ls: vector<ir::Node>, postamble: vector<ir::Node>) {
   callee: ir::Definition? = if outer_call >= 0 { b.data.definitions[outer_call] } else { null };
   borrows = callee != null && binds::is_loft_defined(callee!) && returns_borrowed_view(callee!)
     && !(scope_fn::base(callee!.returned[0] ?? ir::TyVoid) is TyFunction);
@@ -859,9 +853,9 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
         continue;
       }
     }
-    match scanned {
-      NdSpan { inner } => if inner is NdInsert { scanned = inner; },
-      _ => {}
+    spanned_insert = match scanned { NdSpan { inner } => inner is NdInsert, _ => false };
+    if spanned_insert {
+      scanned = scope_fn::unspan(scanned);
     }
     match scanned {
       NdCall { def_nr: cs, args: cargs } => {
@@ -883,17 +877,18 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
           continue;
         }
         k = len(items);
-        tp = if k > 0 { scope_inline_returns::inline_struct_return(s, b, items[k - 1]!, outer_call, f) } else { null };
+        tail = if k > 0 { items[k - 1]! } else { ir::NdNull };
+        tp = if k > 0 { scope_inline_returns::inline_struct_return(s, b, tail, outer_call, f) } else { null };
         if tp != null {
           // loft#1029 — an `Insert` whose tail is a heap-returning call: its ops hoist, the call
           // lifts.
           for op in items[0..k - 1] {
             preamble += [op];
           }
-          host_store_site(s, b, outer_call, arg_idx, items[k - 1]!);
+          host_store_site(s, b, outer_call, arg_idx, tail);
           tmp = scope_scan::new_lift_var(s, f, tp!);
           mark_lift_handoff(s, tmp, arg_idx, transfer_copy, moved_arg);
-          preamble += [scope_scan::lift_set(s, b, tmp, items[k - 1]!, f)];
+          preamble += [scope_scan::lift_set(s, b, tmp, tail, f)];
           ls += [ir::NdVar { n: tmp }];
         } else {
           ls += [scanned];
@@ -979,7 +974,6 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
     s.consumed_lifts.clear();
     s.consumed_lifts += rest;
   }
-  Scanned { preamble: preamble, ls: ls, postamble: postamble }
 }
 
 // port: use_analysis.rs fn inline_handle_needs_holder

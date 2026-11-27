@@ -676,8 +676,10 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
             match scope_fn::unspan(sv) {
               NdInsert { items } => {
                 k = len(items);
+                // The tail is read before the list is built (see scan_set's Span arm).
+                last = items[k - 1]!;
                 ops: vector<ir::Node> = [for x in items[0..k - 1] { x }];
-                ops += [scope_fn::v_set(v, items[k - 1]!)];
+                ops += [scope_fn::v_set(v, last)];
                 return ir::NdInsert { items: ops };
               },
               _ => {}
@@ -748,12 +750,15 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
     NdBlock { block } => scan_block(s, b, block[0], f),
     NdCall { def_nr, args } => scan_call(s, b, def_nr, args, f),
     NdCallRef { var: v_nr, args } => {
-      sa = scope_args::scan_args(s, b, args, f, -1);
-      call = ir::NdCallRef { var: mapped(s, v_nr), args: sa.ls };
-      if len(sa.preamble) == 0 {
+      pre: vector<ir::Node> = [];
+      cls: vector<ir::Node> = [];
+      post: vector<ir::Node> = [];
+      scope_args::scan_args(s, b, args, f, -1, pre, cls, post);
+      call = ir::NdCallRef { var: mapped(s, v_nr), args: cls };
+      if len(pre) == 0 {
         return call;
       }
-      ops = sa.preamble;
+      ops = pre;
       ops += [call];
       ir::NdInsert { items: ops }
     },
@@ -769,8 +774,9 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
             return ir::NdDrop { inner: scanned };
           }
           tmp = new_lift_var(s, f, tp!);
+          last = items[k - 1]!;
           ops: vector<ir::Node> = [for x in items[0..k - 1] { x }];
-          ops += [lift_set(s, b, tmp, items[k - 1]!, f)];
+          ops += [lift_set(s, b, tmp, last, f)];
           ir::NdInsert { items: ops }
         },
         _ => {
@@ -963,8 +969,11 @@ fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f:
       refuse(s, "scan::owner_slot_handoff: a closure record's capture (capture_adoption)");
     }
   }
-  sa = scope_args::scan_args(s, b, args, f, d_nr);
-  call = ir::NdCall { def_nr: d_nr, args: sa.ls };
+  preamble: vector<ir::Node> = [];
+  cls: vector<ir::Node> = [];
+  postamble: vector<ir::Node> = [];
+  scope_args::scan_args(s, b, args, f, d_nr, preamble, cls, postamble);
+  call = ir::NdCall { def_nr: d_nr, args: cls };
   // `@FR-H-Drop` — a copy that frees its source hands a work-ref's record on.
   if d_nr == s.ops.copy_record {
     match scope_fn::unspan(args[2] ?? ir::NdNull) {
@@ -976,8 +985,6 @@ fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f:
   }
   // `arm_handoff_flags` and `regrown_flag` read `handed_off`/`per_path_pairs`, which the phase
   // leaves empty.
-  preamble = sa.preamble;
-  postamble = sa.postamble;
   if len(preamble) == 0 && len(postamble) == 0 {
     return call;
   }
