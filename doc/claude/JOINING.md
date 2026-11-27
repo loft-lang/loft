@@ -55,6 +55,9 @@ that builds on it stops `apply` at its conflict, where it is resolved or dropped
 (a pending commit and a later one that exactly inverts it — the self-reverting run below, skipped
 whole), else `NEW`, or `PARTIAL` when only some of its files are here.
 
+So a commit meant to land is never named `wip:`: the join leaves it out, and nothing says so until
+a later commit that uses it fails to build on the joined base.
+
 A source NOT on the base (a pre-squash branch) is cut first at its **squash point**: the
 newest of its commits that a squash on the base lists, read from every squash since the branch
 left the base.  A squash of the branch itself carries its tree, so a commit up to that point is
