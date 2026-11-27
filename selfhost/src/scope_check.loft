@@ -17,6 +17,7 @@ use scope_scan;
 use scope_phase;
 use scope_args;
 use scope_wrapper;
+use scope_join_rewrite;
 use scope;
 use scope_pure;
 use binds;
@@ -45,12 +46,17 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       continue;
     }
     d_nr = d#index;
-    orig_code = d.code[0]!;
+    // A join copied into a container gives its bare call arms an owner before any analysis.
+    jr = scope_join_rewrite::write_out_joined_copies(b, d.code[0]!, d.variables);
+    orig_code = jr.code;
     why = program[d_nr] ?? "";
+    if why == "" {
+      why = jr.why;
+    }
     if why == "" {
       why = join_rewrites(b, orig_code, d.variables);
     }
-    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale_callee(b, d_nr, orig_code, refused_nrs));
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale_callees(b, d_nr, orig_code, refused_nrs));
     if why == "" {
       why = ph.why;
     }
@@ -60,7 +66,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why != "" {
       if all_reasons {
         all: vector<text> = [];
-        for r in [program[d_nr] ?? "", join_rewrites(b, orig_code, d.variables)] {
+        for r in [program[d_nr] ?? "", jr.why, join_rewrites(b, orig_code, d.variables)] {
           if r != "" {
             all += [r];
           }
@@ -89,30 +95,48 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   refused
 }
 
-// The first function reachable from `code` through calls and function values that Rust laid
-// out before `d_nr` while this pass refused it, "" for none: an ownership summary read through
-// it would read a body this image does not hold.
-fn stale_callee(b: ir::Bundle, d_nr: integer, code: ir::Node, refused_nrs: vector<integer>) -> text {
-  todo: vector<integer> = [];
-  callees(code, todo);
+// The callees and function values named in `code` whose ownership summary reaches, through
+// calls, a function Rust laid out before `d_nr` while this pass refused it: a summary read
+// through one reads a body this image does not hold.
+fn stale_callees(b: ir::Bundle, d_nr: integer, code: ir::Node, refused_nrs: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  if len(refused_nrs) == 0 {
+    return out;
+  }
+  direct: vector<integer> = [];
+  callees(code, direct);
+  memo: vector<integer> = [];
+  for c in direct {
+    if !scope_fn::has(out, c) && reaches_refused(b, d_nr, c, refused_nrs, memo, []) {
+      out += [c];
+    }
+  }
+  out
+}
+
+// Does `c`'s call closure reach a refused function?  Answered by a walk of the closure; `memo`
+// holds the definitions already known to reach one.
+fn reaches_refused(b: ir::Bundle, d_nr: integer, c: integer, refused_nrs: vector<integer>, memo: vector<integer>, path: vector<integer>) -> boolean {
+  todo = [c];
   seen: vector<integer> = [];
   while len(todo) > 0 {
-    c = todo[len(todo) - 1]!;
+    x = todo[len(todo) - 1]!;
     todo = todo[0..len(todo) - 1];
-    if scope_fn::has(seen, c) || c == d_nr {
+    if x == d_nr || scope_fn::has(seen, x) {
       continue;
     }
-    seen += [c];
-    cd = b.data.definitions[c];
-    if cd == null || cd!.def_type != 1 || cd!.source == 0 || len(cd!.code) == 0 {
+    seen += [x];
+    if scope_fn::has(memo, x) || scope_fn::has(refused_nrs, x) {
+      memo += [c];
+      return true;
+    }
+    xd = b.data.definitions[x];
+    if xd == null || xd!.def_type != 1 || xd!.source == 0 || len(xd!.code) == 0 {
       continue;
     }
-    if c < d_nr && scope_fn::has(refused_nrs, c) {
-      return cd!.name;
-    }
-    callees(cd!.code[0]!, todo);
+    callees(xd!.code[0]!, todo);
   }
-  ""
+  false
 }
 
 fn callees(n: ir::Node, out: vector<integer>) {
@@ -128,8 +152,7 @@ fn callees(n: ir::Node, out: vector<integer>) {
 
 // The whole-program rewrites `check` runs on the parser's bodies before the loop, each refused
 // where its trigger is in this body: `pure_reuse`, `bound_append`, `elide_borrows`,
-// `value_struct_copy` (`spent::record_all` records facts only; `move_elide` is off unless
-// `LOFT_MOVE_ELIDE`), and the post-loop ones on the settled bodies: `text_replace::admit`,
+// `move_elide`, `value_struct_copy` (`spent::record_all` records facts only), and the post-loop ones on the settled bodies: `text_replace::admit`,
 // `buffer_detach`, `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
 // and closures, refused where they are bound).
 fn program_rewrites(b: ir::Bundle, free: vector<boolean>, code: ir::Node, f: ir::Function) -> text {
@@ -164,6 +187,16 @@ fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, 
       if nm == "OpSetTextReplace" {
         note(w, "text_replace::admit: a text field assigned");
       }
+      // `move_elide` (default on): a record copied out of a local at that local's last use is
+      // built in the copy's destination instead (`MovePlan`, the `a.field = base` rewrite).
+      if nm == "OpCopyRecord" && len(args) > 1 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: src } => if !scope_fn::is_argument(f, src) {
+            note(w, "move_elide::move_elide: a local record copied out (use_analysis::move_plans)");
+          },
+          _ => {}
+        }
+      }
     },
     _ => {}
   }
@@ -187,14 +220,7 @@ fn join_rewrites(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
 
 fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
   match n {
-    NdCall { def_nr, args } => {
-      if scope_args::def_name(b, def_nr) == "OpCopyRecord" && len(args) > 0 {
-        a0 = scope_fn::unspan(args[0]!);
-        if a0 is NdIf || a0 is NdBlock || a0 is NdInsert {
-          note(w, "join_rewrite::write_out_joined_copies: a join copied into a container");
-        }
-      }
-    },
+    // `write_out_joined_copies` is `scope_join_rewrite`'s.
     NdIf { cond } => {
       match scope_fn::unspan(cond) {
         NdCall { def_nr, args } => {
