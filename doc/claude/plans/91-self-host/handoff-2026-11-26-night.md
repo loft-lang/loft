@@ -150,6 +150,13 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   borrows a LATER loop's vector (`text["_vector_3"]` where Rust's is plain `text`) — the type is
   not set by `set_type` on pass 2, so it is the pass-1 variable's; advancing `loop_binding` for
   the pass-1 members did not cure it.  Held.
+- A range over a NULLABLE narrow start (`for i in n..5`, `n: u8?`): Rust counts in `u8?`
+  (`_range_start_N`, `_next_N`, `i#index`) and the loop variable is the dense `u8` (probe u84,
+  agrees with the change: narrow_spec from the start's base, the counters given the `?` back).
+  Held: I-RangeNull/a-null-range-bound-… then meets `fn opt8(n) -> u8? { if n > 0 { n as u8? }
+  else { null } }` (probe dn1), where Rust types the `null` arm `integer?`, joins to `integer?` and
+  narrows the whole `if` with an outer `dn4cast(OpRangeDefault(if …))`; the port types the arm
+  `u8?` and casts nothing.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
