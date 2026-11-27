@@ -1255,6 +1255,14 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         if !e.first_pass {
           // The second pass converts the default to the field (`set_attr_value`).
           cvx = field_computed(e, mods);
+          ivx = field_init_expr(e, mods);
+          if ivx != null {
+            dv = computed_value(e, ivx!, t!);
+            if dv == null {
+              el::refuse(e, "an init field's expression of this kind");
+              continue;
+            }
+          }
           if cvx != null {
             dv = computed_value(e, cvx!, t!);
             if dv == null {
@@ -1266,6 +1274,9 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
             if a.name == fname {
               if cvx != null {
                 e.b.data.definitions[d].attributes[a#index].constant = true;
+              }
+              if ivx != null {
+                e.b.data.definitions[d].attributes[a#index].init = true;
               }
               if dv != null {
                 e.b.data.definitions[d].attributes[a#index].value = [dv!];
@@ -1307,6 +1318,9 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
         if field_computed(e, mods) != null {
           a.constant = true;
         }
+        if field_init_expr(e, mods) != null {
+          a.init = true;
+        }
         a.fact = alias_fact(e, tn!);
         // The alias an integer field is named by (`u8`, `i32`), whose `size(n)` routes its slot.
         if tp is TyInteger {
@@ -1343,7 +1357,7 @@ fn field_type_node(e: el::El, mods: vector<integer>) -> integer? {
         ty = tp;
       },
       SFieldMod { kind } => {
-        if kind != "const" && kind != "computed" && kind != "virtual" {
+        if kind != "const" && kind != "computed" && kind != "virtual" && kind != "init" {
           return null;
         }
       },
@@ -1361,6 +1375,18 @@ fn field_computed(e: el::El, mods: vector<integer>) -> integer? {
   for m in mods {
     match e.p.nodes[m] {
       SFieldMod { kind, a } => if kind == "computed" || kind == "virtual" { return a; },
+      _ => {}
+    }
+  }
+  null
+}
+
+// The expression of an `init(…)` field (`parse_field_default`'s `is_init`: the attribute's
+// `init`, its value replayed at each construction as a stored default is), or null.
+fn field_init_expr(e: el::El, mods: vector<integer>) -> integer? {
+  for m in mods {
+    match e.p.nodes[m] {
+      SFieldMod { kind, a } => if kind == "init" { return a; },
       _ => {}
     }
   }
