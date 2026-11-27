@@ -1086,6 +1086,18 @@ fn append_place(e: el::El, vars: el_vars::Vars, n: integer) -> AppendPlace {
       b = append_place(e, vars, tin!);
       bt = match b.tp { TyRefVar { inner: bi } => bi, _ => b.tp };
       td = match el_types::base(bt) { TyReference { n: tn } => if starts_with(el::def(e, tn).name, "__tuple<") { tn } else { -1 }, _ => -1 };
+      // (…and so is a member of an ELEMENT of a vector of tuples, `y[0].1`: the element is its
+      // `__tuple<…>` record in the vector's store, the member a field read rooted at the vector.)
+      if td < 0 && e.p.nodes[tin!] is SIndex {
+        match el_types::base(bt) {
+          TyTuple { elems: tge } => {
+            if index >= 0 && index < len(tge) {
+              return AppendPlace { root: b.root, tp: tge[index]! };
+            }
+          },
+          _ => {}
+        }
+      }
       if td < 0 || index < 0 || index >= len(el::def(e, td).attributes) {
         return AppendPlace { root: -1, tp: ir::TyVoid };
       }
