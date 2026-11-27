@@ -2951,7 +2951,7 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   if len(xs) > 0 {
     vector_of(e, in_t);
   }
-  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close);
+  rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close, appended: append);
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
   // answers its vector all the same, `vector<ref(P)>` as Rust's `parse_vector` types it.  So
   // does a vector element in value position — a `for`'s source, an argument, a subscript's

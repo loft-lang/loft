@@ -2305,7 +2305,7 @@ fn registration_name(e: el::El, t: ir::TypeT) -> text {
   }
 }
 
-pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> VecRows? {
+pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, appended: boolean = false) -> VecRows? {
   if t is TyTuple {
     return tuple_vector_rows(e, t, lit, declared);
   }
@@ -2363,6 +2363,11 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   // The scalar's own `vector<scalar>` definition follows on the second pass (`check_vector`),
   // at the same place, its row the first pass's.
   sbn = el_types::nullable_scalar_elem(e, t);
+  // (A nullable plain enum's too: `check_vector` names it by the enum's definition,
+  // `vector<ColLink>` for a `vector<ColLink?>`.)
+  if sbn == "" {
+    sbn = match t { TyOptional { inner: oe } => match oe { TyEnum { n, is_ref } => if is_ref { "" } else { el::def(e, n).name }, _ => "" }, _ => "" };
+  }
   // So does a plain `single`'s, for a literal with items (`v: vector<single> = [0.5f]`): the
   // library declares its wrapper and no `vector<single>`.
   if sbn == "" && t is TySingle && match e.p.nodes[lit] { SVecLit { items: li } => len(li) > 0, _ => false } {
@@ -2371,11 +2376,13 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean) -> 
   if !e.first_pass && sbn != "" && el::def_nr(e, "vector<{sbn}>") < 0 && el_schema::schema_type(e, "vector<{sbn}>") >= 0 {
     stok = match e.p.nodes[lit] { SVecLit { at } => at, SComprehension { at } => at, _ => 0 };
     sat = closing_bracket(e, stok);
-    if sat == stok + 1 || declared {
+    // (An append's literal names it at its `]`, as `parse_append_vector` does.)
+    if (sat == stok + 1 || declared) && !appended {
       sat = stok - 1;
     }
     svd = el::add_def(e, "vector<{sbn}>", el::pos_at(e, sat), el::DT_VECTOR);
-    e.b.data.definitions[svd].parent = el::source_nr(e, 0, sbn);
+    spar = el::source_nr(e, 0, sbn);
+    e.b.data.definitions[svd].parent = if spar >= 0 { spar } else { el::def_nr(e, sbn) };
     e.b.data.definitions[svd].known_type = el_schema::schema_type(e, "vector<{sbn}>");
   }
   // (A function value's `vector<i32>` definition follows on the second pass, at the literal,
