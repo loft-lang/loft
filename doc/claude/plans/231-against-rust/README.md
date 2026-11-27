@@ -101,12 +101,21 @@ the program with `ticks()` (probes 55–60; the answers checked by hand):
 |---|---|---|---|---|
 | bind a field to a local (`fl = w.f; fl.d[i]`) — dryopea: *"NEVER bind a FlowField to a local … 2250×"* | index inline | 18–34 ms against 26–30 ms | 261–300 ms against 236–313 ms | no gap: the note is stale |
 | `for r in v` over records with three text fields — routing: walk by index | `while i < len(v) { v[i] … }` | 5.8–5.9 ms against 7.9–8.0 ms | 244–249 ms against 229–234 ms | no gap; the natural form is faster on C |
-| `map(filter(v, p), f)` | `[for x in v if p(x) { f(x) }]` | **37–53 ms against 8–12 ms** | 323–372 ms against 224–260 ms | **a 4–5× gap on C: owed** |
+| `map(filter(v, p), f)` | `[for x in v if p(x) { f(x) }]` | 37–53 ms against 8–12 ms | 323–372 ms against 224–260 ms | a 4–5× gap on C, **deferred: not a natural loft form** |
 
-The third row turns R5's fusion from "an optimisation for later" into a gap goal F owes, since
-`map(filter(…))` is the form a newcomer reaches for.  It is a cost-layer item (a rewrite fusing
-the stages where both lambdas are pure, and placing the lambda bodies inline), separate from the
-source refusal of loft#2658.
+Goal F owes speed only to a NATURAL spelling — *"is this natural to write, the form a programmer
+reaches for?"* — and a spelling that is not *"keeps today's correct, slower code and is DEFERRED
+with its case written down … never a defect"*.  The owner rules `map(filter(…))` not natural in
+loft, and the corpus says the same: across the published libraries and the consumers (crawler,
+routing, dryopea, moros, hexbody) the comprehension is written about 56 times and the filtered
+`for` 7 times, and `map`/`filter`/`reduce` not once — nor by this project's own agents in a year
+of writing loft.  So the 4–5× is this deferral's written-down case: the fusion is not built,
+and the natural forms it would imitate are already the fast ones.
+
+How this shapes the lifts: loft#2658 still makes the three accept every source the rules
+promise — a habit user's first `map` should work — but it owes them correctness, not the speed
+of the comprehension.  The same test applies to every cost question in this plan: measure the
+form the corpus actually writes before calling a gap owed.
 
 **A correction to every earlier measurement in this plan:** a bare `loft prog.loft` runs the C
 backend — native is the default (`loft --help`) — so the runs first recorded as "interpreter

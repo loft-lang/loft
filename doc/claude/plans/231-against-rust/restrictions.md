@@ -203,9 +203,10 @@ what was measured and whether it can be lifted.  Probe numbers refer to [probes/
 - **And an optimisation, not a restriction:** fusing `map(filter(…))` into one loop is a
   rewrite the layer could admit wherever the difference cannot be observed — where both lambdas
   are pure — as the other `R-` rules carry their admission conditions.  It is not part of the
-  lift, and it is OWED all the same: measured, the chain is 4–5× the fused comprehension on C
-  (README § The natural form owes its speed, probes 59–60), and goal F gives the natural
-  spelling the efficient code.
+  lift, and it is DEFERRED: the chain is 4–5× the fused comprehension on C (README § The
+  natural form owes its speed, probes 59–60), but goal F owes speed only to a natural spelling,
+  and in loft the natural one is the comprehension — written about 56 times across the
+  libraries and consumers, `map`/`filter` never (the owner's ruling).
 - **Verdict.**  Liftable, and the rules already say how.  Out of the plan as
   [loft#2658](https://github.com/loft-lang/loft/issues/2658) and the deviation **D-iter-18** in
   `formal/iteration.md`.
