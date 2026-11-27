@@ -3132,7 +3132,26 @@ impl Function {
             self.trace_type_change(v, type_def, "unique(elm)");
             self.variables[v as usize].type_def = type_def.clone();
         }
+        self.adopt_remint_deps(&full, type_def);
         self.add_variable(&full, type_def, lexer)
+    }
+
+    /// @PLN233: a temp re-minted at the SAME shape takes this pass's borrows.  A temp's name is
+    /// minted once per pass (`unique`'s counter restarts in `append`; a match subject is keyed by
+    /// its site), so an existing entry is pass 1's, and its dependency list is no fact about
+    /// pass 2's value: a match subject `(a, k)` or `t.parts[0]!` borrows parameter `a` / `t`
+    /// because pass 2's subject type says so, not because pass 1 did (stripped, the temp read as
+    /// an owner and freed the parameter's store twice).  Only the deps are adopted: a shape that
+    /// differs stays pass 1's, which the families in `unique` rely on (a capture's local `τ?`).
+    fn adopt_remint_deps(&mut self, full: &str, type_def: &Type) {
+        if let Some(&v) = self.names.get(full)
+            && !type_def.is_unknown()
+            && self.variables[v as usize].type_def != *type_def
+            && self.variables[v as usize].type_def.without_deps() == type_def.without_deps()
+        {
+            self.trace_type_change(v, type_def, "re-mint(deps)");
+            self.variables[v as usize].type_def = type_def.clone();
+        }
     }
 
     /// The temp a `match` evaluates its subject into once (`@FR-M-Match`), named for its SITE.
@@ -3161,7 +3180,11 @@ impl Function {
             return v;
         }
         match self.subject_sites.get(&site) {
-            Some(&nr) => self.add_variable(&format!("_match_subj_{nr}"), type_def, lexer),
+            Some(&nr) => {
+                let full = format!("_match_subj_{nr}");
+                self.adopt_remint_deps(&full, type_def);
+                self.add_variable(&full, type_def, lexer)
+            }
             None => self.unique("match_subj_late", type_def, lexer),
         }
     }
