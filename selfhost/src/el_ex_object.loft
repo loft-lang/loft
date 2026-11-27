@@ -485,15 +485,20 @@ pub fn literal_instance(e: el::El, vars: el_vars::Vars, d: integer, fields: vect
 // not built: its `{ … }` is skipped unread, and a name no definition holds yet leaves a stub
 // (`DefType::Unknown`) the declaration adopts in place, keeping its number.  True when handled.
 pub fn forward_literal(e: el::El, vars: el_vars::Vars, name: text, member: text, at: integer) -> boolean {
-  if !e.first_pass || member != "" || el_vars::var(vars, name) >= 0 {
+  if !e.first_pass || member != "" || name == "" || el_vars::var(vars, name) >= 0 {
     return false;
   }
   d = el::def_nr(e, name);
   if d >= 0 && el::def(e, d).def_type != el::DT_UNKNOWN {
     return false;
   }
+  // (Nor a name another source defines — a library's, which a `use` the port refused never
+  // brought in: Rust's table has it, so Rust leaves no stub.)
+  if d < 0 && (el::pending_import_names(e, name) || el::any_source_nr(e, name) >= 0) {
+    return false;
+  }
   if d < 0 {
-    el::add_def(e, name, el::pos_at(e, at), el::DT_UNKNOWN);
+    e.speculative += [el::add_def(e, name, el::pos_at(e, at), el::DT_UNKNOWN)];
   }
   true
 }

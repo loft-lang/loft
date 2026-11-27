@@ -2848,6 +2848,11 @@ pub fn call_op(e: el::El, vars: el_vars::Vars, op: text, list: vector<ir::Node>,
       return r!;
     }
   }
+  // (No candidate on the first pass, an operand still holding a stub anywhere — `Unknown?`, a
+  // record declared below behind a `?`: undecidable until the second pass, which answers.)
+  if e.first_pass && len([for t in types if el_types::has_unknown(t) { 1 }]) > 0 {
+    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+  }
   kinds = "";
   for t in types {
     kinds += if t#index > 0 { ", {type_kind(t)}" } else { type_kind(t) };

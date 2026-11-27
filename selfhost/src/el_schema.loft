@@ -37,7 +37,7 @@ pub fn fill_all(e: el::El, start_def: integer = 0) {
   for d in 0..len(e.b.data.definitions) {
     df = el::def(e, d);
     if df.source == e.source {
-      if df.def_type == el::DT_UNKNOWN && e.first_pass && !e.default {
+      if df.def_type == el::DT_UNKNOWN && e.first_pass && !e.default && !e.speculative.contains(d) {
         el::refuse(e, "an undefined type, or one declared in another file of a cycle");
       }
       if df.def_type == el::DT_FUNCTION || df.def_type == el::DT_STRUCT || (df.def_type == el::DT_ENUM_VALUE && len(df.attributes) > 0) {

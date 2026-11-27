@@ -1131,8 +1131,10 @@ fn parse_struct(e: el::El, at: integer, value: boolean, name: text, tvars: vecto
   nt = el::name_tok(e, at, name);
   d = if e.first_pass && el::prelude_shadowed(e, name) { -1 } else { el::def_nr(e, name) };
   if e.first_pass {
-    // A stub this file claimed for the name (`claim_declared_type_names`) is adopted.
-    if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source == e.source {
+    // A stub this file claimed for the name (`claim_declared_type_names`) is adopted — and so is
+    // one a module this file imports left by constructing the type above it (loft#797,
+    // loft#801: the stub keeps its number and its source).
+    if d >= 0 && el::def(e, d).def_type == el::DT_UNKNOWN && el::def(e, d).source != el::STD_SOURCE {
       e.b.data.definitions[d].def_type = el::DT_STRUCT;
       e.b.data.definitions[d].position = el::pos_at(e, nt + 1);
       e.adopted += [d];
@@ -1770,7 +1772,17 @@ fn parse_enum_values(e: el::El, d: integer, variants: vector<integer>) {
       SVariant { at, name, fields } => {
         v = -1;
         if e.first_pass {
-          v = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_ENUM_VALUE);
+          // A stub a construction above the enum left for the name (`B { v: n }`, loft#1046) is
+          // adopted in place, keeping its number, as a struct adopts one.
+          ex0 = el::def_nr(e, name);
+          if ex0 >= 0 && el::def(e, ex0).def_type == el::DT_UNKNOWN && el::def(e, ex0).source != el::STD_SOURCE && (el::def(e, ex0).returned[0] ?? ir::TyUnknown { n: 0 }) is TyUnknown {
+            v = ex0;
+            e.b.data.definitions[v].def_type = el::DT_ENUM_VALUE;
+            e.b.data.definitions[v].position = el::pos_at(e, at + 1);
+            e.adopted += [v];
+          } else {
+            v = el::add_def(e, name, el::pos_at(e, at + 1), el::DT_ENUM_VALUE);
+          }
           e.b.data.definitions[v].parent = d;
         } else {
           v = el::variant_of(e, d, name);

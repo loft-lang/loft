@@ -27,6 +27,21 @@ pub fn unrewritten(t: ir::TypeT) -> ir::TypeT {
   }
 }
 
+// `Type::has_unknown`: an unresolved stub anywhere in the type — under a `?`, a link, a tuple
+// member or a vector's element — not the top alone as `is_unknown` asks.
+pub fn has_unknown(t: ir::TypeT) -> boolean {
+  if is_unknown(t) {
+    return true;
+  }
+  match t {
+    TyOptional { inner } => has_unknown(inner),
+    TyRefVar { inner } => has_unknown(inner),
+    TyVector { inner } => has_unknown(inner),
+    TyTuple { elems } => len([for x in elems if has_unknown(x) { 1 }]) > 0,
+    _ => false
+  }
+}
+
 pub fn is_unknown(t: ir::TypeT) -> boolean {
   // `Type::is_unknown`: a vector of an unknown element, and the placeholder `Reference(0)`, too.
   match t {
