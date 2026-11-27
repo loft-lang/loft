@@ -5035,6 +5035,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 return early;
             }
         }
+        self.type_placeholder_element(elm, &in_t);
         // convert parts to the common type
         if in_t == Type::Null {
             return in_t;
@@ -6581,6 +6582,35 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             && vec == self.assign_target
             && !self.assign_replaces
             && parts.iter().any(|v| v.reads_var(vec))
+    }
+
+    /// The element variable of a literal no context typed, once its items are read.
+    ///
+    /// A literal in VALUE position with no hint — a `for` source, a format hole — mints its
+    /// element variable before the first item is read, against a container whose content is
+    /// still unknown, so [`Self::unique_elm_var`] types it with the placeholder def 0
+    /// (`ref(boolean)`).  A bound local and a call argument are hinted and never see it.  The
+    /// placeholder is not a type the slot holds, and `(H-Move)` reads the element's type:
+    /// `scopes::appends_to_element` asks whether its record owns a droppable, and `boolean`
+    /// owns none, so a unit variant built in a work-ref and copied into the element kept its
+    /// own release beside the container's — `for x in [A { id: 1 }, B]` ran `B`'s `OpDrop`
+    /// twice, on both backends.  Typed here as a hinted literal's element is typed (a record of
+    /// its struct, a struct-enum's record as its enum, a vector element as that vector), with
+    /// the borrows it was minted with.  Any other element — a scalar, a text, an element type
+    /// still unknown — keeps the variable as it is: no rule reads a slot type there.
+    fn type_placeholder_element(&mut self, elm: u16, in_t: &Type) {
+        let Type::Reference(0, deps) = self.vars.tp(elm).clone() else {
+            return;
+        };
+        let typed = match in_t.base() {
+            Type::Reference(d, _) if *d != 0 && !self.data.def(*d).name.starts_with("__nullable<") => {
+                Type::Reference(*d, deps)
+            }
+            Type::Enum(e, true, _) => Type::Enum(*e, true, deps),
+            Type::Vector(inner, _) => Type::Vector(inner.clone(), deps),
+            _ => return,
+        };
+        self.vars.set_type(elm, typed);
     }
 
     pub(crate) fn unique_elm_var(&mut self, parent_tp: &Type, assign_tp: &Type, vec: u16) -> u16 {
