@@ -17,6 +17,9 @@ use scope_inline_returns;
 use scope_join_rewrite;
 use scope_buffers;
 use own;
+use scope_scan_set;
+use scope_move_elide;
+use opt_names;
 
 
 // The type of the value a node answers, where the node says it: a variable, a call, a call
@@ -93,8 +96,8 @@ pub fn is_value_branch(n: ir::Node) -> boolean {
   }
 }
 
-// port: arm_lift.rs fn arm_tails_need_binding — `arm_bind` answers only for a record, a vector
-// or a fn-ref call's tail; a scalar or text tail answers none, and a heap one refuses.
+// port: arm_lift.rs fn arm_tails_need_binding — does any arm tail get a binding of its own
+// (`arm_bind`)?  A fn-ref call's tail and a vector variable's (`CopyVector`) refuse.
 pub fn arm_tails_need_binding(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, bound: integer, f: ir::Function) -> boolean {
   match scope_fn::unspan(n) {
     NdIf { t, f: e } => arm_tails_need_binding(s, b, t, bound, f) || arm_tails_need_binding(s, b, e, bound, f),
@@ -117,66 +120,309 @@ pub fn arm_tails_need_binding(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node,
       }
       false
     },
-    NdCall => {
-      if !plain_or_text(value_type(b, n, f)) && call_arm_binds(s, b, n, bound) {
-        scope_scan::refuse(s, "arm_lift::arm_bind: a heap call's value as a branch arm");
-      }
-      false
-    },
-    NdVar { n: x } => {
-      if !plain_or_text(value_type(b, n, f)) && var_arm_binds(s, x, bound, f) {
-        scope_scan::refuse(s, "arm_lift::arm_bind: a heap local as a branch arm");
-      }
-      false
-    },
+    NdCall => arm_bind(s, b, n, bound, f).kind != 0,
+    NdVar => arm_bind(s, b, n, bound, f).kind != 0,
     _ => false
   }
 }
 
-// port: arm_lift.rs fn call_arm_bind — a named call's arm takes a binding of its own where it
-// answers a record the caller must copy (a borrowed or joined return), or an owned one where no
-// binding is named.  The view walk's projection arm needs a materialised binding, which the
-// phase refuses before the scan.
-fn call_arm_binds(s: scope_scan::Scopes, b: ir::Bundle, tail: ir::Node, bound: integer) -> boolean {
-  d = match scope_fn::unspan(tail) { NdCall { def_nr } => b.data.definitions[def_nr], _ => null };
-  if d == null || !binds::is_loft_defined(d!) {
-    return false;
+// What a value-branch arm tail is rewritten into (`ArmBind`): `kind` 0 none, 1 `Bind(tp)`.
+pub struct ArmBind {
+  kind: integer,
+  tp: ir::TypeT
+}
+
+fn no_bind() -> ArmBind {
+  ArmBind { kind: 0, tp: ir::TyVoid }
+}
+
+// port: arm_lift.rs fn arm_bind — the binding an arm tail takes, if it needs one.  The
+// projection arm and the discharge-hoist exception read `views_to_materialise`, which is empty
+// for every function the phase does not refuse.  A vector variable's `CopyVector` refuses.
+fn arm_bind(s: scope_scan::Scopes, b: ir::Bundle, tail: ir::Node, bound: integer, f: ir::Function) -> ArmBind {
+  match scope_fn::unspan(tail) {
+    NdCall { def_nr } => return call_arm_bind(s, b, def_nr, tail, bound),
+    NdVar { n: x } => {
+      if bound == scope_fn::NONE || bound < 0 || x == bound {
+        return no_bind();
+      }
+      if scope_fn::is_compiler_generated(f, x) && !scope_fn::has(s.whole_value_hoists, x) {
+        return no_bind();
+      }
+      whole_into_view = (scope_fn::has(s.whole_value_hoists, x) || !scope_fn::is_compiler_generated(f, x)) && len(scope_fn::deps(f, bound)) > 0;
+      if scope_fn::has(s.multi_assigned, bound) && !whole_into_view && (s.first_set != bound || scope_fn::has(s.owner_witness, bound)) {
+        return no_bind();
+      }
+      t = scope_fn::tp(f, x);
+      opt = t is TyOptional;
+      match scope_fn::base(t) {
+        TyReference { n: r } => return ArmBind { kind: 1, tp: scope_inline_returns::reopt(opt, ir::TyReference { n: r, dep: [] }) },
+        TyEnum { n: r, is_ref } => if is_ref {
+          return ArmBind { kind: 1, tp: scope_inline_returns::reopt(opt, ir::TyEnum { n: r, is_ref: true, dep: [] }) };
+        },
+        TyVector => {
+          scope_scan::refuse(s, "arm_lift::arm_bind: a vector local as a branch arm (CopyVector)");
+          return no_bind();
+        },
+        _ => {}
+      }
+      no_bind()
+    },
+    _ => no_bind()
   }
-  record = match scope_fn::base(d!.returned[0] ?? ir::TyVoid) {
-    TyReference => true,
-    TyEnum { is_ref } => is_ref,
-    _ => false
+}
+
+// port: arm_lift.rs fn call_arm_bind — a named call's record answer takes a temp where the
+// caller must copy it (a borrowed or joined return), or an owned one where no binding is named.
+fn call_arm_bind(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, tail: ir::Node, bound: integer) -> ArmBind {
+  d = b.data.definitions[d_nr];
+  if d == null || !binds::is_loft_defined(d!) {
+    return no_bind();
+  }
+  ret = d!.returned[0] ?? ir::TyVoid;
+  opt = ret is TyOptional;
+  t = match scope_fn::base(ret) {
+    TyReference { n: r } => ir::TyReference { n: r, dep: [] },
+    TyEnum { n: r, is_ref } => if is_ref { ir::TyEnum { n: r, is_ref: true, dep: [] } } else { ir::TyVoid },
+    _ => ir::TyVoid
   };
-  if !record {
-    return false;
+  if t is TyVoid {
+    return no_bind();
   }
   match scope_scan::ownership(s, b, tail) {
-    Owned => bound == scope_fn::NONE || bound < 0,
-    Unknown => false,
-    _ => true
+    Owned => if bound == scope_fn::NONE || bound < 0 { ArmBind { kind: 1, tp: scope_inline_returns::reopt(opt, t) } } else { no_bind() },
+    Unknown => no_bind(),
+    _ => ArmBind { kind: 1, tp: scope_inline_returns::reopt(opt, t) }
   }
 }
 
-// port: arm_lift.rs fn arm_bind's `Var` arm — a plain variable a plain bind copies takes a
-// binding of its own.  A compiler temp answers none unless it is a `??` hoist
-// (`whole_value_hoists`, read here as every hoist: a superset); the materialised views are none.
-fn var_arm_binds(s: scope_scan::Scopes, x: integer, bound: integer, f: ir::Function) -> boolean {
-  if bound == scope_fn::NONE || bound < 0 || x == bound {
-    return false;
+// port: arm_lift.rs fn is_discharge_hoist
+fn is_discharge_hoist(f: ir::Function, v: integer) -> boolean {
+  nm = scope_fn::name(f, v);
+  nm.starts_with("__ncc_") || nm.starts_with("_ncr_")
+}
+
+// What `lift_arm_tails_into` gathers: `(source, temp)` per copied variable arm, the `??` hoists
+// an arm hands back as they are, the temps a call arm's answer was bound to.
+struct Lifted {
+  copied_src: vector<integer>,
+  copied_tmp: vector<integer>,
+  viewed: vector<integer>,
+  called: vector<integer>
+}
+
+// port: arm_lift.rs fn lift_join_arm_tails — every arm tail `arm_bind` answers for rewritten
+// into the bound spelling on a `__lift_N` temp declared at `home`, and the joined binding's deps
+// rewritten to name the temps.
+pub fn lift_join_arm_tails(s: scope_scan::Scopes, b: ir::Bundle, node: ir::Node, home: integer, bound: integer, f: ir::Function) -> ir::Node {
+  lf = Lifted { copied_src: [], copied_tmp: [], viewed: [], called: [] };
+  keyed = bound != scope_fn::NONE && bound >= 0 && scope_fn::is_keyed(scope_fn::tp(f, bound));
+  out = lift_arm_tails_into(s, b, node, home, bound, f, lf);
+  if keyed {
+    lf.called.clear();
   }
-  nm = scope_fn::name(f, x);
-  if scope_fn::is_compiler_generated(f, x) && !(nm.starts_with("__ncc_") || nm.starts_with("_ncr_")) {
-    return false;
+  for i in 0..len(lf.copied_src) {
+    src = lf.copied_src[i];
+    tmp = lf.copied_tmp[i];
+    if !scope_fn::has(s.arm_lift_temps, tmp) {
+      s.arm_lift_temps += [tmp];
+    }
+    // `copy_moves_drop_from`: a record with a drop cascade copied out of a local this frame
+    // owns moves its release (`per_path_pairs`, the hand-off flag) — not transcribed.
+    rec = own::heap_def_nr(scope_fn::tp(f, tmp));
+    if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE && !scope_fn::is_argument(f, src) {
+      scope_scan::refuse(s, "arm_lift::lift_join_arm_tails: a lifted copy that moves a drop (handoff::copy_moves_drop_from)");
+    }
   }
-  whole_into_view = len(scope_fn::deps(f, bound)) > 0;
-  if scope_fn::has(s.multi_assigned, bound) && !whole_into_view && (s.first_set != bound || scope_fn::has(s.owner_witness, bound)) {
-    return false;
+  if bound == scope_fn::NONE || bound < 0 || (len(lf.copied_src) == 0 && len(lf.viewed) == 0 && len(lf.called) == 0) {
+    return out;
   }
-  match scope_fn::base(scope_fn::tp(f, x)) {
-    TyReference => true,
-    TyEnum { is_ref } => is_ref,
-    TyVector => true,
-    _ => false
+  if scope_fn::has(s.multi_assigned, bound) {
+    scope_scan_set::note_lift_viewers(s, bound, [for t in lf.copied_tmp { t }]);
+    return out;
+  }
+  owned: vector<integer> = [];
+  out = lift_owned_call_tails(s, b, out, home, f, owned);
+  deps: vector<integer> = [for d in scope_fn::deps(f, bound) { d }];
+  for t in owned {
+    deps += [t];
+  }
+  for x in lf.viewed {
+    if !scope_fn::has(deps, x) {
+      deps += [x];
+    }
+  }
+  for src in lf.copied_src {
+    if !mentions_var_outside(out, src, lf.copied_tmp) {
+      deps = [for d in deps if d != src { d }];
+    }
+  }
+  for t in lf.copied_tmp {
+    if !scope_fn::has(deps, t) {
+      deps += [t];
+    }
+  }
+  for t in lf.called {
+    if !scope_fn::has(deps, t) {
+      deps += [t];
+    }
+  }
+  depend_on_all(f, bound, deps);
+  out
+}
+
+// port: variables/mod.rs fn depend_on_all
+fn depend_on_all(f: ir::Function, v: integer, on: vector<integer>) {
+  incoming: vector<integer> = [for d in on if d != scope_fn::NONE { d }];
+  if len(incoming) == 0 {
+    return;
+  }
+  f.variables[v].type_def = [scope_move_elide::with_deps(scope_fn::tp(f, v), incoming)];
+}
+
+// port: arm_lift.rs fn mentions_var_outside
+fn mentions_var_outside(n: ir::Node, v: integer, lifted: vector<integer>) -> boolean {
+  match scope_fn::unspan(n) {
+    NdSet { var: t } => if scope_fn::has(lifted, t) { return false; },
+    NdCall { args } => if len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n: t } => scope_fn::has(lifted, t), _ => false } { return false; },
+    NdVar { n: x } => if x == v { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if mentions_var_outside(c, v, lifted) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: arm_lift.rs fn lift_arm_tails_into
+fn lift_arm_tails_into(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, home: integer, bound: integer, f: ir::Function, lf: Lifted) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: lift_arm_tails_into(s, b, inner, home, bound, f, lf) },
+    NdIf { cond, t, f: e } => {
+      nt = lift_arm_tails_into(s, b, t, home, bound, f, lf);
+      ne = lift_arm_tails_into(s, b, e, home, bound, f, lf);
+      return ir::NdIf { cond: cond, t: nt, f: ne };
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      r = bl.result[0] ?? ir::TyVoid;
+      k = len(bl.operators);
+      if r is TyVoid || r is TyNull || k == 0 {
+        return n;
+      }
+      ops: vector<ir::Node> = [for i in 0..k - 1 { bl.operators[i]! }];
+      ops += [lift_arm_tails_into(s, b, bl.operators[k - 1]!, home, bound, f, lf)];
+      return ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] };
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return n;
+      }
+      ops: vector<ir::Node> = [for i in 0..k - 1 { items[i]! }];
+      ops += [lift_arm_tails_into(s, b, items[k - 1]!, home, bound, f, lf)];
+      return ir::NdInsert { items: ops };
+    },
+    NdCallRef => {},
+    NdCall => {},
+    NdVar => {},
+    _ => return n
+  }
+  src = match n { NdVar { n: x } => x, _ => -1 };
+  if src >= 0 && is_discharge_hoist(f, src) && scope_fn::is_dbref(scope_fn::base(scope_fn::tp(f, src))) {
+    lf.viewed += [src];
+  }
+  ab = if n is NdCallRef { no_bind() } else { arm_bind(s, b, n, bound, f) };
+  if ab.kind != 1 {
+    return n;
+  }
+  tmp = scope_scan::new_lift_var(s, f, ab.tp);
+  scope_scan::set_scope_of(s, tmp, home);
+  scope_scan::put(s.lift_decl_depth, tmp, loop_depth_at(s, home));
+  if src >= 0 {
+    lf.copied_src += [src];
+    lf.copied_tmp += [tmp];
+  } else if (env_variable("LOFT_NO_CALL_ARM_HOLDERS") ?? "0") == "0" {
+    lf.called += [tmp];
+  }
+  ir::NdInsert { items: [scope_fn::v_set(tmp, n), ir::NdVar { n: tmp }] }
+}
+
+// port: arm_lift.rs fn loop_depth_at
+fn loop_depth_at(s: scope_scan::Scopes, home: integer) -> integer {
+  if home == s.scope {
+    return len(s.loops);
+  }
+  idx = scope_scan::position(s.stack, home);
+  if idx < 0 {
+    return len(s.loops);
+  }
+  k = 0;
+  for l in s.loops {
+    if l == home || scope_fn::has(s.stack[0..idx], l) {
+      k += 1;
+    }
+  }
+  k
+}
+
+// port: arm_lift.rs fn lift_owned_call_tails — a bare call arm minting a record takes a temp of
+// its own; the temps into `out`.
+fn lift_owned_call_tails(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, home: integer, f: ir::Function, out: vector<integer>) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: lift_owned_call_tails(s, b, inner, home, f, out) },
+    NdIf { cond, t, f: e } => {
+      nt = lift_owned_call_tails(s, b, t, home, f, out);
+      ne = lift_owned_call_tails(s, b, e, home, f, out);
+      ir::NdIf { cond: cond, t: nt, f: ne }
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      r = bl.result[0] ?? ir::TyVoid;
+      k = len(bl.operators);
+      if r is TyVoid || r is TyNull || k == 0 {
+        return n;
+      }
+      ops: vector<ir::Node> = [for i in 0..k - 1 { bl.operators[i]! }];
+      ops += [lift_owned_call_tails(s, b, bl.operators[k - 1]!, home, f, out)];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return n;
+      }
+      ops: vector<ir::Node> = [for i in 0..k - 1 { items[i]! }];
+      ops += [lift_owned_call_tails(s, b, items[k - 1]!, home, f, out)];
+      ir::NdInsert { items: ops }
+    },
+    NdCall { def_nr } => {
+      d = b.data.definitions[def_nr];
+      if d == null || !binds::is_loft_defined(d!) {
+        return n;
+      }
+      ret = d!.returned[0] ?? ir::TyVoid;
+      opt = ret is TyOptional;
+      t = match scope_fn::base(ret) {
+        TyReference { n: r } => ir::TyReference { n: r, dep: [] },
+        TyEnum { n: r, is_ref } => if is_ref { ir::TyEnum { n: r, is_ref: true, dep: [] } } else { ir::TyVoid },
+        _ => ir::TyVoid
+      };
+      if t is TyVoid {
+        return n;
+      }
+      if !(scope_scan::ownership(s, b, n) is Owned) {
+        return n;
+      }
+      tmp = scope_scan::new_lift_var(s, f, scope_inline_returns::reopt(opt, t));
+      scope_scan::set_scope_of(s, tmp, home);
+      scope_scan::put(s.lift_decl_depth, tmp, loop_depth_at(s, home));
+      out += [tmp];
+      ir::NdInsert { items: [scope_fn::v_set(tmp, n), ir::NdVar { n: tmp }] }
+    },
+    _ => n
   }
 }
 
@@ -834,11 +1080,12 @@ pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f
       hoisted_from += [len(preamble)];
     }
     // loft#1320 — a branch value consumed by this call gets its arms' owners here.
+    av = a;
     if is_value_branch(a) && arm_tails_need_binding(s, b, a, scope_fn::NONE, f) {
-      scope_scan::refuse(s, "arm_lift::lift_join_arm_tails: a branch value as an argument");
+      av = lift_join_arm_tails(s, b, a, s.scope, scope_fn::NONE, f);
     }
-    s.place_operand = place_operand(b, outer_call, arg_idx, is_place, a);
-    scanned = scope_scan::scan(s, b, a, f);
+    s.place_operand = place_operand(b, outer_call, arg_idx, is_place, av);
+    scanned = scope_scan::scan(s, b, av, f);
     s.place_operand = false;
     // #248 — a trailing inline heap-returning call beside a borrowed receiver is lifted as an
     // ORDERING device: its temp frees nothing.

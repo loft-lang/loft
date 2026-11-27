@@ -206,7 +206,7 @@ fn vs_base_vars(b: ir::Bundle, rhs: ir::Node, code: ir::Node, out: vector<intege
 }
 
 // port: parser/mod.rs fn find_field_written_vars
-fn find_field_written_vars(b: ir::Bundle, n: ir::Node, written: vector<integer>) {
+pub fn find_field_written_vars(b: ir::Bundle, n: ir::Node, written: vector<integer>) {
   match n {
     NdCall { def_nr, args } => {
       nm = b.data.definitions[def_nr]!.name;

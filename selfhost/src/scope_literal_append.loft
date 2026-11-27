@@ -1,0 +1,342 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/literal_append.rs` transcribed: `@FR-R-LiteralAppend`, a record literal bound to
+// a local whose one use is the append of it is built in its element.  `L = null; OpDatabase(L,
+// tp); OpSet<scalar>(L, off, v)…; E = OpNewRecord(V, ptp, fld); OpCopyRecord(L, E, _);
+// OpFinishRecord(V, E, ptp, fld); OpFreeRef(L)` becomes `E = OpNewRecord(…); OpSet…(E, off, v)…;
+// OpFinishRecord(…)` where every value is simple and `L` is named nowhere else.  Run by `check`
+// on the settled body, after `literal_host`, as Rust's is.
+
+use ir;
+use scope_fn;
+use binds;
+use ir_pass_tree;
+
+// port: literal_append.rs fn rewrite — every admitted literal-append of `d`.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if env_variable("LOFT_NO_LITERAL_APPEND") != null || !binds::is_loft_defined(d) {
+    return code;
+  }
+  sites: vector<integer> = [];
+  lens: vector<integer> = [];
+  find(b, code, f, sites, lens);
+  out = code;
+  for i in 0..len(sites) {
+    l = sites[i];
+    // The literal's local must be named nowhere outside its run.
+    if mentions(code, l) != lens[i] - 2 {
+      continue;
+    }
+    out = apply_all(b, out, l);
+  }
+  out
+}
+
+// The walk of `rewrite`'s first half: every block or loop statement that starts a run.
+fn find(b: ir::Bundle, n: ir::Node, f: ir::Function, sites: vector<integer>, lens: vector<integer>) {
+  match n {
+    NdBlock { block } => find_in(b, block[0]!.operators, f, sites, lens),
+    NdLoop { block } => find_in(b, block[0]!.operators, f, sites, lens),
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    find(b, c, f, sites, lens);
+  }
+}
+
+fn find_in(b: ir::Bundle, ops: vector<ir::Node>, f: ir::Function, sites: vector<integer>, lens: vector<integer>) {
+  for at in 0..len(ops) {
+    // `admit` answers none unless the run opens with `L = null` (asked first: the run is read
+    // off a copy of the rest of the list).
+    if !starts_null_set(ops[at]!) {
+      continue;
+    }
+    r = admit(b, ops[at..], f);
+    if r != null {
+      sites += [r!.l];
+      lens += [r!.n];
+    }
+  }
+}
+
+// port: literal_append.rs fn mentions — how often `x` is named, as a variable or a `Set` target.
+fn mentions(n: ir::Node, x: integer) -> integer {
+  k = match n {
+    NdVar { n: y } => if y == x { 1 } else { 0 },
+    NdSet { var: y } => if y == x { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(n) {
+    k += mentions(c, x);
+  }
+  k
+}
+
+// port: literal_append.rs fn named — the arguments of a call of the operator `name`.
+fn named(b: ir::Bundle, v: ir::Node, name: text) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if ir_pass_tree::def_name(b, def_nr) == name { args } else { null },
+    _ => null
+  }
+}
+
+fn is_var(args: vector<ir::Node>, i: integer, x: integer) -> boolean {
+  if i >= len(args) {
+    return false;
+  }
+  match scope_fn::unspan(args[i]!) { NdVar { n: y } => y == x, _ => false }
+}
+
+// port: literal_append.rs fn scalar
+fn scalar(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyInteger => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    _ => false
+  }
+}
+
+// port: literal_append.rs fn simple — a literal, a scalar variable, or a native scalar op over
+// those: reads no record.
+fn simple(b: ir::Bundle, v: ir::Node, f: ir::Function) -> boolean {
+  match scope_fn::unspan(v) {
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdVar { n: x } => x < scope_fn::count(f) && scalar(scope_fn::tp(f, x)),
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr];
+      if d == null {
+        return false;
+      }
+      if !(len(d!.code) == 0 || d!.code[0]! is NdNull) || !d!.name.starts_with("Op") || len(d!.attributes) == 0 {
+        return false;
+      }
+      for a in d!.attributes {
+        if a.constant || !scalar(a.typedef[0] ?? ir::TyVoid) {
+          return false;
+        }
+      }
+      if !scalar(d!.returned[0] ?? ir::TyVoid) {
+        return false;
+      }
+      for a in args {
+        if !simple(b, a, f) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+fn is_scalar_setter(nm: text) -> boolean {
+  nm == "OpSetInt" || nm == "OpSetFloat" || nm == "OpSetSingle" || nm == "OpSetInt4" || nm == "OpSetBoolean" || nm == "OpSetCharacter"
+}
+
+struct Site {
+  l: integer,
+  n: integer
+}
+
+// port: literal_append.rs fn admit — is `all` the start of an admissible run?  `L` and the
+// run's length in statements.
+fn admit(b: ir::Bundle, all: vector<ir::Node>, f: ir::Function) -> Site? {
+  ops: vector<ir::Node> = [];
+  for o in all {
+    if !(scope_fn::unspan(o) is NdLine) {
+      ops += [o];
+    }
+  }
+  if len(ops) == 0 {
+    return null;
+  }
+  l = -1;
+  match scope_fn::unspan(ops[0]!) {
+    NdSet { var, inner } => {
+      if !(scope_fn::unspan(inner) is NdNull) {
+        return null;
+      }
+      l = var;
+    },
+    _ => { return null; }
+  }
+  t = scope_fn::tp(f, l);
+  if scope_fn::is_argument(f, l) || scope_fn::is_captured(f, l) || t is TyOptional || !(scope_fn::base(t) is TyReference) {
+    return null;
+  }
+  if len(ops) < 2 {
+    return null;
+  }
+  mint = named(b, ops[1]!, "OpDatabase");
+  if mint == null || !is_var(mint!, 0, l) {
+    return null;
+  }
+  k = 2;
+  while k < len(ops) {
+    stop = false;
+    match scope_fn::unspan(ops[k]!) {
+      NdCall { def_nr, args } => {
+        if !is_scalar_setter(ir_pass_tree::def_name(b, def_nr)) || !is_var(args, 0, l) {
+          stop = true;
+        } else {
+          if len(args) < 3 || ir_pass_tree::int_of(args[1]!) == null || !simple(b, args[2]!, f) {
+            return null;
+          }
+        }
+      },
+      _ => { stop = true; }
+    }
+    if stop {
+      break;
+    }
+    k += 1;
+  }
+  if k + 3 >= len(ops) {
+    return null;
+  }
+  e = -1;
+  new: vector<ir::Node>? = null;
+  match scope_fn::unspan(ops[k]!) {
+    NdSet { var, inner } => {
+      e = var;
+      new = named(b, inner, "OpNewRecord");
+    },
+    _ => { return null; }
+  }
+  if new == null {
+    return null;
+  }
+  copy = named(b, ops[k + 1]!, "OpCopyRecord");
+  if copy == null || !is_var(copy!, 0, l) || !is_var(copy!, 1, e) {
+    return null;
+  }
+  finish = named(b, ops[k + 2]!, "OpFinishRecord");
+  if finish == null || !is_var(finish!, 1, e) {
+    return null;
+  }
+  f0 = if len(finish!) > 0 { "{finish![0]!}" } else { "" };
+  n0 = if len(new!) > 0 { "{new![0]!}" } else { "" };
+  if f0 != n0 || (len(finish!) == 0) != (len(new!) == 0) {
+    return null;
+  }
+  free = named(b, ops[k + 3]!, "OpFreeRef");
+  if free == null || !is_var(free!, 0, l) {
+    return null;
+  }
+  // The values must not name the element or the vector either (they run after the mint).
+  nv = if len(new!) > 0 { match scope_fn::unspan(new![0]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };
+  for i in 2..k {
+    match scope_fn::unspan(ops[i]!) {
+      NdCall { args } => if mentions(args[2]!, e) > 0 || (nv >= 0 && mentions(args[2]!, nv) > 0) {
+        return null;
+      },
+      _ => {}
+    }
+  }
+  Site { l: l, n: k + 4 }
+}
+
+fn starts_null_set(op: ir::Node) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet { inner } => scope_fn::unspan(inner) is NdNull,
+    _ => false
+  }
+}
+
+fn starts_run(op: ir::Node, l: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet { var, inner } => var == l && scope_fn::unspan(inner) is NdNull,
+    _ => false
+  }
+}
+
+// `code.map_nodes` over every block and loop: each run of `l` applied.
+fn apply_all(b: ir::Bundle, n: ir::Node, l: integer) -> ir::Node {
+  m = n;
+  match n {
+    NdBlock { block } => { m = ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, applied(block[0]!.operators, l))] }; },
+    NdLoop { block } => { m = ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, applied(block[0]!.operators, l))] }; },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { apply_all(b, c, l) }])
+}
+
+fn applied(ops: vector<ir::Node>, l: integer) -> vector<ir::Node> {
+  out = ops;
+  at = 0;
+  while at < len(out) {
+    if starts_run(out[at]!, l) {
+      out = apply(out, at, l);
+    }
+    at += 1;
+  }
+  out
+}
+
+// port: literal_append.rs fn apply — `L = null; mint(L); set(L,…)…; E = new; copy(L, E);
+// finish; free(L)` → `E = new; set(E,…)…; finish`, the `Line` markers of the run kept in front.
+fn apply(ops: vector<ir::Node>, at: integer, l: integer) -> vector<ir::Node> {
+  idx: vector<integer> = [];
+  for i in at..len(ops) {
+    if !(scope_fn::unspan(ops[i]!) is NdLine) {
+      idx += [i];
+    }
+  }
+  k = 2;
+  while k < len(idx) && match scope_fn::unspan(ops[idx[k]]!) { NdCall { args } => is_var(args, 0, l), _ => false } {
+    k += 1;
+  }
+  if k + 3 >= len(idx) {
+    return ops;
+  }
+  e = match scope_fn::unspan(ops[idx[k]]!) { NdSet { var } => var, _ => -1 };
+  if e < 0 {
+    return ops;
+  }
+  last = idx[k + 3];
+  run: vector<ir::Node> = [];
+  for i in at..last + 1 {
+    if scope_fn::unspan(ops[i]!) is NdLine {
+      run += [ops[i]!];
+    }
+  }
+  run += [ops[idx[k]]!];
+  for j in 2..k {
+    run += [retarget(ops[idx[j]]!, e)];
+  }
+  run += [ops[idx[k + 2]]!];
+  out: vector<ir::Node> = [for i in 0..at { ops[i]! }];
+  out += run;
+  for i in last + 1..len(ops) {
+    out += [ops[i]!];
+  }
+  out
+}
+
+// A write `OpSet…(L, off, v)` (under any spans) aimed at `e` instead.
+fn retarget(n: ir::Node, e: integer) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: retarget(inner, e) },
+    NdCall { def_nr, args } => {
+      a: vector<ir::Node> = [ir::NdVar { n: e }];
+      for i in 1..len(args) {
+        a += [args[i]!];
+      }
+      ir::NdCall { def_nr: def_nr, args: a }
+    },
+    _ => n
+  }
+}

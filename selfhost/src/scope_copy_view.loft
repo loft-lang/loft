@@ -1,0 +1,1097 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/copy_view.rs` transcribed: `@FR-R-CopyView`, a read-only copy of a record
+// nothing can disturb is a view of it.  A plain bind `t = a` becomes the projection
+// `t = OpGetField(a, 0, tp)`, a join's arms lose their `__lift_N` copies, and the walk clause
+// makes a cursor rebound only to a child of itself a view of what it walks; `t`'s deps name its
+// sources, and the frees of what is no longer minted go.  Run by `check` on the settled body,
+// after `literal_append`, as Rust's is (`return_field`, `rebind_place` and `const_fn` before it
+// are refused where they would fire).
+
+use ir;
+use scope_fn;
+use binds;
+use ir_pass_tree;
+use scope_inline_returns;
+
+// (The bundle and the frame are handed as parameters: a struct field takes a COPY of what it is
+// given, and the frame's types are written in place.)
+struct Cx {
+  frees: vector<integer>,
+  get_field: integer
+}
+
+// port: const_fn.rs fn free_ops
+fn free_ops(b: ir::Bundle) -> vector<integer> {
+  out: vector<integer> = [];
+  for n in ["OpFreeRef", "OpFreeRefIfDistinct", "OpFreeRefUnlessEntry", "OpFreeRecordIn"] {
+    d = scope_fn::def_nr(b, n);
+    if d >= 0 {
+      out += [d];
+    }
+  }
+  out
+}
+
+// What a candidate bind copies from: one source (`arms` empty, `plain` the source), or a join's
+// arms as (lift, source) pairs.
+struct Shape {
+  plain: integer,
+  lifts: vector<integer>,
+  srcs: vector<integer>
+}
+
+fn sources(s: Shape) -> vector<integer> {
+  if s.plain >= 0 { [s.plain] } else { s.srcs }
+}
+
+// port: copy_view.rs fn rewrite — every admitted copy of the body; `f` is changed in place.
+pub fn rewrite(b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  if env_variable("LOFT_NO_COPY_VIEW") != null {
+    return code;
+  }
+  if !(scope_fn::unspan(code) is NdBlock) {
+    return code;
+  }
+  cx = Cx { frees: free_ops(b), get_field: scope_fn::def_nr(b, "OpGetField") };
+  ts: vector<integer> = [];
+  shapes: vector<Shape> = [];
+  candidates(b, f, cx, code, ts, shapes);
+  out = code;
+  if len(ts) > 0 {
+    // A join arm's `L = a` is the join's to judge, never a candidate of its own.
+    lifts: vector<integer> = [];
+    for s in shapes {
+      for l in s.lifts {
+        lifts += [l];
+      }
+    }
+    for i in 0..len(ts) {
+      t = ts[i];
+      if scope_fn::has(lifts, t) {
+        continue;
+      }
+      rd = admit(b, f, cx, out, t, shapes[i]!);
+      if rd >= 0 {
+        out = apply(b, f, cx, out, t, shapes[i]!, rd);
+      }
+    }
+  }
+  walk_clause(b, f, cx, out)
+}
+
+fn candidates(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, ts: vector<integer>, shapes: vector<Shape>) {
+  if n is NdSpan {
+    candidates(b, f, cx, scope_fn::unspan(n), ts, shapes);
+    return;
+  }
+  match n {
+    NdSet { var: t, inner } => if record_of(scope_fn::tp(f, t)) >= 0 {
+      s = shape_of(inner);
+      if s != null {
+        ts += [t];
+        shapes += [s!];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    candidates(b, f, cx, c, ts, shapes);
+  }
+}
+
+// port: copy_view.rs fn shape_of
+fn shape_of(rhs: ir::Node) -> Shape? {
+  match scope_fn::unspan(rhs) {
+    NdVar { n: a } => Shape { plain: a, lifts: [], srcs: [] },
+    NdIf { t, f: e } => {
+      s = Shape { plain: -1, lifts: [], srcs: [] };
+      if join_arms(t, s) && join_arms(e, s) { s } else { null }
+    },
+    _ => null
+  }
+}
+
+// port: copy_view.rs fn join_arms — an arm `{ L = a; L }`, or a nested `if` of such arms.
+fn join_arms(arm: ir::Node, out: Shape) -> boolean {
+  match scope_fn::unspan(arm) {
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) != 2 {
+        return false;
+      }
+      l = match scope_fn::unspan(ops[0]!) { NdSet { var } => var, _ => -1 };
+      l2 = match scope_fn::unspan(ops[1]!) { NdVar { n } => n, _ => -2 };
+      if l < 0 || l != l2 {
+        return false;
+      }
+      a = match scope_fn::unspan(ops[0]!) {
+        NdSet { inner } => match scope_fn::unspan(inner) { NdVar { n } => n, _ => -1 },
+        _ => -1
+      };
+      if a < 0 {
+        return false;
+      }
+      out.lifts += [l];
+      out.srcs += [a];
+      true
+    },
+    NdIf { t, f: e } => join_arms(t, out) && join_arms(e, out),
+    _ => false
+  }
+}
+
+// port: copy_view.rs fn record_of — the plain record `tp` holds (-1 for a nullable one or none).
+fn record_of(t: ir::TypeT) -> integer {
+  match t {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+fn record_deps(t: ir::TypeT) -> vector<integer> {
+  match t {
+    TyReference { dep } => dep,
+    _ => []
+  }
+}
+
+// port: copy_view.rs fn owned_record — a plain record with no deps.
+fn owned_record(f: ir::Function, v: integer) -> integer {
+  t = scope_fn::tp(f, v);
+  if record_of(t) >= 0 && len(record_deps(t)) == 0 { record_of(t) } else { -1 }
+}
+
+// port: copy_view.rs fn admit — the record type `t` holds, -1 for a decline.
+fn admit(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer, shape: Shape) -> integer {
+  if scope_fn::is_argument(f, t) || scope_fn::is_captured(f, t) {
+    return -1;
+  }
+  rd = -1;
+  if shape.plain >= 0 {
+    rd = owned_record(f, t);
+  } else {
+    tt = scope_fn::tp(f, t);
+    if record_of(tt) >= 0 {
+      all = true;
+      for x in record_deps(tt) {
+        if !scope_fn::has(shape.lifts, x) && !scope_fn::has(shape.srcs, x) {
+          all = false;
+        }
+      }
+      if all {
+        rd = record_of(tt);
+      }
+    }
+  }
+  if rd < 0 {
+    return -1;
+  }
+  if set_count(code, t) != 1 {
+    return -1;
+  }
+  for l in shape.lifts {
+    if owned_record(f, l) != rd || set_count(code, l) != 1 {
+      return -1;
+    }
+    if non_free_mentions(b, f, cx, code, l) != 2 {
+      return -1;
+    }
+  }
+  for a in sources(shape) {
+    if record_of(scope_fn::tp(f, a)) != rd {
+      return -1;
+    }
+    if scope_fn::is_argument(f, a) {
+      return -1;
+    }
+    if !roots_are_parameters(f, a) {
+      return -1;
+    }
+  }
+  if !only_read(b, f, cx, code, t, false) {
+    return -1;
+  }
+  range = live_range(b, f, cx, code, t);
+  if range == null {
+    return -1;
+  }
+  for s in range! {
+    if disturbs(b, f, cx, s, rd) != "" {
+      return -1;
+    }
+  }
+  rd
+}
+
+// port: copy_view.rs fn roots_are_parameters
+fn roots_are_parameters(f: ir::Function, a: integer) -> boolean {
+  seen: vector<integer> = [];
+  stack: vector<integer> = [a];
+  while len(stack) > 0 {
+    v = stack[len(stack) - 1];
+    stack.remove(len(stack) - 1);
+    if scope_fn::has(seen, v) {
+      continue;
+    }
+    seen += [v];
+    deps = scope_fn::deps(f, v);
+    if len(deps) == 0 {
+      if !scope_fn::is_argument(f, v) {
+        return false;
+      }
+    } else {
+      for d in deps {
+        if d < scope_fn::count(f) {
+          stack += [d];
+        }
+      }
+    }
+  }
+  true
+}
+
+// port: copy_view.rs fn set_counts, for one variable — its `Set`s but a null init.
+fn set_count(n: ir::Node, v: integer) -> integer {
+  k = match n {
+    NdSet { var, inner } => if var == v && !(scope_fn::unspan(inner) is NdNull) { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(n) {
+    k += set_count(c, v);
+  }
+  k
+}
+
+fn is_free(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr } => scope_fn::has(cx.frees, def_nr),
+    _ => false
+  }
+}
+
+// port: copy_view.rs fn non_free_mentions — reads and non-null `Set`s of `x` but as a free's
+// operand (a span and the node under it each count, as Rust's walk counts them).
+fn non_free_mentions(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, x: integer) -> integer {
+  if is_free(b, f, cx, n) {
+    return 0;
+  }
+  k = 0;
+  match scope_fn::unspan(n) {
+    NdVar { n: y } => if y == x { k += 1; },
+    NdSet { var: y, inner } => if y == x && !(scope_fn::unspan(inner) is NdNull) { k += 1; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    k += non_free_mentions(b, f, cx, c, x);
+  }
+  k
+}
+
+// port: parser/work_buffer.rs fn is_scalar_accessor
+fn is_scalar_accessor(nm: text) -> boolean {
+  for x in ["OpGetInt", "OpGetInt4", "OpGetInt4Raw", "OpGetInt4Full", "OpGetCharacter", "OpGetSingle", "OpGetFloat", "OpGetByte", "OpGetByteNullable", "OpGetEnum", "OpGetBoolean", "OpGetShort", "OpGetShortRaw", "OpGetShortSpare", "OpGetShortFull", "OpSetInt", "OpSetInt4", "OpSetInt4Raw", "OpSetCharacter", "OpSetSingle", "OpSetFloat", "OpSetByte", "OpSetByteNullable", "OpSetShort", "OpSetShortRaw", "OpSetEnum", "OpSetBoolean"] {
+    if x == nm {
+      return true;
+    }
+  }
+  false
+}
+
+// port: copy_view.rs fn only_read
+fn only_read(b: ir::Bundle, f: ir::Function, cx: Cx, node: ir::Node, t: integer, under: boolean) -> boolean {
+  u = scope_fn::unspan(node);
+  match u {
+    NdVar { n: x } => if x == t { return under; },
+    NdCall { def_nr, args } => {
+      if scope_fn::has(cx.frees, def_nr) {
+        return true;
+      }
+      nm = ir_pass_tree::def_name(b, def_nr);
+      getter = is_scalar_accessor(nm) && nm.starts_with("OpGet");
+      projection = nm == "OpGetField";
+      for i in 0..len(args) {
+        read = i == 0 && (getter || (projection && under));
+        if !only_read(b, f, cx, args[i]!, t, read) {
+          return false;
+        }
+      }
+      return true;
+    },
+    NdSet { inner } => return only_read(b, f, cx, inner, t, false),
+    _ => {}
+  }
+  for c in scope_fn::children(node) {
+    if !only_read(b, f, cx, c, t, false) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: copy_view.rs fn live_range — the statements after `t`'s first `Set` to its last
+// mention, in the block that binds it; null when `t` is mentioned outside them.
+fn live_range(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer) -> vector<ir::Node>? {
+  found = find_bind(code, t);
+  if found == null {
+    return null;
+  }
+  ops = found!.ops;
+  i = found!.at;
+  j = -1;
+  k = len(ops) - 1;
+  while k >= i {
+    if non_free_mentions(b, f, cx, ops[k]!, t) > 0 {
+      j = k;
+      break;
+    }
+    k -= 1;
+  }
+  if j < 0 {
+    return null;
+  }
+  inside = 0;
+  for q in i..j + 1 {
+    inside += non_free_mentions(b, f, cx, ops[q]!, t);
+  }
+  if inside != non_free_mentions(b, f, cx, code, t) {
+    return null;
+  }
+  [for q in i + 1..j + 1 { ops[q]! }]
+}
+
+struct Found {
+  ops: vector<ir::Node>,
+  at: integer
+}
+
+fn find_bind(n: ir::Node, t: integer) -> Found? {
+  ops: vector<ir::Node>? = match scope_fn::unspan(n) {
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    _ => null
+  };
+  if ops != null {
+    for i in 0..len(ops!) {
+      match scope_fn::unspan(ops![i]!) {
+        NdSet { var } => if var == t { return Found { ops: ops!, at: i }; },
+        _ => {}
+      }
+    }
+  }
+  for c in scope_fn::children(n) {
+    r = find_bind(c, t);
+    if r != null {
+      return r;
+    }
+  }
+  null
+}
+
+// port: copy_view.rs struct Reach — can a value of `t` hold a record of type `rd`?
+fn reaches(b: ir::Bundle, t: ir::TypeT, rd: integer, seen: vector<integer>) -> boolean {
+  match t {
+    TyOptional { inner } => return reaches(b, inner, rd, seen),
+    TyRefVar { inner } => return reaches(b, inner, rd, seen),
+    TyVector { inner } => return reaches(b, inner, rd, seen),
+    TyText => return false,
+    _ => {}
+  }
+  d = heap_def_nr(t);
+  if d < 0 {
+    // A keyed collection or any other heap shape this does not name: reaches.
+    return has_heap_dep(t);
+  }
+  if d == rd {
+    return true;
+  }
+  if scope_fn::has(seen, d) {
+    return false;
+  }
+  seen += [d];
+  for a in b.data.definitions[d]!.attributes {
+    if reaches(b, a.typedef[0] ?? ir::TyVoid, rd, seen) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs fn heap_def_nr — through `base()`, -1 for none.
+fn heap_def_nr(t: ir::TypeT) -> integer {
+  match scope_fn::base(t) {
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  }
+}
+
+// port: data.rs fn heap_dep `.is_some()` — through `base()`.
+fn has_heap_dep(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyReference => true,
+    TyVector => true,
+    TyEnum { is_ref } => is_ref,
+    TySorted => true,
+    TyHash => true,
+    TyIndex => true,
+    TyRadix => true,
+    TyTrie => true,
+    _ => false
+  }
+}
+
+fn returns_heap(b: ir::Bundle, d: integer) -> boolean {
+  x = b.data.definitions[d];
+  x != null && has_heap_dep(x!.returned[0] ?? ir::TyVoid)
+}
+
+// Does argument `a` of an operation reach a record of type `rd`?
+fn arg_reaches(b: ir::Bundle, f: ir::Function, cx: Cx, a: ir::Node, rd: integer) -> boolean {
+  match scope_fn::unspan(a) {
+    NdVar { n: x } => reaches(b, scope_fn::tp(f, x), rd, []),
+    NdCall { def_nr } => returns_heap(b, def_nr),
+    _ => false
+  }
+}
+
+// port: copy_view.rs fn disturbs — why statement `s` may disturb a record of type `rd`, "" for
+// none.
+fn disturbs(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, rd: integer) -> text {
+  if n is NdSpan {
+    return disturbs(b, f, cx, scope_fn::unspan(n), rd);
+  }
+  match n {
+    NdCall { def_nr, args } => {
+      why = disturbs_call(b, f, cx, def_nr, args, rd);
+      if why != "" {
+        return why;
+      }
+    },
+    NdCallRef => return "a function value is called in its live range",
+    NdYield => return "its live range suspends or forks",
+    NdParallel => return "its live range suspends or forks",
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    why = disturbs(b, f, cx, c, rd);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+// The `Call` arm of `disturbs`, for one call node.
+fn disturbs_call(b: ir::Bundle, f: ir::Function, cx: Cx, op: integer, args: vector<ir::Node>, rd: integer) -> text {
+  def = b.data.definitions[op]!;
+  nm = def.name;
+  reader = nm.starts_with("OpGet") || nm.starts_with("OpLength") || nm.starts_with("OpSize") || nm == "OpVectorRef" || nm == "OpVectorRefNullable" || nm == "OpVectorIsNull" || nm == "OpRefIsNull" || nm == "OpConvBoolFromRef" || nm == "OpEqRef" || nm == "OpNeRef";
+  if reader {
+    return "";
+  }
+  loft_fn = binds::is_loft_defined(def) && !nm.starts_with("Op");
+  for i in 0..len(args) {
+    if !arg_reaches(b, f, cx, args[i]!, rd) {
+      continue;
+    }
+    at = def.attributes[i];
+    to_const = loft_fn && at != null && at!.value_const;
+    if !to_const {
+      return if loft_fn { "a call in its live range can write a record of its type" } else { "an operation in its live range can write a record of its type" };
+    }
+  }
+  ""
+}
+
+// port: copy_view.rs fn apply — the admitted bind of `t` made a view, and what is no longer
+// minted dropped.
+fn apply(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer, shape: Shape, rd: integer) -> ir::Node {
+  tp_nr = b.data.definitions[rd]!.known_type;
+  done = [false];
+  out = view_bind(b, f, cx, code, t, shape, tp_nr, done);
+  dead: vector<integer> = [for l in shape.lifts { l }];
+  dead += [t];
+  out = strip(b, f, cx, out, dead);
+  f.variables[t].type_def = [scope_inline_returns::with_deps(scope_fn::tp(f, t), sources(shape))];
+  for l in shape.lifts {
+    f.variables[l].skip_free = true;
+  }
+  out
+}
+
+// The BIND is rewritten, never `t`'s null-init: the first non-null `Set(t, …)` in walk order.
+fn view_bind(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, t: integer, shape: Shape, tp_nr: integer, done: vector<boolean>) -> ir::Node {
+  if done[0] {
+    return n;
+  }
+  match scope_fn::unspan(n) {
+    NdSet { var: x, inner: rhs } => if x == t && !(scope_fn::unspan(rhs) is NdNull) {
+      done[0] = true;
+      nv = if shape.plain >= 0 {
+        ir::NdCall { def_nr: cx.get_field, args: [ir::NdVar { n: shape.plain }, ir::NdInt { n: 0 }, ir::NdInt { n: tp_nr }] }
+      } else {
+        join_view(rhs, shape.lifts)
+      };
+      return respan(n, ir::NdSet { var: x, inner: nv });
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  out: vector<ir::Node> = [];
+  for c in kids {
+    out += [view_bind(b, f, cx, c, t, shape, tp_nr, done)];
+  }
+  ir_pass_tree::with_children(n, out)
+}
+
+// `n`'s spans kept around `with`, which stands for what was under them.
+fn respan(n: ir::Node, with: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: respan(inner, with) },
+    _ => with
+  }
+}
+
+// The join's `if` with every lifted arm answering its source (`rhs.unspan_mut()`, spans kept).
+fn join_view(rhs: ir::Node, lifts: vector<integer>) -> ir::Node {
+  match rhs {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: join_view(inner, lifts) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: rewrite_arm(t, lifts), f: rewrite_arm(f, lifts) },
+    _ => rhs
+  }
+}
+
+// port: copy_view.rs fn rewrite_arm
+fn rewrite_arm(arm: ir::Node, lifts: vector<integer>) -> ir::Node {
+  u = scope_fn::unspan(arm);
+  match u {
+    NdIf { cond, t, f } => return respan(arm, ir::NdIf { cond: cond, t: rewrite_arm(t, lifts), f: rewrite_arm(f, lifts) }),
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if len(ops) == 2 {
+        match scope_fn::unspan(ops[0]!) {
+          NdSet { var: l, inner: src } => if scope_fn::has(lifts, l) { return scope_fn::unspan(src); },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  arm
+}
+
+// port: copy_view.rs fn strip — every statement that frees one of `dead` or null-inits one.
+fn strip(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, dead: vector<integer>) -> ir::Node {
+  m = n;
+  match n {
+    NdBlock { block } => { m = ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators if !is_dead(b, f, cx, op, dead) { op }])] }; },
+    NdLoop { block } => { m = ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators if !is_dead(b, f, cx, op, dead) { op }])] }; },
+    NdInsert { items } => { m = ir::NdInsert { items: [for op in items if !is_dead(b, f, cx, op, dead) { op }] }; },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { strip(b, f, cx, c, dead) }])
+}
+
+fn is_dead(b: ir::Bundle, f: ir::Function, cx: Cx, op: ir::Node, dead: vector<integer>) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => scope_fn::has(cx.frees, def_nr) && len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n: x } => scope_fn::has(dead, x), _ => false },
+    NdSet { var: x, inner } => scope_fn::has(dead, x) && scope_fn::unspan(inner) is NdNull,
+    _ => false
+  }
+}
+
+// ---- the WALK clause ------------------------------------------------------------------------
+
+fn def_named(b: ir::Bundle, f: ir::Function, cx: Cx, d: integer, nm: text) -> boolean {
+  ir_pass_tree::def_name(b, d) == nm
+}
+
+// port: copy_view.rs fn is_self_step — `OpRefFromChildRec(OpGetField(t, …))`.
+fn is_self_step(b: ir::Bundle, f: ir::Function, cx: Cx, rhs: ir::Node, t: integer) -> boolean {
+  match scope_fn::unspan(rhs) {
+    NdCall { def_nr, args } => {
+      if !def_named(b, f, cx, def_nr, "OpRefFromChildRec") || len(args) == 0 {
+        return false;
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdCall { def_nr: gf, args: ga } => def_named(b, f, cx, gf, "OpGetField") && len(ga) > 0 && match scope_fn::unspan(ga[0]!) { NdVar { n: x } => x == t, _ => false },
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: copy_view.rs fn walk_record — the record a walk cursor holds, nullable or not; -1 none.
+fn walk_record(t: ir::TypeT) -> integer {
+  match t {
+    TyOptional { inner } => walk_record(inner),
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  }
+}
+
+fn walk_deps(t: ir::TypeT) -> vector<integer> {
+  match t {
+    TyOptional { inner } => walk_deps(inner),
+    TyReference { dep } => dep,
+    TyEnum { dep } => dep,
+    _ => []
+  }
+}
+
+fn self_step_sets(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, t: integer, found: vector<integer>) {
+  if n is NdSpan {
+    self_step_sets(b, f, cx, scope_fn::unspan(n), t, found);
+    return;
+  }
+  match n {
+    NdSet { var: p, inner } => if p != t && is_self_step(b, f, cx, inner, t) && !scope_fn::has(found, p) { found += [p]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    self_step_sets(b, f, cx, c, t, found);
+  }
+}
+
+// A non-null `Set(p, …)` that is no step of `t`.
+fn other_set(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, p: integer, t: integer) -> boolean {
+  match n {
+    NdSet { var: x, inner } => if x == p && !(scope_fn::unspan(inner) is NdNull) && !is_self_step(b, f, cx, inner, t) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if other_set(b, f, cx, c, p, t) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: copy_view.rs fn step_locals — null for a decline.
+fn step_locals(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer, rd: integer) -> vector<integer>? {
+  found: vector<integer> = [];
+  self_step_sets(b, f, cx, code, t, found);
+  other = false;
+  for p in found {
+    if scope_fn::is_argument(f, p) || scope_fn::is_captured(f, p) || walk_record(scope_fn::tp(f, p)) != rd {
+      return null;
+    }
+    if other_set(b, f, cx, code, p, t) {
+      other = true;
+    }
+    w = scope_fn::owner_witness(f, p);
+    if other || !walk_only_read(b, f, cx, code, p, w, t, false) {
+      return null;
+    }
+  }
+  found
+}
+
+// port: copy_view.rs fn steps_inside
+fn steps_inside(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, range: vector<ir::Node>, steps: vector<integer>) -> boolean {
+  for p in steps {
+    inside = 0;
+    for s in range {
+      inside += non_free_mentions(b, f, cx, s, p);
+    }
+    if inside != non_free_mentions(b, f, cx, code, p) {
+      return false;
+    }
+  }
+  true
+}
+
+struct Sources {
+  srcs: vector<integer>,
+  steps: integer,
+  ok: boolean
+}
+
+fn source_sets(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, t: integer, steps: vector<integer>, out: Sources) {
+  if n is NdSpan {
+    source_sets(b, f, cx, scope_fn::unspan(n), t, steps, out);
+    return;
+  }
+  match n {
+    NdSet { var: x, inner } => if x == t && !(scope_fn::unspan(inner) is NdNull) {
+      r = scope_fn::unspan(inner);
+      match r {
+        NdVar { n: a } => if scope_fn::has(steps, a) { out.steps += 1; } else { out.srcs += [a]; },
+        _ => if is_self_step(b, f, cx, r, t) { out.steps += 1; } else { out.ok = false; }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    source_sets(b, f, cx, c, t, steps, out);
+  }
+}
+
+// port: copy_view.rs fn walk_sources — null for a decline.
+fn walk_sources(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer, steps: vector<integer>) -> vector<integer>? {
+  out = Sources { srcs: [], steps: 0, ok: true };
+  source_sets(b, f, cx, code, t, steps, out);
+  if out.ok && out.steps > 0 && len(out.srcs) > 0 { out.srcs } else { null }
+}
+
+// port: copy_view.rs fn walk_only_read — `w` the owner witness (-1 none), `into` the cursor of a
+// step local (-1 none).
+fn walk_only_read(b: ir::Bundle, f: ir::Function, cx: Cx, node: ir::Node, t: integer, w: integer, into: integer, under: boolean) -> boolean {
+  u = scope_fn::unspan(node);
+  match u {
+    NdVar { n: x } => if x == t { return under; },
+    NdSet { var: x, inner: rhs } => {
+      if into >= 0 && x == into && match scope_fn::unspan(rhs) { NdVar { n: y } => y == t, _ => false } {
+        return true;
+      }
+      if x == t {
+        r = scope_fn::unspan(rhs);
+        return r is NdVar || r is NdNull || walk_only_read(b, f, cx, rhs, t, w, into, false);
+      }
+      if w >= 0 && x == w {
+        return true;
+      }
+    },
+    NdCall { def_nr, args } => {
+      if scope_fn::has(cx.frees, def_nr) {
+        return true;
+      }
+      nm = ir_pass_tree::def_name(b, def_nr);
+      if nm == "OpDistinctStore" || nm == "OpRefAlias" {
+        for a in args {
+          match scope_fn::unspan(a) {
+            NdVar { n: x } => if w >= 0 && x == w { return true; },
+            _ => {}
+          }
+        }
+      }
+      getter = is_scalar_accessor(nm) && nm.starts_with("OpGet");
+      test = nm == "OpRefIsNull" || nm == "OpConvBoolFromRef" || nm == "OpGetEnum";
+      projection = nm == "OpGetField" || nm == "OpRefFromChildRec";
+      for i in 0..len(args) {
+        read = i == 0 && (getter || test || projection);
+        if !walk_only_read(b, f, cx, args[i]!, t, w, into, read) {
+          return false;
+        }
+      }
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(node) {
+    if !walk_only_read(b, f, cx, c, t, w, into, false) {
+      return false;
+    }
+  }
+  true
+}
+
+// A `Set(a, …)` or a free of `a` anywhere in `n`.
+fn rebinds_or_frees(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, a: integer) -> boolean {
+  match n {
+    NdSet { var: x } => if x == a { return true; },
+    NdCall { def_nr, args } => if scope_fn::has(cx.frees, def_nr) && len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == a, _ => false } { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if rebinds_or_frees(b, f, cx, c, a) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: copy_view.rs fn walk_source_ok
+fn walk_source_ok(b: ir::Bundle, f: ir::Function, cx: Cx, rd: integer, a: integer, range: vector<ir::Node>) -> boolean {
+  t = scope_fn::tp(f, a);
+  if walk_record(t) != rd {
+    return false;
+  }
+  if scope_fn::is_argument(f, a) {
+    return env_variable("LOFT_NO_OUT_OF_LINE") == null && binds::held_out_of_line(b, rd);
+  }
+  if roots_are_parameters(f, a) {
+    return true;
+  }
+  if len(walk_deps(t)) != 0 {
+    return false;
+  }
+  for s in range {
+    if rebinds_or_frees(b, f, cx, s, a) {
+      return false;
+    }
+  }
+  true
+}
+
+struct WalkCx {
+  t: integer,
+  w: integer,
+  steps: vector<integer>,
+  rd: integer
+}
+
+// port: copy_view.rs fn walk_disturbs — "" for none.
+fn walk_disturbs(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, wx: WalkCx, sources: vector<integer>) -> text {
+  if n is NdSpan {
+    return walk_disturbs(b, f, cx, scope_fn::unspan(n), wx, sources);
+  }
+  match n {
+    NdCall { def_nr, args } => {
+      why = walk_disturbs_call(b, f, cx, def_nr, args, wx, sources);
+      if why != "" {
+        return why;
+      }
+    },
+    NdCallRef => return "a function value is called in its live range",
+    NdYield => return "its live range suspends or forks",
+    NdParallel => return "its live range suspends or forks",
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    why = walk_disturbs(b, f, cx, c, wx, sources);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+fn mine(a: ir::Node, wx: WalkCx) -> boolean {
+  match scope_fn::unspan(a) {
+    NdVar { n: x } => x == wx.t || (wx.w >= 0 && x == wx.w) || scope_fn::has(wx.steps, x),
+    _ => false
+  }
+}
+
+fn walk_disturbs_call(b: ir::Bundle, f: ir::Function, cx: Cx, op: integer, args: vector<ir::Node>, wx: WalkCx, sources: vector<integer>) -> text {
+  def = b.data.definitions[op]!;
+  nm = def.name;
+  if nm == "OpRefFromChildRec" || nm == "OpDistinctStore" || nm == "OpRefAlias" || (scope_fn::has(cx.frees, op) && len(args) > 0 && mine(args[0]!, wx)) {
+    return "";
+  }
+  owners_only = !binds::is_loft_defined(def) || nm.starts_with("Op");
+  reaching: vector<ir::Node> = [];
+  for a in args {
+    if arg_reaches(b, f, cx, a, wx.rd) {
+      reaching += [a];
+    }
+  }
+  if owners_only && len(reaching) > 0 {
+    all = true;
+    for a in reaching {
+      foreign = match scope_fn::unspan(a) {
+        NdVar { n: x } => x != wx.t && !scope_fn::has(wx.steps, x) && !scope_fn::has(sources, x) && !scope_fn::is_argument(f, x) && walk_record(scope_fn::tp(f, x)) >= 0 && len(walk_deps(scope_fn::tp(f, x))) == 0,
+        _ => false
+      };
+      if !foreign {
+        all = false;
+      }
+    }
+    if all {
+      return "";
+    }
+  }
+  disturbs_call(b, f, cx, op, args, wx.rd)
+}
+
+// port: copy_view.rs fn walk_clause
+fn walk_clause(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node) -> ir::Node {
+  if env_variable("LOFT_NO_COPY_VIEW_WALK") != null {
+    return code;
+  }
+  cands: vector<integer> = [];
+  walk_cands(b, f, cx, code, cands);
+  out = code;
+  for t in cands {
+    v = walk_verdict(b, f, cx, out, t);
+    if v != null {
+      out = apply_walk(b, f, cx, out, t, v!);
+    }
+  }
+  out
+}
+
+fn walk_cands(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, cands: vector<integer>) {
+  if n is NdSpan {
+    walk_cands(b, f, cx, scope_fn::unspan(n), cands);
+    return;
+  }
+  match n {
+    NdSet { var: t, inner } => if scope_fn::unspan(inner) is NdVar && walk_record(scope_fn::tp(f, t)) >= 0 && !scope_fn::has(cands, t) {
+      cands += [t];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    walk_cands(b, f, cx, c, cands);
+  }
+}
+
+struct Walk {
+  rd: integer,
+  sources: vector<integer>,
+  steps: vector<integer>
+}
+
+fn walk_verdict(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer) -> Walk? {
+  if scope_fn::is_argument(f, t) || scope_fn::is_captured(f, t) {
+    return null;
+  }
+  rd = walk_record(scope_fn::tp(f, t));
+  if rd < 0 {
+    return null;
+  }
+  steps = step_locals(b, f, cx, code, t, rd);
+  if steps == null {
+    return null;
+  }
+  srcs = walk_sources(b, f, cx, code, t, steps!);
+  if srcs == null {
+    return null;
+  }
+  w = scope_fn::owner_witness(f, t);
+  if !walk_only_read(b, f, cx, code, t, w, -1, false) {
+    return null;
+  }
+  range = live_range(b, f, cx, code, t);
+  if range == null {
+    return null;
+  }
+  if !steps_inside(b, f, cx, code, range!, steps!) {
+    return null;
+  }
+  // Each bind is judged on its own segment — from it to the next bind of `t` — against its
+  // own source.
+  at = 0;
+  current = srcs![0];
+  seg_src: vector<integer> = [];
+  segs: vector<vector<ir::Node>> = [];
+  segment: vector<ir::Node> = [];
+  for st in range! {
+    a = match scope_fn::unspan(st) {
+      NdSet { var: x, inner: rhs } => if x == t { match scope_fn::unspan(rhs) { NdVar { n } => n, _ => -1 } } else { -1 },
+      _ => -1
+    };
+    if a >= 0 {
+      seg_src += [current];
+      segs += [segment];
+      segment = [];
+      at += 1;
+      current = a;
+      continue;
+    }
+    segment += [st];
+  }
+  seg_src += [current];
+  segs += [segment];
+  if at + 1 != len(srcs!) {
+    return null;
+  }
+  wx = WalkCx { t: t, w: w, steps: steps!, rd: rd };
+  for k in 0..len(seg_src) {
+    src = seg_src[k];
+    seg = segs[k];
+    if !walk_source_ok(b, f, cx, rd, src, seg) {
+      return null;
+    }
+    for s in seg {
+      if walk_disturbs(b, f, cx, s, wx, [src]) != "" {
+        return null;
+      }
+    }
+  }
+  Walk { rd: rd, sources: srcs!, steps: steps! }
+}
+
+// port: copy_view.rs fn apply_walk
+fn apply_walk(b: ir::Bundle, f: ir::Function, cx: Cx, code: ir::Node, t: integer, wk: Walk) -> ir::Node {
+  tp_nr = b.data.definitions[wk.rd]!.known_type;
+  out = walk_binds(b, f, cx, code, t, tp_nr);
+  views: vector<integer> = [t];
+  views += wk.steps;
+  for v in views {
+    w = scope_fn::owner_witness(f, v);
+    if w >= 0 {
+      out = strip_mentions(out, w);
+    }
+  }
+  out = strip(b, f, cx, out, views);
+  for v in views {
+    tv = scope_fn::tp(f, v);
+    f.variables[v].type_def = [scope_inline_returns::with_deps(tv, wk.sources)];
+    f.variables[v].skip_free = true;
+    f.variables[v].owner_witness = scope_fn::NONE;
+  }
+  out
+}
+
+// Every `Set(t, Var(a))` becomes `Set(t, OpGetField(a, 0, tp))`.
+fn walk_binds(b: ir::Bundle, f: ir::Function, cx: Cx, n: ir::Node, t: integer, tp_nr: integer) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdSet { var: x, inner: rhs } => if x == t {
+      match scope_fn::unspan(rhs) {
+        NdVar { n: a } => return respan(n, ir::NdSet { var: x, inner: ir::NdCall { def_nr: cx.get_field, args: [ir::NdVar { n: a }, ir::NdInt { n: 0 }, ir::NdInt { n: tp_nr }] } }),
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for c in kids { walk_binds(b, f, cx, c, t, tp_nr) }])
+}
+
+fn names_w(n: ir::Node, w: integer) -> boolean {
+  scope_fn::reads_var(n, w)
+}
+
+// port: copy_view.rs fn strip_mentions — `about`: a statement ABOUT the witness `w`.
+fn about(op: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet { var: y } => y == w,
+    NdCall { args } => len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n: y } => y == w, _ => false },
+    NdIf { cond } => names_w(cond, w),
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return false;
+      }
+      for o in items {
+        if !about(o, w) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+fn strip_mentions(n: ir::Node, w: integer) -> ir::Node {
+  m = n;
+  match n {
+    NdBlock { block } => { m = ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators if !about(op, w) { op }])] }; },
+    NdLoop { block } => { m = ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators if !about(op, w) { op }])] }; },
+    NdInsert { items } => { m = ir::NdInsert { items: [for op in items if !about(op, w) { op }] }; },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { strip_mentions(c, w) }])
+}

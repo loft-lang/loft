@@ -29,13 +29,16 @@ pub struct Phase {
   pub whys: vector<text>,
   // The locals a sweep skipped as views that ended the scan as owners: `check` rescans with
   // them read as owners from the start.
-  pub late: vector<integer>
+  pub late: vector<integer>,
+  // The reassignments the scan wrote out per arm (`written_out`).
+  pub written_v: vector<integer>,
+  pub written_t: vector<text>
 }
 
 // port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
 // `confined` is the confinement rescan's map, `late` the late owners of an earlier phase;
-// `sunk` is empty (a written-out arm is refused).
-pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>, confined: vector<integer>, late: vector<integer>) -> Phase {
+// `sunk` the bindings an earlier phase wrote out per arm.
+pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>, confined: vector<integer>, late: vector<integer>, sunk: vector<integer>) -> Phase {
   s = scope_scan::Scopes {
     ops: ops,
     d_nr: d_nr,
@@ -56,13 +59,16 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     skipped_viewers: [],
     value_hoists: [],
     multi_assigned: multi_assigned_in(orig_code),
+    whole_value_hoists: whole_value_hoists_in(b, orig_code, orig_vars),
     first_set: scope_fn::NONE,
     null_led: null_led_in(b, orig_code),
     null_led_first: [],
     split_from: [],
     split_count: [],
     mentions: var_mentions_in(orig_code),
-    sunk: [],
+    sunk: [for x in sunk { x }],
+    written_out_v: [],
+    written_out_t: [],
     assigned: assigned_in(orig_code),
     loopish: loopish_in(b, orig_code, orig_vars),
     own_ops: own::ops_of(b),
@@ -210,7 +216,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
       function.variables[v#index].scope = v;
     }
   }
-  Phase { code: code, function: function, why: s.why, whys: s.whys, late: late_now }
+  Phase { code: code, function: function, why: s.why, whys: s.whys, late: late_now, written_v: s.written_out_v, written_t: s.written_out_t }
 }
 
 // port: phase.rs fn hidden_return_buffer_var — the variable of the hidden return buffer, -1.
@@ -244,10 +250,73 @@ fn displaces_return_buffer(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
   false
 }
 
+// port: phase.rs fn whole_value_hoists_in — the `??` hoists (`__ncc_`, `_ncr_`) a bind gives a
+// whole local on some path, and no bind anything but a local or a null.
+fn whole_value_hoists_in(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  whole: vector<integer> = [];
+  hoist_binds(b, code, f, whole, true);
+  if len(whole) > 0 {
+    hoist_binds(b, code, f, whole, false);
+  }
+  whole
+}
+
+fn hoist_binds(b: ir::Bundle, n: ir::Node, f: ir::Function, whole: vector<integer>, collect: boolean) {
+  match scope_fn::unspan(n) {
+    NdSet { var: v, inner } => {
+      nm = scope_fn::name(f, v);
+      if collect && (nm.starts_with("__ncc_") || nm.starts_with("_ncr_")) && hoist_tails(b, inner, f) == 1 && !scope_fn::has(whole, v) {
+        whole += [v];
+      }
+      if !collect && scope_fn::has(whole, v) && hoist_tails(b, inner, f) < 0 {
+        out: vector<integer> = [for x in whole if x != v { x }];
+        whole.clear();
+        whole += out;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    hoist_binds(b, c, f, whole, collect);
+  }
+}
+
+// `tails`: 1 a whole local on some path, 0 only nulls, -1 anything else.
+fn hoist_tails(b: ir::Bundle, v: ir::Node, f: ir::Function) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n: x } => if scope_fn::is_compiler_generated(f, x) { -1 } else { 1 },
+    NdNull => 0,
+    NdCall { def_nr, args } => {
+      nm = b.data.definitions[def_nr]!.name;
+      if len(args) == 0 && (nm == "OpNullRefSentinel" || nm == "OpConvRefFromNull") { 0 } else { -1 }
+    },
+    NdIf { t, f: e } => {
+      a = hoist_tails(b, t, f);
+      c = hoist_tails(b, e, f);
+      if a < 0 || c < 0 { -1 } else if a == 1 || c == 1 { 1 } else { 0 }
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      r = scope_fn::base(bl.result[0] ?? ir::TyVoid);
+      if r is TyVoid || r is TyNull || len(bl.operators) == 0 {
+        return -1;
+      }
+      hoist_tails(b, bl.operators[len(bl.operators) - 1]!, f)
+    },
+    _ => -1
+  }
+}
+
 // `body_block_mut`, with `ops` put in front of its operators.
 fn prepend_body(code: ir::Node, ops: vector<ir::Node>) -> ir::Node {
   match code {
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: prepend_body(inner, ops) },
+    // `body_block_mut`'s `hoisted_ref` arm: `Insert([Set(w, null), Block])`.
+    NdInsert { items } => if len(items) == 2 && scope_buffers::hoisted_init(items[0]!) && items[1]! is NdBlock {
+      ir::NdInsert { items: [items[0]!, prepend_body(items[1]!, ops)] }
+    } else {
+      code
+    },
     NdBlock { block } => {
       bl = block[0];
       all = ops;

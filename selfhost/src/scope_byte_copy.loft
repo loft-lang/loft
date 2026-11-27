@@ -13,7 +13,7 @@
 use ir;
 use scope_fn;
 
-struct Ops {
+pub struct Ops {
   pre_alloc: integer,
   conv_bool_from_int: integer,
   conv_int_from_null: integer,
@@ -28,7 +28,7 @@ struct Ops {
   get_nullable: integer
 }
 
-fn ops_of(b: ir::Bundle) -> Ops {
+pub fn ops_of(b: ir::Bundle) -> Ops {
   Ops {
     pre_alloc: scope_fn::def_nr(b, "OpPreAllocVector"),
     conv_bool_from_int: scope_fn::def_nr(b, "OpConvBoolFromInt"),
@@ -98,7 +98,7 @@ fn is_null(v: ir::Node) -> boolean {
 }
 
 // A counted loop: its index, bounds and body.
-struct Counted {
+pub struct Counted {
   i: integer,
   lo: ir::Node,
   hi: ir::Node,
@@ -121,7 +121,7 @@ fn body_of(v: ir::Node) -> vector<ir::Node>? {
 }
 
 // port: compact.rs fn match_loop — a counted `for` over `lo..hi` in either range prelude.
-fn match_loop(v: ir::Node, o: Ops) -> Counted? {
+pub fn match_loop(v: ir::Node, o: Ops) -> Counted? {
   bl = block(v, "For block");
   if bl == null {
     return null;
@@ -439,16 +439,6 @@ fn pure_off(v: ir::Node, i: integer, src: integer) -> boolean {
   }
 }
 
-// `if t0 { if t1 { … tN } else false } else false` — the tests folded from the last.  Built
-// by recursion: a node rebound in a loop to a literal holding itself, when it started as a
-// vector element, loses the held value on the second pass (r4b/repro/w_j.loft).
-fn chain(tests: vector<ir::Node>, k: integer) -> ir::Node {
-  if k == len(tests) - 1 {
-    return tests[k]!;
-  }
-  ir::NdIf { cond: tests[k]!, t: chain(tests, k + 1), f: ir::NdBoolean { b: false } }
-}
-
 // port: byte_copy.rs fn guarded, the text clause.
 fn guarded(c: Copy, original: ir::Node, o: Ops) -> ir::Node {
   tests: vector<ir::Node> = [];
@@ -461,7 +451,13 @@ fn guarded(c: Copy, original: ir::Node, o: Ops) -> ir::Node {
   tests += [ir::NdCall { def_nr: o.le_int, args: [ir::NdInt { n: 0 }, c.lo] }];
   tests += [ir::NdCall { def_nr: o.le_int, args: [c.lo, c.hi] }];
   tests += [ir::NdCall { def_nr: o.le_int, args: [c.hi, ir::NdCall { def_nr: o.size_text, args: [ir::NdVar { n: c.text }] }] }];
-  cond = chain(tests, 0);
+  // `if t0 { if t1 { … tN } else false } else false` — the tests folded from the last.
+  cond = tests[len(tests) - 1]!;
+  k = len(tests) - 2;
+  while k >= 0 {
+    cond = ir::NdIf { cond: tests[k]!, t: cond, f: ir::NdBoolean { b: false } };
+    k -= 1;
+  }
   append = ir::NdCall { def_nr: o.append, args: [ir::NdVar { n: c.buf }, ir::NdVar { n: c.text }, c.lo, c.hi] };
   ir::NdIf { cond: cond, t: ir::NdInsert { items: [append] }, f: ir::NdInsert { items: [original] } }
 }

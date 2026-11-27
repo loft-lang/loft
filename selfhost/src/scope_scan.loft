@@ -146,6 +146,8 @@ pub struct Scopes {
   pub skipped_viewers: vector<integer>,
   pub value_hoists: vector<integer>,
   pub multi_assigned: vector<integer>,
+  // `whole_value_hoists_in`: the `??` hoists that hold a whole local on some path.
+  pub whole_value_hoists: vector<integer>,
   pub first_set: integer,
   pub null_led: vector<integer>,
   pub null_led_first: vector<integer>,
@@ -154,6 +156,10 @@ pub struct Scopes {
   pub split_count: vector<integer>,
   pub mentions: vector<integer>,
   pub sunk: vector<integer>,
+  // `written_out`: the reassignments the scan wrote out per arm, as (binding, the value it was
+  // bound to as text) — Rust keys the value by its address in the scanned body.
+  pub written_out_v: vector<integer>,
+  pub written_out_t: vector<text>,
   pub assigned: vector<integer>,
   // The variables that MAY have served as a loop's variable (`scope_phase::loopish_in`).
   pub loopish: vector<integer>,
@@ -625,6 +631,21 @@ pub fn lift_set(s: Scopes, b: ir::Bundle, tmp: integer, value: ir::Node, f: ir::
   scope_fn::v_set(tmp, value)
 }
 
+// port: handoff.rs fn drop_bearing_source — the variable whose release a copy of `src` hands
+// over, -1 for none, -2 for a tuple member (`tuple_member_backing`, not transcribed).
+fn drop_bearing_source(src: ir::Node) -> integer {
+  match scope_fn::unspan(src) {
+    NdVar { n: v } => v,
+    NdTupleGet => -2,
+    NdBlock { block } => {
+      k = len(block[0]!.operators);
+      if k == 0 { -1 } else { drop_bearing_source(block[0]!.operators[k - 1]!) }
+    },
+    NdInsert { items } => if len(items) == 0 { -1 } else { drop_bearing_source(items[len(items) - 1]!) },
+    _ => -1
+  }
+}
+
 // port: data.rs fn is_loft_defined
 pub fn is_loft_defined(d: ir::Definition) -> boolean {
   (d.name.starts_with("n_") || d.name.starts_with("t_") || d.name.starts_with("i_") || d.name.starts_with("f_")) && len(d.code) > 0 && !(d.code[0]! is NdNull)
@@ -975,10 +996,22 @@ fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f:
   scope_args::scan_args(s, b, args, f, d_nr, preamble, cls, postamble);
   call = ir::NdCall { def_nr: d_nr, args: cls };
   // `@FR-H-Drop` — a copy that frees its source hands a work-ref's record on.
+  // From here the work-ref names a freed store and holds nothing to release.  A source whose
+  // record has a drop cascade (its per-path pair, `arm_container_handoffs`) refuses.
   if d_nr == s.ops.copy_record {
     match scope_fn::unspan(args[2] ?? ir::NdNull) {
       NdInt { n: tp } => if (tp / 32768) % 2 == 1 {
-        refuse(s, "handoff::drop_bearing_source: a copy that frees its source");
+        w = drop_bearing_source(args[0] ?? ir::NdNull);
+        if w == -2 {
+          refuse(s, "handoff::drop_bearing_source: a tuple member copied and freed (tuple_member_backing)");
+        } else if w >= 0 && scope_fn::name(f, w).starts_with("__ref_") {
+          rec = own::heap_def_nr(scope_fn::tp(f, w));
+          if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
+            refuse(s, "handoff::drop_bearing_source: a droppable record copied and freed (arm_container_handoffs)");
+          } else {
+            set_add(s.drop_transferred, mapped(s, w));
+          }
+        }
       },
       _ => {}
     }

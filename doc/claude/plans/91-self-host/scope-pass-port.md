@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 394 of 1188 programs agree; 505 stop at the scope pass, 286 at the elaborator; 0 differ, 0 fault, 1 leak (the elaborator's) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 6): 871 of 2277 programs, 30 227 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 556 of 1 189 programs agree; 345 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 3 leaks, none the scope pass's answer (step 7) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 7): 1 260 of 2 282 programs, 32 729 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -363,6 +363,65 @@ Span { pos, inner } => match inner { Ins { items } => { ops: vector<Node> = [for
 }]; scanned = Ins { items: ops }; } } }` answers one item where `items` held two
 (`LOFT_NO_MOVE_ELIDE=1` answers right).  `scan_set` builds that node in a call
 (`scope_fn::insert_of`), which no construct rewrite reaches.
+
+**Step 7 (2026-11-27) — the settled rewrites, the move elisions, the arm lifts.**  Measured
+against loft-suite `45cb6a2` and a binary with loft#2668 fixed (dc44e24bd); the step-6 baseline
+re-taken there reads 871 of 2 282 programs, 30 296 of 40 088 definitions, and 400 of 1 189 on the
+whole path.  New files, each a Rust module transcribed whole: `scope_slice_text.loft`,
+`scope_slice_into.loft`, `scope_repeat_run.loft` (a run into a local whose `vector<elem>` the
+schema does not hold refuses: Rust's `Stores::vector` mints it), `scope_literal_append.loft`,
+`scope_literal_host.loft` (`Function::is_ref_named` is not in the image: an admitted literal in a
+program with a `reference<T>` field refuses), `scope_copy_view.loft` (the plain, join and walk
+clauses), `scope_compact.loft` (`match_loop` is `scope_byte_copy`'s, now `pub`),
+`scope_use_analysis.loft` (`collect_uses`, `caller_stores_stable`, `elision_plans`, `move_plans`;
+the survival split is off by default, so `loop_survives` is false), `scope_move_elide.loft`
+(`elide_borrows`, `move_elide`'s record shape) and `scope_construct_elide.loft` (B1.3b–d).  The
+move elisions run in `check` over every function on the parser's bodies, `elide_borrows` first, as
+Rust's do; `Variable::viewed` (every earlier bind's deps) is not in the image, so B1.3c/B1.3d ask
+`touches_store` twice — the current deps, and every multiply-bound local as a possible viewer — and
+refuse where the answers differ.  `place_result`'s trigger is narrowed to its callee clause (a
+local bound from a loft call with a hidden return buffer, copied into an appended element).
+`arm_lift::lift_join_arm_tails` is transcribed for record arms (`arm_bind`'s `Bind`, the owned
+call tails, the deps rewrite, `whole_value_hoists_in`); a vector variable arm (`CopyVector`) and a
+lifted copy that moves a drop refuse.  `sink_set_into_arms` and `rewrite_written_out` are carried
+where the scan writes a reassignment out per arm (keyed by the binding and its value's text where
+Rust keys by address, then the rescan with `sunk`); a reassignment kept in its value form beside
+that rule refuses (the promoted return buffer's arm work-refs read otherwise).  A copy that frees
+its source (`0x8000`) disarms its `__ref_N` work-ref (`drop_transferred`).  `body_block_mut`'s
+`Insert([Set(w, null), Block])` form is read by the lazy mints, the record-buffer reuse and the
+entry prepends (`f29_build` had lost its lazy mint).  The loft#2667 workaround in
+`scope_byte_copy` and the loft#2668 one in `scope_scan_set` are gone.
+
+| measured | programs agree | definitions agree | differ |
+|---|---|---|---|
+| step 6, re-taken | 871 / 2 282 | 30 296 / 40 088 | 0 |
+| + `slice_text`, `slice_into`, `repeat_run`, `literal_append`, `literal_host` | 927 | 30 664 | 0 |
+| + `copy_view` | 978 | 31 172 | 0 |
+| + `move_elide`, `elide_borrows` | 1 067 | 31 766 | 0 |
+| + `compact`, the hoisted body block | 1 145 | 32 148 | 0 |
+| + the arm lifts | 1 212 | 32 500 | 0 |
+| + the copy that frees its source | 1 241 | 32 663 | 0 |
+| + the written-out reassignments | 1 260 / 2 282 | 32 729 / 40 088 | 0 |
+
+No definition that agreed was lost at any step.  The whole path: 400 → 416 → 434 → 470 → 511 →
+513 → 525 → 556 of 1 189, 0 differ.  Two faults are new and neither is a wrong answer of
+the scope pass: `2568-parallel-arms-run-at-once` asserts — the runner in loft runs `parallel`
+arms one after another, so an arm that waits for a later one times out — and
+`a-function-of-many-record-temporaries-compiles-in-seconds` takes 106 s in the development-built
+`run_front` against the survey's 60 s (its output is right).  The leaks the whole path now
+reports are the tools' own stores, counted because the runner shares the C runtime with the
+program it runs: an `NdSet` per `??` bind out of `scope_join_rewrite::reassoc_walk` (24 programs,
+worked around below), the elaborator's `Ex` (two programs) and two `NdIf` records in
+`2591-a-name-an-alternation-captured-ends-with-its-arm` (not traced yet).
+
+Sole refusal families now (scope gate, programs): `was_loop_var` 28, the view walk's materialise
+legs 26, `unnameable_borrow_source` 21, `place_result` 17, `rebind_place` 15,
+`insert_evacuations` 15, a value-form reassignment beside `sink_set_into_arms` 12.
+
+A loft defect met, a leak, both backends, worked around in `reassoc_walk`: a local bound from a
+join of a parameter and a call's fresh record is not released where the function answers another
+value — `node = if deep { rebuild(n, A { x: 7 }) } else { n }; r = alt(node); if r != null { r! }
+else { node }` leaves one `S` store at exit (`--interpret` and `--native-c`).
 
 ## Passes
 

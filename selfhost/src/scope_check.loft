@@ -13,7 +13,9 @@
 
 use ir;
 use scope_fn;
+use ir_pass_tree;
 use scope_scan;
+use scope_scan_set;
 use scope_phase;
 use scope_args;
 use scope_wrapper;
@@ -36,6 +38,15 @@ use scope_loop_kernel;
 use scope_view_walk;
 use scope_vec_copy;
 use scope_forward_result;
+use scope_slice_text;
+use scope_slice_into;
+use scope_repeat_run;
+use scope_literal_append;
+use scope_literal_host;
+use scope_copy_view;
+use scope_use_analysis;
+use scope_move_elide;
+use scope_compact;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -52,11 +63,38 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   reuse = scope_pure_reuse::rewrite_program(b, free);
   // `@FR-R-BoundAppend` — a bound call result appended whole, appended where it is made.
   scope_bound_append::rewrite_program(b);
+  // Tier-0 borrow elision (`elide_borrows`), then the last-use move elision (`move_elide`), each
+  // over every function in turn, on the parser's bodies.
+  uo = scope_use_analysis::ops_of(b);
+  elide: vector<text> = [for _ in b.data.definitions { "" }];
+  if env_variable("LOFT_LINK_WIDEN") != null {
+    for d in b.data.definitions {
+      elide[d#index] = "use_analysis::analyze_fn: the transparent-link widening (LOFT_LINK_WIDEN)";
+    }
+  }
+  if env_variable("LOFT_NO_BORROW_ELIDE") == null {
+    for d in b.data.definitions {
+      if d.def_type == 1 && len(d.code) > 0 && d.source != 0 {
+        scope_move_elide::elide_borrows(b, uo, d#index);
+      }
+    }
+  }
+  for d in b.data.definitions {
+    if d.def_type == 1 && len(d.code) > 0 && d.source != 0 {
+      w = scope_move_elide::move_elide(b, uo, d#index);
+      if w != "" && (elide[d#index] ?? "") == "" {
+        elide[d#index] = w;
+      }
+    }
+  }
   // The whole-program rewrites run on the PARSER's bodies before the loop: their triggers are
   // read before any body is laid out (a callee laid out earlier would otherwise answer).
   program: vector<text> = [];
   for d in b.data.definitions {
     why = reuse[d#index] ?? "";
+    if why == "" {
+      why = elide[d#index] ?? "";
+    }
     if why == "" && d.def_type == 1 && len(d.code) > 0 && d.source != 0 {
       why = program_rewrites(b, free, d.code[0]!, d.variables);
     }
@@ -112,15 +150,36 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       why = join_rewrites(vars);
     }
     stale = stale_callees(b, d_nr, orig_code, refused_nrs);
-    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], []);
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], [], []);
+    late = ph.late;
+    // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
+    // that ran before the scan: rewrite exactly those and scan again.
+    sunk: vector<integer> = [];
+    for x in ph.written_v {
+      if !scope_fn::has(sunk, x) {
+        sunk += [x];
+      }
+    }
+    if ph.why == "" && len(ph.written_v) > 0 {
+      hit = [false];
+      rw = scope_scan_set::rewrite_written_out(b, orig_code, vars, ph.written_v, ph.written_t, hit);
+      if hit[0] {
+        orig_code = rw;
+        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late, sunk);
+        for v in ph.late {
+          if !late.contains(v) {
+            late += [v];
+          }
+        }
+      }
+    }
     if why == "" {
       why = ph.why;
     }
     // A local an early sweep skipped as a view and the scan then made an owner: scan again
     // with it read as an owner from the start.  The rescans below carry the set.
-    late = ph.late;
     if why == "" && len(late) > 0 {
-      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late);
+      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late, sunk);
       why = ph.why;
       for v in ph.late {
         if !late.contains(v) {
@@ -143,7 +202,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
             scope_scan::put(cmap, c.local, c.block);
           }
         }
-        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, cmap, late);
+        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, cmap, late, sunk);
         why = ph.why;
         for c in confined {
           ph.code = scope_confinement::relocate_null_init(ph.code, c.vdb, c.block);
@@ -207,14 +266,34 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     // `(R-ForwardResult)` — a returned local bound from a call is built in the return buffer
     // (after `(R-ExitVector)` and `exit_record`, refused above where they would fire).
     code = scope_forward_result::rewrite(b, d_nr, ph.code, ph.function);
+    // `@FR-R-MoveLast`'s host clause, then `(R-LiteralAppend)`.  A literal it would place
+    // where a stored reference may name the store refuses (`is_ref_named`, not in the image).
+    lh = scope_literal_host::refusal(b, d, code, ph.function);
+    if lh != "" {
+      refused += ["{d.name}: {lh}"];
+      refused_nrs += [d_nr];
+      continue;
+    }
+    code = scope_literal_host::rewrite(b, d, code, ph.function);
+    code = scope_literal_append::rewrite(b, d, code, ph.function);
+    // `@FR-R-CopyView` (after `return_field`, `rebind_place` and `const_fn`, refused above
+    // where they would fire).
+    code = scope_copy_view::rewrite(b, code, ph.function);
+    // `@FR-R-Compact`.
+    code = scope_compact::rewrite(b, code);
     // `(R-MoveLast)`'s local clause, after `(R-Compact)` (refused above where it would fire).
     code = scope_take_local::rewrite(b, code, ph.function);
     // `(R-BoundedNest)`'s reduction is its loop kernel's call.
     code = scope_loop_kernel::rewrite(b, code);
     // `@FR-R-ByteCopy`.
     code = scope_byte_copy::rewrite(b, code);
+    // `@FR-R-RepeatRun`.
+    code = scope_repeat_run::rewrite(b, code, ph.function);
     // `@FR-R-VecCopy` (after `repeat_run`, refused above where it would fire).
     code = scope_vec_copy::rewrite(b, d, code, ph.function);
+    // `@FR-R-SliceArg`'s range clause, then `@FR-R-SliceInto`.
+    code = scope_slice_text::rewrite(b, d, code, ph.function);
+    code = scope_slice_into::rewrite(b, d, code, ph.function);
     // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
     code = scope_wrapper::rewrite(b, code);
     b.data.definitions[d_nr].variables = ph.function;
@@ -309,117 +388,19 @@ fn callees(n: ir::Node, out: vector<integer>) {
   }
 }
 
-// The whole-program rewrites `check` runs on the parser's bodies before the loop, each refused
-// where its trigger is in this body: `pure_reuse`, `elide_borrows`,
-// `move_elide`, `value_struct_copy` (`spent::record_all` records facts only), and the post-loop ones on the settled bodies: `text_replace::admit`,
-// `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
-// and closures, refused where they are bound).
+// The whole-program rewrites `check` runs on the parser's bodies before the loop are all
+// transcribed (`pure_reuse`, `bound_append`, `elide_borrows`, `move_elide`, `value_struct_copy`);
+// the post-loop ones on the settled bodies (`text_replace::admit`, `host_store`,
+// `rebound_captures`, `owner_handover`, `lease_calls`) are refused where they are bound.
 fn program_rewrites(b: ir::Bundle, free: vector<boolean>, code: ir::Node, f: ir::Function) -> text {
-  calls: vector<integer> = [];
-  w = Trigger { why: "" };
-  triggers(b, free, code, f, calls, w);
-  if w.why == "" && elide_borrows_candidate(b, code, f) {
-    note(w, "move_elide::elide_borrows: a vector local filled once from a variable (use_analysis::elision_plans)");
-  }
-  w.why
+  ""
 }
 
-// The copy idioms `use_analysis::elision_plans` reads, gathered as `collect_uses` does: the
-// buffer each local is defined from (`def_vdb`), the buffers minted (`database_vars`), and
-// each local's appends with the base of their source (`append_src`).
-struct Idiom { vdb: vector<integer>, minted: vector<integer>, appends: vector<integer>, based: vector<boolean> }
-
-fn idioms(b: ir::Bundle, n: ir::Node, gf: integer, db: integer, app: integer, u: Idiom) {
-  match n {
-    NdSet { var, inner } => match scope_fn::unspan(inner) {
-      NdCall { def_nr, args } => if def_nr == gf && len(args) > 0 {
-        match scope_fn::unspan(args[0]!) { NdVar { n: x } => if var < len(u.vdb) { u.vdb[var] = x; }, _ => {} }
-      },
-      _ => {}
-    },
-    NdCall { def_nr, args } => {
-      if def_nr == db && len(args) > 0 {
-        match scope_fn::unspan(args[0]!) { NdVar { n: x } => { u.minted += [x]; }, _ => {} }
-      }
-      if def_nr == app && len(args) > 0 {
-        match scope_fn::unspan(args[0]!) {
-          NdVar { n: v } => if v < len(u.appends) {
-            u.appends[v] = (u.appends[v] ?? 0) + 1;
-            src = if len(args) > 1 { scope_fn::unspan(args[1]!) } else { ir::NdNull };
-            u.based[v] = match src {
-              NdVar => true,
-              NdCall { def_nr: g, args: ga } => g == gf && len(ga) > 0 && scope_fn::unspan(ga[0]!) is NdVar,
-              _ => false
-            };
-          },
-          _ => {}
-        }
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    idioms(b, c, gf, db, app, u);
-  }
-}
-
-// `move_elide::elide_borrows` (default on): a LOCAL vector filled by exactly one append from a
-// variable or a field of one into a fresh buffer may be bound in place of its copy — a superset
-// of the plans `use_analysis::elision_plans` makes, refused by name.
-fn elide_borrows_candidate(b: ir::Bundle, code: ir::Node, f: ir::Function) -> boolean {
-  gf = scope_fn::def_nr(b, "OpGetField");
-  db = scope_fn::def_nr(b, "OpDatabase");
-  app = scope_fn::def_nr(b, "OpAppendVector");
-  n = scope_fn::count(f);
-  u = Idiom { vdb: [for _ in 0..n { -1 }], minted: [], appends: [for _ in 0..n { 0 }], based: [for _ in 0..n { false }] };
-  idioms(b, code, gf, db, app, u);
-  for v in 0..n {
-    if (u.appends[v] ?? 0) == 1 && (u.based[v] ?? false) && !scope_fn::is_argument(f, v) && (u.vdb[v] ?? -1) >= 0 && u.minted.contains(u.vdb[v] ?? -1) {
-      return true;
-    }
-  }
-  false
-}
-
-struct Trigger { why: text, f: ir::Function, has_loop: boolean }
-
-fn has_loop(n: ir::Node) -> boolean {
-  if n is NdLoop {
-    return true;
-  }
-  for c in scope_fn::children(n) {
-    if has_loop(c) {
-      return true;
-    }
-  }
-  false
-}
+struct Trigger { why: text, placeable: vector<integer> }
 
 fn note(w: Trigger, why: text) {
   if w.why == "" {
     w.why = why;
-  }
-}
-
-fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, calls: vector<integer>, w: Trigger) {
-  match n {
-    NdCall { def_nr, args } => {
-      nm = scope_args::def_name(b, def_nr);
-      // `move_elide` (default on): a record copied out of a local at that local's last use is
-      // built in the copy's destination instead (`MovePlan`, the `a.field = base` rewrite).
-      if nm == "OpCopyRecord" && len(args) > 1 {
-        match scope_fn::unspan(args[0]!) {
-          NdVar { n: src } => if !scope_fn::is_argument(f, src) {
-            note(w, "move_elide::move_elide: a local record copied out (use_analysis::move_plans)");
-          },
-          _ => {}
-        }
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    triggers(b, free, c, f, calls, w);
   }
 }
 
@@ -437,9 +418,10 @@ fn join_rewrites(f: ir::Function) -> text {
 
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
-// is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
-// `compact`, `byte_copy`'s vector clause, `repeat_run`, `slice_text`, `slice_into`.
-// `take_local`, `loop_kernel_rewrite`, `byte_copy` and `vec_copy` are transcribed and run by `check`.
+// is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `byte_copy`'s
+// vector clause.  `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
+// `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`, `slice_text` and `slice_into`
+// are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
   for x in f.variables {
@@ -465,86 +447,17 @@ fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Fun
       }
     }
   }
+  placeable_binds(b, code, f, w.placeable);
   record_triggers(b, code, f, hidden, w);
-  w.f = f;
-  w.has_loop = has_loop(code);
-  settled_triggers(b, code, false, w);
   note(w, scope_byte_copy::refusal(b, code));
+  note(w, scope_repeat_run::refusal(b, code, f));
   w.why
-}
-
-fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
-  lp = in_loop;
-  match n {
-    NdLoop { block } => {
-      lp = true;
-    },
-    NdBlock { block } => {
-      // `repeat_run`: four or more consecutive pushes of one constant into one target.
-      run = 0;
-      prev = "";
-      for op in block[0].operators {
-        u = scope_fn::unspan(op);
-        cur = match u {
-          NdCall { def_nr } => {
-            nm = scope_args::def_name(b, def_nr);
-            if nm == "OpPushFloat" || nm == "OpPushInt" || nm == "OpPushSingle" || nm == "OpPushInt4" { "{u}" } else { "" }
-          },
-          _ => ""
-        };
-        if cur != "" && cur == prev {
-          run += 1;
-        } else {
-          run = if cur == "" { 0 } else { 1 };
-        }
-        prev = cur;
-        if run >= 4 {
-          note(w, "repeat_run::rewrite: a run of one constant pushed");
-        }
-      }
-    },
-    NdCall { def_nr, args } => {
-      nm = scope_args::def_name(b, def_nr);
-      if nm == "OpAppendVector" && len(args) > 1 {
-        src = scope_fn::unspan(args[1]!);
-        // `(R-SliceInto)`: a slice VALUE (its block) appended to a place.
-        if src is NdBlock || src is NdInsert {
-          note(w, "slice_into::rewrite: a slice value appended to a place");
-        }
-        // `(R-MoveLast)`'s host clause: a literal's vector field takes a local vector.
-        if src is NdVar && match scope_fn::unspan(args[0]!) { NdCall { def_nr: g } => scope_args::def_name(b, g) == "OpGetField", _ => false } {
-          match src {
-            NdVar { n: t } => if !scope_fn::is_argument(w.f, t) && scope_fn::base(scope_fn::tp(w.f, t)) is TyVector {
-              note(w, "literal_host::rewrite: a vector local appended into a literal's field");
-            },
-            _ => {}
-          }
-        }
-        // `(R-Compact)`: the rebind `V = t` of a local `t` built in a counted loop appends
-        // from `t`.
-        match src {
-          NdVar { n: t } => if w.has_loop && !scope_fn::is_argument(w.f, t) && scope_fn::base(scope_fn::tp(w.f, t)) is TyVector {
-            note(w, "compact::rewrite: a vector local appended whole beside a loop");
-          },
-          _ => {}
-        }
-      }
-      if nm == "n_text_from_bytes" {
-        note(w, "slice_text::rewrite: text from bytes");
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    settled_triggers(b, c, lp, w);
-  }
 }
 
 // The settled-IR record rewrites, each refused where its trigger is in the body:
 // `insert_evacuations` (a stored reference), `place_result` (an element appended to a
 // parameter's collection), `literal_append` (a bound literal copied into an element),
-// `rebind_place` (`x = f(x, …)` through a hidden record buffer), `copy_view` (a record copied
-// from a variable or a join of variables).
+// `rebind_place` (`x = f(x, …)` through a hidden record buffer).  `copy_view` is transcribed.
 fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<text>, w: Trigger) {
   match n {
     NdCall { def_nr, args } => {
@@ -564,12 +477,13 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
           note(w, "stored_refs::insert_evacuations: a reference to a local's record stored");
         }
       }
-      // `place_result` (both clauses) and `literal_append` store a record by copying it into
-      // an appended element (`_elm_N`) or a field of one.
+      // `place_result` (both clauses) stores a call's record by copying it, or its one heap
+      // field, into an appended element (`_elm_N`) or a field of one (`literal_append`, the
+      // literal clause, is transcribed).
       if nm == "OpCopyRecord" && len(args) > 1 {
         er = root_var(b, args[1]!);
-        if er >= 0 && scope_fn::name(f, er).starts_with("_elm_") {
-          note(w, "place_result::rewrite / literal_append::rewrite: a record copied into an appended element");
+        if er >= 0 && scope_fn::name(f, er).starts_with("_elm_") && scope_fn::has(w.placeable, root_var(b, args[0]!)) {
+          note(w, "place_result::rewrite: a call's record copied into an appended element");
         }
         match scope_fn::unspan(args[1]!) {
           NdCall { def_nr: g, args: ga } => {
@@ -588,8 +502,6 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
     },
     NdSet { var: t, inner } => if scope_fn::is_record(scope_fn::tp(f, t)) {
       match scope_fn::unspan(inner) {
-        NdVar => if !scope_fn::is_argument(f, t) { note(w, "copy_view::rewrite: a record copied from a variable"); },
-        NdIf => if !scope_fn::is_argument(f, t) { note(w, "copy_view::rewrite: a record copied from a join"); },
         NdCall { def_nr, args } => {
           d = b.data.definitions[def_nr];
           if d != null && binds::hidden_return_buffer_attr(d!) != null {
@@ -608,6 +520,26 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
   }
   for c in scope_fn::children(n) {
     record_triggers(b, c, f, hidden, w);
+  }
+}
+
+// The locals `place_result::placeable_bind` may examine, a superset: a plain local bound from a
+// loft-defined callee that answers a record through a hidden return buffer.
+fn placeable_binds(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  match n {
+    NdSet { var: v, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr } => {
+        d = b.data.definitions[def_nr];
+        if d != null && binds::is_loft_defined(d!) && binds::hidden_return_buffer_attr(d!) != null && !scope_fn::is_argument(f, v) && !scope_fn::name(f, v).starts_with("__") && !scope_fn::has(out, v) {
+          out += [v];
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    placeable_binds(b, c, f, out);
   }
 }
 

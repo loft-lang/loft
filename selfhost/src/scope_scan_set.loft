@@ -12,6 +12,9 @@
 // handle or `&` binding refuses the function by name; a fn-ref takes the generic legs.
 
 use ir;
+use scope_inline_returns;
+use opt_names;
+use ir_pass_tree;
 use own;
 use binds;
 use scope_fn;
@@ -79,8 +82,31 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     && scope_args::is_value_branch(value)
     && !(t is TyRefVar)
     && scope_fn::is_record(t);
-  if writes_out {
-    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch");
+  if writes_out && sink_set_into_arms(b, v, ov, value, f, true) != null {
+    s.written_out_v += [ov];
+    s.written_out_t += ["{value}"];
+  }
+  sunk = if writes_out { sink_set_into_arms(b, v, ov, value, f, false) } else { null };
+  // A reassignment kept in its value form beside the written-out rule reads facts (the arms'
+  // construction work-refs of a promoted return buffer) this transcription does not yet settle.
+  if writes_out && sunk == null {
+    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch kept in its value form");
+  }
+  if sunk != null {
+    for src in branch_tail_vars(value) {
+      // The identity arm hands nothing over, and the binding does not view itself.
+      if src == v || src == ov {
+        scope_fn::make_independent(f, v, src);
+        continue;
+      }
+      // `per_path_stops` answers only for a record with a drop cascade, which the phase
+      // refuses where it is bound.
+      rec = own::heap_def_nr(scope_fn::tp(f, v));
+      if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE && !scope_fn::is_argument(f, src) {
+        scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a written-out arm that moves a drop (handoff::per_path_stops)");
+      }
+    }
+    return scope_scan::scan(s, b, sunk!, f);
   }
   // #316 — capture BEFORE put_scope below: an ownership-transition free only applies to a
   // REassignment.
@@ -390,8 +416,15 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     _ => false
   };
   s.first_set = if was_in_scope { scope_fn::NONE } else { v };
-  if scope_args::is_value_branch(value) || local_tail {
-    scope_args::arm_tails_need_binding(s, b, value, v, f);
+  // `@FR-O-Complete` — each path of a value branch gets a binding of its own, the temps living
+  // where the BINDING lives.
+  if (scope_args::is_value_branch(value) || local_tail) && scope_args::arm_tails_need_binding(s, b, value, v, f) {
+    home = scope_scan::get(s.var_scope, v);
+    if home < 0 {
+      home = s.scope;
+    }
+    value = scope_args::lift_join_arm_tails(s, b, value, home, v, f);
+    unspanned = scope_fn::unspan(value);
   }
   s.first_set = scope_fn::NONE;
   // A branch JOIN hands over each arm's construction.
@@ -452,7 +485,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
           NdInsert { items } => if len(items) >= 2 {
             ops: vector<ir::Node> = [for x in items[0..len(items) - 1] { x }];
             ops += [ir::NdSpan { pos: pos, inner: items[len(items) - 1]! }];
-            scanned = scope_fn::insert_of(ops);
+            scanned = ir::NdInsert { items: ops };
           },
           _ => {}
         }
@@ -986,7 +1019,7 @@ fn kept_displaced_free(s: scope_scan::Scopes, b: ir::Bundle, v: integer, was_in_
 }
 
 // port: scan_set.rs fn note_lift_viewers
-fn note_lift_viewers(s: scope_scan::Scopes, v: integer, lifts: vector<integer>) {
+pub fn note_lift_viewers(s: scope_scan::Scopes, v: integer, lifts: vector<integer>) {
   if len(lifts) == 0 {
     return;
   }
@@ -1034,6 +1067,172 @@ fn ends_in_if(v: ir::Node) -> boolean {
     },
     _ => false
   }
+}
+
+// port: arm_lift.rs fn sink_set_into_arms — the statement form of `Set(v, <value branch>)`:
+// every arm tail `t` becomes `Set(ov, t)`, or null where an arm tail is not one a plain bind can
+// take as it is.
+pub fn sink_set_into_arms(b: ir::Bundle, v: integer, ov: integer, value: ir::Node, f: ir::Function, beside_any: boolean) -> ir::Node? {
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0]!.name == "ncc" || block[0]!.name == "Object" { return null; },
+    _ => {}
+  }
+  if !sinkable(b, value, v, ov, f) || (!beside_any && !owners_beside_locals_only(value)) {
+    return null;
+  }
+  sink(value, v, ov)
+}
+
+fn sinkable(b: ir::Bundle, tail: ir::Node, v: integer, ov: integer, f: ir::Function) -> boolean {
+  match scope_fn::unspan(tail) {
+    NdVar { n: x } => x == v || x == ov || (x < scope_fn::count(f) && !scope_fn::is_compiler_generated(f, x)),
+    NdNull => true,
+    NdCall => true,
+    NdCallRef => true,
+    NdIf { t, f: e } => sinkable(b, t, v, ov, f) && sinkable(b, e, v, ov, f),
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "join-arm-owner" {
+        return owner_block_call(bl) != null;
+      }
+      if bl.name == "Object" {
+        return scope_backings::construction_work_ref(tail, f) >= 0;
+      }
+      if bl.name == "ncc" {
+        return env_variable("LOFT_NO_CHAIN_ARM_SINK") == null && scope_inline_returns::ncc_arms_are_all_owned(b, bl.operators);
+      }
+      r = bl.result[0] ?? ir::TyVoid;
+      k = len(bl.operators);
+      !(r is TyVoid) && !(r is TyNull) && k > 0 && sinkable(b, bl.operators[k - 1]!, v, ov, f)
+    },
+    NdInsert { items } => len(items) > 0 && sinkable(b, items[len(items) - 1]!, v, ov, f),
+    _ => false
+  }
+}
+
+// port: arm_lift.rs fn owner_block_call — the call `{ buf = call; buf }` binds, or null.
+fn owner_block_call(bl: ir::Block) -> ir::Node? {
+  if len(bl.operators) != 2 {
+    return null;
+  }
+  match scope_fn::unspan(bl.operators[0]!) {
+    NdSet { var: buf, inner } => match scope_fn::unspan(bl.operators[1]!) {
+      NdVar { n: t } => if buf == t { inner } else { null },
+      _ => null
+    },
+    _ => null
+  }
+}
+
+// An arm that is no block or `if` of its own is wrapped in a `sunk arm` block.
+fn block_arm(arm: ir::Node) -> ir::Node {
+  u = scope_fn::unspan(arm);
+  if u is NdBlock || u is NdIf {
+    return arm;
+  }
+  ir::NdBlock { block: [ir::Block { name: "sunk arm", operators: [arm], result: [ir::TyVoid], scope: 0, var_size: 0 }] }
+}
+
+fn owners_beside_locals_only(n: ir::Node) -> boolean {
+  st = [false, false];  // owner, other
+  owners_walk(n, st);
+  !st[0] || !st[1]
+}
+
+fn owners_walk(n: ir::Node, st: vector<boolean>) {
+  match scope_fn::unspan(n) {
+    NdVar => {},
+    NdNull => {},
+    NdIf { t, f } => {
+      owners_walk(t, st);
+      owners_walk(f, st);
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "join-arm-owner" {
+        st[0] = true;
+      } else if len(bl.operators) > 0 {
+        owners_walk(bl.operators[len(bl.operators) - 1]!, st);
+      }
+    },
+    NdInsert { items } => if len(items) > 0 { owners_walk(items[len(items) - 1]!, st); },
+    _ => { st[1] = true; }
+  }
+}
+
+// `sink`: every arm tail written out as `Set(ov, tail)`.
+fn sink(n: ir::Node, v: integer, ov: integer) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => if x == v || x == ov { return ir::NdInsert { items: [] }; },
+    _ => {}
+  }
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "join-arm-owner" {
+        c = owner_block_call(bl);
+        if c != null {
+          return scope_fn::v_set(ov, c!);
+        }
+      }
+      if bl.name == "Object" || bl.name == "ncc" {
+        return scope_fn::v_set(ov, n);
+      }
+      k = len(bl.operators);
+      ops: vector<ir::Node> = [for i in 0..k { bl.operators[i]! }];
+      if k > 0 {
+        ops[k - 1] = sink(bl.operators[k - 1]!, v, ov);
+      }
+      return ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] };
+    },
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: sink(inner, v, ov) },
+    NdIf { cond, t, f } => return ir::NdIf { cond: cond, t: block_arm(sink(t, v, ov)), f: block_arm(sink(f, v, ov)) },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return n;
+      }
+      ops: vector<ir::Node> = [for i in 0..k - 1 { items[i]! }];
+      ops += [sink(items[k - 1]!, v, ov)];
+      return ir::NdInsert { items: ops };
+    },
+    _ => {}
+  }
+  scope_fn::v_set(ov, n)
+}
+
+// port: join_rewrite.rs fn rewrite_written_out — each reassignment the scan wrote out, written
+// out in the body the analyses before the scan read (keyed by its binding and its value's text).
+pub fn rewrite_written_out(b: ir::Bundle, code: ir::Node, f: ir::Function, wv: vector<integer>, wt: vector<text>, hit: vector<boolean>) -> ir::Node {
+  kids = scope_fn::children(code);
+  n = code;
+  if len(kids) > 0 {
+    n = ir_pass_tree::with_children(code, [for c in kids { rewrite_written_out(b, c, f, wv, wt, hit) }]);
+  }
+  match n {
+    NdSet { var: t, inner: val } => {
+      found = false;
+      for i in 0..len(wv) {
+        if wv[i] == t && !found && wt[i] == "{val}" {
+          found = true;
+        }
+      }
+      if found {
+        stmt = sink_set_into_arms(b, t, t, val, f, true);
+        if stmt != null {
+          for src in branch_tail_vars(val) {
+            if var_copy_owns(b, f, t, src) {
+              scope_fn::make_independent(f, t, src);
+            }
+          }
+          hit[0] = true;
+          return stmt!;
+        }
+      }
+    },
+    _ => {}
+  }
+  n
 }
 
 // port: join_rewrite.rs fn branch_tail_vars

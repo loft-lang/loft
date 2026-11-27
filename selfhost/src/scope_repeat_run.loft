@@ -1,0 +1,310 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/repeat_run.rs` transcribed: `@FR-R-RepeatRun`, four or more consecutive pushes
+// of one scalar literal into one target are one push of the template behind
+// `OpPreAllocVector` and one `OpAppendCopy`.  A local target's vector type is the schema's
+// `vector<elem>`, which Rust's `Stores::vector` mints when absent: such a target refuses by name
+// (the image's schema is not grown here).  Run by `check` on the settled body, after
+// `byte_copy`, as Rust's is.
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+use ir_fill_loop;
+
+// `MIN_RUN`: the shortest run worth one fill.
+MIN_RUN = 4;
+
+struct Ops {
+  // `PUSHES`: the push ops whose element is at least four bytes, with that element's size.
+  pushes: vector<integer>,
+  sizes: vector<integer>,
+  get_field: integer,
+  append_copy: integer,
+  pre_alloc: integer
+}
+
+fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    pushes: [scope_fn::def_nr(b, "OpPushFloat"), scope_fn::def_nr(b, "OpPushInt"), scope_fn::def_nr(b, "OpPushSingle"), scope_fn::def_nr(b, "OpPushInt4")],
+    sizes: [8, 8, 4, 4],
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    append_copy: scope_fn::def_nr(b, "OpAppendCopy"),
+    pre_alloc: scope_fn::def_nr(b, "OpPreAllocVector")
+  }
+}
+
+fn disabled() -> boolean {
+  env_variable("LOFT_NO_REPEAT_RUN") != null
+}
+
+// One statement's push: the op, the target (unspanned) and the literal (unspanned).
+struct Push {
+  op: integer,
+  target: ir::Node,
+  lit: ir::Node
+}
+
+// port: repeat_run.rs fn push_of — a push of a literal into a target the rule can evaluate once.
+fn push_of(v: ir::Node, o: Ops) -> Push? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => {
+      if !scope_fn::has(o.pushes, def_nr) || len(args) != 2 {
+        return null;
+      }
+      lit = scope_fn::unspan(args[1]!);
+      if !(lit is NdInt || lit is NdLong || lit is NdFloat || lit is NdSingle) {
+        return null;
+      }
+      if !pure_target(args[0]!, o) {
+        return null;
+      }
+      Push { op: def_nr, target: scope_fn::unspan(args[0]!), lit: lit }
+    },
+    _ => null
+  }
+}
+
+// port: repeat_run.rs fn pure_target — a local, or a field path over one with literal operands.
+fn pure_target(v: ir::Node, o: Ops) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar => true,
+    NdCall { def_nr, args } => def_nr == o.get_field && len(args) == 3 && ir_pass_tree::int_of(args[1]!) != null && ir_pass_tree::int_of(args[2]!) != null && pure_target(args[0]!, o),
+    _ => false
+  }
+}
+
+// port: repeat_run.rs fn same_literal — compared by its bits.
+fn same_literal(a: ir::Node, b: ir::Node) -> boolean {
+  match a {
+    NdInt { n: x } => match b { NdInt { n: y } => x == y, _ => false },
+    NdLong { n: x } => match b {
+      NdLong { n: y } => if x == null { y == null } else { y != null && x! == y! },
+      _ => false
+    },
+    NdFloat { f: x } => match b { NdFloat { f: y } => x.bits() == y.bits(), _ => false },
+    NdSingle { f: x } => match b { NdSingle { f: y } => x.bits() == y.bits(), _ => false },
+    _ => false
+  }
+}
+
+fn same_node(a: ir::Node, b: ir::Node) -> boolean {
+  "{a}" == "{b}"
+}
+
+// One run: its first and last index in the list, and its count.
+struct Run {
+  first: integer,
+  last: integer,
+  count: integer
+}
+
+// port: repeat_run.rs fn runs
+fn runs(ops: vector<ir::Node>, o: Ops) -> vector<Run> {
+  out: vector<Run> = [];
+  cur: Run? = null;
+  prev: Push? = null;
+  for i in 0..len(ops) {
+    u = scope_fn::unspan(ops[i]!);
+    if u is NdLine || u is NdNull {
+      continue;
+    }
+    this = push_of(ops[i]!, o);
+    extends = this != null && prev != null && this!.op == prev!.op && same_node(this!.target, prev!.target) && same_literal(this!.lit, prev!.lit);
+    if extends {
+      if cur != null {
+        cur!.last = i;
+        cur!.count = cur!.count + 1;
+      }
+    } else {
+      if cur != null && cur!.count >= MIN_RUN {
+        out += [cur!];
+      }
+      cur = if this != null { Run { first: i, last: i, count: 1 } } else { null };
+    }
+    prev = this;
+  }
+  if cur != null && cur!.count >= MIN_RUN {
+    out += [cur!];
+  }
+  out
+}
+
+// The vector type `OpAppendCopy` names for a target: a field's own type, or a local's vector
+// type from the schema; -1 for none, -2 where the schema does not hold it yet.
+fn vector_type(b: ir::Bundle, f: ir::Function, target: ir::Node, o: Ops) -> integer {
+  match target {
+    NdCall { def_nr, args } => if def_nr == o.get_field { ir_pass_tree::int_of(args[2]!) ?? -1 } else { -1 },
+    NdVar { n: v } => {
+      elem = match scope_fn::base(scope_fn::tp(f, v)) { TyVector { inner } => inner, _ => return -1 };
+      et = ir_fill_loop::vector_element_type(b, elem);
+      if et < 0 {
+        return -1;
+      }
+      schema_vector(b, et)
+    },
+    _ => -1
+  }
+}
+
+// port: database/types.rs fn vector, as a lookup: the schema type `vector<content>`, -2 when
+// the schema does not hold it (Rust mints it).
+fn schema_vector(b: ir::Bundle, content: integer) -> integer {
+  t = b.types[content];
+  if t == null {
+    return -2;
+  }
+  inner = t!.name;
+  if inner.starts_with("array<") {
+    inner = "vector<{inner[6..]}";
+  } else if inner.starts_with("ordered<") {
+    inner = "sorted<{inner[8..]}";
+  }
+  name = "vector<{inner}>";
+  found = -2;
+  for x in b.types {
+    if x.name == name {
+      found = x#index;
+    }
+  }
+  found
+}
+
+// port: repeat_run.rs fn rewrite — every admitted run of a settled body.
+pub fn rewrite(b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  if disabled() {
+    return code;
+  }
+  o = ops_of(b);
+  if !pushes_any(code, o) {
+    return code;
+  }
+  visit(b, f, code, o)
+}
+
+// The refusal of a body whose run names a vector type the schema does not hold, "" for none.
+pub fn refusal(b: ir::Bundle, code: ir::Node, f: ir::Function) -> text {
+  if disabled() {
+    return "";
+  }
+  o = ops_of(b);
+  if !pushes_any(code, o) || !unheld(b, f, code, o) {
+    return "";
+  }
+  "repeat_run::rewrite: a run into a local whose vector type the schema does not hold (Stores::vector mints it)"
+}
+
+fn unheld(b: ir::Bundle, f: ir::Function, n: ir::Node, o: Ops) -> boolean {
+  ls = lists(n);
+  if ls != null {
+    for r in runs(ls!, o) {
+      p = push_of(ls![r.first]!, o);
+      if vector_type(b, f, p!.target, o) == -2 {
+        return true;
+      }
+    }
+  }
+  for c in scope_fn::children(n) {
+    if unheld(b, f, c, o) {
+      return true;
+    }
+  }
+  false
+}
+
+fn pushes_any(n: ir::Node, o: Ops) -> boolean {
+  match n {
+    NdCall { def_nr } => if scope_fn::has(o.pushes, def_nr) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if pushes_any(c, o) {
+      return true;
+    }
+  }
+  false
+}
+
+// The statement list of a block, a loop or an insert (spans seen through).
+fn lists(n: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(n) {
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    _ => null
+  }
+}
+
+// port: repeat_run.rs fn visit — each list rebuilt with its admitted runs replaced.
+fn visit(b: ir::Bundle, f: ir::Function, v: ir::Node, o: Ops) -> ir::Node {
+  m = v;
+  if !(v is NdSpan) {
+    ls = lists(v);
+    if ls != null {
+      src = ls!;
+      // Per statement: -1 kept, 0 the template behind its reservation, 1 the fill, 2 nothing.
+      role: vector<integer> = [for _ in 0..len(src) { -1 }];
+      reserve: vector<ir::Node> = [for _ in 0..len(src) { ir::NdNull }];
+      fill: vector<ir::Node> = [for _ in 0..len(src) { ir::NdNull }];
+      for r in runs(src, o) {
+        p = push_of(src[r.first]!, o)!;
+        size = 0;
+        for k in 0..len(o.pushes) {
+          if o.pushes[k] == p.op && size == 0 {
+            size = o.sizes[k];
+          }
+        }
+        tp = vector_type(b, f, p.target, o);
+        if tp < 0 {
+          continue;
+        }
+        // The template is preceded by the reservation; every later push of the run becomes
+        // nothing, the second the fill that writes them.
+        total = r.count;
+        if total <= 65535 {
+          role[r.first] = 0;
+          reserve[r.first] = ir::NdCall { def_nr: o.pre_alloc, args: [p.target, ir::NdInt { n: total }, ir::NdInt { n: size }] };
+        }
+        filled = false;
+        for i in r.first + 1..r.last + 1 {
+          u = scope_fn::unspan(src[i]!);
+          if u is NdLine || u is NdNull {
+            continue;
+          }
+          if filled {
+            role[i] = 2;
+          } else {
+            role[i] = 1;
+            fill[i] = ir::NdCall { def_nr: o.append_copy, args: [p.target, ir::NdInt { n: total }, ir::NdInt { n: tp }] };
+            filled = true;
+          }
+        }
+      }
+      ops: vector<ir::Node> = [];
+      for i in 0..len(src) {
+        rl = role[i];
+        if rl == 0 {
+          ops += [ir::NdInsert { items: [reserve[i]!, src[i]!] }];
+        } else if rl == 1 {
+          ops += [fill[i]!];
+        } else if rl == 2 {
+          ops += [ir::NdNull];
+        } else {
+          ops += [src[i]!];
+        }
+      }
+      m = match v {
+        NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ops)] },
+        NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, ops)] },
+        _ => ir::NdInsert { items: ops }
+      };
+    }
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { visit(b, f, c, o) }])
+}

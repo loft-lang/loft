@@ -64,6 +64,13 @@ pub fn reuse_record_buffers(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node
   match code {
     NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: reuse_record_buffers(s, b, inner, f) }; },
     NdBlock { block } => { ops = block[0].operators; },
+    // `body_block_mut`'s `hoisted_ref` arm: `Insert([Set(w, null), Block])`.
+    NdInsert { items } => {
+      if len(items) == 2 && hoisted_init(items[0]!) && items[1]! is NdBlock {
+        return ir::NdInsert { items: [items[0]!, reuse_record_buffers(s, b, items[1]!, f)] };
+      }
+      return code;
+    },
     _ => { return code; }
   }
   guarded: vector<integer> = [];
@@ -468,6 +475,13 @@ pub fn lazy_buffer_mints(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f
   match code {
     NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: lazy_buffer_mints(s, b, inner, f) }; },
     NdBlock { block } => { ops = block[0].operators; },
+    // `body_block_mut`'s `hoisted_ref` arm: `Insert([Set(w, null), Block])`.
+    NdInsert { items } => {
+      if len(items) == 2 && hoisted_init(items[0]!) && items[1]! is NdBlock && !suspends_or_forks(code) {
+        return ir::NdInsert { items: [items[0]!, lazy_buffer_mints(s, b, items[1]!, f)] };
+      }
+      return code;
+    },
     _ => { return code; }
   }
   if suspends_or_forks(code) {
@@ -515,6 +529,14 @@ pub fn lazy_buffer_mints(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f
       ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
     },
     _ => code
+  }
+}
+
+// A bare `Set(_, Null)` (`[Value::Set(_, init), …] if matches!(**init, Value::Null)`).
+pub fn hoisted_init(n: ir::Node) -> boolean {
+  match n {
+    NdSet { inner } => inner is NdNull,
+    _ => false
   }
 }
 

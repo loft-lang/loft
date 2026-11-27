@@ -250,7 +250,7 @@ fn field_is_out_of_line(b: ir::Bundle, d: integer, a: ir::Attribute) -> boolean 
 
 // src/data.rs fn held_out_of_line — does a record of definition `d` (or a variant of the enum
 // `d`) hold a field out of line?
-fn held_out_of_line(b: ir::Bundle, d: integer) -> boolean {
+pub fn held_out_of_line(b: ir::Bundle, d: integer) -> boolean {
   def = b.data.definitions[d];
   if def == null {
     return false;

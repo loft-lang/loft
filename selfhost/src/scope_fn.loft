@@ -405,13 +405,6 @@ pub fn is_par_loop_var(nm: text) -> boolean {
   true
 }
 
-// `Value::Insert(items)`, built in a call: a local rebound to an insert whose items were read out
-// of its own old value (`x = NdInsert { items: ops }`) is a construct the compiler's move
-// elision builds over that old value (scope-pass-port.md § Built, step 6).
-pub fn insert_of(items: vector<ir::Node>) -> ir::Node {
-  ir::NdInsert { items: items }
-}
-
 // `Value::Call(data.def_nr(name), args)`.
 pub fn op(b: ir::Bundle, nm: text, args: vector<ir::Node>) -> ir::Node {
   ir::NdCall { def_nr: def_nr(b, nm), args: args }

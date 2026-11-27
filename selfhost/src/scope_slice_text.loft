@@ -1,0 +1,469 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/slice_text.rs` transcribed: `@FR-R-SliceArg`'s range clause,
+// `text_from_bytes(v[lo..hi])` is the slice's bound statements and
+// `text_from_byte_range(v, lo, hi)`, so neither backend builds the slice.  The slice block's
+// test (`admit`, `split`, `outside_mentions`) is shared with `@FR-R-SliceInto`
+// (`scope_slice_into`).  Run by `check` on the settled body, after `vec_copy`, as Rust's is.
+
+use ir;
+use scope_fn;
+use binds;
+use ir_pass_tree;
+
+// port: slice_text.rs struct BlockOps — the operators a slice value's block is made of.
+pub struct BlockOps {
+  slice: vector<integer>,
+  keep: vector<integer>,
+  frees: vector<integer>,
+  get_field: integer
+}
+
+// port: slice_text.rs fn BlockOps::new
+pub fn block_ops(b: ir::Bundle) -> BlockOps {
+  BlockOps {
+    slice: [scope_fn::def_nr(b, "OpSliceView"), scope_fn::def_nr(b, "OpSliceVector")],
+    keep: [scope_fn::def_nr(b, "OpDatabase"), scope_fn::def_nr(b, "OpDatabaseNP"), scope_fn::def_nr(b, "OpSetInt4"), scope_fn::def_nr(b, "OpClearVector")],
+    // Every one passes a null store by (`free_displaced`, `loft_free_displaced`).
+    frees: [scope_fn::def_nr(b, "OpFreeRef"), scope_fn::def_nr(b, "OpFreeRecordIn"), scope_fn::def_nr(b, "OpFreeRefIfDistinct")],
+    get_field: scope_fn::def_nr(b, "OpGetField")
+  }
+}
+
+struct Ops {
+  from_bytes: integer,
+  from_range: integer,
+  append_text: integer,
+  block: BlockOps
+}
+
+// port: slice_text.rs struct Site — one admitted site: the temporary `T`, its store `W`.
+pub struct Site {
+  tmp: integer,
+  store: integer
+}
+
+// A site, or why the block is not one.
+pub struct Admit {
+  why: text,
+  site: Site
+}
+
+// port: slice_text.rs fn rewrite — every admitted `text_from_bytes(<slice block>)` of `d`.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if (env_variable("LOFT_NO_SLICE_TEXT") ?? "0") != "0" || !binds::is_loft_defined(d) {
+    return code;
+  }
+  o = Ops {
+    from_bytes: scope_fn::def_nr(b, "n_text_from_bytes"),
+    from_range: scope_fn::def_nr(b, "n_text_from_byte_range"),
+    append_text: scope_fn::def_nr(b, "OpAppendText"),
+    block: block_ops(b)
+  };
+  if o.from_bytes < 0 || o.from_range < 0 {
+    return code;
+  }
+  sites: vector<Site> = [];
+  find_sites(code, f, o, sites);
+  // A call held anywhere else is left alone (declined).
+  kept: vector<Site> = [];
+  for s in sites {
+    if outside_mentions(code, s, o.block) == "" {
+      kept += [s];
+    }
+  }
+  if len(kept) == 0 {
+    return code;
+  }
+  // Read on the code as it was, before any site is rebuilt.
+  set_before: vector<integer> = [];
+  declares: vector<integer> = [];
+  first_assignments(code, o, set_before, declares);
+  out = map_sites(code, f, o, kept);
+  declare_before(out, declares, o)
+}
+
+// The walk of `rewrite`'s first half: every host's admitted site.
+fn find_sites(n: ir::Node, f: ir::Function, o: Ops, sites: vector<Site>) {
+  if n is NdSpan {
+    find_sites(scope_fn::unspan(n), f, o, sites);
+    return;
+  }
+  bl = host(n, o);
+  if bl != null {
+    a = admit(bl!, f, o.block);
+    if a.why == "" {
+      sites += [a.site];
+    }
+  }
+  for c in scope_fn::children(n) {
+    find_sites(c, f, o, sites);
+  }
+}
+
+// `code.map_nodes`: each admitted host replaced by its statement block, the replacement then
+// walked as any node.
+fn map_sites(n: ir::Node, f: ir::Function, o: Ops, sites: vector<Site>) -> ir::Node {
+  m = n;
+  bl = host(n, o);
+  if bl != null {
+    a = admit(bl!, f, o.block);
+    if a.why == "" && site_in(sites, a.site.tmp) {
+      sp = split(bl!, a.site, o.block);
+      stmts = sp.prelude;
+      stmts += [rebuilt(n, ir::NdCall { def_nr: o.from_range, args: [sp.src, sp.lo, sp.hi] }, o)];
+      // The bounds' variables belong to the slice block's scope: the statement block that
+      // replaces the assignment takes it over.
+      m = ir::NdBlock { block: [ir_pass_tree::block("slice text", stmts, ir::TyVoid, bl!.scope)] };
+    }
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { map_sites(c, f, o, sites) }])
+}
+
+fn site_in(sites: vector<Site>, tmp: integer) -> boolean {
+  for s in sites {
+    if s.tmp == tmp {
+      return true;
+    }
+  }
+  false
+}
+
+// port: slice_text.rs fn first_assignments — the variables an assignment host DECLARES.
+fn first_assignments(n: ir::Node, o: Ops, set_before: vector<integer>, declares: vector<integer>) {
+  match n {
+    NdSpan { inner } => {
+      first_assignments(inner, o, set_before, declares);
+      return;
+    },
+    NdSet { var: x } => {
+      if host(n, o) != null && !scope_fn::has(set_before, x) && !scope_fn::has(declares, x) {
+        declares += [x];
+      }
+      if !scope_fn::has(set_before, x) {
+        set_before += [x];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    first_assignments(c, o, set_before, declares);
+  }
+}
+
+// port: slice_text.rs fn declare_before — a rewritten assignment that was its variable's
+// declaration is declared `x = ""` in front of its statement block.
+fn declare_before(n: ir::Node, declares: vector<integer>, o: Ops) -> ir::Node {
+  if len(declares) == 0 {
+    return n;
+  }
+  m = n;
+  match n {
+    NdBlock { block } => { m = ir::NdBlock { block: [declared(block[0]!, declares, o)] }; },
+    NdLoop { block } => { m = ir::NdLoop { block: [declared(block[0]!, declares, o)] }; },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { declare_before(c, declares, o) }])
+}
+
+fn declared(bl: ir::Block, declares: vector<integer>, o: Ops) -> ir::Block {
+  out: vector<ir::Node> = [];
+  for op in bl.operators {
+    x = declared_target(op, declares, o);
+    if x >= 0 {
+      remove(declares, x);
+      out += [ir::NdSet { var: x, inner: ir::NdText { s: "" } }];
+    }
+    out += [op];
+  }
+  ir_pass_tree::with_operators(bl, out)
+}
+
+fn remove(v: vector<integer>, x: integer) {
+  for i in 0..len(v) {
+    if v[i] == x {
+      v.remove(i);
+      return;
+    }
+  }
+}
+
+// The variable a `slice text` block's last statement `x = text_from_byte_range(…)` declares,
+// -1 for none.
+fn declared_target(op: ir::Node, declares: vector<integer>, o: Ops) -> integer {
+  match scope_fn::unspan(op) {
+    NdBlock { block } => {
+      inner = block[0]!;
+      k = len(inner.operators);
+      if inner.name != "slice text" || k == 0 {
+        return -1;
+      }
+      match scope_fn::unspan(inner.operators[k - 1]!) {
+        NdSet { var: x, inner: rhs } => if ir_pass_tree::is_call(rhs, o.from_range) && scope_fn::has(declares, x) { x } else { -1 },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// port: slice_text.rs fn host — the assignment `x = text_from_bytes(<slice>)`, or the append
+// `OpAppendText(w, text_from_bytes(<slice>))` into a plain variable: the slice block.
+fn host(n: ir::Node, o: Ops) -> ir::Block? {
+  match n {
+    NdSet { inner } => slice_call(inner, o),
+    NdCall { def_nr, args } => if def_nr == o.append_text && len(args) == 2 && scope_fn::unspan(args[0]!) is NdVar {
+      slice_call(args[1]!, o)
+    } else {
+      null
+    },
+    _ => null
+  }
+}
+
+// port: slice_text.rs fn rebuilt — the host with its call replaced by `range`.
+fn rebuilt(n: ir::Node, range: ir::Node, o: Ops) -> ir::Node {
+  match n {
+    NdSet { var } => ir::NdSet { var: var, inner: range },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [args[0]!, range] },
+    _ => n
+  }
+}
+
+// port: slice_text.rs fn slice_call
+fn slice_call(v: ir::Node, o: Ops) -> ir::Block? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr == o.from_bytes && len(args) == 1 { slice_block(args[0]!) } else { null },
+    _ => null
+  }
+}
+
+// port: slice_text.rs fn slice_block — the block a slice value is lowered to.
+pub fn slice_block(v: ir::Node) -> ir::Block? {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => block[0]!,
+    _ => null
+  }
+}
+
+// port: slice_text.rs fn flat — the statements with every `Insert` opened, in order.
+fn flat(ops: vector<ir::Node>, out: vector<ir::Node>) {
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdInsert { items } => flat(items, out),
+      _ => { out += [op]; }
+    }
+  }
+}
+
+// port: slice_text.rs fn names — a `Var` of `owned` anywhere in `v`.
+fn names(v: ir::Node, owned: vector<integer>) -> boolean {
+  match v {
+    NdVar { n: x } => if scope_fn::has(owned, x) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    if names(c, owned) {
+      return true;
+    }
+  }
+  false
+}
+
+fn first_var(args: vector<ir::Node>) -> integer {
+  if len(args) == 0 {
+    return -1;
+  }
+  match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 }
+}
+
+fn rest_names(args: vector<ir::Node>, owned: vector<integer>) -> boolean {
+  for i in 1..len(args) {
+    if names(args[i]!, owned) {
+      return true;
+    }
+  }
+  false
+}
+
+fn refused(why: text) -> Admit {
+  Admit { why: why, site: Site { tmp: -1, store: -1 } }
+}
+
+// port: slice_text.rs fn admit — is `bl` exactly a slice value?
+pub fn admit(bl: ir::Block, f: ir::Function, o: BlockOps) -> Admit {
+  k = len(bl.operators);
+  if k == 0 {
+    return refused("an empty block");
+  }
+  tmp = match scope_fn::unspan(bl.operators[k - 1]!) { NdVar { n: x } => x, _ => -1 };
+  if tmp < 0 {
+    return refused("its value is not the temporary");
+  }
+  if !scope_fn::name(f, tmp).contains("__iter_vec") {
+    return refused("its value is no slice temporary");
+  }
+  deps = scope_fn::deps(f, tmp);
+  if len(deps) != 1 {
+    return refused("the temporary's store is not one variable");
+  }
+  store = deps[0];
+  owned = [tmp, store];
+  slices = 0;
+  ops: vector<ir::Node> = [];
+  flat(bl.operators[0..k - 1], ops);
+  for op in ops {
+    u = scope_fn::unspan(op);
+    handled = false;
+    match u {
+      NdCall { def_nr, args } => {
+        if scope_fn::has(o.slice, def_nr) {
+          if len(args) != 5 || first_var(args) != tmp || rest_names(args, owned) {
+            return refused("the slice reads the temporary");
+          }
+          slices += 1;
+          handled = true;
+        } else if scope_fn::has(o.keep, def_nr) && scope_fn::has(owned, first_var(args)) && !rest_names(args, owned) {
+          handled = true;
+        }
+      },
+      NdSet { var: x, inner: val } => if x == tmp {
+        ok = match scope_fn::unspan(val) {
+          NdCall { def_nr, args } => def_nr == o.get_field && first_var(args) == store,
+          _ => false
+        };
+        if !ok {
+          return refused("the temporary is bound to something but its store");
+        }
+        handled = true;
+      },
+      _ => {}
+    }
+    if !handled && names(u, owned) {
+      return refused("a bound statement names the temporary");
+    }
+  }
+  if slices != 1 {
+    return refused("not one slice");
+  }
+  Admit { why: "", site: Site { tmp: tmp, store: store } }
+}
+
+// port: slice_text.rs fn split — the bound statements and the slice's operands after its
+// destination: the source, the bounds and the element type.
+pub struct Split {
+  prelude: vector<ir::Node>,
+  src: ir::Node,
+  lo: ir::Node,
+  hi: ir::Node,
+  row: ir::Node
+}
+
+pub fn split(bl: ir::Block, s: Site, o: BlockOps) -> Split {
+  owned = [s.tmp, s.store];
+  out = Split { prelude: [], src: ir::NdNull, lo: ir::NdNull, hi: ir::NdNull, row: ir::NdNull };
+  ops: vector<ir::Node> = [];
+  flat(bl.operators[0..len(bl.operators) - 1], ops);
+  for op in ops {
+    u = scope_fn::unspan(op);
+    sliced = false;
+    match u {
+      NdCall { def_nr, args } => if scope_fn::has(o.slice, def_nr) {
+        out.src = args[1]!;
+        out.lo = args[2]!;
+        out.hi = args[3]!;
+        out.row = args[4]!;
+        sliced = true;
+      },
+      _ => {}
+    }
+    if sliced {
+      continue;
+    }
+    owned_set = match u { NdSet { var: x } => scope_fn::has(owned, x), _ => false };
+    if names(u, owned) || owned_set {
+      continue;
+    }
+    out.prelude += [op];
+  }
+  out
+}
+
+// port: slice_text.rs fn outside_mentions — outside its block, `W` is only declared null and
+// freed, and `T` never named; "" when so, else why not.
+pub fn outside_mentions(code: ir::Node, s: Site, o: BlockOps) -> text {
+  c = [0, 0, 0, 0, 0, 0];
+  mentions_walk(code, s, o, c);
+  // c: store_all, tmp_all, store_freed, store_set, store_in, tmp_in
+  if c[3] > 0 {
+    return "its store is assigned outside the slice";
+  }
+  if c[0] != c[4] + c[2] {
+    return "its store is named outside the slice";
+  }
+  if c[1] != c[5] {
+    return "the temporary is named outside the slice";
+  }
+  ""
+}
+
+fn mentions_walk(n: ir::Node, s: Site, o: BlockOps, c: vector<integer>) {
+  match n {
+    NdSpan { inner } => {
+      mentions_walk(inner, s, o, c);
+      return;
+    },
+    NdVar { n: x } => {
+      if x == s.store {
+        c[0] = c[0] + 1;
+      } else if x == s.tmp {
+        c[1] = c[1] + 1;
+      }
+    },
+    NdCall { def_nr, args } => if scope_fn::has(o.frees, def_nr) && first_var(args) == s.store {
+      c[2] = c[2] + 1;
+    },
+    NdSet { var: x, inner } => if x == s.store && !(scope_fn::unspan(inner) is NdNull) {
+      c[3] = c[3] + 1;
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      k = len(bl.operators);
+      if k > 0 && match scope_fn::unspan(bl.operators[k - 1]!) { NdVar { n: x } => x == s.tmp, _ => false } {
+        for op in bl.operators {
+          inside(op, s, c);
+        }
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    mentions_walk(ch, s, o, c);
+  }
+}
+
+fn inside(n: ir::Node, s: Site, c: vector<integer>) {
+  match n {
+    NdVar { n: x } => {
+      if x == s.store {
+        c[4] = c[4] + 1;
+      } else if x == s.tmp {
+        c[5] = c[5] + 1;
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    inside(ch, s, c);
+  }
+}

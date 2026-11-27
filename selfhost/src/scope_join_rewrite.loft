@@ -378,9 +378,16 @@ fn reassoc(c: Chain, n: ir::Node, f: ir::Function) -> ir::Node? {
 }
 
 // Post-order: the children first, then the node itself.
+// (The leaf and the rebuilt node take separate locals: one bound from a join of the parameter
+// and a fresh node leaked the fresh node where `reassoc` answered — scratchpad repro
+// `w7/repro_leak/leak.loft`, both backends.)
 fn reassoc_walk(c: Chain, n: ir::Node, f: ir::Function) -> ir::Node {
   kids = scope_fn::children(n);
-  node = if len(kids) == 0 { n } else { rebuild(n, [for x in kids { reassoc_walk(c, x, f) }]) };
+  if len(kids) == 0 {
+    leaf = reassoc(c, n, f);
+    return if leaf != null { leaf! } else { n };
+  }
+  node = rebuild(n, [for x in kids { reassoc_walk(c, x, f) }]);
   r = reassoc(c, node, f);
   if r != null { r! } else { node }
 }
