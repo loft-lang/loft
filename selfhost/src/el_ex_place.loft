@@ -1251,6 +1251,24 @@ pub fn unqualify_literal(e: el::El, n: integer) {
   }
 }
 
+// The pattern twin: `Color::Red =>`, `Sh::Sq { s } =>` read as the plain variant — the lexer
+// resolves a qualified variant to its name for Rust — in place, through `a | b` alternatives.
+// A qualifier no enum answers yet (declared below, on the first pass) is left for the second.
+pub fn unqualify_pattern(e: el::El, n: integer) {
+  match e.p.nodes[n] {
+    PName { at, name, member, fields, braces } => {
+      if member != "" {
+        v = qualified_variant(e, name, member);
+        if v != "" {
+          e.p.nodes[n] = PName { at: at, name: v, member: "", fields: fields, braces: braces };
+        }
+      }
+    },
+    PAlt { alts } => { for a in alts { unqualify_pattern(e, a); } },
+    _ => {}
+  }
+}
+
 // `literal_into_place` for a record literal written into a PLACE (a field, an element, a keyed
 // slot, a tagged holder), as Rust's trace prints it at the literal's end: on the second pass, and
 // only where the place has a root Rust can name (`projection_root_field_place`: a variable the

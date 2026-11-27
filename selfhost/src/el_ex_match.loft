@@ -118,7 +118,11 @@ pub fn match_subject(e: el::El, vars: el_vars::Vars, t: ir::TypeT) -> integer {
   // Rust's first pass reads such a match's arms all the same, minting their temporaries; this
   // port's first pass skips an untyped match, so the arms' work texts number otherwise — not
   // carried: refused by name (the temp keeps Rust's name).
-  el::refuse(e, "a match whose subject is typed only on the second pass");
+  // (Measured: the arms are read on the first pass now, `subject_unresolved`, so the late temp
+  // is all that differs, and Rust mints it alike — `_match_subj_late_N`.)
+  if (env_variable("LOFT_ELAB_REFUSE_LATE_SUBJECT") ?? "") != "" {
+    el::refuse(e, "a match whose subject is typed only on the second pass");
+  }
   el_vars::create_unique(vars, "match_subj_late", t)
 }
 
@@ -129,6 +133,9 @@ pub fn match_expr(e: el::El, vars: el_vars::Vars, subject: integer, arms: vector
   // overwrites, `view-written-back`.)
   kept_arm = ex(ir::NdNull, vars.arm_expect);
   vars.arm_expect = if node >= 0 && vars.expect_node == node && (el_types::base(vars.expect) is TyVector || keyed_kind(el_types::base(vars.expect))) { vars.expect } else { ir::TyVoid };
+  for ua in arms {
+    match e.p.nodes[ua] { SArm { pats: ups } => { for up in ups { el_ex_place::unqualify_pattern(e, up); } }, _ => {} }
+  }
   r = match_expr_inner(e, vars, subject, arms, node);
   vars.arm_expect = kept_arm.tp;
   r
