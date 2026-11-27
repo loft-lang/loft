@@ -632,7 +632,8 @@ fn if_tail_params_in(e: el::El, vars: el_vars::Vars, spanned: ir::Node, sets: ve
       null
     },
     NdCall { def_nr, args } => {
-      if len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel" {
+      // (…and a checked variant cast's miss, `OpConvRefFromNull`.)
+      if len(args) == 0 && (el::def(e, def_nr).name == "OpNullRefSentinel" || el::def(e, def_nr).name == "OpConvRefFromNull") {
         return [];
       }
       // A record field of a parameter borrows that parameter.
