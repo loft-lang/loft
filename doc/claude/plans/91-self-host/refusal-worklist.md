@@ -219,6 +219,11 @@ instances; Rust-only definitions 283), one to four per program.  What each open 
 - a lambda argument's tuple record on the first pass (`last(v, |x| { (x, x + 1, x + 2) })`):
   making it there shifted later second-pass rows of the same program — needs Rust's exact moment.
 - cross-library keyed tuples and instances (2435).
+- a function's tail literal read at its declared element (`-> vector<(float, integer)> { [(1, 2)] }`,
+  an-expected-element-type-reaches-every-literal-position): the port builds it at its own
+  element.  Reading it at the result's element names the right vector, but Rust also hoists a
+  constant tail as `__const_n_<fn>`, which the port does not here — without that hoist the change
+  shifts the program's numbering (measured: 32 → 43 Rust-only image lines).
 
 ## R10 — the 32-bit regime
 
