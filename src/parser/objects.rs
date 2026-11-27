@@ -7109,10 +7109,17 @@ impl Parser {
             // `@FR-R-InPlaceLiteral` — and only a local no earlier bind left viewing another store
             // (`viewed_by_an_earlier_bind`): its type keeps the last bind's deps alone.
             let viewed_before = self.vars.viewed_by_an_earlier_bind(*v_nr);
+            // @PLN233 — and only a local no LATER bind makes a view either: `owns_store` reads
+            // this pass's list, which has not met `r = b.tp` further down yet, so pass 1's
+            // final list is the lookahead (`viewed_in_pass_one`).  A user local only, as the
+            // fresh-buffer arm below takes user locals only.
+            let viewed_later =
+                self.vars.viewed_in_pass_one(*v_nr) && !self.vars.is_compiler_generated(*v_nr);
             if self.vars.owns_store(*v_nr)
                 && type_matches
                 && !self.vars.rebind_must_mint(*v_nr)
                 && !viewed_before
+                && !viewed_later
             {
                 // #330: remember the in-place target — a field initialiser
                 // that READS it must be hoisted ABOVE the OpDatabase re-init
@@ -7195,6 +7202,7 @@ impl Parser {
             } else if (!type_matches
                 || self.vars.rebind_must_mint(*v_nr)
                 || viewed_before
+                || viewed_later
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))
                 && !self.first_pass
             {
@@ -7205,7 +7213,9 @@ impl Parser {
                 //   as dependent on some other variable (e.g. `x` had `x = bs[i]` in a
                 //   later statement, giving x type `Reference(T, [bs])`), so
                 //   `is_independent` returns false even though `type_matches` is true
-                //   for this struct-literal assignment.  Without this branch, the
+                //   for this struct-literal assignment.  That later statement is a
+                //   LOOKAHEAD only pass 1 has: where pass 2 starts from clean lists
+                //   (@PLN233), `viewed_in_pass_one` asks pass 1's.  Without this branch, the
                 //   in-place `v_set(x, Null) + OpDatabase` init above was skipped,
                 //   leaving only field-init calls that wrote into uninitialised storage
                 //   — the subsequent codegen then asserted

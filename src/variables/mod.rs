@@ -222,6 +222,12 @@ pub struct Variable {
     /// yet): pass 2 types it by its field ([`Function::unique`]).  On the variable, which is
     /// what carries over between the passes.
     blind_capture: bool,
+    /// @PLN233 — the dependency list this variable ENDED pass 1 with, kept apart from its type
+    /// ([`Function::strip_carried_deps`]).  Pass 2 types each bind with its own deps; this is
+    /// the LOOKAHEAD pass 1 gives it: a bind that must know whether a LATER statement makes the
+    /// variable a view (`r = Lit {}` … `r = b.tp` further down) reads
+    /// [`Function::viewed_in_pass_one`], never the type.
+    pass1_deps: Vec<u16>,
     scope: u16,
     /// The deps each earlier bind of this variable ENDED with on pass 2 ([`Function::note_bind`])
     /// — each store a bind left it viewing.  The type keeps only the LAST bind's deps (a rebind
@@ -1156,6 +1162,7 @@ impl Function {
                 write_source: (0, 0),
                 nullable_line: 0,
                 blind_capture: false,
+                pass1_deps: Vec::new(),
                 defined: false,
                 const_binding: false,
                 amp_link: false,
@@ -1181,15 +1188,36 @@ impl Function {
         f
     }
 
-    /// @PLN233 phase 1 EXPERIMENT (`LOFT_NO_PASS1_DEPS=1`): drop the dependency lists pass 1 left
-    /// on every local of the table pass 2 starts from, so pass 2 derives each list itself.  A
-    /// measurement of which programs still LEAN on the pass-1 lists, not the cure.
+    /// @PLN233 (`LOFT_NO_PASS1_DEPS=1` while phase 3 lands): take the dependency lists pass 1
+    /// left on every local of the table pass 2 starts from OUT of their types, so pass 2 derives
+    /// each list itself, and keep each as the variable's lookahead record (`pass1_deps`).
     pub fn strip_carried_deps(&mut self) {
         for v in &mut self.variables {
             if !v.argument {
+                v.pass1_deps = v.type_def.depend();
                 v.type_def = v.type_def.without_deps();
             }
         }
+    }
+
+    /// @PLN233 — whether pass 1 ended with `var_nr` borrowing a store other than its own: the
+    /// LOOKAHEAD a bind reads when a later statement may turn an owner into a view (a literal
+    /// bound to `r` that `r = b.tp` rebinds further down): [`Self::is_independent`]'s question,
+    /// asked of pass 1's final list.  Empty on pass 1 and wherever the lists stay in the types;
+    /// such a caller reads the type as before.
+    #[must_use]
+    pub fn viewed_in_pass_one(&self, var_nr: u16) -> bool {
+        let Some(v) = self.variables.get(var_nr as usize) else {
+            return false;
+        };
+        let d = &v.pass1_deps;
+        !(d.is_empty()
+            || (d.len() == 1
+                && d[0] == var_nr
+                && !matches!(
+                    v.type_def.base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                )))
     }
 
     pub fn append(&mut self, other: &mut Function) {
@@ -3303,6 +3331,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: false,
             const_binding: false,
@@ -3370,6 +3399,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
@@ -3428,6 +3458,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: false,
             const_binding: false,
@@ -3482,6 +3513,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: true,
             const_binding: false,
