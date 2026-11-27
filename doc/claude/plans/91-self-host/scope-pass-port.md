@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 278 of 1188 programs agree; 624 stop at the scope pass, 286 at the elaborator; 0 differ, 0 fault, 0 leak | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 5): 635 of 2277 programs, 28 962 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 394 of 1188 programs agree; 505 stop at the scope pass, 286 at the elaborator; 0 differ, 0 fault, 1 leak (the elaborator's) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 6): 871 of 2277 programs, 30 227 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -310,6 +310,59 @@ view walk is now the first refusal of 9 programs (132 before).  By first refusal
 `inline_struct_return` 82, `move_elide` 67, keyed bindings 63, `pure_reuse` 51, `drop_hook` 42,
 `arm_bind` (Rust's own lifts) 27, closure records 26, `copy_view` (join) 23, `elide_borrows` 22,
 `exit_vector` 20.
+
+**Step 6 (2026-11-27) — inline returns, `pure_reuse`, `forward_result`, keyed locals.**
+`scope_inline_returns.loft` is `inline_returns.rs` whole: `inline_struct_return` answering the lifted
+temp's type (the fn-ref call through `fnref_target` with its capture and witness gates, the `??`
+and `!` blocks with `ncc_flat_arms` and the local-arm bases, the monomorph facts read off a
+callee's body — `return_sites`, `site_is_fresh`, `monomorph_return_is_fresh`, the delegated and
+fn-ref-slot chains — and the native constructors).  `scan_args` makes every lift Rust makes in
+its order (#248's ordering lift, the A5.6 / P135 / @C118 hoists with their final lift, the
+`Insert`-tail lift, the plain lift with `mark_lift_handoff` and `home_lasts_as_its_holder`, the
+coalesce arm, the generator handle) and `keep_operand_order` (`@FR-E-Left`); `new_lift_var` takes
+the pending join witnesses, `lift_set` the literal accumulator and the minted-store pairing, the
+`Drop` arm of the scan lifts a discarded result, and a consumed lift is read back as null after
+its call.  A body a refused callee would answer for (`stale_defs`) refuses only where the answer
+reads it: a scalar or text result answers `None` before any body is read.  Refused by name: the
+host-store literal clause (`host_store::literal_clause`, a call's answer lifted into a child
+field), the `&` write-back copy (`amp_writeback_owned_copy`), a tuple literal's member lifts.
+`scope_pure_reuse.loft` is `pure_reuse::rewrite_program` with `shared_call::total` and
+`sharing_of`, run by `check` on the parser's bodies before `bound_append`; a sharing wrapper's
+variant (a new definition) and a total call's vector handed in (`hand_in`) refuse by name.
+`scope_forward_result.loft` is `(R-ForwardResult)` whole: the port had no refusal for it, and the
+`pure_reuse` trigger had hidden the one program that reaches it.  Keyed locals take the collection
+legs (the @P302 clear, the self-dep and minting-null-init releases); a keyed type whose records
+hold a generator refuses by name, and a local keyed record stored through a parameter's reference
+is `insert_evacuations`' trigger.  A `par` loop's element variable (`_<name>_par<N>`) is a loop
+variable.
+
+| measured | programs agree | definitions agree | differ |
+|---|---|---|---|
+| step 5 | 635 / 2277 | 28 962 / 39 960 | 0 |
+| + `inline_struct_return` and the lifts | 719 | 29 620 | 0 |
+| + `pure_reuse`, `forward_result` | 788 | 29 878 | 0 |
+| + keyed locals | 871 / 2277 | 30 227 / 39 960 | 0 |
+
+No definition that agreed was lost at any step.  The whole path: 278 → 312 → 348 → 394 of 1 188
+agree, 0 differ, 0 fault; one leak is new — a program the scope pass now carries reaches the exit
+leak check for the first time, and the three records it leaves are the elaborator's own `Ex`
+(`el_ex_base`), a tool leak beneath the scope pass.  By first refusal now: `move_elide` 70,
+`drop_hook` 42, `arm_bind` 35, `copy_view` (join) 27, closure records 26, `literal_host` 26,
+`elide_borrows` 26, `exit_vector` 22.  `move_elide` and `elide_borrows` are one port: the use
+analysis' `analyze_fn` (`collect_uses`, the parser's `find_written_vars`) beneath `move_plans` and
+`elision_plans`, then `move_elide.rs` and `construct_elide.rs`.
+
+Two programs leave the agree column without a wrong answer: `store_iter_scratch.loft` prints its
+store report, which inside `run_front` lists the runner's own store too (`stores`), and
+`store_handoff_residency.loft` reaches a node the bytecode writer in loft does not carry
+(`unwritten`).
+
+A loft defect met, silent, both backends, worked around in the port (not filed yet) — move
+elision builds a record over the local its own source views: `scanned = mk(i); match scanned {
+Span { pos, inner } => match inner { Ins { items } => { ops: vector<Node> = [for x in items { x
+}]; scanned = Ins { items: ops }; } } }` answers one item where `items` held two
+(`LOFT_NO_MOVE_ELIDE=1` answers right).  `scan_set` builds that node in a call
+(`scope_fn::insert_of`), which no construct rewrite reaches.
 
 ## Passes
 

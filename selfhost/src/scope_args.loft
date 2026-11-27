@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @PLN91 — `src/scopes/args.rs` `scan_args` transcribed: a call's arguments, each scanned, and
-// the preamble a lifted argument leaves before the call.  Every lift of a HEAP argument (an inline
-// record or collection a call answers, a `&` write-back, a borrow source the bracket cannot name)
-// belongs to the passes not transcribed yet and refuses the function by name; the text copy of a
-// by-value operand a later operand writes (`copy_written_text_operands`) is carried.
+// the preamble a lifted argument leaves before the call — the lifts of an inline record or
+// collection a call answers (`scope_inline_returns`), the hoisted preambles, `@FR-E-Left`'s
+// operand order, the text copy of a by-value operand a later operand writes.  Refused by name:
+// a `&` write-back's owned copy, a tuple literal's member lifts, a borrow source the bracket
+// cannot name, the vector copy beside a writing operand.
 
 use ir;
 use scope_fn;
@@ -809,8 +810,7 @@ fn host_store_site(s: scope_scan::Scopes, b: ir::Bundle, outer_call: integer, ar
 }
 
 // port: args.rs fn scan_args
-// The three lists are the caller's, filled here: a struct of nodes handed back through the
-// scan's recursion is the shape loft double-frees (scope-pass-port.md § Built, step 3).
+// `(preamble, ls, postamble)`: the three lists are the caller's, filled here.
 pub fn scan_args(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function, outer_call: integer, preamble: vector<ir::Node>, ls: vector<ir::Node>, postamble: vector<ir::Node>) {
   callee: ir::Definition? = if outer_call >= 0 { b.data.definitions[outer_call] } else { null };
   borrows = callee != null && binds::is_loft_defined(callee!) && returns_borrowed_view(callee!)
