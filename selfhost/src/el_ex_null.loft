@@ -2864,6 +2864,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if result is TyOptional && el_types::base(result) is TyVector && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) && (e.first_pass || match el_ir::unspan(v.code) { NdBlock { block: ob } => literal_backing_store(ob[0]) >= 0, _ => false }) {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
+    // (…and so is a slice, `return a[0..k]`: its `iter_vec` block builds a store of its own.)
+    slice_syn = match e.p.nodes[x!] { SIndex { range: sxr } => sxr, _ => false };
+    if result is TyOptional && el_types::base(result) is TyVector && ((e.first_pass && slice_syn) || match el_ir::unspan(v.code) { NdBlock { block: sb } => sb[0].name == "iter_vec", _ => false }) {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
     if el_types::base(result) is TyVector && !(result is TyOptional) && (e.first_pass || vector_buffer(e, vars) >= 0 || renamed) {
       // `return q ?? [literal]` over a nullable vector parameter (`parse_return`'s `clear +
       // append + Return(buf)` over the `??`'s whole branch): the first pass merges the parameter
