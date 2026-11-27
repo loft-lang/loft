@@ -602,7 +602,9 @@ fn push_text_arms(b: ir::Bundle, n: ir::Node, av: integer) -> ir::Node {
     NdIf { cond, t, f } => ir::NdIf { cond: cond, t: push_text_arms(b, t, av), f: push_text_arms(b, f, av) },
     NdBlock { block } => {
       bl = block[0];
-      ops = bl.operators;
+      // A copy built element by element: `ops = bl.operators` on an element view writes back
+      // into the original (sp/repro/view_copy2.loft).
+      ops = [for x in bl.operators { x }];
       k = len(ops);
       if k > 0 {
         ops[k - 1] = push_text_arms(b, ops[k - 1]!, av);
@@ -610,7 +612,7 @@ fn push_text_arms(b: ir::Bundle, n: ir::Node, av: integer) -> ir::Node {
       ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] }
     },
     NdInsert { items } => {
-      ops = items;
+      ops = [for x in items { x }];
       k = len(ops);
       if k > 0 {
         ops[k - 1] = push_text_arms(b, ops[k - 1]!, av);
