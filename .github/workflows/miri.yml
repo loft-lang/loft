@@ -1576,6 +1576,10 @@ jobs:
       - name: Build the release loft
         run: cargo build --release --bin loft
       - name: The suite and its attic, interpreter and C
+        # Two attic programs test loft's own libraries (`use parser;`, `use lexer;` from lib/),
+        # which they found from loft's tree before they moved; the suite runs from its own root.
+        env:
+          LOFT_LIB: ${{ github.workspace }}/lib
         run: python3 "$LOFT_SUITE_DIR/loft-suite" run --attic --mode both-c --loft "$PWD/target/release/loft"
 
   toolchain-matrix:
