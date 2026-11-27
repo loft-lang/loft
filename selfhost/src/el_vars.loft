@@ -273,8 +273,9 @@ pub struct Vars {
   pub lit_root: integer = -1,
   // `literal_into_place`'s field notes of the literal being built into `lit_place` (`{field}:staged`).
   pub lit_notes: vector<text> = [],
-  // Where a literal's omitted-field defaults begin in the op list `object_fields` answered
-  // (-1: none): the staging of `parse_object_field` covers the written fields only.
+  // How many ops at the END of the list `object_fields` answered are the omitted fields'
+  // defaults and what follows them (-1: unknown): the staging of `parse_object_field` covers
+  // the written fields only.
   pub lit_defaults_at: integer = -1,
   pub self_read: integer = -1,
   pub self_stage: vector<ir::Node> = [],

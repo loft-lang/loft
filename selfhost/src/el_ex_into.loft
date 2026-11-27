@@ -247,7 +247,7 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
   }
   vars.lit_defaults_at = -1;
   list = object_fields(e, vars, v, d, fields);
-  defaults_at = vars.lit_defaults_at;
+  defaults_at = if list == null || vars.lit_defaults_at < 0 { -1 } else { len(list!) - vars.lit_defaults_at };
   vars.demote_var = -1;
   vars.rebuild_attempt = false;
   if list == null {
@@ -1301,7 +1301,7 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       _ => {}
     }
   }
-  vars.lit_defaults_at = len(list);
+  dstart = len(list);
   if !e.first_pass {
     for a in def.attributes {
       if a.constant || found.contains(a.name) {
@@ -1356,6 +1356,8 @@ pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: int
       }
     }
   }
+  // (Counted from the END: what the caller places ahead of the list does not move it.)
+  vars.lit_defaults_at = len(list) - dstart;
   list
 }
 
