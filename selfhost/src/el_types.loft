@@ -1335,6 +1335,11 @@ pub fn owns_hook(e: el::El, t: integer, h: text, path: vector<integer>) -> boole
     if type_owns_hook(e, a.typedef[0] ?? ir::TyVoid, h, path) {
       return true;
     }
+    // (`@FR-L-CapOwn`: once the fn fields are settled, a fn field whose closure record has
+    // something to release makes its struct droppable — `Data::fn_field_record`.)
+    if h == "OpDrop" && e.fn_fields_settled > 0 && t < e.fn_fields_settled && fn_field_record(e, a) >= 0 {
+      return true;
+    }
   }
   for x in e.b.data.definitions {
     if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_hook(e, x#index, h, path) {
@@ -1342,6 +1347,21 @@ pub fn owns_hook(e: el::El, t: integer, h: text, path: vector<integer>) -> boole
     }
   }
   false
+}
+
+// `Data::fn_field_record`: the closure record a fn-typed field's assigned lambda is built into,
+// where that record has something to release — a captured store (a `Reference` with deps) or a
+// droppable; -1 otherwise.  One lambda per field (`assigned_lambda_d_nr`).
+pub fn fn_field_record(e: el::El, a: ir::Attribute) -> integer {
+  if !(base(a.typedef[0] ?? ir::TyVoid) is TyFunction) || a.assigned_lambda_d_nr == el::NONE || a.assigned_lambda_d_nr < 0 {
+    return -1;
+  }
+  record = el::def(e, a.assigned_lambda_d_nr).closure_record;
+  if record < 0 || record == el::NONE {
+    return -1;
+  }
+  holds = len([for c in el::def(e, record).attributes if match base(c.typedef[0] ?? ir::TyVoid) { TyReference { n: _, dep } => len(dep) > 0, _ => false } { 1 }]) > 0;
+  if holds || owns_droppable(e, record, []) { record } else { -1 }
 }
 
 // `Data::type_holds_generator`: a value of this type holds a generator's frame — an
