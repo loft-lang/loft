@@ -10,7 +10,7 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 | layer | measured | command |
 |---|---|---|
 | front (the whole loft path) | 52 of 1188 programs agree; 842 stop at the scope pass, 286 at the elaborator, 8 other | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | 142 of 2277 programs, 19 878 of 37 762 definitions agree; 16 671 unscoped, 1 213 differ | `scope_survey.py` |
+| scope gate (Rust's parsed image in, per definition) | the slice: 142 of 2277 programs, 19 878 of 37 762 definitions agree; the transcription (`LOFT_SCOPE_PORT=1`, step 2): 238 programs, 24 435 of 39 960 definitions (libraries' included), 140 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -105,6 +105,64 @@ Step 2's order — the refusals ranked by the definitions where they are the ONL
 The survey looked an unscoped definition up by its name cut at the first `#`, so a dispatch or
 generic instance (`t_18Circle#Tri#integer_tag`) counted as differ; fixed, which moved ≈620 of
 the slice's differ to unscoped.
+
+**Step 2 (2026-11-27) — records.**  A record (or record-enum) local is carried through the scan
+in Rust's order of decisions: `scope_scan_set.loft` (`scan_set` for every kind; a collection,
+tuple, handle, fn-ref or `&` binding still refuses), the record leg of `get_free_vars` with
+`pair_literal_buffers`, the record return legs of `free_vars` and `insert_free` (the null-arm
+join hoist, loft#754 / loft#793, `sink_return_branch`), the branch and loop reconciles of
+`owned_refs` / `construction_backing` / `view_backing`, and `scan_if`'s `deferred_first_bind`.
+New files, named after the Rust modules: `scope_drops.loft` (`drop_hook`, `displaced_drop`,
+`in_place_rebuild`), `scope_witness.loft` (`owner_witness_locals` as a question,
+`nullable_view_locals`, the displacement predicates), `scope_backings.loft`,
+`scope_buffers.loft` (`tail_calls`, `reuse_record_buffers` with its lazy mints),
+`scope_capture_builds.loft` (`adopted_work_refs`), `scope_join_rewrite.loft`
+(`write_out_joined_copies`).  The phase mints the hidden return buffer's two witnesses
+(`__rbo_`, `__rbw_`) and computes `null_led_first`, `literal_moves`, `view_temps`.  The pass
+lays out every function but the standard library's, as Rust does, and the survey compares
+the libraries' definitions too.
+
+A fact a pass refused before the scan would fill stays empty and is read as Rust reads it; the
+refusal is placed where it could fire: a local of a type with a drop cascade (the hand-offs,
+per-path flags and hooks), a local whose assignments mix ownership (the owner witness), a
+record view of a container the body may disturb (the view walk, a superset), a view handed to
+a `&` parameter (`view_rebind_locals`).  The settled-IR record rewrites refuse where their
+trigger is: `copy_view`, `rebind_place`, `return_field`, `exit_record`, `place_result` /
+`literal_append`, `insert_evacuations`, `keep_placed_results`, `lastuse_reclaim` (vector
+backings only), and before the scan `move_elide` (on by default, a local record copied out).
+Two facts the image does not hold are refused where read: `Function::is_arm_consumed`, and
+`Data::value_structs` — not refusable at all, so a `value struct` binding shows as differ
+(`R-ValueRecord`, 1 definition).
+
+A summary of a callee (`use_analysis::return_ownership`) reads the callee's body as Rust has
+it at that moment: SETTLED for a function before this one.  Where this pass refused such a
+callee, the image holds only its parser body, so the oracle asked about a value whose call
+closure reaches one is refused by name (`check::stale_callees`, `Scopes::stale_defs`).  It
+shrinks as callees are carried.
+
+| pass | programs agree | definitions agree (step-1 set) | unscoped | differ |
+|---|---|---|---|---|
+| the slice | 142 / 2277 | 19 878 / 37 762 | 16 780 | 1 104 |
+| step 1 | 127 / 2277 | 19 725 / 37 762 | 17 898 | 139 |
+| step 2 | 238 / 2277 | 22 622 / 37 762 | 15 000 | 140 |
+
+With the libraries' 2 198 definitions: 24 435 of 39 960 agree (1 813 of the libraries').  No
+definition step 1 agreed on is lost (`--verdicts` files compared after every change).  Overlap
+with the slice: 18 876 under both, 3 746 only under the transcription, 1 002 only under the
+slice — 435 closure drop cascades, 112 generator returns, 90 `pure_reuse`, 55 tuple returns, 50
+`text_replace`, 46 `loop_kernel_rewrite`, 41 vector return buffers, 35 `copy_view`, 33 keyed
+returns; the records family is no longer the gap, so step 3 is not yet due.
+
+Step 3's order — the families by definitions where they are the only blocker:
+
+| family | sole | top refusals |
+|---|---|---|
+| records (the refusals above) | ≈1 570 | the view walk 360, `copy_view` 470, `sink_return_branch`'s non-sinkable arms, `reassociate_coalesce_chains` 160, drop cascades 195 |
+| closures and fn-refs | ≈1 170 | `mark_borrowed_captures` 888 |
+| vectors | ≈1 000 | `vector_rebind_release`, the vector bindings and exits |
+| heap arguments | ≈470 | `inline_struct_return` 365 |
+| a stale callee summary | 260 | shrinks with every family carried |
+| keyed, generators, `text_replace`, `pure_reuse`, tuples | 200, 190, 180, 120, 65 | |
 
 ## Passes
 
