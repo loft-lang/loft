@@ -63,7 +63,7 @@ fn ensure_tuple_defs(e: el::El, t: ir::TypeT, pos: ir::Position) {
   }
 }
 
-fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text, ret: integer? = null) -> Ex {
+fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<integer>, names: vector<text>, body: integer?, why: text, ret: integer? = null, ret_at: integer? = null) -> Ex {
   if e.context < 0 || body == null {
     el::refuse(e, why);
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -83,7 +83,7 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
       }
     }
     cnames = captured_names(e, vars, body!, own);
-    ld = el::add_def(e, nm, el::pos_at(e, at), el::DT_FUNCTION);
+    ld = el::add_def(e, nm, el::pos_at(e, lambda_after(e, at, if ret != null { ret } else { ret_at }, body)), el::DT_FUNCTION);
     // Rust reads the refused lambda's body, so the lambdas nested in it are registered where they
     // are met, before this one's closure record (which follows the body's end).
     register_nested_lambdas(e, vars, body!, root, own + scope_names(e, body!));
@@ -159,6 +159,26 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
   ex(ir::NdNull, ir::TyUnknown { n: 0 })
 }
 
+// Where a lambda's definition stands: where the lexer is past its `)`, on the `->` or on the
+// body's `{` (`parse_function`'s position), not at its `fn`.
+fn lambda_after(e: el::El, at: integer, ret: integer?, body: integer?) -> integer {
+  if ret != null {
+    match e.p.nodes[ret!] {
+      STy { at: rat } => { return rat - 1; },
+      STyFn { at: rat } => { return rat - 1; },
+      STyTuple { at: rat } => { return rat - 1; },
+      _ => {}
+    }
+  }
+  if body != null {
+    match e.p.nodes[body!] {
+      SBlock { at: bat } => { return bat; },
+      _ => {}
+    }
+  }
+  at
+}
+
 // The lambdas nested in a refused lambda's body, in source order: each takes its name from the
 // function's lambda count, and on the first pass its definition `n___lambda_<fn>_<N>`, the
 // lambdas nested in it, and — where its body names a capture (a local of the function or of an
@@ -166,7 +186,7 @@ fn refuse_lambda(e: el::El, vars: el_vars::Vars, at: integer, params: vector<int
 fn register_nested_lambdas(e: el::El, vars: el_vars::Vars, n: integer, root: text, scope: vector<text>) {
   for c in el_length::children(e, n) {
     match e.p.nodes[c] {
-      SLambda { at: lat, params: lps, body: lb } => {
+      SLambda { at: lat, params: lps, ret: lret, body: lb } => {
         if lb != null {
           lk = el::lambda_take(e, root);
           nm = "n___lambda_{root}_{lk}";
@@ -179,7 +199,7 @@ fn register_nested_lambdas(e: el::El, vars: el_vars::Vars, n: integer, root: tex
             }
           }
           if e.first_pass && el::def_nr(e, nm) < 0 {
-            ld = el::add_def(e, nm, el::pos_at(e, lat), el::DT_FUNCTION);
+            ld = el::add_def(e, nm, el::pos_at(e, lambda_after(e, lat, lret, lb)), el::DT_FUNCTION);
             register_nested_lambdas(e, vars, lb!, root, scope + own + scope_names(e, lb!));
             if len(names_captured_in(e, vars, lb!, own, scope)) > 0 {
               end = match e.p.nodes[lb!] { SBlock { end: be } => be, _ => 0 };
@@ -256,7 +276,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           hint = el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid);
         }
         if !(hint is TyFunction) {
-          return refuse_lambda(e, vars, at, params, names, body, "a short lambda (`|…|`) with no `fn(…)` its position expects");
+          return refuse_lambda(e, vars, at, params, names, body, "a short lambda (`|…|`) with no `fn(…)` its position expects", ret_at: ret);
         }
       }
       if e.context < 0 || body == null {
@@ -312,17 +332,17 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         if writes_a_name(e, body!, [el::Capture { name: c, tp: ct }]) && !(el_types::base(ct) is TyVector && !(ct is TyOptional)) {
           boxable = if e.first_pass { el_cell::cell_name(e, ct) != "" } else { el_cell::cell_of(e, ct) >= 0 };
           if !boxable {
-            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}");
+            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: written by it, of this type {type_kind(ct)}", ret_at: ret);
           }
           // A written parameter takes a shadow cell (`promote_boxed_scalar_arg`, #685) and a
           // lambda's own local a nested lambda writes is boxed by no flip: not carried.
           // A written parameter is boxed through a shadow (`el_cell::flip`); a `const` one, a `&`
           // one and a hidden one are refused, as Rust reports the first two.
           if vars.vars[cv].argument && (vars.vars[cv].value_const || el_vars::tp(vars, cv) is TyRefVar || hidden_param(e, vars, cv)) {
-            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a parameter written by it");
+            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a parameter written by it", ret_at: ret);
           }
           if starts_with(el::def(e, e.context).name, "n___lambda_") || starts_with(el::def(e, e.context).name, "__lambda_") {
-            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a lambda's local written by a nested lambda");
+            return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a lambda's local written by a nested lambda", ret_at: ret);
           }
           written += [c];
           if e.first_pass {
@@ -365,10 +385,10 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         shares = false;
       }
       if shares && answer != null && !el_types::is_unknown(answer!) && !el_ex_object::scalar_type(answer!) && !(el_types::base(answer!) is TyText) && !(answer! is TyVoid) && !record_type(e, answer!) {
-        return refuse_lambda(e, vars, at, params, names, body, "a lambda answering a record or a collection beside a shared capture");
+        return refuse_lambda(e, vars, at, params, names, body, "a lambda answering a record or a collection beside a shared capture", ret_at: ret);
       }
       if len(caps) > 0 && holds_lambda(e, body!) {
-        return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: around another lambda");
+        return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: around another lambda", ret_at: ret);
       }
       // (`next_lambda_name`: numbered in the enclosing FUNCTION's sequence, a lambda inside a
       // lambda as its sibling — `__lambda_f_1` beside `__lambda_f_0`.)
