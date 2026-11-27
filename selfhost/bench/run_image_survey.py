@@ -132,6 +132,9 @@ def one(f, loft, runner, tmp, env, timeout, written=False, test=None, libargs=()
         # The loft scope pass lays out no frame for one of its functions yet.
         # By its reason: the function it was met in (`n_main: …`) is the program's own.
         return f, "unscoped", [(err2.strip().splitlines() or [""])[0][len("unscoped: "):].split(": ", 1)[-1][:100]]
+    if front_std and rc2 == 6:
+        # An IR pass (`ir_passes.loft`) cannot carry one of its functions yet.
+        return f, "unpassed", [(err2.strip().splitlines() or [""])[0][len("unpassed: "):].split(": ", 1)[-1][:100]]
     if "stopped: not carried by the bytecode writer in loft" in err2:
         return f, "unwritten", [""]
     m = re.search(r"stopped: not carried: ([^\n]+)", err2)
@@ -172,7 +175,7 @@ def main():
                     help="run from the loft FRONT END's own definitions (run_front.loft): elaborated, "
                          "scoped by the loft scope pass, written and run in loft")
     ap.add_argument("--show", action="append", default=[],
-                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage, refused, unscoped; repeatable)")
+                    help="list the programs of a verdict (agree, stores, leak, differ, stopped, fault, noimage, refused, unscoped, unpassed; repeatable)")
     ap.add_argument("--check", metavar="BASELINE", help="exit 1 on a drop against BASELINE or any differ")
     ap.add_argument("--write-baseline", metavar="BASELINE", help="write this layer's block of BASELINE")
     o = ap.parse_args()
@@ -244,11 +247,11 @@ def main():
                 results[name] = verdict
                 if verdict in o.show:
                     shown.append(f"{verdict}\t{name}\t{what[0]}")
-                if verdict in ("stopped", "unscoped"):
-                    ops[("unscoped: " + what[0]) if verdict == "unscoped" else what[0]] += 1
+                if verdict in ("stopped", "unscoped", "unpassed"):
+                    ops[(verdict + ": " + what[0]) if verdict != "stopped" else what[0]] += 1
         print(f"{counts['agree']} of {len(jobs)} programs agree; " +
               ", ".join(f"{counts[k]} {k}" for k in ("stores", "leak", "stopped", "unwritten", "differ", "fault", "noimage", "refused",
-                                          "unscoped") if counts[k]))
+                                          "unscoped", "unpassed") if counts[k]))
         for line in sorted(shown):
             print(line)
         if ops:
