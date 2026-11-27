@@ -2929,6 +2929,16 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
       }
       match el_ir::unspan(v.code) {
         NdVar { n } => {
+          // (On the first pass a parameter returned from a body ending in `null` is merged into the
+          // result, `MergeAttr`, as `ref_return(…, MidReturn)` answers.)
+          if e.first_pass && vars.vars[n].argument && !hidden_param(e, vars, n) && el_types::base(el_vars::tp(vars, n)) is TyVector {
+            fnt = el_ex_deliver::tail_syntax(e, vars.body);
+            fpa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, n));
+            fpr = el::def(e, e.context).returned[0] ?? result;
+            if fnt >= 0 && e.p.nodes[fnt] is SNull && fpa >= 0 && !el_types::deps(fpr).contains(fpa) {
+              e.b.data.definitions[e.context].returned = [el_types::with_deps(el_types::base(fpr), el_types::deps(fpr) + [fpa])];
+            }
+          }
           if (!vars.vars[n].argument || e.first_pass) && el_types::base(el_vars::tp(vars, n)) is TyVector {
             return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
           }
@@ -2941,6 +2951,24 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
           buf = vector_buffer(e, vars);
           row = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
           if vars.vars[n].argument && !hidden_param(e, vars, n) && el_types::base(el_vars::tp(vars, n)) is TyVector && buf >= 0 && row >= 0 {
+            // (A body ending in `null` keeps the parameter's `MergeAttr` the first pass gave it —
+            // the result naming the buffer in its place now — as the `τ?` road does.)
+            dnt = el_ex_deliver::tail_syntax(e, vars.body);
+            if dnt >= 0 && e.p.nodes[dnt] is SNull {
+              dpa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, n));
+              dba = attr_nr(el::def(e, e.context), el_vars::name_of(vars, buf));
+              dpr = el::def(e, e.context).returned[0] ?? result;
+              if dpa >= 0 && dba >= 0 {
+                dods: vector<integer> = [];
+                for dod in el_types::deps(dpr) {
+                  dnd = if dod == dpa { dba } else { dod };
+                  if !dods.contains(dnd) {
+                    dods += [dnd];
+                  }
+                }
+                e.b.data.definitions[e.context].returned = [el_types::with_deps(el_types::base(dpr), dods)];
+              }
+            }
             b = ir::NdVar { n: buf };
             return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, v.code, ir::NdInt { n: row }]), ir::NdReturn { inner: b }] }, ir::TyNever);
           }

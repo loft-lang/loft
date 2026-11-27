@@ -121,16 +121,17 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     null_tail = (result is TyOptional || el_types::base(result) is TyVector) && (el_ir::is_null(tail) || match tail { NdCall { def_nr: ntd, args: nta } => len(nta) == 0 && el::def(e, ntd).name == "OpNullRefSentinel", _ => false });
     if null_tail && len(bl.operators) > 0 {
       nmids = bl.operators[0..len(bl.operators) - 1];
-      // (A dense result's exit that answers the buffer — a parameter copied in — is not carried
-      // under a `null` tail: its result's borrow is the `τ?` road's alone.)
-      dense_buf = !(result is TyOptional) && el_ex_copy::buffer_returns(nmids, rb) > 0;
+      // (A dense result's buffer exit — a parameter copied in — is carried as the `τ?` one is:
+      // its `return` merged the parameter on the first pass and names the buffer now.)
+      dense_buf = false;
       // (A slice exit, `return a[0..k]`, is a fresh build of its own as a literal is.)
       if !dense_buf && el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + slice_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) + el_ex_copy::buffer_returns(nmids, rb) {
         null_exits = true;
         // (An exit answering the buffer makes the body borrow what it handed back.)
         if el_ex_copy::buffer_returns(nmids, rb) > 0 {
           nps = el_ex_copy::returned_params(e, vars, nmids, rb);
-          bl.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(nps) > 0 { nps } else { [rb] }) }];
+          nbt = el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(nps) > 0 { nps } else { [rb] });
+          bl.result = [if result is TyOptional { ir::TyOptional { inner: nbt } } else { nbt }];
           return ir::NdBlock { block: [bl] };
         }
       }
