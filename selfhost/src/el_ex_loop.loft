@@ -1324,7 +1324,8 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   vec = -1;
   elem = ir::TyInteger { spec: i32_spec() };
   if ranged {
-    rw = el_ex_pattern::range_walk(e, vars, id, source);
+    // (A `_` walk's counter is a unique `_index_N`, as the vector walk's is.)
+    rw = el_ex_pattern::range_walk(e, vars, if src_id == "_" { "_" } else { id }, source);
     if rw == null {
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -1684,6 +1685,13 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       },
       _ => { value = el_ir::unspan(b.code); }
     }
+    // (`const_eval`'s value is what is pushed: `-5` and `3 * 4` fill as `-5i32` and `12i32`.)
+    if !(value is NdInt) && !(value is NdLong) && !(value is NdFloat) && !(value is NdSingle) && !(value is NdBoolean) && !(value is NdText) && !(value is NdNull) {
+      cv = el_convert::const_int(e, value);
+      if cv != null {
+        value = ir::NdInt { n: cv! };
+      }
+    }
     count = el_ex_assign::expression(e, vars, fill_count);
     // (A field's fill makes no room first.)
     if v >= 0 {
@@ -1735,8 +1743,22 @@ pub fn constant_body(e: el::El, code: ir::Node) -> boolean {
     NdBoolean { b: _ } => true,
     NdText { s: _ } => true,
     NdNull => true,
-    _ => el_convert::const_int(e, el_ir::unspan(ops[0])) != null
+    // (`const_eval` folds integer arithmetic over `Int`s: an operator over a long literal —
+    // `-1099511627776`, `OpMinSingleInt(<long>)` — is no constant to it, and the walk runs.)
+    _ => !holds_long(el_ir::unspan(ops[0])) && el_convert::const_int(e, el_ir::unspan(ops[0])) != null
   }
+}
+
+fn holds_long(n: ir::Node) -> boolean {
+  if el_ir::unspan(n) is NdLong {
+    return true;
+  }
+  for ch in el_ir::children(n) {
+    if holds_long(ch) {
+      return true;
+    }
+  }
+  false
 }
 
 // `iter_text`'s step: the character at the byte position, the position moved past it (one byte
