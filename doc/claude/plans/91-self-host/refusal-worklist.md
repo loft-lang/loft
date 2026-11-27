@@ -206,9 +206,11 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
   struct (121), a drop helper (90), a tuple record (84).
 `np/shift.py` and `np/verify.py` (the tester's scratch tools) rank them from the saved IR.
 
-**Rust-only types (open).**  49 at loft30-gate d1e819096 (vectors, tuple records, type
-instances; Rust-only definitions 278), one to four per program.  What each open group needs:
-- iterator element vectors (`vector<iterator>`, four programs): Rust's `check_vector` at the
+**Rust-only types (open).**  41 at loft30-gate d22b037ac (vectors, tuple records, type
+instances; Rust-only definitions 270), one to four per program.  What each open group needs:
+- the wrapper field-fill `check_vector` on the SECOND pass — iterator element vectors
+  (`vector<iterator>`, four programs) and a nullable vector element's plain vector (923's
+  `vector<vector<Ent>>`, parent `Ent`): Rust's `check_vector` at the
   wrapper's field fill (`typedef.rs` `fill_database`, the `main_vector<iterator<…>>` place) on
   the SECOND pass; the port fills that wrapper on the first pass only, where an iterator field
   has no content type (`c = -1`), so it refuses before its `check_vector` arm.
@@ -219,6 +221,9 @@ instances; Rust-only definitions 278), one to four per program.  What each open 
 - a lambda argument's tuple record on the first pass (`last(v, |x| { (x, x + 1, x + 2) })`):
   making it there shifted later second-pass rows of the same program — needs Rust's exact moment.
 - cross-library keyed tuples and instances (2435).
+- a computed text member of a tuple (`[for i in 0..3 { (i, "x{i}") }]`): Rust types the record's
+  field `_1: text["#4"]`, a borrow, against formal/tuples.md (T-Record) — reported to the owner as
+  a Rust deviation; the port keeps the shape refused.
 - a function's tail literal at its declared element: DONE for a tuple element together with
   the constant-tuple hoist (d1e819096).  A record or nested-vector tail is still built at its own
   element (Rust keeps a record tail's element temp bare; a nested one is open).
