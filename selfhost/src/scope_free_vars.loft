@@ -377,16 +377,16 @@ pub fn collect_return_sources(s: scope_scan::Scopes, n: ir::Node, out: vector<in
     NdVar { n: v } => if !scope_fn::has(out, v) { out += [v]; },
     NdBlock { block } => {
       l = last_non_free_result(s, block[0].operators);
-      if l != null {
-        collect_return_sources(s, l!, out);
+      if l >= 0 {
+        collect_return_sources(s, block[0].operators[l]!, out);
       }
     },
     NdReturn { inner } => collect_return_sources(s, inner, out),
     NdDrop { inner } => collect_return_sources(s, inner, out),
     NdInsert { items } => {
       l = last_non_free_result(s, items);
-      if l != null {
-        collect_return_sources(s, l!, out);
+      if l >= 0 {
+        collect_return_sources(s, items[l]!, out);
       }
     },
     NdIf { t, f } => {
@@ -398,18 +398,18 @@ pub fn collect_return_sources(s: scope_scan::Scopes, n: ir::Node, out: vector<in
   }
 }
 
-// port: returns.rs fn last_non_free_result
-fn last_non_free_result(s: scope_scan::Scopes, ops: vector<ir::Node>) -> ir::Node? {
+// port: returns.rs fn last_non_free_result — its index, -1 for none.
+fn last_non_free_result(s: scope_scan::Scopes, ops: vector<ir::Node>) -> integer {
   k = len(ops);
   i = k - 1;
   while i >= 0 {
     op = ops[i]!;
     if !is_scope_exit_cleanup(s, op) && !(scope_fn::unspan(op) is NdLine) {
-      return op;
+      return i;
     }
     i -= 1;
   }
-  null
+  -1
 }
 
 // port: insert_free.rs fn is_scope_exit_cleanup

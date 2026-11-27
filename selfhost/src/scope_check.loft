@@ -192,6 +192,9 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
       }
     },
     NdBlock { block } => {
+      if reduction_shape(b, block[0]) {
+        note(w, "loop_kernel_rewrite::rewrite: a sum loop over a vector");
+      }
       // `repeat_run`: four or more consecutive pushes of one constant into one target.
       run = 0;
       prev = "";
@@ -226,9 +229,6 @@ fn settled_triggers(b: ir::Bundle, n: ir::Node, in_loop: boolean, w: Trigger) {
       if nm == "n_text_from_bytes" {
         note(w, "slice_text::rewrite: text from bytes");
       }
-      if in_loop && nm == "OpGetVector" {
-        note(w, "loop_kernel_rewrite::rewrite: a vector read in a loop");
-      }
     },
     _ => {}
   }
@@ -249,4 +249,35 @@ fn contains_call(b: ir::Bundle, n: ir::Node, prefix: text) -> boolean {
     }
   }
   false
+}
+
+// `loop_kernel_rewrite::reduction`'s shape, short of its counting step and accumulation:
+// `{ end = len(v); idx = -1; loop { i = <step>; { <one statement> } } }`.
+fn reduction_shape(b: ir::Bundle, bl: ir::Block) -> boolean {
+  st = [for o in bl.operators if !(scope_fn::unspan(o) is NdLine) { scope_fn::unspan(o) }];
+  if len(st) != 3 {
+    return false;
+  }
+  len_ok = match st[0]! {
+    NdSet { inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr, args } => {
+        nm = scope_args::def_name(b, def_nr);
+        (nm == "t_6vector_len" || nm == "OpLengthVector") && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar
+      },
+      _ => false
+    },
+    _ => false
+  };
+  idx_ok = match st[1]! {
+    NdSet { inner } => scope_fn::unspan(inner) == ir::NdInt { n: -1 },
+    _ => false
+  };
+  loop_ok = match st[2]! {
+    NdLoop { block } => {
+      ls = [for o in block[0].operators if !(scope_fn::unspan(o) is NdLine) { scope_fn::unspan(o) }];
+      len(ls) == 2 && ls[0]! is NdSet && ls[1]! is NdBlock
+    },
+    _ => false
+  };
+  len_ok && idx_ok && loop_ok
 }
