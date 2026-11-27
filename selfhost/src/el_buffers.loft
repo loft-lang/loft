@@ -265,7 +265,9 @@ fn candidate(vars: el_vars::Vars, v: integer) -> integer {
   }
   match t {
     TyVector { inner, dep } => {
-      if el_ex_call::scalar(inner) && len(dep) == 1 && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") {
+      // (`is_scalar` asks the element's BASE: a `τ?` scalar is stored in `τ`'s own width,
+      // `@FR-N-Shape`.)
+      if el_ex_call::scalar(el_types::base(inner)) && !(inner is TyVoid) && len(dep) == 1 && starts_with(el_vars::name_of(vars, dep[0]), "__vdb_") {
         return dep[0];
       }
     },
