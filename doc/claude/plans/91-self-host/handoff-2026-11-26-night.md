@@ -138,6 +138,12 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   (`patch_tret_call`, G-Gen-Scope/a-type-variable-is-a-name-only…), and three older vector-instance
   gaps (`___ret_copy_N` per returned parameter, G-Gen/an-unbounded-variable…; result block deps,
   R-TailSelf ×2).  Held back until those are ported.
+- A width on a character, vector, record or enum hole (`{c:5}`): Rust renders into a pass-2-only
+  scratch work text and pads it (`OpFormatText(w, scratch, width, dir, pad)`).  Ported and agreeing
+  on probes (pd1/pd2), but held: it admits nothing yet — 30-formatting then meets a Rust defect
+  (inside a format hole the element temp of `[jp]` is typed `ref(boolean)`, as a bind
+  `ref(Point)`; probe eb1, reported), and G-Mono/a-spec-part-… needs the template to defer the
+  choice for a type variable (the instance binds `float` and pads directly).
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
