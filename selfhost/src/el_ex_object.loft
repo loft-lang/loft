@@ -890,6 +890,16 @@ pub fn set_field(e: el::El, d: integer, a: integer, r: ir::Node, val: ir::Node) 
         return el_ir::cl(e, "OpCopyRecord", [val, el_ir::cl(e, "OpGetField", [r, pos, k]), k]);
       }
     },
+    // A vector value is appended into the field's own vector (`OpAppendVector`), as a vector
+    // field takes a copy.
+    TyVector { inner: fvi } => {
+      fvn = el_types::elem_name(e, fvi);
+      fvk = if fvn == "" { -1 } else { el_ex_base::vector_store(e, fvi, fvn) };
+      fvr = el_ex_vector::append_row(e, fvi);
+      if fvk >= 0 && fvr >= 0 {
+        return el_ir::cl(e, "OpAppendVector", [el_ir::cl(e, "OpGetField", [r, pos, ir::NdInt { n: fvk }]), val, ir::NdInt { n: fvr }]);
+      }
+    },
     _ => {}
   }
   write_at(e, at, r, pos, val)
