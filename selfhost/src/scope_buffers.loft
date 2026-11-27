@@ -458,3 +458,122 @@ fn place_in_if(cond: ir::Node, t: ir::Node, f: ir::Node, av: integer, guard: ir:
   }
   Placed { before: bare, node: ir::NdIf { cond: cond, t: arms[0]!, f: arms[1]! } }
 }
+
+// port: buffers.rs fn lazy_buffer_mints — @PLN164 A0 (`@FR-O-LazyBuffer`): a hidden VECTOR
+// return buffer (`__ref_N`) is minted in front of the statements that hand it to a callee, behind
+// `OpRefIsNull`, instead of at function entry.  Declined for a body that suspends or forks, a
+// buffer with a second assignment, a `vector<T>?` buffer, and the buffer a `for` iterates.
+pub fn lazy_buffer_mints(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  ops: vector<ir::Node> = [];
+  match code {
+    NdSpan { pos, inner } => { return ir::NdSpan { pos: pos, inner: lazy_buffer_mints(s, b, inner, f) }; },
+    NdBlock { block } => { ops = block[0].operators; },
+    _ => { return code; }
+  }
+  if suspends_or_forks(code) {
+    return code;
+  }
+  frees = free_ops(b);
+  for x in f.variables {
+    av = x#index;
+    if !x.caller_hidden_buf || x.argument || scope_fn::has(f.inline_refs, av) || x.skip_free || !x.name.starts_with("__ref_") {
+      continue;
+    }
+    t = scope_fn::tp(f, av);
+    if t is TyOptional {
+      continue;
+    }
+    match scope_fn::base(t) {
+      TyVector { dep } => if len(dep) > 0 { continue; },
+      _ => { continue; }
+    }
+    top_inits = 0;
+    for op in ops {
+      match scope_fn::unspan(op) {
+        NdSet { var, inner } => if var == av && scope_fn::unspan(inner) is NdNull { top_inits += 1; },
+        _ => {}
+      }
+    }
+    sets = 0;
+    for op in ops {
+      sets += sets_of(op, av);
+    }
+    if top_inits != 1 || sets != 1 || iterates_a_call_into(ops, av) {
+      continue;
+    }
+    f.variables[av].lazy_buffer = true;
+    guard = ir::NdIf {
+      cond: ir::NdCall { def_nr: s.ops.ref_is_null, args: [ir::NdVar { n: av }] },
+      t: ir::NdInsert { items: [scope_fn::v_set(av, ir::NdNull)] },
+      f: ir::NdNull
+    };
+    ops = insert_before_uses(ops, av, guard, frees);
+  }
+  match code {
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => code
+  }
+}
+
+// `code.any_node(|v| matches!(v, Value::Yield(..) | Value::Parallel(..)))`
+fn suspends_or_forks(n: ir::Node) -> boolean {
+  if n is NdYield || n is NdParallel {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if suspends_or_forks(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// The `Set(av, _)` nodes in `n` (`Value::walk`, which steps through a span).
+fn sets_of(n: ir::Node, av: integer) -> integer {
+  k = match n { NdSet { var } => if var == av { 1 } else { 0 }, _ => 0 };
+  for c in scope_fn::children(n) {
+    k += sets_of(c, av);
+  }
+  k
+}
+
+// port: buffers.rs fn iterates_a_call_into — is `av` the buffer of a call a `for` loop iterates?
+fn iterates_a_call_into(ops: vector<ir::Node>, av: integer) -> boolean {
+  for op in ops {
+    if iterates_walk(op, av) {
+      return true;
+    }
+  }
+  false
+}
+
+fn iterates_walk(n: ir::Node, av: integer) -> boolean {
+  match n {
+    NdBlock { block } => if block[0].name == "For block" && len(block[0].operators) > 0 {
+      match scope_fn::unspan(block[0].operators[0]!) {
+        NdSet { inner } => {
+          match scope_fn::unspan(inner) {
+            NdCall { args } => if len(args) > 0 {
+              match scope_fn::unspan(args[len(args) - 1]!) {
+                NdVar { n: bv } => if bv == av { return true; },
+                _ => {}
+              }
+            },
+            _ => {}
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if iterates_walk(c, av) {
+      return true;
+    }
+  }
+  false
+}

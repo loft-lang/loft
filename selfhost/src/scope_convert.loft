@@ -13,6 +13,7 @@ use scope_scan;
 use scope_branches;
 use scope_free_vars;
 use scope_drops;
+use scope_backings;
 use binds;
 
 // port: convert.rs fn convert
@@ -52,12 +53,25 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     if rebuilt.some {
       scope_scan::refuse(s, "drops::in_place_rebuild: a droppable record rebuilt in place");
     }
-    statement_rewrites(s, b, v, f);
-    // `vector_call_rebind` (refused above), `closure_keep_rebind` (gated frames, refused by the
-    // phase), then `fnref_call_rebind`.
+    rebind_release = scope_drops::vector_rebind_release(s, b, v, f);
+    // `vector_call_rebind`, `closure_keep_rebind` (gated frames, refused by the phase), then
+    // `fnref_call_rebind`.
     rebind_pre: vector<ir::Node> = [];
     rebind_post: vector<ir::Node> = [];
-    fnref_call_rebind(s, b, v, f, rebind_pre, rebind_post);
+    call_rebind = scope_drops::vector_call_rebind(s, b, v, f);
+    if call_rebind.some {
+      rebind_pre = call_rebind.pre;
+      rebind_post = call_rebind.post;
+    } else {
+      fnref_call_rebind(s, b, v, f, rebind_pre, rebind_post);
+    }
+    promoted_refill = scope_drops::promoted_vector_refill(s, b, v, f);
+    // A literal's `Set` heads the statements that fill its new backing, so its release waits for
+    // the statement's end; any other rebind is a whole statement already.
+    rebind_is_group = match scope_fn::unspan(v) {
+      NdSet { inner } => scope_backings::literal_backing_of(inner, f, s.ops.get_field) >= 0,
+      _ => false
+    };
     match scope_fn::unspan(v) {
       NdSet { var: ov } => if scope_fn::base(scope_fn::tp(f, ov)) is TyFunction {
         scope_scan::set_add(s.fnref_bound, s.fnref_depth * 65536 + scope_scan::mapped(s, ov));
@@ -66,14 +80,25 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     }
     sv = scope_scan::scan(s, b, v, f);
     ls += rebind_pre;
+    ls += promoted_refill.pre;
     // The hand-offs a statement arms after it is scanned (`drop_handoff_node`, the tuple member
     // moves) are facts about drop-bearing records and tuples, refused where they are bound.
     match sv {
       NdInsert { items } => { ls += items; },
       _ => { ls += [sv]; }
     }
-    // A fn-ref rebind's statement is no vector literal's group: its release follows at once.
-    ls += rebind_post;
+    if promoted_refill.waits {
+      at_end += promoted_refill.post;
+    } else {
+      ls += promoted_refill.post;
+    }
+    if rebind_is_group {
+      at_end += rebind_release;
+      at_end += rebind_post;
+    } else {
+      ls += rebind_release;
+      ls += rebind_post;
+    }
     // loft#1331 — detach an accumulator this statement repointed.
     if (void_block || i + 1 < len(ops)) {
       acc = repointed_literal_accumulator(v, f);
@@ -248,29 +273,6 @@ pub fn is_record_local(f: ir::Function, w: integer) -> boolean {
 // `stmt`'s outer span around `n`, where `stmt` had one.
 fn respan(stmt: ir::Node, n: ir::Node) -> ir::Node {
   match stmt { NdSpan { pos } => ir::NdSpan { pos: pos, inner: n }, _ => n }
-}
-
-// The statement rewrites `convert` asks before it scans a statement, each refusing where its
-// Rust gate could fire (`in_place_rebuild` is carried in `convert`): `vector_rebind_release`, `vector_call_rebind`,
-// `closure_keep_rebind`, `fnref_call_rebind`, `promoted_vector_refill`.
-fn statement_rewrites(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::Function) {
-  match scope_fn::unspan(v) {
-    NdSet { var: ov } => {
-      t = scope_fn::base(scope_fn::tp(f, scope_scan::mapped(s, ov)));
-      if t is TyVector {
-        scope_scan::refuse(s, "drops::vector_rebind_release: a vector local bound");
-      }
-    },
-    NdCall { def_nr, args } => {
-      match scope_fn::unspan(args[0] ?? ir::NdNull) {
-        NdVar { n: x } => if scope_fn::is_argument(f, x) && scope_fn::base(scope_fn::tp(f, x)) is TyVector && def_nr == scope_fn::def_nr(b, "OpClearVector") {
-          scope_scan::refuse(s, "drops::promoted_vector_refill: a vector argument cleared");
-        },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
 }
 
 // port: convert.rs fn locals_read_after

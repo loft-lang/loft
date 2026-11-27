@@ -15,6 +15,7 @@
 use ir;
 use own;
 use scope_fn;
+use binds;
 use scope_scan_set;
 use scope_branches;
 use scope_convert;
@@ -47,8 +48,13 @@ pub struct Ops {
   pub drop_fn_ref: integer,
   pub fn_ref_closure: integer,
   pub fn_ref_detach_shared: integer,
+  pub clear_vector: integer,
+  pub ref_is_null: integer,
   // `Data::any_closure_drop`: some lambda's closure record has a drop cascade.
-  pub any_closure_drop: boolean
+  pub any_closure_drop: boolean,
+  // The `vector<T>` definitions (`DefType::Vector`) with a drop cascade, the ones
+  // `Data::collection_def_nr` can name for a release.
+  pub vec_cascades: vector<integer>
 }
 
 pub fn ops_of(b: ir::Bundle) -> Ops {
@@ -75,8 +81,22 @@ pub fn ops_of(b: ir::Bundle) -> Ops {
     drop_fn_ref: scope_fn::def_nr(b, "OpDropFnRef"),
     fn_ref_closure: scope_fn::def_nr(b, "OpFnRefClosure"),
     fn_ref_detach_shared: scope_fn::def_nr(b, "OpFnRefDetachShared"),
-    any_closure_drop: any_closure_drop(b)
+    clear_vector: scope_fn::def_nr(b, "OpClearVector"),
+    ref_is_null: scope_fn::def_nr(b, "OpRefIsNull"),
+    any_closure_drop: any_closure_drop(b),
+    vec_cascades: vec_cascades(b)
   }
+}
+
+// The vector definitions (`el::DT_VECTOR`) whose `vector<T>` has a drop cascade.
+fn vec_cascades(b: ir::Bundle) -> vector<integer> {
+  out: vector<integer> = [];
+  for d in b.data.definitions {
+    if d.def_type == 6 && opt_names::drop_cascade_nr(b, d#index) != opt_names::NONE {
+      out += [d#index];
+    }
+  }
+  out
 }
 
 // port: data.rs fn any_closure_drop
@@ -188,6 +208,16 @@ pub struct Scopes {
   pub arm_lift_temps: vector<integer>,
   pub free_transferred: vector<integer>,
   pub local_owns: vector<integer>,
+  // The literal backings (`__vdb_N`) and call buffers (`__ref_N`) each vector local is bound to
+  // anywhere in the body, by pre-scan id (`vector_literal_backings`, `vector_call_buffers`); the
+  // backing the latest bind of a vector local filled (`bind_backing`, -1: none); the vector
+  // locals promoted onto the return buffer a statement already filled (`promoted_filled`).
+  pub vector_backings: vector<VarList>,
+  // Plan-57 cluster I — the confined `__vdb`/local → block scope of the rescan (-1: none).
+  pub confined: vector<integer>,
+  pub vector_call_buffers: vector<VarList>,
+  pub bind_backing: vector<integer>,
+  pub promoted_filled: vector<integer>,
   // The callees named in this body whose ownership summary would read a body Rust laid out
   // before this function and this pass refused (`check::stale_callees`), and the body itself
   // (the oracle follows a variable to its binds there).
@@ -437,7 +467,9 @@ pub fn exit_scope(s: Scopes) {
 
 // port: scan.rs fn put_scope — `confined` is empty on every phase this transcription runs.
 pub fn put_scope(s: Scopes, v: integer) {
-  set_scope_of(s, v, s.scope);
+  // Plan-57 cluster I — on the rescan a confined `__vdb`/local registers at its block scope.
+  c = get(s.confined, v);
+  set_scope_of(s, v, if c >= 0 { c } else { s.scope });
 }
 
 // port: scan.rs fn register_binding
@@ -754,11 +786,39 @@ fn scan_block(s: Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function) -> ir::N
   if k > 0 {
     match bl.operators[k - 1]! {
       NdVar { n: orig_ret } => {
+        // Pre-register a block-result heap variable at the OUTER scope before entering the
+        // block's inner scope: `Insert([Set(w, Null), Block])` below.  @PLN164 B1 — a bind of
+        // the callee's minted record has its deps stripped inside the block, so it hoists too.
         ret_v = mapped(s, orig_ret);
-        t = scope_fn::tp(f, ret_v);
-        heap = match t { TyReference => true, TyVector => true, TyEnum { is_ref } => is_ref, _ => false };
-        if heap && !in_scope(s, ret_v) {
-          refuse(s, "scan: a block answering a record or vector local (use_analysis::binds_the_callees_minted_store)");
+        adopts = false;
+        for op in bl.operators {
+          match scope_fn::unspan(op) {
+            NdSet { var, inner } => if var == orig_ret {
+              if asks_minted_summary(b, inner) {
+                oracle_guard(s, inner);
+              }
+              if binds::adopts_minted_at_bind(b, s.own_ops, f, ret_v, inner) {
+                adopts = true;
+              }
+            },
+            _ => {}
+          }
+        }
+        dep_ok = match scope_fn::tp(f, ret_v) {
+          TyReference { dep } => len(dep) == 0 || adopts,
+          TyVector { dep } => len(dep) == 0 || adopts,
+          TyEnum { is_ref, dep } => is_ref && (len(dep) == 0 || adopts),
+          _ => false
+        };
+        if !in_scope(s, ret_v) && dep_ok {
+          // The hoisted null-init stands right in front of the block, so the block's one bind
+          // is the temp's first (`deferred_first_bind`).
+          if adopts && !scope_fn::has(s.multi_assigned, orig_ret) {
+            f.variables[ret_v].deferred_first_bind = true;
+          }
+          set_scope_of(s, ret_v, s.scope);
+          s.var_order += [ret_v];
+          hoisted_ref = ret_v;
         }
       },
       _ => {}
@@ -785,6 +845,10 @@ fn scan_block(s: Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function) -> ir::N
   outer_scope = s.scope;
   lift_watermark = len(s.lift_vars);
   scope = enter_scope(s);
+  // The hoisted variable moves from the outer scope to the block's.
+  if hoisted_ref >= 0 {
+    set_scope_of(s, hoisted_ref, scope);
+  }
   ls = scope_convert::convert(s, b, bl, f, is_body_return);
   exit_scope(s);
   // loft#722 — a lift temp minted inside a value block that its result borrows moves out.
@@ -805,7 +869,31 @@ fn scan_block(s: Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Function) -> ir::N
       ls = drop_tail_frees(s, ls, hoisted);
     }
   }
-  ir::NdBlock { block: [ir::Block { name: bl.name, operators: ls, result: bl.result, scope: scope, var_size: 0 }] }
+  block = ir::NdBlock { block: [ir::Block { name: bl.name, operators: ls, result: bl.result, scope: scope, var_size: 0 }] };
+  if hoisted_ref >= 0 {
+    return ir::NdInsert { items: [scope_fn::v_set(hoisted_ref, ir::NdNull), block] };
+  }
+  block
+}
+
+// Does `binds_the_callees_minted_store` reach its callee's summary
+// (`may_hand_back_a_caller_store`) for `value` — its shape gates ahead of that question pass?
+fn asks_minted_summary(b: ir::Bundle, value: ir::Node) -> boolean {
+  match scope_fn::unspan(value) {
+    NdCall { def_nr } => {
+      if def_nr < 0 || def_nr >= len(b.data.definitions) {
+        return false;
+      }
+      dd = b.data.definitions[def_nr]!;
+      ret = dd.returned[0] ?? ir::TyVoid;
+      if !scope_fn::is_record(ret) || !binds::is_loft_defined(dd) || binds::return_adopts_fresh_store(dd) || own::returns_borrowed_view(dd) {
+        return false;
+      }
+      buf = binds::hidden_return_buffer_attr(dd);
+      buf != null && own::depend_of(ret) == [buf!]
+    },
+    _ => false
+  }
 }
 
 // The `Value::Call` arm of `scan_inner`.

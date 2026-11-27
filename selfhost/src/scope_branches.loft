@@ -10,6 +10,7 @@
 use ir;
 use scope_fn;
 use scope_scan;
+use scope_backings;
 use scope_phase;
 use binds;
 
@@ -123,17 +124,21 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
   // keep only entries BOTH branches agree on (@FR-O-Complete).
   owned_before = scope_scan::copy_ints(s.owned_refs);
   backing_before = scope_scan::copy_ints(s.construction_backing);
+  binds_before = scope_scan::copy_ints(s.bind_backing);
   views_before = scope_scan::copy_ints(s.view_backing);
   scanned_true = scope_scan::scan(s, b, t_val, f);
   owned_after_true = scope_scan::copy_ints(s.owned_refs);
   backing_after_true = scope_scan::copy_ints(s.construction_backing);
+  binds_after_true = scope_scan::copy_ints(s.bind_backing);
   views_after_true = scope_scan::copy_ints(s.view_backing);
   restore(s.owned_refs, owned_before);
   restore(s.construction_backing, backing_before);
+  restore(s.bind_backing, binds_before);
   restore(s.view_backing, views_before);
   scanned_false = scope_scan::scan(s, b, f_val, f);
   scope_scan::retain_same(s.owned_refs, owned_after_true);
   scope_scan::retain_same(s.construction_backing, backing_after_true);
+  scope_scan::retain_same(s.bind_backing, binds_after_true);
   scope_scan::retain_same(s.view_backing, views_after_true);
   scanned_if = ir::NdIf { cond: scanned_test, t: scanned_true, f: scanned_false };
   if len(pre_inits) == 0 {
@@ -193,6 +198,29 @@ fn only_bind_find(n: ir::Node, v: integer, out: vector<ir::Node>) {
   }
 }
 
+// port: branches.rs fn arm_bind_backing — the backing the ONE bind of `v` inside `arm` fills,
+// -1 when the arm binds `v` other than once or through another shape.
+fn arm_bind_backing(s: scope_scan::Scopes, arm: ir::Node, v: integer, f: ir::Function) -> integer {
+  found: vector<ir::Node> = [];
+  arm_bind_find(arm, v, found);
+  if len(found) != 1 {
+    return -1;
+  }
+  scope_backings::bind_backing_of(found[0]!, f, s.ops.get_field)
+}
+
+fn arm_bind_find(n: ir::Node, v: integer, out: vector<ir::Node>) {
+  match scope_fn::unspan(n) {
+    NdSet { var, inner } => if var == v {
+      out += [inner];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(scope_fn::unspan(n)) {
+    arm_bind_find(c, v, out);
+  }
+}
+
 // port: branches.rs fn confined_to_one_arm
 fn confined_to_one_arm(s: scope_scan::Scopes, v: integer, t_val: ir::Node, f_val: ir::Node, f: ir::Function) -> boolean {
   total = scope_scan::get(s.mentions, v);
@@ -203,10 +231,10 @@ fn confined_to_one_arm(s: scope_scan::Scopes, v: integer, t_val: ir::Node, f_val
   in_f = scope_phase::mentions_of(f_val, v);
   t = scope_fn::base(scope_fn::tp(f, v));
   collection = t is TyVector || t is TyTuple;
-  if t is TyVector && in_t > 0 && in_f > 0 {
-    scope_scan::refuse(s, "backings::bind_backing_of: a vector bound in both arms");
-  }
-  if in_t + in_f != total || (collection && in_t > 0 && in_f > 0) {
+  // A VECTOR bound in both arms is each arm's own when each arm's bind names the backing it
+  // fills (`bind_backing`, loft#1607): the arm's release then reads that one.
+  per_arm_backing = t is TyVector && arm_bind_backing(s, t_val, v, f) >= 0 && arm_bind_backing(s, f_val, v, f) >= 0;
+  if in_t + in_f != total || (collection && in_t > 0 && in_f > 0 && !per_arm_backing) {
     return false;
   }
   if leaves_as_value(t_val, v) || leaves_as_value(f_val, v) || returned_in(t_val, v) || returned_in(f_val, v) {

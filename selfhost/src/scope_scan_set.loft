@@ -52,9 +52,11 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   // A fn-ref binding takes the generic legs below (its deps reserved, its first bind registered
   // with its closure record after it); its rebind and scope-end releases are `convert`'s
   // (`fnref_call_rebind`) and `get_free_vars`'.
-  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) {
+  // A vector binding (step 4) takes the record legs with its own: the backing its bind fills
+  // (`bind_backing`), the call-buffer pairing of a vector-shaped first bind.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) {
     // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox, the
-    // collection backings and materialise copies, the generator handle frees.
+    // keyed materialise copies, the generator handle frees.
     scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
     if !scope_scan::in_scope(s, v) {
       scope_scan::register_binding(s, v, f);
@@ -203,7 +205,8 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if d >= scope_fn::count(f) {
       continue;
     }
-    if !scope_scan::in_scope(s, d) {
+    // A `par` loop's result variable (`_r_par<N>`) is a loop variable: unregistered.
+    if !scope_scan::in_scope(s, d) && !scope_fn::name(f, d).starts_with("_r_par") {
       // `function.was_loop_var(d)` is not in the image: a dep that is not a text temp may be a
       // loop's variable, which Rust leaves unregistered.
       if !scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d) {
@@ -218,6 +221,14 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   first_binding = !scope_scan::in_scope(s, v);
   if first_binding {
     scope_scan::register_binding(s, v, f);
+  }
+  if scope_fn::base(scope_fn::tp(f, v)) is TyVector {
+    bb = scope_backings::bind_backing_of(value, f, s.ops.get_field);
+    if bb >= 0 {
+      scope_scan::put(s.bind_backing, v, bb);
+    } else {
+      scope_scan::unput(s.bind_backing, v);
+    }
   }
   unspanned = scope_fn::unspan(value);
   publishes_through_ref = t is TyRefVar;
@@ -450,9 +461,12 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     for d in scope_fn::deps(f, v) {
       scope_fn::make_independent(f, v, d);
     }
+  } else if scope_fn::base(t) is TyVector && scope_fn::unspan(set_value) is NdCallRef {
+    // The collection twins (`callref_collection_join_base`, `callref_delivers_collection`): a
+    // vector bound from a fn-ref call — a witness by store identity, or the deps stripped for
+    // a delivered copy — is not transcribed.
+    scope_scan::refuse(s, "use_analysis::callref_collection_join_base: a vector bound from a fn-ref call");
   }
-  // The collection twins (`callref_collection_join_base`, `callref_delivers_collection`) answer
-  // only for a vector or keyed binding, which refuses above.
   prefix: vector<ir::Node> = [];
   lifts = [for l in scope_scan::list_of(s.lift_viewers, v) if l != v { l }];
   if transition_free == null && was_in_scope && len(lifts) > 0 && scope_fn::is_record(t) && !scope_fn::reads_var(value, v) && !scope_fn::reads_var(value, ov) {
@@ -951,7 +965,7 @@ fn kept_displaced_free(s: scope_scan::Scopes, b: ir::Bundle, v: integer, was_in_
     t: ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: snap }, ir::NdVar { n: v }] },
     f: ir::NdNull
   };
-  scope_drops::PrePost { some: true, pre: pre, post: [free] }
+  scope_drops::PrePost { some: true, pre: pre, post: [free], waits: false }
 }
 
 // port: scan_set.rs fn note_lift_viewers

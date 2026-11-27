@@ -18,19 +18,23 @@ use scope_args;
 use scope_witness;
 use scope_backings;
 use scope_buffers;
+use scope_drops;
 use opt_names;
 
 pub struct Phase {
   pub code: ir::Node,
   pub function: ir::Function,
   pub why: text,
-  pub whys: vector<text>
+  pub whys: vector<text>,
+  // The locals a sweep skipped as views that ended the scan as owners: `check` rescans with
+  // them read as owners from the start.
+  pub late: vector<integer>
 }
 
 // port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
-// `confined`, `sunk` and `late_owners` are empty on every phase this transcription runs (the
-// confinement rescan, the written-out arms and the late owners are facts of stores).
-pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>) -> Phase {
+// `confined` is the confinement rescan's map, `late` the late owners of an earlier phase;
+// `sunk` is empty (a written-out arm is refused).
+pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>, confined: vector<integer>, late: vector<integer>) -> Phase {
   s = scope_scan::Scopes {
     ops: ops,
     d_nr: d_nr,
@@ -47,7 +51,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     lift_vars: [],
     lift_texts: [],
     ret_temp_counter: 0,
-    late_owners: [],
+    late_owners: [for x in late { x }],
     skipped_viewers: [],
     value_hoists: [],
     multi_assigned: multi_assigned_in(orig_code),
@@ -92,6 +96,11 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     arm_lift_temps: [],
     free_transferred: [],
     local_owns: [],
+    vector_backings: scope_backings::vector_literal_backings(orig_code, orig_vars, ops.get_field),
+    confined: [for x in confined { x }],
+    vector_call_buffers: scope_backings::vector_call_buffers(orig_code, orig_vars),
+    bind_backing: [],
+    promoted_filled: [],
     stale_defs: stale,
     orig_code: orig_code,
     why: "",
@@ -100,7 +109,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   s.null_led_first = null_led_first_binds_in(b, orig_code);
   s.literal_moves = literal_moves_in(b, orig_code, orig_vars, s.null_led_first);
   function = scope_fn::copy_function(orig_vars);
-  pre_scan_refusals(s, b, d_nr, orig_code, function);
+  pre_scan_refusals(s, b, orig_code, function);
   // A nullable heap local that holds a PROJECTION VIEW owns no store it must free: marked
   // never-free (@FR-O-Override).  The displacing and witnessed locals it excludes are empty
   // here (`nullable_locals_that_displace` answers none while `τ?` has a buffer; the owner
@@ -177,13 +186,21 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     code = prepend_body(code, head);
   }
   code = scope_buffers::reuse_record_buffers(s, b, code, function);
-  // `lazy_buffer_mints` acts on `__ref_N` VECTOR buffers, whose bindings `scan_set` refuses.
+  code = scope_buffers::lazy_buffer_mints(s, b, code, function);
+  // Skipped by a sweep as a view, and an owner by the end of the scan: a later bind stripped its
+  // deps.
+  late_now: vector<integer> = [];
+  for v in s.skipped_viewers {
+    if !scope_fn::has(s.late_owners, v) && v < scope_fn::count(function) && scope_fn::proxy_says_owned(function, v) && !scope_fn::has(late_now, v) {
+      late_now += [v];
+    }
+  }
   for v in s.var_scope {
     if v >= 0 {
       function.variables[v#index].scope = v;
     }
   }
-  Phase { code: code, function: function, why: s.why, whys: s.whys }
+  Phase { code: code, function: function, why: s.why, whys: s.whys, late: late_now }
 }
 
 // port: phase.rs fn hidden_return_buffer_var — the variable of the hidden return buffer, -1.
@@ -233,17 +250,7 @@ fn prepend_body(code: ir::Node, ops: vector<ir::Node>) -> ir::Node {
 
 // The analyses `run_scan_phase` runs before the scan that change the body or the table there:
 // each refuses where its Rust gate can fire.
-fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function) {
-  d = b.data.definitions[d_nr]!;
-  // A VECTOR return buffer: its delivery (`OpClearVector`/`OpAppendVector` into it), the
-  // promoted vector refill and `lazy_buffer_mints` are a vector's, refused.
-  h = binds::hidden_return_buffer_attr(d);
-  if h != null {
-    a = d.attributes[h!];
-    if a != null && scope_fn::base(a!.typedef[0] ?? ir::TyVoid) is TyVector {
-      scope_scan::refuse(s, "phase: a vector return buffer (drops::promoted_vector_refill, lazy_buffer_mints)");
-    }
-  }
+fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) {
   // `collect_views_to_materialise` — a `text` payload view a disturbance materialises
   // (`text_mirror`); a record or collection view refuses where it is bound.
   if has_block(code, "text_mirror") {
@@ -277,6 +284,16 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
     rec = own::heap_def_nr(v.type_def[0] ?? ir::TyVoid);
     if !v.argument && scope_fn::has(s.assigned, v#index) && rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
       scope_scan::refuse(s, "drops::drop_hook: a record type with a drop cascade (handoff, displaced_drop)");
+    }
+  }
+  // The same for a VECTOR whose element type has a collection cascade (`collection_def_nr`):
+  // its rebind and scope-end releases, its call rebind, its hand-offs (`collection_handoffs`).
+  for v in f.variables {
+    match scope_fn::base(v.type_def[0] ?? ir::TyVoid) {
+      TyVector { inner } => if !v.argument && scope_fn::has(s.assigned, v#index) && scope_drops::collection_cascade_nr(s, b, inner) != opt_names::NONE {
+        scope_scan::refuse(s, "drops::drop_hook: a vector of droppable elements (handoff, collection_handoffs)");
+      },
+      _ => {}
     }
   }
   // `(H-Copy-Lease)` — `lease_calls` runs a type's `OpCopy` on every copy of it: a record local
@@ -429,6 +446,14 @@ fn view_containers(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<inte
       c = binds::projection_container_var(b, inner);
       r = if c != null { c! } else { read_root(b, inner) };
       if r >= 0 && !scope_fn::has(out, r) {
+        out += [r];
+      }
+    } else if scope_fn::base(scope_fn::tp(f, var)) is TyVector {
+      // A VECTOR view (`xs = s.items`) is copied out through a materialise buffer
+      // (`OpReplaceVector`); a vector bound to its own literal backing or call buffer is no view.
+      c = binds::projection_container_var(b, inner);
+      r = if c != null { c! } else { read_root(b, inner) };
+      if r >= 0 && !scope_fn::is_compiler_generated(f, r) && !scope_fn::has(out, r) {
         out += [r];
       }
     },

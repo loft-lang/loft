@@ -1,0 +1,264 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/bound_append.rs` transcribed (scope-pass-port.md step 4): `@FR-R-BoundAppend`,
+// a call result bound to a local and later appended whole is appended where it is made —
+//
+//   k = f(args);  S;  dst += k   →   b0 = len(dst);  dst += f(args);  kl = len(dst) - b0;  S'
+//
+// with `S'` reading `len(dst)` as `b0` and `len(k)` as `kl`.  `check` runs it on the parser's
+// bodies before the per-function loop, as Rust's `scopes::check` does.
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use opt_decode_view;
+use ir_pass_tree;
+
+fn is_len(b: ir::Bundle, d: integer) -> boolean {
+  nm = scope_args::def_name(b, d);
+  nm == "t_6vector_len" || nm == "OpLengthVector"
+}
+
+// port: bound_append.rs fn only_lengths — every mention of a watched variable is a length's
+// operand; no `Set` of one, and nothing that leaves the block.
+fn only_lengths(b: ir::Bundle, v: ir::Node, watched: vector<integer>) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdVar { n } => { return !scope_fn::has(watched, n); },
+    NdSet { var, inner } => { return !scope_fn::has(watched, var) && only_lengths(b, inner, watched); },
+    NdReturn => { return false; },
+    NdBreak => { return false; },
+    NdContinue => { return false; },
+    NdYield => { return false; },
+    NdCallRef => { return false; },
+    NdParallel => { return false; },
+    NdCall { def_nr, args } => if is_len(b, def_nr) && len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n } => scope_fn::has(watched, n), _ => false } {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if !only_lengths(b, c, watched) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: bound_append.rs fn serve_lengths — `len(k)` read as `kl`, `len(dst)` as `b0`.
+fn serve_lengths(b: ir::Bundle, v: ir::Node, k: integer, dst: integer, kl: integer, b0: integer) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if is_len(b, def_nr) && len(args) > 0 {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n } => {
+          if n == k {
+            return ir::NdVar { n: kl };
+          }
+          if n == dst {
+            return ir::NdVar { n: b0 };
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  opt_decode_view::with_children(v, [for c in kids { serve_lengths(b, c, k, dst, kl, b0) }])
+}
+
+// port: bound_append.rs fn mentions — the `Var(x)` and `Set(x, _)` nodes in `v`.
+fn mentions(v: ir::Node, x: integer) -> integer {
+  k = match v {
+    NdVar { n } => if n == x { 1 } else { 0 },
+    NdSet { var } => if var == x { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(v) {
+    k += mentions(c, x);
+  }
+  k
+}
+
+// port: bound_append.rs fn views — the variables whose dependencies reach `root`, and `root`.
+fn views(f: ir::Function, root: integer) -> vector<integer> {
+  set = [root];
+  before = 0;
+  while len(set) != before {
+    before = len(set);
+    for v in 0..scope_fn::count(f) {
+      if scope_fn::has(set, v) {
+        continue;
+      }
+      for d in scope_fn::deps(f, v) {
+        if scope_fn::has(set, d) && !scope_fn::has(set, v) {
+          set += [v];
+        }
+      }
+    }
+  }
+  set
+}
+
+// A statement's call, `NdNull` for any other statement.
+fn call_of(v: ir::Node) -> ir::Node {
+  u = scope_fn::unspan(v);
+  if (u is NdCall) { u } else { ir::NdNull }
+}
+
+// port: bound_append.rs fn rewrite_block — one rewrite in `ops`, if one is admitted; `snap` is
+// the function's body before the pass (`whole`).
+fn rewrite_block(b: ir::Bundle, ops: vector<ir::Node>, d_nr: integer, snap: ir::Node) -> boolean {
+  f = b.data.definitions[d_nr].variables;
+  for i in 0..len(ops) {
+    k = -1;
+    call = ir::NdNull;
+    match scope_fn::unspan(ops[i]!) {
+      NdSet { var, inner } => {
+        k = var;
+        call = inner;
+      },
+      _ => { continue; }
+    }
+    callee = -1;
+    cargs: vector<ir::Node> = [];
+    match scope_fn::unspan(call) {
+      NdCall { def_nr, args } => {
+        callee = def_nr;
+        cargs = args;
+      },
+      _ => { continue; }
+    }
+    if scope_fn::is_argument(f, k) {
+      continue;
+    }
+    cd = b.data.definitions[callee]!;
+    at = binds::hidden_return_buffer_attr(cd);
+    if at == null {
+      continue;
+    }
+    if !(scope_fn::base(cd.attributes[at!]!.typedef[0] ?? ir::TyVoid) is TyVector) || !(scope_fn::unspan(cargs[at!] ?? ir::NdNull) is NdVar) {
+      continue;
+    }
+    // The append: `dst += k`, a later statement of this block.
+    j = -1;
+    for x in i + 1..len(ops) {
+      if j < 0 {
+        match call_of(ops[x]!) {
+          NdCall { def_nr, args } => if scope_args::def_name(b, def_nr) == "OpAppendVector" && match scope_fn::unspan(args[1] ?? ir::NdNull) { NdVar { n } => n == k, _ => false } {
+            j = x;
+          },
+          _ => {}
+        }
+      }
+    }
+    if j < 0 {
+      continue;
+    }
+    aargs: vector<ir::Node> = match call_of(ops[j]!) { NdCall { args } => args, _ => [] };
+    dst = match scope_fn::unspan(aargs[0] ?? ir::NdNull) { NdVar { n } => n, _ => -1 };
+    if dst < 0 || dst == k || !(scope_fn::base(scope_fn::tp(f, dst)) is TyVector) {
+      continue;
+    }
+    watched = views(f, dst);
+    watched += [k];
+    ok = true;
+    for x in i + 1..j {
+      if !only_lengths(b, ops[x]!, watched) {
+        ok = false;
+      }
+    }
+    if !ok {
+      continue;
+    }
+    // `k` nowhere else: its bind, its lengths between, the append.
+    here = 0;
+    for x in i..j + 1 {
+      here += mentions(ops[x]!, k);
+    }
+    if here != mentions(snap, k) {
+      continue;
+    }
+    tp = aargs[2]!;
+    len_op = scope_fn::def_nr(b, "t_6vector_len");
+    minus = scope_fn::def_nr(b, "OpMinInt");
+    append_op = scope_fn::def_nr(b, "OpAppendVector");
+    int_tp = b.data.definitions[len_op]!.returned[0] ?? ir::TyVoid;
+    b0 = ir_pass_tree::add_unique(f, "ba_b0", int_tp, 65535);
+    kl = ir_pass_tree::add_unique(f, "ba_kl", int_tp, 65535);
+    len_dst = ir::NdCall { def_nr: len_op, args: [ir::NdVar { n: dst }] };
+    for x in i + 1..j {
+      ops[x] = serve_lengths(b, ops[x]!, k, dst, kl, b0);
+    }
+    out: vector<ir::Node> = [for x in ops[0..i] { x }];
+    out += [scope_fn::v_set(b0, len_dst)];
+    out += [ir::NdCall { def_nr: append_op, args: [ir::NdVar { n: dst }, call, tp] }];
+    out += [scope_fn::v_set(kl, ir::NdCall { def_nr: minus, args: [len_dst, ir::NdVar { n: b0 }] })];
+    for x in i + 1..len(ops) {
+      if x != j {
+        out += [ops[x]!];
+      }
+    }
+    ops.clear();
+    ops += out;
+    return true;
+  }
+  false
+}
+
+// port: bound_append.rs fn rewrite_in — every block of `v`, innermost blocks included.
+fn rewrite_in(b: ir::Bundle, v: ir::Node, d_nr: integer, snap: ir::Node) -> ir::Node {
+  match v {
+    NdBlock { block } => { return rewrite_ops(b, v, block[0].operators, d_nr, snap); },
+    NdLoop { block } => { return rewrite_ops(b, v, block[0].operators, d_nr, snap); },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  opt_decode_view::with_children(v, [for c in kids { rewrite_in(b, c, d_nr, snap) }])
+}
+
+fn rewrite_ops(b: ir::Bundle, v: ir::Node, operators: vector<ir::Node>, d_nr: integer, snap: ir::Node) -> ir::Node {
+  ops = [for x in operators { x }];
+  while rewrite_block(b, ops, d_nr, snap) {}
+  opt_decode_view::with_children(v, [for op in ops { rewrite_in(b, op, d_nr, snap) }])
+}
+
+// An `OpAppendVector(_, Var(_), …)` anywhere in `n`.
+fn appends_a_local(b: ir::Bundle, append: integer, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr, args } => if def_nr == append && scope_fn::unspan(args[1] ?? ir::NdNull) is NdVar {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if appends_a_local(b, append, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: bound_append.rs fn rewrite_program — every function this load lays out.
+pub fn rewrite_program(b: ir::Bundle) {
+  append = scope_fn::def_nr(b, "OpAppendVector");
+  for d in b.data.definitions {
+    if d.def_type != 1 || d.source == 0 || len(d.code) == 0 || d.code[0]! is NdNull || !d.name.starts_with("n_") {
+      continue;
+    }
+    snap = d.code[0]!;
+    if !appends_a_local(b, append, snap) {
+      continue;
+    }
+    b.data.definitions[d#index].code = [rewrite_in(b, snap, d#index, snap)];
+  }
+}

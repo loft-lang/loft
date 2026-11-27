@@ -96,8 +96,9 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     // `move_join_hooks_into_arms` moves the HOOKS of a join's sources into its arms, and
     // `return_copies_whole_local`, `return_copies_view_holders`, `return_moved_holders` take a
     // hook away from the sweep: for a record return no source has one (the phase refuses a
-    // record type with a cascade, and a vector source's elements are asked here).
-    if scope_fn::is_record(tp) && !(scope_fn::base(tp) is TyRefVar) {
+    // record type with a cascade, and a vector source's elements are asked here).  A VECTOR
+    // return's sources are vectors and records, none with a cascade (the phase refuses both).
+    if (scope_fn::is_record(tp) || scope_fn::base(tp) is TyVector) && !(scope_fn::base(tp) is TyRefVar) {
       for v in 0..scope_fn::count(f) {
         match scope_fn::base(scope_fn::tp(f, v)) {
           TyVector { inner } => {
@@ -360,10 +361,19 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
       NdInsert { items } => len(items) > 0 && (scope_fn::unspan(items[len(items) - 1]!) is NdCall || scope_fn::unspan(items[len(items) - 1]!) is NdCallRef),
       _ => false
     };
-    if ret_var != scope_fn::NONE {
-      if frees_follow && ret_var < scope_fn::count(f) && (scope_fn::is_argument(f, ret_var) || scope_fn::base(scope_fn::tp(f, ret_var)) is TyVector) {
-        scope_scan::refuse(s, "returns::return_has_null_arm: an argument or collection returned (__ret_tail_N)");
-      }
+    // loft#1097 — a null arm folded onto a COLLECTION (or a var the caller hands in) cannot
+    // carry the sentinel: the tail's value is hoisted to a temp (not registered — it holds the
+    // value the caller adopts), the frees run, the temp is returned.
+    null_arm_needs_the_value = ret_var != scope_fn::NONE && frees_follow && ret_var < scope_fn::count(f)
+      && (is_collection(scope_fn::tp(f, ret_var)) || scope_fn::is_argument(f, ret_var))
+      && return_has_null_arm(expr, s.ops.null_ref_sentinel);
+    if null_arm_needs_the_value {
+      s.ret_temp_counter += 1;
+      tmp = scope_fn::add_temp_var(f, "__ret_tail_{s.ret_temp_counter}", tp);
+      out = bind_return_temp(s, b, tmp, expr, f);
+      out += ls;
+      out += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
+    } else if ret_var != scope_fn::NONE {
       out += [ir::NdReturn { inner: ir::NdVar { n: ret_var } }];
     } else if frees_follow && !(tp is TyVoid) && (call_tail || scope_fn::base(tp) is TyFunction) && !(scope_fn::base(tp) is TyIterator) {
       s.ret_temp_counter += 1;

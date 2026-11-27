@@ -25,6 +25,9 @@ use own;
 use scope_value_struct;
 use scope_capture_adoption;
 use scope_text_replace;
+use scope_confinement;
+use scope_last_use;
+use scope_bound_append;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -35,6 +38,9 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   ops = scope_scan::ops_of(b);
   iops = scope::ops_of(b);
   free = scope_pure::effect_free(b);
+  twins = const_twins(b);
+  // `@FR-R-BoundAppend` rewrites the parser's bodies first (after `pure_reuse`, refused below).
+  scope_bound_append::rewrite_program(b);
   // The whole-program rewrites run on the PARSER's bodies before the loop: their triggers are
   // read before any body is laid out (a callee laid out earlier would otherwise answer).
   program: vector<text> = [];
@@ -86,12 +92,73 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why == "" {
       why = join_rewrites(b, orig_code, d.variables);
     }
-    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale_callees(b, d_nr, orig_code, refused_nrs));
+    stale = stale_callees(b, d_nr, orig_code, refused_nrs);
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale, [], []);
     if why == "" {
       why = ph.why;
     }
+    // A local an early sweep skipped as a view and the scan then made an owner: scan again
+    // with it read as an owner from the start.  The rescans below carry the set.
+    late = ph.late;
+    if why == "" && len(late) > 0 {
+      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale, [], late);
+      why = ph.why;
+      for v in ph.late {
+        if !late.contains(v) {
+          late += [v];
+        }
+      }
+    }
+    // Plan-57 cluster I-a — a vector store confined to a block is registered at that block on
+    // a rescan, and its null-init relocated into it.
+    stores_acted = false;
+    if why == "" {
+      confined = scope_confinement::store_confinement(ph.code, ph.function, ops.free_ref, ops.get_field);
+      if len(confined) > 0 {
+        stores_acted = true;
+        cmap: vector<integer> = [];
+        for c in confined {
+          scope_scan::put(cmap, c.vdb, c.block);
+          dl = scope_fn::deps(ph.function, c.local);
+          if len(dl) == 1 && dl[0] == c.vdb {
+            scope_scan::put(cmap, c.local, c.block);
+          }
+        }
+        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale, cmap, late);
+        why = ph.why;
+        for c in confined {
+          ph.code = scope_confinement::relocate_null_init(ph.code, c.vdb, c.block);
+        }
+      }
+    }
+    // Plan-57 last-use freeing — null-init relocation and early free.
+    if why == "" {
+      drop_bearing = scope_last_use::drop_bearing_stores(b, ph.function);
+      if len(scope_last_use::reclaim_free_intent(ph.code, ph.function, ops.database, ops.get_field, ops.free_ref, drop_bearing).owning) > 0 {
+        stores_acted = true;
+      }
+      ph.code = scope_last_use::lastuse_reclaim(ph.code, ph.function, ops.database, ops.get_field, ops.free_ref, drop_bearing, ops.free_if_distinct);
+    }
+    // `Function::is_ref_home` (`@FR-H-RefHome`, the parser's mark of a store a stored reference
+    // names) is not in the image, and both store passes above read it.
+    store_why = if stores_acted && stored_reference(b, orig_code) { "last_use::reclaim_safe / confinement::store_confinement: a stored reference's home (Function::is_ref_home, not in the image)" } else { "" };
+    if why == "" {
+      why = store_why;
+    }
+    // `const_fn::rewrite` (`@FR-R-Const`): a literal-bodied function's body is copied from its
+    // twin, and a call of one whose result is only read answers a view of the constant.
+    const_why = if twins[d_nr] ?? false {
+      "const_fn::rewrite: a literal-bodied function (copy_from_twin)"
+    } else if calls_const(ph.code, twins) {
+      "const_fn::rewrite: a call of a literal-bodied function (read_only_uses)"
+    } else {
+      ""
+    };
     if why == "" {
       why = settled_rewrites(b, d, ph.code, ph.function);
+    }
+    if why == "" {
+      why = const_why;
     }
     if why != "" {
       if all_reasons {
@@ -102,9 +169,15 @@ pub fn check(b: ir::Bundle) -> vector<text> {
           }
         }
         all += ph.whys;
+        if store_why != "" {
+          all += [store_why];
+        }
         r = settled_rewrites(b, d, ph.code, ph.function);
         if r != "" {
           all += [r];
+        }
+        if const_why != "" {
+          all += [const_why];
         }
         why = all.join(" | ");
       }
@@ -200,7 +273,7 @@ fn callees(n: ir::Node, out: vector<integer>) {
 }
 
 // The whole-program rewrites `check` runs on the parser's bodies before the loop, each refused
-// where its trigger is in this body: `pure_reuse`, `bound_append`, `elide_borrows`,
+// where its trigger is in this body: `pure_reuse`, `elide_borrows`,
 // `move_elide`, `value_struct_copy` (`spent::record_all` records facts only), and the post-loop ones on the settled bodies: `text_replace::admit`,
 // `buffer_detach`, `host_store`, `rebound_captures`, `owner_handover`, `lease_calls` (records
 // and closures, refused where they are bound).
@@ -229,9 +302,6 @@ fn triggers(b: ir::Bundle, free: vector<boolean>, n: ir::Node, f: ir::Function, 
           note(w, "pure_reuse::reuse_in_block: an effect-free call made twice");
         }
         calls += [key];
-      }
-      if nm == "OpAppendVector" && len(args) > 1 && scope_fn::unspan(args[1]!) is NdVar {
-        note(w, "bound_append::rewrite_program: a local appended whole");
       }
       // `move_elide` (default on): a record copied out of a local at that local's last use is
       // built in the copy's destination instead (`MovePlan`, the `a.field = base` rewrite).
@@ -294,34 +364,34 @@ fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
 }
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
-// is in the body: `store_confinement` and `lastuse_reclaim` (a store local, refused where it is
-// bound), `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
+// is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `copy_view`,
 // `compact`, `take_local`, `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`,
 // `slice_text`, `slice_into`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
-  // `lastuse_reclaim` — a store built in the body scope that is dead before another one is
-  // built there (`reclaim_free_intent`) is freed early: it needs two such stores, each a
-  // vector's `__vdb_N` backing (`reclaim_safe`).
-  body_scope = match scope_fn::unspan(code) { NdBlock { block } => block[0].scope, _ => -1 };
-  built: vector<integer> = [];
-  database_targets(b, code, built);
-  in_body = 0;
-  for x in built {
-    v = f.variables[x];
-    if v != null && v!.scope == body_scope && v!.name.starts_with("__vdb") {
-      in_body += 1;
-    }
-  }
-  if in_body >= 2 {
-    note(w, "last_use::lastuse_reclaim: two vector backings built in the body scope");
-  }
   for x in f.variables {
     if x.name.starts_with("__place") && scope_fn::is_record(x.type_def[0] ?? ir::TyVoid) {
       note(w, "stored_refs::keep_placed_results: a call result placed in a holder's store");
     }
   }
   hidden: vector<text> = [for a in d.attributes if a.hidden { a.name }];
+  // `(R-ExitVector)` — a local vector's wrapper (`__vdb_N`) is claimed in the hidden RECORD
+  // return buffer's store where the exit literal copies it in (`exit_vector::rewrite`).
+  rec_buffer = false;
+  for a in d.attributes {
+    if a.hidden && scope_fn::is_record(a.typedef[0] ?? ir::TyVoid) {
+      rec_buffer = true;
+    }
+  }
+  if rec_buffer {
+    built: vector<integer> = [];
+    database_targets(b, code, built);
+    for x in built {
+      if scope_fn::name(f, x).starts_with("__vdb_") {
+        note(w, "exit_vector::rewrite: a local vector's wrapper beside a record return buffer");
+      }
+    }
+  }
   record_triggers(b, code, f, hidden, w);
   settled_triggers(b, code, false, w);
   w.why
@@ -396,7 +466,12 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
       // record copied out first (`ref_evacuations`, the parser's fact, not in the image).
       if nm == "OpSetDbRef" && len(args) == 3 {
         r = root_var(b, args[2]!);
-        if r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_record(scope_fn::tp(f, r)) {
+        holder = root_var(b, args[0]!);
+        // …and an element of a LOCAL vector stored through a PARAMETER's reference, which
+        // outlives the frame (`@FR-H-RefHome`: the element is copied out of its home first).
+        er = element_root(b, args[2]!);
+        vector_home = er >= 0 && !scope_fn::is_argument(f, er) && scope_fn::base(scope_fn::tp(f, er)) is TyVector && holder >= 0 && scope_fn::is_argument(f, holder);
+        if (r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_record(scope_fn::tp(f, r))) || vector_home {
           note(w, "stored_refs::insert_evacuations: a reference to a local's record stored");
         }
       }
@@ -452,6 +527,59 @@ fn root_var(b: ir::Bundle, n: ir::Node) -> integer {
   match scope_fn::unspan(n) {
     NdVar { n: x } => x,
     NdCall { def_nr, args } => if scope_args::def_name(b, def_nr).starts_with("OpGet") && len(args) > 0 { root_var(b, args[0]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// An `OpSetDbRef` anywhere in `n`: a reference stored into a record (`@FR-H-RefHome`'s homes are
+// marked off such stores).
+fn stored_reference(b: ir::Bundle, n: ir::Node) -> boolean {
+  match n {
+    NdCall { def_nr } => if scope_args::def_name(b, def_nr) == "OpSetDbRef" { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if stored_reference(b, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// `@FR-R-Const` — the functions with a constant twin `__const_<name>`
+// (`Definition::literal_const`, read off the twin the parser made, `synthetic == "literal_const"`).
+fn const_twins(b: ir::Bundle) -> vector<boolean> {
+  keys: vector<text> = [];
+  for d in b.data.definitions {
+    if d.synthetic == "literal_const" && d.name.starts_with("__const_") {
+      keys += ["{d.source}:{d.name[8..]}"];
+    }
+  }
+  [for d in b.data.definitions { d.def_type == 1 && len(keys) > 0 && keys.contains("{d.source}:{d.name}") }]
+}
+
+// A call of a function with a constant twin anywhere in `n` (`const_fn::rewrite`'s `calls_one`).
+fn calls_const(n: ir::Node, twins: vector<boolean>) -> boolean {
+  match n {
+    NdCall { def_nr } => if twins[def_nr] ?? false { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls_const(c, twins) {
+      return true;
+    }
+  }
+  false
+}
+
+// The vector an element reference (`OpVectorRef(v, …)`) is taken out of, -1 for none.
+fn element_root(b: ir::Bundle, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => if scope_args::def_name(b, def_nr).starts_with("OpVectorRef") && len(args) > 0 {
+      match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 }
+    } else {
+      -1
+    },
     _ => -1
   }
 }

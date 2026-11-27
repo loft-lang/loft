@@ -17,6 +17,7 @@ use scope_fn;
 use scope_scan;
 use scope_free_vars;
 use scope_drops;
+use scope_backings;
 use binds;
 
 // port: get_free_vars.rs fn get_free_vars
@@ -32,6 +33,17 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     }
     if scope_fn::has(delivered.sources, v) && scope_fn::is_dbref(scope_fn::base(t)) {
       continue;
+    }
+    // `@FR-H-Drop`, the scope-end clause — a VECTOR local whose elements live in a backing of an
+    // OUTER scope is released here, through the backing's hook, and emptied.  A captured local's
+    // store is its closure record's (`capture_adoption_owns_free`), refused where it is released.
+    backing = scope_backings::outer_collection_backing(f, v, vars, scope_scan::get(s.bind_backing, v));
+    if backing >= 0 && !scope_fn::is_captured(f, v) {
+      hook = scope_drops::scope_end_drop(s, b, f, backing);
+      if hook != null {
+        ls += [hook!];
+        ls += [ir::NdCall { def_nr: s.ops.clear_vector, args: [ir::NdVar { n: v }] }];
+      }
     }
     if scope_fn::name(f, v).contains("hash_scratch") {
       ls += [ir::NdCall { def_nr: scope_fn::def_nr(b, "OpFreeScratch"), args: [ir::NdVar { n: v }] }];
@@ -51,7 +63,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     if scope_fn::is_plain(t) || scope_fn::is_plain_link(t) {
       continue;
     }
-    if scope_fn::is_record(t) && !(scope_fn::base(t) is TyRefVar) {
+    if (scope_fn::is_record(t) || scope_fn::base(t) is TyVector) && !(scope_fn::base(t) is TyRefVar) {
       record_release(s, b, f, v, ret_var, delivered, ls);
       continue;
     }
@@ -164,7 +176,7 @@ fn owns_text_copy(f: ir::Function, v: integer) -> boolean {
   scope_fn::base(scope_fn::tp(f, v)) is TyText && !scope_fn::is_skip_free(f, v)
 }
 
-// The heap leg of `get_free_vars` for one RECORD local.
+// The heap leg of `get_free_vars` for one RECORD or VECTOR local.
 fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>) {
   // `closure_keep`, `outer_collection_backing`, `outer_tuple_backings`: a closure record, a
   // vector, a tuple's members — refused where they are made.
@@ -276,8 +288,17 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     }
   } else {
     // `join_capture_witness`, `reassigned_join_capture_slot`: a closure record's.  The type's
-    // scope-end hook, immediately before the free, unless `v` is a buffer whose witness ran it.
-    if !is_buffer {
+    // scope-end hook, immediately before the free, unless `v` is a buffer whose witness ran it —
+    // or a collection buffer whose delivered binding's scope has ended (it ran the hook there).
+    binding_ended = false;
+    if scope_fn::base(scope_fn::tp(f, v)) is TyVector {
+      db = scope_drops::delivered_binding(f, v);
+      if db >= 0 {
+        bs = scope_scan::get(s.var_scope, db);
+        binding_ended = bs >= 0 && bs != s.scope && !scope_fn::has(s.stack, bs);
+      }
+    }
+    if !is_buffer && !binding_ended {
       hook = scope_drops::scope_end_hook(s, b, f, v, []);
       if hook != null {
         ls += [scope_drops::lift_viewer_guard(s, v, hook!)];

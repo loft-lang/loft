@@ -8,6 +8,7 @@
 
 use ir;
 use scope_fn;
+use scope_scan;
 
 // port: backings.rs fn block_tail_var
 pub fn block_tail_var(v: ir::Node) -> integer {
@@ -181,6 +182,80 @@ pub fn call_buffer_of(rhs: ir::Node, f: ir::Function) -> integer {
         }
       }
       -1
+    },
+    _ => -1
+  }
+}
+
+// port: backings.rs fn vector_literal_backings — the literal backings (`__vdb_N`) each vector
+// local is bound to anywhere in `code`, by the id the body names it with.
+pub fn vector_literal_backings(code: ir::Node, f: ir::Function, get_field: integer) -> vector<scope_scan::VarList> {
+  out: vector<scope_scan::VarList> = [];
+  backings_walk(code, f, get_field, true, out);
+  out
+}
+
+// port: backings.rs fn vector_call_buffers — the call buffers (`__ref_N`) each vector local is
+// bound through anywhere in `code`.
+pub fn vector_call_buffers(code: ir::Node, f: ir::Function) -> vector<scope_scan::VarList> {
+  out: vector<scope_scan::VarList> = [];
+  backings_walk(code, f, -1, false, out);
+  out
+}
+
+// `code.walk` over every `Set(v, rhs)`, pre-order, for the two censuses above.
+fn backings_walk(n: ir::Node, f: ir::Function, get_field: integer, literal: boolean, out: vector<scope_scan::VarList>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var, inner } => {
+      bv = if literal { literal_backing_of(inner, f, get_field) } else { call_buffer_of(inner, f) };
+      if bv >= 0 {
+        scope_scan::list_add(out, var, bv);
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    backings_walk(c, f, get_field, literal, out);
+  }
+}
+
+// port: backings.rs fn is_backing_name — a vector local's `__vdb_N` or a call's `__ref_N`.
+fn is_backing_name(f: ir::Function, bv: integer) -> boolean {
+  nm = scope_fn::name(f, bv);
+  nm.starts_with("__vdb_") || nm.starts_with("__ref_")
+}
+
+// port: backings.rs fn outer_collection_backing — the backing of vector local `v` that lives in
+// a scope other than the ones being left (`exited`), -1 for none.  `on_this_path` is the backing
+// the latest bind on this path filled (`bind_backing`), -1 for none.
+pub fn outer_collection_backing(f: ir::Function, v: integer, exited: vector<integer>, on_this_path: integer) -> integer {
+  if !(scope_fn::base(scope_fn::tp(f, v)) is TyVector) || scope_fn::is_compiler_generated(f, v) {
+    return -1;
+  }
+  bv = on_this_path;
+  if bv < 0 {
+    d = scope_fn::deps(f, v);
+    if len(d) != 1 {
+      return -1;
+    }
+    bv = d[0];
+  }
+  if is_backing_name(f, bv) && !scope_fn::has(exited, bv) && !scope_fn::is_argument(f, bv) { bv } else { -1 }
+}
+
+// port: backings.rs fn bind_backing_of — the backing a vector bind fills (`OpGetField(<backing>,
+// …)`), -1 for none.
+pub fn bind_backing_of(value: ir::Node, f: ir::Function, get_field: integer) -> integer {
+  match scope_fn::unspan(value) {
+    NdCall { def_nr, args } => {
+      if def_nr != get_field || len(args) == 0 {
+        return -1;
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: bv } => if bv < scope_fn::count(f) && is_backing_name(f, bv) { bv } else { -1 },
+        _ => -1
+      }
     },
     _ => -1
   }
