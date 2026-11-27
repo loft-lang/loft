@@ -41,6 +41,26 @@ use el_ex_match;
 // as its base does and stays nullable — a `null` is the target's null, and a text is parsed
 // (`OpCastIntFromText`, null when it does not parse).  A checked narrowing, a non-scalar side and
 // a narrowing no constant answers are refused by name.
+// The `operator to_<t>` converting a value of type `from` to `to` (its `self` the source's
+// type, its answer the target), or -1.  `to_text` is formatting's, not a cast's.
+fn user_conversion(e: el::El, from: ir::TypeT, to: ir::TypeT) -> integer {
+  fb = el_types::base(from);
+  tb = el_types::base(to);
+  if el_types::is_unknown(fb) || el_types::is_unknown(tb) || to is TyOptional {
+    return -1;
+  }
+  for d in e.b.data.definitions {
+    if d.operator_form && contains(d.name, "_to_") && !ends_with(d.name, "_to_text") && len(d.attributes) >= 1 && len(d.returned) > 0 {
+      st = el_types::base(d.attributes[0]!.typedef[0] ?? ir::TyVoid);
+      rt = el_types::base(d.returned[0]!);
+      if el_types::is_equal(e, el_types::without_deps(st), el_types::without_deps(fb)) && el_types::is_equal(e, el_types::without_deps(rt), el_types::without_deps(tb)) {
+        return d#index;
+      }
+    }
+  }
+  -1
+}
+
 pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> Ex {
   if ae == null || tn == null {
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -57,6 +77,16 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   vc = variant_cast(e, vars, x, to, ae!, tn!);
   if vc != null {
     return vc!;
+  }
+  // `@PLN99` Arc C — a user conversion `operator to_<t>(self: S) -> T` is `convert`'s candidate
+  // for `S as T` before any built-in cast: `"abcd" as Celsius` calls `t_4text_to_celsius`, a
+  // record source too (`a as Fahrenheit`), handed its hidden buffer as any call is.
+  uc = user_conversion(e, x.tp, to);
+  if uc >= 0 {
+    ucr = el_ex_call::call_args(e, vars, uc, [x.code], [x.tp]);
+    if ucr != null {
+      return ucr!;
+    }
   }
   // `as τ?` that narrows nothing: the cast to the base, typed `τ?`.  A checked narrowing (the
   // `dn4cast` guard and the store's range default) is refused by name.
