@@ -200,9 +200,10 @@ def main():
     if o.check or o.write_baseline:
         pin = baseline.require_pin(root, suite, o.check)
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
-    if o.written:
+    if o.written or o.front:
         # The loft writer holds every text local as its own text; the image's tables are
-        # written for that same form.
+        # written for that same form.  The front layer runs the same writer over the same
+        # tables, so its images are taken in that form too.
         env["LOFT_NO_TEXT_BORROW"] = "1"
     tmp = tempfile.mkdtemp(prefix="loft-runimg-", dir=os.environ.get("TMPDIR"))
     try:
