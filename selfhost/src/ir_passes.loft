@@ -11,6 +11,7 @@ use ir_zero_count;
 use ir_forward_walk;
 use ir_discharge_into;
 use ir_text_len;
+use ir_complete_write;
 
 // `close_program`'s passes over `b`, in order.  Answers the functions a pass refuses by name.
 pub fn close_program(b: ir::Bundle) -> vector<text> {
@@ -28,5 +29,8 @@ pub fn close_program(b: ir::Bundle) -> vector<text> {
   ir_discharge_into::rewrite_program(b);
   // `@FR-R-TextLen` — a loop counts a text's length once, until the text is written.
   ir_text_len::rewrite_program(b);
+  // `@FR-R-CompleteWrite` — a copy into a field of an element its literal just minted is flagged
+  // fresh.
+  ir_complete_write::rewrite_program(b);
   refused
 }

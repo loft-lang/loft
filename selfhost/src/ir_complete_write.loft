@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/opt/complete_write.rs` transcribed (`@FR-R-CompleteWrite`), its IR half: each
+// record copy into a FIELD of an element a literal group builds (`CompleteWrites::fresh_fields`,
+// `opt::ret_adopt::collect_fresh_fields`) is flagged `COPY_FRESH_DEST`.  Its destination was just
+// created, so it releases nothing there and a null source writes the field type's defaults
+// (`@C137`).  The flags are written whatever `LOFT_NO_COMPLETE_WRITE` says.
+//
+// NOT transcribed yet: the stored fact `Definition::no_prefill` (`complete_writes`' `db_vars` and
+// `mint_tps`, decided by `loop_records::group_covers_type`).  The passes gate does not print it,
+// so a function whose fact Rust sets still agrees there; the writers read it from Rust's image.
+
+use ir;
+use scope_fn;
+use lower;
+use ir_pass_tree;
+
+// `keys::COPY_FRESH_DEST`
+COPY_FRESH_DEST = 16384;
+
+struct Ops {
+  copy_record: integer,
+  get_field: integer,
+  finish_record: integer,
+  new_record: integer
+}
+
+// `field_chain_root`: the variable a field chain `OpGetField(…OpGetField(Var(t), a, _)…, b, _)`
+// is rooted at, and whether it IS that variable (`whole`).  -1 for no chain.
+struct Root { v: integer, whole: boolean }
+
+fn field_chain_root(ops: Ops, v: ir::Node) -> Root {
+  u = scope_fn::unspan(v);
+  match u {
+    NdVar { n } => return Root { v: n, whole: true },
+    _ => {}
+  }
+  if !ir_pass_tree::is_call(u, ops.get_field) {
+    return Root { v: -1, whole: false };
+  }
+  a = ir_pass_tree::args_of(u);
+  if len(a) == 0 {
+    return Root { v: -1, whole: false };
+  }
+  r = field_chain_root(ops, a[0]!);
+  Root { v: r.v, whole: false }
+}
+
+// `fresh_field_copy`: is `stmt` a record copy into a field reached from `target`, not flagged
+// FRESH yet?
+fn fresh_field_copy(ops: Ops, stmt: ir::Node, target: integer) -> boolean {
+  if !ir_pass_tree::is_call(stmt, ops.copy_record) {
+    return false;
+  }
+  args = ir_pass_tree::args_of(stmt);
+  if len(args) < 3 {
+    return false;
+  }
+  r = field_chain_root(ops, args[1]!);
+  if r.v < 0 {
+    return false;
+  }
+  raw = ir_pass_tree::int_of(args[2]!);
+  if raw == null || raw! < 0 || raw! > 65535 {
+    return false;
+  }
+  r.v == target && !r.whole && (raw! & COPY_FRESH_DEST) == 0
+}
+
+// `collect_fresh_fields`: the positions in `stmts` of the record copies into fields of the
+// element `target` that the mint at `at - 1` builds — every statement up to the
+// `OpFinishRecord` that closes the element.
+fn collect_fresh_fields(ops: Ops, stmts: vector<ir::Node>, at: integer, target: integer, out: vector<boolean>) {
+  for k in at..len(stmts) {
+    s = stmts[k]!;
+    if fresh_field_copy(ops, s, target) {
+      out[k] = true;
+    } else if ir_pass_tree::is_call(s, ops.finish_record) {
+      fa = ir_pass_tree::args_of(s);
+      if len(fa) > 1 && (ir_pass_tree::var_of(fa[1]!) ?? -1) == target {
+        return;
+      }
+    }
+  }
+}
+
+// `flag_fresh` on one statement: the copy's raw type, where it is an `Int` itself, flagged.
+fn flag(n: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: flag(inner) },
+    NdCall { def_nr, args } => {
+      match args[2] ?? ir::NdNull {
+        NdInt { n: raw } => {
+          na = [for a in args { a }];
+          na[2] = ir::NdInt { n: raw | COPY_FRESH_DEST };
+          ir::NdCall { def_nr: def_nr, args: na }
+        },
+        _ => n
+      }
+    },
+    _ => n
+  }
+}
+
+struct Count { n: integer }
+
+// Every block and loop of `v` (`any_node` over `Block | Loop`): its `Set(e, OpNewRecord(…))`
+// heads collect their fresh copies, which are flagged.
+fn walk(ops: Ops, v: ir::Node, c: Count) -> ir::Node {
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  v2 = ir_pass_tree::with_children(v, [for k in kids { walk(ops, k, c) }]);
+  bl = match v2 { NdBlock { block } => block[0]!, NdLoop { block } => block[0]!, _ => return v2 };
+  st = bl.operators;
+  fresh: vector<boolean> = [for _ in st { false }];
+  for s in st {
+    match scope_fn::unspan(s) {
+      NdSet { var, inner } => {
+        if ir_pass_tree::is_call(inner, ops.new_record) {
+          collect_fresh_fields(ops, st, s#index + 1, var, fresh);
+        }
+      },
+      _ => {}
+    }
+  }
+  if !fresh.contains(true) {
+    return v2;
+  }
+  out = [for s in st { if fresh[s#index] ?? false { flag(s) } else { s } }];
+  c.n += 1;
+  match v2 {
+    NdLoop => ir::NdLoop { block: [ir_pass_tree::with_operators(bl, out)] },
+    _ => ir::NdBlock { block: [ir_pass_tree::with_operators(bl, out)] }
+  }
+}
+
+// `Definition::is_operator`: a function named `Op` and an upper-case letter.
+fn is_operator(d: ir::Definition) -> boolean {
+  d.def_type == 1 && len(d.name) > 2 && d.name.starts_with("Op") && d.name[2] >= 'A' && d.name[2] <= 'Z'
+}
+
+// port: complete_write.rs fn rewrite_program — every function's fresh-field copies flagged.
+pub fn rewrite_program(b: ir::Bundle) {
+  ops = Ops {
+    copy_record: lower::find(b, "OpCopyRecord") ?? -1,
+    get_field: lower::find(b, "OpGetField") ?? -1,
+    finish_record: lower::find(b, "OpFinishRecord") ?? -1,
+    new_record: lower::find(b, "OpNewRecord") ?? -1
+  };
+  for d in b.data.definitions {
+    if !ir_pass_tree::has_body(d) || is_operator(d) || d.rust != "" {
+      continue;
+    }
+    c = Count { n: 0 };
+    code = walk(ops, d.code[0]!, c);
+    if c.n > 0 {
+      b.data.definitions[d#index].code = [code];
+    }
+  }
+}
