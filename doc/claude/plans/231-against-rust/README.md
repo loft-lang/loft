@@ -228,13 +228,26 @@ revisit trigger).
 
   With a lambda the real refusal is hidden behind *"Cannot infer type for lambda parameter"*
   (31, 36): the user is first told to type the lambda, then refused once they have.
+- **Two layers, kept apart.**  The rules say what a call MEANS: a fresh vector (`(I-Comp)`),
+  `filter` finished before `map` starts.  The rewrites decide what the C DOES (`formal/rewrites.md`).
+  Read from `--native-emit` (probes 53, 54):
+  - `map` and `filter` are already lowered to the comprehension's loop, and each loop gets the
+    same rewrites: a push window (`(R-Push)`) and a hoisted vector header (`(R-Header)`).  What
+    is separate is the parsing and the vector-only source check — not the code they produce.
+  - `map(filter(v, p), f)` is two loops with an intermediate buffer claimed, filled and freed;
+    `[for x in v if p(x) { f(x) }]` is one loop with none.  No rewrite fuses the stages.
+  - The lambdas stay calls (`static inline` C functions); inlining them is the C compiler's.
 - **Can we lift it?  Feasible.**  The target is the right-hand side of each rule, and that
   already works for every source on both backends.  The lift is to parse the three calls (and
   their method forms) as exactly that rewrite; the element type then types the lambda as it does
-  in a comprehension, and the special parsing shrinks to the rewrite.  Laziness is not part of
-  it: the rules give a vector result, which is also what a Rust user's `.collect()` gives.
-  Fusing `map(filter(…))` into one loop is not part of it either: the rules finish `filter`
-  before `map` starts, and an impure lambda would see the difference.
+  in a comprehension, and the code produced stays what it is today, rewrites included.
+  Laziness is not part of it: the rules give a vector result, which is also what a Rust user's
+  `.collect()` gives.
+- **And an optimisation, not a restriction:** fusing `map(filter(…))` into one loop is a
+  rewrite the layer could admit wherever the difference cannot be observed — where both lambdas
+  are pure — as the other `R-` rules carry their admission conditions.  It is not part of the
+  lift; if a profile ever shows the intermediate buffer, it is a candidate `R-` rule with its
+  census row.
 - **Verdict.**  Liftable, and the rules already say how.  Out of the plan as
   [loft#2658](https://github.com/loft-lang/loft/issues/2658) and the deviation **D-iter-18** in
   `formal/iteration.md`.
