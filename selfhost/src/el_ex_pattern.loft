@@ -2513,6 +2513,44 @@ pub fn name_fields(e: el::El, d: integer, fields: vector<integer>) {
 
 // The right side of a `+=`: `h += [R { … }]` appends to `h` whatever its type, a keyed
 // collection's included (one this pass may not type yet), and is no vector literal of its own.
+// Is `target` the value a body ends in, through its last statement and the arms of an `if` or a
+// `match` there?  (Such a literal is typed by the function's declared result.)
+fn in_tail(e: el::El, body: integer, target: integer) -> boolean {
+  if body < 0 {
+    return false;
+  }
+  if body == target {
+    return true;
+  }
+  match e.p.nodes[body] {
+    SBlock { stmts } => {
+      if len(stmts) == 0 {
+        return false;
+      }
+      match e.p.nodes[stmts[-1]] {
+        SStmt { e: se, semi } => !semi && se != null && in_tail(e, se!, target),
+        _ => in_tail(e, stmts[-1], target)
+      }
+    },
+    SStmt { e: se, semi } => !semi && se != null && in_tail(e, se!, target),
+    SIf { then: it, other: io } => in_tail(e, it, target) || (io != null && in_tail(e, io!, target)),
+    SMatch { arms } => {
+      for a in arms {
+        match e.p.nodes[a] {
+          SArm { body: ab } => {
+            if ab != null && in_tail(e, ab!, target) {
+              return true;
+            }
+          },
+          _ => {}
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
 fn appended_literal(e: el::El, n: integer) -> boolean {
   for x in e.p.nodes {
     match x {
@@ -2805,6 +2843,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         // (An unnamed `{…}` is typed by its place, which Rust knows.)
         bn != "" && (bd < 0 || (el::def(e, bd).def_type == el::DT_UNKNOWN && !append && !appended_literal(e, n)) || el::def(e, bd).position.line > lp.line || (el::def(e, bd).position.line == lp.line && el::def(e, bd).position.pos > lp.pos))
       },
+      // (A name bound off a value whose type only a stub names — `match s { Sq { w } => [w, w] }`
+      // with `enum Shape` below — is no more typed on Rust's first pass.)
+      SName { name: inn, member: inm } => inm == "" && !append && !appended_literal(e, n) && !in_tail(e, vars.body, n) && el_vars::var(vars, inn) >= 0 && el_types::is_unknown(el_vars::tp(vars, el_vars::var(vars, inn))),
       _ => false
     };
     if e.first_pass && below && el::def_nr(e, "main_vector<unknown>") < 0 {
