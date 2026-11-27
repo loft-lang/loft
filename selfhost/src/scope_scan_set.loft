@@ -54,7 +54,10 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   // (`fnref_call_rebind`) and `get_free_vars`'.
   // A vector binding (step 4) takes the record legs with its own: the backing its bind fills
   // (`bind_backing`), the call-buffer pairing of a vector-shaped first bind.
-  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) {
+  // A keyed binding (step 6) takes the collection legs: its clear on a rebind to `[]` (@P302),
+  // its scope-end release through its self-dep; the generator walk of a keyed type whose records
+  // hold a handle refuses.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) && !scope_fn::is_keyed(t) {
     // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox, the
     // keyed materialise copies, the generator handle frees.
     scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
@@ -94,9 +97,9 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   if was_in_scope && !value_null && scope_scan::get(s.var_scope, v) == s.scope && !scope_fn::has(s.arm_lift_temps, v) {
     scope_scan::set_remove(s.drop_transferred, v);
   }
-  // A redundant re-init `Set(v, Null)` for an already-in-scope var is elided (a keyed
-  // collection's `Set(s, Null)` is a CLEAR, but keyed bindings refuse above).
-  if was_in_scope && value_null {
+  // A redundant re-init `Set(v, Null)` for an already-in-scope var is elided.  EXCEPTION (@P302):
+  // a keyed collection's `Set(s, Null)` on a rebind is a CLEAR, emitted as it stands.
+  if was_in_scope && value_null && !scope_fn::is_keyed(t) {
     return ir::NdInsert { items: [] };
   }
   transition_free: ir::Node? = null;
@@ -111,6 +114,19 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     && scope_witness::displaces_owned_through_fresh_callee(b, value, v, ov)
     && binds::entry_witness(f, v) == null {
     transition_free = scope_drops::free_ref(s, v);
+  }
+  // loft#1601, @FR-G-Hold — a keyed collection rebound releases the generator frames its records
+  // hold through its type's walk (`keyed_frames_name`), not transcribed.
+  if transition_free == null && was_in_scope && scope_drops::keyed_holds_generator(b, t) && !scope_fn::reads_var(value, v) && !scope_fn::reads_var(value, ov) {
+    self_only = true;
+    for d in scope_fn::deps(f, v) {
+      if d != v && d != ov {
+        self_only = false;
+      }
+    }
+    if self_only {
+      scope_scan::refuse(s, "scan_set: a keyed collection whose records hold a generator, rebound (keyed_frames_name)");
+    }
   }
   // A `??` hoist that OWNS its subject is re-bound on every pass of a loop.
   if transition_free == null && was_in_scope && scope_fn::name(f, v).starts_with("__ncc_") && scope_fn::is_record(t) && scope_fn::proxy_says_owned(f, v) {

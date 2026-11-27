@@ -558,7 +558,9 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
         // outlives the frame (`@FR-H-RefHome`: the element is copied out of its home first).
         er = element_root(b, args[2]!);
         vector_home = er >= 0 && !scope_fn::is_argument(f, er) && scope_fn::base(scope_fn::tp(f, er)) is TyVector && holder >= 0 && scope_fn::is_argument(f, holder);
-        if (r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_record(scope_fn::tp(f, r))) || vector_home {
+        // …and so is a record of a LOCAL keyed collection (`h.r = s[1]`).
+        keyed_home = r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_keyed(scope_fn::tp(f, r)) && holder >= 0 && scope_fn::is_argument(f, holder);
+        if (r >= 0 && !scope_fn::is_argument(f, r) && scope_fn::is_record(scope_fn::tp(f, r))) || vector_home || keyed_home {
           note(w, "stored_refs::insert_evacuations: a reference to a local's record stored");
         }
       }

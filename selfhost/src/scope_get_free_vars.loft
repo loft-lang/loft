@@ -63,7 +63,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     if scope_fn::is_plain(t) || scope_fn::is_plain_link(t) {
       continue;
     }
-    if (scope_fn::is_record(t) || scope_fn::base(t) is TyVector) && !(scope_fn::base(t) is TyRefVar) {
+    if (scope_fn::is_record(t) || scope_fn::base(t) is TyVector || scope_fn::is_keyed(t)) && !(scope_fn::base(t) is TyRefVar) {
       record_release(s, b, f, v, ret_var, delivered, ls);
       continue;
     }
@@ -216,12 +216,16 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     || (ret_var != scope_fn::NONE && scope_fn::has(scope_fn::deps(f, ret_var), v) && !owns_text_copy(f, ret_var));
   nm = scope_fn::name(f, v);
   // A KEYED work-ref's null init mints a store of its own: a record work-ref is not one.
-  is_work_ref = (nm.starts_with("__ref_") || nm.starts_with("__rref_")) && (len(dep) == 0 || scope_fn::has(dep, v));
+  // …or a KEYED work-ref, whose null init mints a store of its own (`keyed_null_mints`).
+  keyed_owner = binds::owns_keyed_store(scope_fn::tp(f, v)) && binds::keyed_null_mints(f, v) && env_variable("LOFT_NO_KEYED_WORK_REF_OWNS") == null;
+  is_work_ref = (nm.starts_with("__ref_") || nm.starts_with("__rref_")) && (len(dep) == 0 || scope_fn::has(dep, v) || keyed_owner);
   viewer_now = !scope_fn::proxy_says_owned(f, v) && len(dep) > 0 && scope_fn::is_dbref(scope_fn::base(scope_fn::tp(f, v)));
   if viewer_now && !scope_fn::has(s.skipped_viewers, v) {
     s.skipped_viewers += [v];
   }
-  owns = scope_fn::proxy_says_owned(f, v) || scope_fn::has(s.late_owners, v) || scope_scan::get(s.lift_join_witness, v) >= 0;
+  // @P302 — a keyed local backed by its own store carries the self-dep `[v]`: an owner.
+  owns = scope_fn::proxy_says_owned(f, v) || scope_fn::has(s.late_owners, v) || scope_scan::get(s.lift_join_witness, v) >= 0
+    || (len(dep) == 1 && dep[0] == v && scope_fn::is_keyed(scope_fn::tp(f, v)));
   // `capture_adoption_owns_free` — a captured local's store is its closure record's.
   if scope_fn::is_captured(f, v) {
     scope_scan::refuse(s, "capture_builds::capture_adoption_owns_free: a captured record local");
