@@ -1598,7 +1598,7 @@ pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_re
 pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   syn = match x.tp { TyEnum { n, is_ref } => if is_ref && is_nullable_wrapper(e, x.tp) { n } else { -1 }, _ => -1 };
   if syn < 0 {
-    return x;
+    return ex(enum_slot_read(e, x.code, x.tp), x.tp);
   }
   some_d = el::variant_of(e, syn, "Some");
   sd = nullable_payload(e, syn);
@@ -1617,6 +1617,25 @@ pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   el_vars::set_skip_free(vars, named, "emit_nullable_slot_read");
   el_vars::mark_inline(vars, named, "emit_nullable_slot_read");
   ex(el_ir::v_block([el_ir::v_set(named, x.code), nullable_pick(e, ir::NdVar { n: named }, pp, s_kt)], rt, "nullable_slot_read"), rt)
+}
+
+// `read_through_enum_slot` (`@FR-L-Null-Which`, loft#1529): a struct enum's `E?` FIELD read
+// leaving its slot for a position that is no slot (a field read's base, a local) is the pointer —
+// the null sentinel where the slot's first word is zero: `if OpGetInt4(r, pos) == 0 nullref else
+// OpGetField(r, pos, E)`.  On the second pass, for a slot off a place a test may read twice.
+pub fn enum_slot_read(e: el::El, code: ir::Node, tp: ir::TypeT) -> ir::Node {
+  if e.first_pass || !(tp is TyOptional) || el_types::struct_enum_def(el_types::base(tp)) < 0 || is_nullable_wrapper(e, tp) {
+    return code;
+  }
+  match el_ir::unspan(code) {
+    NdCall { def_nr: gd, args: ga } => {
+      if el::def(e, gd).name == "OpGetField" && len(ga) == 3 && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
+        return el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [ga[0]!, ga[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), code);
+      }
+    },
+    _ => {}
+  }
+  code
 }
 
 // `nullable_pick`: the payload of slot `slot` where its discriminant says present, else the
@@ -1970,6 +1989,11 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
   // discriminant 0.
   if is_nullable_wrapper(e, ft) {
     return [];
+  }
+  // (…and an omitted struct-enum `E?` field is its four-byte child slot holding no record:
+  // `OpSetInt4(r, pos, 0)`.)
+  if ft is TyOptional && match el_types::base(ft) { TyEnum { is_ref } => is_ref, _ => false } && base == 0 {
+    return [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }])];
   }
   if el_types::is_collection(ft) {
     z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
