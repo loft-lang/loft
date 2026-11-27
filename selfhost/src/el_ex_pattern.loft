@@ -2587,6 +2587,33 @@ fn appended_literal(e: el::El, n: integer) -> boolean {
   false
 }
 
+// `Parser::type_placeholder_element`: the element of a literal no context typed (a `for`
+// source, a format hole), minted with the placeholder `ref(boolean)` before its first item was
+// read, takes the items' type once they are known — a struct's record, a struct-enum's record as
+// its enum, a vector element as that vector — keeping the borrows it was minted with.
+// `scopes::appends_to_element` reads that type (`@FR-H-Move`): a unit variant copied into an
+// element typed by the placeholder kept its own release and ran its hook twice.  Any other
+// element keeps its variable as it is.
+fn type_placeholder_element(e: el::El, vars: el_vars::Vars, elm: integer, in_t: ir::TypeT) {
+  pd: vector<integer> = [];
+  match el_vars::tp(vars, elm) {
+    TyReference { n: pn, dep } => {
+      if pn != 0 {
+        return;
+      }
+      pd = dep;
+    },
+    _ => return
+  }
+  typed = match el_types::base(in_t) {
+    TyReference { n: d } => if d != 0 && !el::def(e, d).name.starts_with("__nullable<") { ir::TyReference { n: d, dep: pd } } else { return },
+    TyEnum { n: en, is_ref } => if is_ref { ir::TyEnum { n: en, is_ref: true, dep: pd } } else { return },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: pd },
+    _ => return
+  };
+  el_vars::set_var_type(vars, elm, typed);
+}
+
 pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
   if el_trace::on() {
     el_trace::route(e, "parse_vector");
@@ -3089,6 +3116,12 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // `main_vector<T>` before `vector<T>`, after the structs.
   if len(xs) > 0 {
     vector_of(e, in_t);
+  }
+  // `Parser::type_placeholder_element` (`@FR-H-Move`): an element minted before any item was
+  // read, against a container whose content was unknown (`ref(boolean)`, definition 0), is
+  // typed once the items are known, as a hinted literal's element is.
+  if elm >= 0 {
+    type_placeholder_element(e, vars, elm, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close, appended: append);
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
