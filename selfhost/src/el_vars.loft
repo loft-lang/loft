@@ -154,6 +154,9 @@ pub struct Vars {
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
   pub whiles: integer = 0,
+  // Each open `while`'s count of enclosing `for` loops (`active_loops`) where it was entered: a
+  // `x#break` / `x#continue` leaves every `while` opened inside `x`'s loop too.
+  pub while_marks: vector<integer> = [],
   // The body's tail took `classify_reference_delivery`'s `MaterializeView` (the lowering's
   // decision, `el_expressions`), read by the return-promotion classifier (`el_retpromo`).
   pub mv_tail: boolean = false,
