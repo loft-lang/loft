@@ -5883,13 +5883,16 @@ use #count instead"
         let mut copies: Vec<(u16, i32)> = Vec::new();
         for t in elem_borrow_bindings(block, var) {
             let tp = self.vars.tp(t).clone();
-            let td = match &tp {
-                Type::Reference(td, _) | Type::Enum(td, true, _) => Some(*td),
-                _ => None,
-            };
             if matches!(tp.base(), Type::Text(_)) {
                 continue;
             }
+            // A NULLABLE bind may receive the absent value, which a copy would turn into an
+            // allocated empty record; it stays the view it was.
+            let (shape, nullable) = tp.peel_optional();
+            let td = match shape {
+                Type::Reference(td, _) | Type::Enum(td, true, _) if !nullable => Some(*td),
+                _ => None,
+            };
             if let Some(td) = td
                 && !self.vars.is_skip_free(t)
             {
