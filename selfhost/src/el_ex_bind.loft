@@ -325,11 +325,15 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: 
       ] }, ir::TyVoid);
     }
   }
-  if x.tp is TyOptional || (el_vars::tp(vars, v) is TyOptional && !param) || (param && (hidden_param(e, vars, v) || el_vars::is_compiler_generated(vars, v))) {
+  // A nullable source bound to a local (`b = a`, `a: vector<T>?`): the local is `vector<T>?` too,
+  // its fresh store taking the source whole — absence included — `OpReplaceVector(b, a, <the
+  // element row the append takes>)` (`lower_vec_copy_bind`'s nullable leg).
+  opt_src = x.tp is TyOptional && !param;
+  if (x.tp is TyOptional && !opt_src) || (el_vars::tp(vars, v) is TyOptional && !param && !opt_src) || (param && (hidden_param(e, vars, v) || el_vars::is_compiler_generated(vars, v))) {
     el::refuse(e, "a whole-vector copy bind of a nullable vector or into a buffer parameter");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if !opt_param && !el_vars::change_var_type(e, vars, v, ir::TyVector { inner: elm, dep: [] }) {
+  if !opt_param && !el_vars::change_var_type(e, vars, v, if opt_src { ir::TyOptional { inner: ir::TyVector { inner: elm, dep: [] } } } else { ir::TyVector { inner: elm, dep: [] } }) {
     el::refuse(e, "a local that changes type: {retype_note(e, vars)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -365,7 +369,7 @@ pub fn vec_copy_bind(e: el::El, vars: el_vars::Vars, v: integer, x: Ex, in_arm: 
     return ex(ir::NdNull, ir::TyVoid);
   }
   cel = el_vars::create_unique(vars, "elm", ir::TyReference { n: elm_n, dep: [v] });
-  ops = vec_copy_ops(e, vars, v, x.code, elm, rec, opt_param);
+  ops = vec_copy_ops(e, vars, v, x.code, elm, rec, opt_param || opt_src);
   if ops == null {
     return ex(ir::NdNull, ir::TyVoid);
   }
