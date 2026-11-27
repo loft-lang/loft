@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 52 of 1188 programs agree; 842 stop at the scope pass, 286 at the elaborator, 8 other | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the slice: 142 of 2277 programs, 19 878 of 37 762 definitions agree; the transcription (`LOFT_SCOPE_PORT=1`, step 3): 256 programs, 24 744 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 221 of 1188 programs agree; 674 stop at the scope pass, 286 at the elaborator, 6 leak, 1 faults | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 4): 518 of 2277 programs, 28 205 of 39 960 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -247,8 +247,9 @@ and `take_local` (transcribed).  Still refused by name: `byte_copy`'s vector cla
 
 No definition that agreed was lost at any step (`--verdicts` files compared).  The whole path
 (`run_image_survey.py --front`, 1 188 programs) went 142 → 147 agree with the join rewrite,
-take_local and slot mints in, 0 differ; two R-ValueRecord programs that now reach the runner
-leak.
+take_local and slot mints in, and → 221 with the rest of the step (d3f88a747): 0 differ, leaks
+29 → 6, faults 3 → 1.  One leak is new, a program that reaches the runner for the first time
+(`R-StackBase/a-stack-that-grows-mid-call-keeps-every-frame.loft`).
 
 What stops the most programs now (scope gate, programs whose ONLY refusal it is): the view walk
 55, `inline_struct_return` 43, `pure_reuse` 33, `arm_lift::arm_bind` (a heap local as a branch
