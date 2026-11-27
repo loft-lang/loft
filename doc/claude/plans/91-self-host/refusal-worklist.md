@@ -206,6 +206,20 @@ expected empty literal (6711b88de: 84).  Next, by the shifts each causes:
   struct (121), a drop helper (90), a tuple record (84).
 `np/shift.py` and `np/verify.py` (the tester's scratch tools) rank them from the saved IR.
 
+**Rust-only types (open).**  52 at loft30-gate 12d1c0290 (vectors, tuple records, type
+instances; Rust-only definitions 283), one to four per program.  What each open group needs:
+- iterator element vectors (`vector<iterator>`, four programs): Rust names them through
+  `format_vector_row` → `check_vector`, from the monomorph's stale-row repair
+  (`monomorph.rs` near `format_vector_row(&cont)`) — no port twin; `vector_rows` is not reached
+  for an empty declared `[]`.
+- the 2501 module cycle (`BvcCx`): `Parser::resolve_deferred_unknowns` (re-applied imports, the
+  deferred stubs) — no port twin.
+- forward-reference `main_vector<unknown>` (2547, 2623): the literal-below test is positional;
+  counting every stub as below lost 29 agreeing definitions in 947 — Rust's rule is narrower.
+- a lambda argument's tuple record on the first pass (`last(v, |x| { (x, x + 1, x + 2) })`):
+  making it there shifted later second-pass rows of the same program — needs Rust's exact moment.
+- cross-library keyed tuples and instances (2435).
+
 ## R10 — the 32-bit regime
 
 Built (d067d87a8): a `#width 32` file is lowered as the Rust front end lowers it — W-Name,
