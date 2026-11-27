@@ -1,0 +1,7 @@
+// @PLN231 probe — an accessor that returns the place, `-> &Enemy`
+// Expect on both backends: refused — a return type cannot be a link (yet (F-Ret) names a `&T` return)
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy> }
+fn first(s: State) -> &Enemy { s.enemies[0] }
+fn hurt(e: Enemy, d: integer) { e.hp -= d; }
+fn main() { s = State { enemies: [Enemy { hp: 100 }] }; hurt(first(s), 10); println("via &-accessor: {s.enemies[0].hp}"); }

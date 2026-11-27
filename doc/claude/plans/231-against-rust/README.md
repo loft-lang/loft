@@ -3,7 +3,7 @@ Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 
-# 231 — Against Rust: each restriction's cause, whether it is one, and what we could do
+# 231 — Restrictions that bite: what causes each, and can we lift it
 
 [loft-lang/plans#231](https://github.com/loft-lang/plans/issues/231) · an investigation plan
 
@@ -11,30 +11,27 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 | Stage | Status |
 |---|---|
-| A — Probe catalogue | ✅ 17 probes in [`probes/`](probes/), each with its expected answer, run on the interpreter and the C backend |
-| B — Cause and verdict per restriction | 🟡 a first reading for all nine below; R3 still owes the probe named in its row |
-| C — Cures | ⏸️ each cure the owner approves becomes its own plan or fix; none is built here |
+| A — Which restrictions bite | 🟡 the loft tracker and four consumers' loft notes read (dryopea, crawler, moros, routing); R10 bites, the rest show no consumer evidence yet |
+| B — Cause and lift per biting restriction | 🟡 R10 read against the formal rules; the others carry a first reading |
+| C — Lifts | ⏸️ each lift the owner approves becomes its own plan or fix |
 
 ## Goal
 
-[VS_RUST.md](../../VS_RUST.md) lists nine things loft lacks against Rust.  For each one this plan
-answers three questions:
+Find the restrictions that BITE us — the ones a real program written in loft runs into — and,
+for each, investigate whether we can lift it.  A restriction that only reads badly on a
+comparison page is not this plan's work.
 
-1. **What causes it** — the decision (`@C…`), rule (`@FR-…`) or mechanism, by name.
-2. **Is it a restriction at all** — a probe that tries to do the thing, on both backends.  A gap
-   that a program can already close is a documentation or library gap, not a language one.
-3. **What could we do** — the cure and what it costs, or why it stays.  A cure that reopens a
-   decision is the owner's call: this plan states the trade and does not reopen anything.
+Per restriction:
 
-The plan adds no tests.  Its probes are evidence for the verdicts and live only in
-[`probes/`](probes/); where a cure removes a restriction, the cure also removes the refusal, its
-pinned message and the doc lines that describe it.
+1. **Does it bite?**  Evidence from a consumer: a workaround in its code, an entry in its loft
+   notes, an issue it filed.  No evidence, no work.
+2. **What causes it** — the decision (`@C…`), rule (`@FR-…`) or mechanism, by name.
+3. **Can we lift it** — what the lift costs, and what it would break.  A lift that reopens a
+   decision is the owner's call.
 
-## In-plan vs spinoff
-
-A wrong claim in a doc found here is fixed here.  A cure is a spinoff: it gets its own plan or
-fix once the owner picks it, because each one is a language or library change with its own
-verification.
+The probes in [`probes/`](probes/) are the evidence for the verdicts, not tests; tests are
+written where a lift needs them.  A lift that removes a restriction also removes its refusal and
+the doc lines that describe it.
 
 ## The restrictions
 
@@ -42,17 +39,42 @@ Verdicts: **real** (a program cannot do it) · **partial** (it can, with a named
 **not one** (the probe does it; the doc is wrong) · **by design** (a decision chose it, with a
 revisit trigger).
 
-| ID | Restriction | Verdict | Cause | Probes |
-|---|---|---|---|---|
-| R1 | No proof against aliasing or data races | partial; the data-race half is not one | @C79, @C86; `par` isolation | 03, 04, 13, 14, 16 |
-| R2 | No moves, no consuming `self` | by design | @C86 | 03 |
-| R3 | No dynamic dispatch on interfaces, no default methods | partial | INTERFACES.md § What is out of scope | 05, 06, 09 |
-| R4 | No metaprogramming | real; no decision recorded | none written down | 17 |
-| R5 | No lazy iterator chain | not one in the language; a library gap | the stdlib's `map`/`filter` are on `vector` | 10, 11, 12 |
-| R6 | Closures: not in a collection; `par` takes no reference | partial | @C116, @C74, @C115; `par` isolation | 07, 08, 09, 14, 15 |
-| R7 | Slower than `rustc -O` | real, and a defect past 3× | @C136; the keyed and alloc-temp classes | perf portal |
-| R8 | No Rust ecosystem, a small own one | by design | @C170, @C78 (@PLN225) | — |
-| R9 | The compatibility promise is not in force | real until 1.0 | contract 0 (@PLN102) | — |
+| ID | Restriction | Bites? | Verdict | Cause | Probes |
+|---|---|---|---|---|---|
+| R10 | A function cannot return a place (`-> &T`) | **yes** — dryopea's lost writes through an accessor (loft#894, LOFT_GOTCHAS.md § Values, copies and tail calls) | real, and the rules allow it | the refusal at the `&` return type; `(F-Ret)` names a `&T` return as its exception | 18, 19 |
+| R1 | No proof against aliasing or data races | one loft-found case (loft#1605); no consumer | partial; the data-race half is not one | @C79, @C86; `par` isolation | 03, 04, 13, 14, 16 |
+| R2 | No moves, no consuming `self` | through R10: copies are what accessors lose writes to | by design | @C86 | 03 |
+| R3 | No dynamic dispatch on interfaces, no default methods | no consumer evidence | partial | INTERFACES.md § What is out of scope | 05, 06, 09 |
+| R4 | No metaprogramming | no consumer evidence | real; no decision recorded | none written down | 17 |
+| R5 | No lazy iterator chain | no consumer evidence | not one in the language; a library gap | the stdlib's `map`/`filter` are on `vector` | 10, 11, 12 |
+| R6 | Closures: not in a collection; `par` takes no reference | loft-found only (loft#1358, #2492) | partial | @C116, @C74, @C115; `par` isolation | 07, 08, 09, 14, 15 |
+| R7 | Slower than `rustc -O` | yes — every consumer's speed; @C136 owns it | real, and a defect past 3× | @C136; the keyed and alloc-temp classes | perf portal |
+| R8 | No Rust ecosystem, a small own one | not measured | by design | @C170, @C78 (@PLN225) | — |
+| R9 | The compatibility promise is not in force | not a code restriction | real until 1.0 | contract 0 (@PLN102) | — |
+
+### R10 — a function cannot return a place
+
+- **Does it bite?**  Yes.  dryopea's notes: *"A struct RETURNED from a function is a COPY, so
+  mutating it is a silent no-op"* — `hurt(first(state), 10)` lands no damage, while indexing
+  inline or writing through a `for` loop variable lands it (loft#894).  A one-line "get me the
+  element" accessor is the most ordinary helper there is, and it can be read through but never
+  written through.  crawler met the bind form of the same family (`vv = s.vis` mutating a copy).
+- **Measured on main** (probe 18): the write through the accessor is still lost on both
+  backends, but `warning[lost-write]` now names it, which is what loft#894 asked for.  The
+  cure the warning offers is to index inline, which is the workaround and not a lift.
+- **Cause.** `-> &Enemy` is refused: *"a return type, a field, an element or a tuple member
+  holds a value and cannot be a link"* (probe 19); LOFT_DECLARATIONS.md states it as an edge of
+  the `&` ladder (a reference can't escape its source).  But `formal/calls.md` `(F-Ret)` names
+  *"a `&T` return … an explicit borrow of an addressable input"* as its one exception.  So the
+  rules allow what the compiler refuses — by the doctrine, the code is the deviation, unless the
+  owner rules the exception out of the rule.
+- **Can we lift it?**  The lift the rule describes is narrow: a `&T` return whose place is
+  rooted in a PARAMETER (an addressable input), never in a local.  That is the one case a
+  lifetime is not needed for, because the place outlives the call by construction; the caller's
+  `&` parameter machinery already links a place.  What must be settled first: what the caller
+  may do with the returned link (bind it with `&`, pass it on, write through it), and that a
+  reshape of the container while the link lives stays a compile error (@C86).  Effort M; the
+  first step is a probe matrix over those three uses on both backends, written before any code.
 
 ### R1 — aliasing and data races
 
