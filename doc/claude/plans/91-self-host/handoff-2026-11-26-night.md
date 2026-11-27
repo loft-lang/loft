@@ -166,6 +166,14 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   probe fr7) or a struct-enum result through a LOCAL fn value (`g = mks; g(n)`, fr9): both
   differ (older than the fn-value tail roads, unchanged by them) — the copy into the buffer
   (`materialize_whole_tail`) is not Rust's shape; read `ref_return`'s classify for each.
+- **A loft compiler defect the port's own build meets (main's compiler, `src/` unchanged on this
+  branch):** in `el_ex_match.loft`'s arm loop (after 89545d722's parent), writing
+  `atp = if enum_arm { el_types::with_deps(el_types::without_deps(b.tp), outside_deps(e, b.code, el_types::deps(b.tp))) } else { arm_own_tp(e, b) };`
+  in place of the two statements now there makes the `--native-c` elaborator stop with "a store
+  was freed twice" on a plain struct-enum match (probe rv6b: `match e { Num { v } => Num { v: v },
+  Mul { l, r } => { … }, _ => e }`); `arm_own_tp` may answer `b.tp` itself, the other arm a fresh
+  call.  A 15-line reduction (an `Ex { code, tp: Ty }` record, the same `if`) does NOT reproduce
+  on either backend — the reduction is open; start from the elaborator build with that one line.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
