@@ -1,0 +1,4 @@
+// @PLN231 goal-F probe — the natural form against its hand rewrite (iter_hand); prints its own time in µs
+// Run with --interpret and without (C is the default); read the answer and the µs
+struct R { a: text, b: text, c: text, n: integer }
+fn main() { t0 = ticks(); v = [for i in 0..2000 { R { a: "alpha{i}", b: "beta", c: "gamma", n: i } }]; t = 0; for _k in 0..2000 { i = 0; while i < len(v) { if v[i].n % 7 == 0 { t += 1; } i += 1; } } println("index {t} us {ticks() - t0}"); }
