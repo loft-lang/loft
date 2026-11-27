@@ -169,7 +169,9 @@ fn owned(b: ir::Bundle, node: ir::Node, f: ir::Function) -> ir::Node? {
   match scope_fn::unspan(node) {
     NdCall { def_nr, args } => {
       d = b.data.definitions[def_nr]!;
-      if !binds::is_loft_defined(d) || !scope_fn::is_record(d.returned[0] ?? ir::TyVoid) {
+      // A callee that answers its argument hands back a view of a store the caller does not
+      // own (`@FR-O-Derived`, loft#2665): that arm stays the bare call.
+      if !binds::is_loft_defined(d) || own::returns_borrowed_view(d) || !scope_fn::is_record(d.returned[0] ?? ir::TyVoid) {
         return null;
       }
       for a in args {

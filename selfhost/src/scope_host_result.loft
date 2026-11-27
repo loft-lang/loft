@@ -59,15 +59,6 @@ fn var_of(v: ir::Node) -> integer {
   }
 }
 
-fn var_named(f: ir::Function, nm: text) -> integer {
-  for v in f.variables {
-    if v.name == nm {
-      return v#index;
-    }
-  }
-  -1
-}
-
 // port: host_result.rs fn tails — the values a node answers.
 fn tails(v: ir::Node, out: vector<ir::Node>) {
   u = scope_fn::unspan(v);
@@ -184,31 +175,6 @@ fn plain_return(t: ir::TypeT) -> boolean {
   }
 }
 
-// `Value::names_var_here` anywhere in `n` (`Value::reads_var`).
-fn reads(n: ir::Node, v: integer) -> boolean {
-  u = scope_fn::unspan(n);
-  hit = match u {
-    NdVar { n: x } => x == v,
-    NdSet { var: x } => x == v,
-    NdTupleGet { var: x } => x == v,
-    NdTuplePut { var: x } => x == v,
-    NdFnRefDnr { n: x } => x == v,
-    NdCallRef { var: x } => x == v,
-    NdIter { var: x } => x == v,
-    NdFnRef { var: x } => x == v,
-    _ => false
-  };
-  if hit {
-    return true;
-  }
-  for c in scope_fn::children(u) {
-    if reads(c, v) {
-      return true;
-    }
-  }
-  false
-}
-
 struct Scan {
   d_nr: integer,
   buf: integer,
@@ -255,7 +221,7 @@ fn arg_walk(n: ir::Node, tracked: vector<integer>, st: Scan) {
     NdCall { def_nr, args } => if def_nr == st.d_nr {
       for a in args {
         for t in tracked {
-          if reads(a, t) {
+          if scope_fn::names_var(a, t) {
             st.arg_reads = true;
           }
         }
@@ -373,7 +339,7 @@ fn admit(b: ir::Bundle, d_nr: integer, ops: Ops) -> boolean {
   }
   code = d.code[0]!;
   f = d.variables;
-  buf = var_named(f, d.attributes[ba!]!.name);
+  buf = scope_fn::var(f, d.attributes[ba!]!.name);
   st = Scan { d_nr: d_nr, buf: buf, buf_at: ba!, results: [], answers: [] };
   count_walk(code, f, st);
   if st.calls == 0 || buf < 0 || !scope_fn::is_argument(f, buf) || st.bad_bind || st.binds != st.calls {
@@ -385,7 +351,7 @@ fn admit(b: ir::Bundle, d_nr: integer, ops: Ops) -> boolean {
   if st.arg_reads || !once_per_path(code, d_nr, []) {
     return false;
   }
-  entry = var_named(f, "__rbw_{scope_fn::name(f, buf)}");
+  entry = scope_fn::var(f, "__rbw_{scope_fn::name(f, buf)}");
   expanded: vector<ir::Node> = [];
   for a in st.answers {
     r = var_of(a);

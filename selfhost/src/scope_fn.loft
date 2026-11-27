@@ -61,6 +61,42 @@ pub fn was_loop_var(f: ir::Function, v: integer) -> boolean {
   if x == null { false } else { x.was_loop_var }
 }
 
+// port: variables/mod.rs fn var — the variable `nm` names in the names map, -1 for none.
+pub fn var(f: ir::Function, nm: text) -> integer {
+  for n in f.names {
+    if n.name == nm {
+      return n.nr;
+    }
+  }
+  -1
+}
+
+// port: data.rs fn reads_var — does `n` name `v` anywhere (`names_var_here`: a read, a `Set`
+// target, a tuple access, a call through it, an iterator, a fn-ref's work variable)?
+pub fn names_var(n: ir::Node, v: integer) -> boolean {
+  u = unspan(n);
+  hit = match u {
+    NdVar { n: x } => x == v,
+    NdSet { var: x } => x == v,
+    NdTupleGet { var: x } => x == v,
+    NdTuplePut { var: x } => x == v,
+    NdFnRefDnr { n: x } => x == v,
+    NdCallRef { var: x } => x == v,
+    NdIter { var: x } => x == v,
+    NdFnRef { var: x } => x == v,
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for c in children(u) {
+    if names_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
 // port: variables/mod.rs fn is_compiler_generated
 pub fn is_compiler_generated(f: ir::Function, v: integer) -> boolean {
   x = f.variables[v];

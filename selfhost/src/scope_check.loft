@@ -49,6 +49,7 @@ use scope_move_elide;
 use scope_compact;
 use scope_host_store;
 use scope_host_result;
+use scope_rebind_place;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -129,6 +130,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       program[i] = "capture_adoption::mark_borrowed_captures: a drop cascade the building frame's capture verdicts decide";
     }
   }
+  // `(R-Rebind)`'s callees, their parse-time variable tables (`scope_rebind_place`).
+  pv = scope_rebind_place::parse_vars(b);
   // The definitions with a settled body: the standard library's, and each one laid out below.
   settled: vector<boolean> = [for d in b.data.definitions { d.source == 0 }];
   // The functions refused so far: Rust laid each out before the ones after it, so a summary of
@@ -278,6 +281,23 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     }
     code = scope_literal_host::rewrite(b, d, code, ph.function);
     code = scope_literal_append::rewrite(b, d, code, ph.function);
+    // `@FR-R-Rebind` (after `return_field`, refused above where it would fire), on the body as
+    // it stands: the oracle it asks reads the definition's own code.
+    if scope_rebind_place::has_candidate(b, code) {
+      parse_code: vector<ir::Node> = [for c in d.code { c }];
+      parse_fn = scope_fn::copy_function(d.variables);
+      b.data.definitions[d_nr].variables = ph.function;
+      b.data.definitions[d_nr].code = [code];
+      rb = scope_rebind_place::rewrite(b, d_nr, code, ph.function, refused_nrs, pv);
+      if rb.why != "" {
+        b.data.definitions[d_nr].code = parse_code;
+        b.data.definitions[d_nr].variables = parse_fn;
+        refused += ["{d.name}: {rb.why}"];
+        refused_nrs += [d_nr];
+        continue;
+      }
+      code = rb.code;
+    }
     // `@FR-R-CopyView` (after `return_field`, `rebind_place` and `const_fn`, refused above
     // where they would fire).
     code = scope_copy_view::rewrite(b, code, ph.function);
@@ -471,8 +491,8 @@ fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Fun
 
 // The settled-IR record rewrites, each refused where its trigger is in the body:
 // `insert_evacuations` (a stored reference), `place_result` (an element appended to a
-// parameter's collection), `literal_append` (a bound literal copied into an element),
-// `rebind_place` (`x = f(x, …)` through a hidden record buffer).  `copy_view` is transcribed.
+// parameter's collection), `literal_append` (a bound literal copied into an element).
+// `rebind_place` and `copy_view` are transcribed.
 fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<text>, w: Trigger) {
   match n {
     NdCall { def_nr, args } => {
@@ -514,22 +534,6 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
     },
     NdBlock { block } => if block[0].name == "materialized_view_return" {
       note(w, "return_field::rewrite: a field of a local returned through the buffer");
-    },
-    NdSet { var: t, inner } => if scope_fn::is_record(scope_fn::tp(f, t)) {
-      match scope_fn::unspan(inner) {
-        NdCall { def_nr, args } => {
-          d = b.data.definitions[def_nr];
-          if d != null && binds::hidden_return_buffer_attr(d!) != null {
-            for a in args {
-              match scope_fn::unspan(a) {
-                NdVar { n: x } => if x == t { note(w, "rebind_place::rewrite: a record rebound from a call it is handed to"); },
-                _ => {}
-              }
-            }
-          }
-        },
-        _ => {}
-      }
     },
     _ => {}
   }

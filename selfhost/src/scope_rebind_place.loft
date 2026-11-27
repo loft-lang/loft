@@ -1,0 +1,719 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/rebind_place.rs` transcribed: `@FR-R-Rebind`, `x = f(x, …)` hands the callee
+// x's OWN record as its return buffer: the hidden buffer argument of the call, the caller's
+// `__ref_N`, becomes `x`.  Run by `check` on the settled body after `literal_append`, as Rust's
+// is.  The admission reads the callee's body as Rust has it at that moment — settled for a
+// function laid out before this one — so a callee this pass refused refuses the site by name.
+// The callee's parameter viewers read `Variable::viewed` (every bind's deps), which the image
+// does not hold: they are asked twice, with the deps the callee carries now and the parse's,
+// and with every local bound more than once added, and a site the two answers disagree on
+// refuses by name.
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use own;
+use ir_pass_tree;
+
+// The parse's variable tables of the functions with a `__retbuf`, the possible callees (their
+// deps before the scope pass rewrote them): `fns[k]` is definition `defs[k]`'s.
+pub struct ParseVars {
+  defs: vector<integer>,
+  fns: vector<ir::Function>
+}
+
+pub fn parse_vars(b: ir::Bundle) -> ParseVars {
+  out = ParseVars { defs: [], fns: [] };
+  for d in b.data.definitions {
+    if d.def_type != 1 || d.source == 0 {
+      continue;
+    }
+    for a in d.attributes {
+      if a.hidden && a.name == "__retbuf" {
+        out.defs += [d#index];
+        out.fns += [scope_fn::copy_function(d.variables)];
+        break;
+      }
+    }
+  }
+  out
+}
+
+pub struct Rebound {
+  pub code: ir::Node,
+  pub why: text
+}
+
+struct Facts {
+  d_nr: integer,
+  f: ir::Function,
+  defs: own::Defs,
+  projected: vector<integer>,
+  reads_at: vector<integer>,
+  reads_var: vector<integer>,
+  loop_from: vector<integer>,
+  loop_to: vector<integer>,
+  refused_nrs: vector<integer>,
+  pv: ParseVars,
+  why: text = ""
+}
+
+// port: rebind_place.rs fn rewrite — every admitted rebind of `d_nr` (its settled body `code`
+// and table `f`, which `check` has put in place).
+pub fn rewrite(b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function, refused_nrs: vector<integer>, pv: ParseVars) -> Rebound {
+  if env_variable("LOFT_NO_REBIND_PLACE") != null || b.data.definitions[d_nr]!.def_type != 1 {
+    return Rebound { code: code, why: "" };
+  }
+  fx = Facts {
+    d_nr: d_nr,
+    f: f,
+    defs: own::function_defs(b, d_nr, own::ops_of(b)),
+    projected: projected_locals(b, code),
+    reads_at: [],
+    reads_var: [],
+    loop_from: [],
+    loop_to: [],
+    refused_nrs: refused_nrs,
+    pv: pv
+  };
+  pos = [0];
+  number(code, pos, fx);
+  vpos = [0];
+  out = visit(b, code, fx, vpos);
+  Rebound { code: out, why: fx.why }
+}
+
+// port: rebind_place.rs fn has_candidate — an `x = f(…, x, …)` with `f` a loft-bodied function.
+pub fn has_candidate(b: ir::Bundle, n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: x, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr: g, args } => if g < len(b.data.definitions) && b.data.definitions[g]!.rust == "" && has_body(b.data.definitions[g]!) {
+        for a in args {
+          if (match scope_fn::unspan(a) { NdVar { n: y } => y == x, _ => false }) {
+            return true;
+          }
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if has_candidate(b, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: rebind_place.rs fn number — the body in pre-order, every variable read and every loop's
+// span.
+fn number(v: ir::Node, pos: vector<integer>, fx: Facts) {
+  here = pos[0]!;
+  pos[0] = here + 1;
+  match v {
+    NdVar { n: x } => {
+      fx.reads_at += [here];
+      fx.reads_var += [x];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(v) {
+    number(c, pos, fx);
+  }
+  if v is NdLoop {
+    fx.loop_from += [here];
+    fx.loop_to += [pos[0]!];
+  }
+}
+
+// port: rebind_place.rs fn Order::read_across — is one of `views` read after the node at
+// `site`, or anywhere in a loop around it?
+fn read_across(fx: Facts, site: integer, views: vector<integer>) -> boolean {
+  for k in 0..len(fx.reads_at) {
+    p = fx.reads_at[k]!;
+    if !scope_fn::has(views, fx.reads_var[k]!) {
+      continue;
+    }
+    if p > site {
+      return true;
+    }
+    for l in 0..len(fx.loop_from) {
+      s = fx.loop_from[l]!;
+      e = fx.loop_to[l]!;
+      if s < site && site < e && s < p && p < e {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// port: rebind_place.rs fn projected_locals — the locals one of whose bindings is a projection.
+fn projected_locals(b: ir::Bundle, code: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  projected_walk(b, code, out);
+  out
+}
+
+fn projected_walk(b: ir::Bundle, n: ir::Node, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: v, inner } => {
+      rhs = match scope_fn::unspan(inner) {
+        NdInsert { items } => if len(items) > 0 { scope_fn::unspan(items[len(items) - 1]!) } else { ir::NdNull },
+        _ => scope_fn::unspan(inner)
+      };
+      hit = match rhs {
+        NdTupleGet => true,
+        NdCall { def_nr } => def_nr < len(b.data.definitions) && own::is_projection_op(b, def_nr),
+        _ => false
+      };
+      if hit && !scope_fn::has(out, v) {
+        out += [v];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    projected_walk(b, c, out);
+  }
+}
+
+// port: rebind_place.rs fn visit
+fn visit(b: ir::Bundle, v: ir::Node, fx: Facts, pos: vector<integer>) -> ir::Node {
+  here = pos[0]!;
+  pos[0] = here + 1;
+  m = v;
+  match v {
+    NdSet { var: x, inner } => {
+      call = scope_fn::unspan(inner);
+      match call {
+        NdCall { def_nr: g, args } => {
+          at = admit(b, fx, here, x, g, args);
+          if at >= 0 {
+            m = ir::NdSet { var: x, inner: set_arg(inner, at, ir::NdVar { n: x }) };
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { visit(b, c, fx, pos) }])
+}
+
+// `Call(f, args)` with `args[at]` replaced, through spans.
+fn set_arg(n: ir::Node, at: integer, v: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: set_arg(inner, at, v) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == at { v } else { a } }] },
+    _ => n
+  }
+}
+
+fn has_body(d: ir::Definition) -> boolean {
+  len(d.code) > 0 && !(d.code[0]! is NdNull)
+}
+
+// port: rebind_place.rs fn admit — the caller's half; the hidden buffer's argument index, -1
+// for a decline.
+fn admit(b: ir::Bundle, fx: Facts, site: integer, local: integer, callee_nr: integer, args: vector<ir::Node>) -> integer {
+  buf_idx = admit_callee(b, fx, callee_nr, args);
+  if buf_idx < 0 {
+    return -1;
+  }
+  callee = b.data.definitions[callee_nr]!;
+  f = fx.f;
+  me = b.data.definitions[fx.d_nr]!;
+  own_buffer = false;
+  if scope_fn::is_argument(f, local) && env_variable("LOFT_NO_REBIND_OWN_BUFFER") == null {
+    hb = binds::hidden_return_buffer_attr(me);
+    own_buffer = hb != null && scope_fn::var(f, me.attributes[hb!]!.name) == local;
+  }
+  if (scope_fn::is_argument(f, local) && !own_buffer) || scope_fn::is_compiler_generated(f, local) {
+    return -1;
+  }
+  lt = scope_fn::tp(f, local);
+  if lt is TyOptional {
+    return -1;
+  }
+  td = match lt { TyReference { n } => n, _ => -1 };
+  if td < 0 {
+    return -1;
+  }
+  // The oracle's evidence: a derived binding or a mint.
+  if !own_buffer && !has_evidence(b, fx.defs, local) {
+    return -1;
+  }
+  if scope_fn::has(fx.projected, local) {
+    return -1;
+  }
+  if len(scope_fn::deps(f, local)) > 0 {
+    return -1;
+  }
+  if f.variables[local]!.view_elided {
+    return -1;
+  }
+  if scope_fn::var(f, "__own_{scope_fn::name(f, local)}") >= 0 {
+    return -1;
+  }
+  if own::heap_def_nr(callee.attributes[buf_idx]!.typedef[0] ?? ir::TyVoid) != td {
+    return -1;
+  }
+  viewers = if own_buffer { own_buffer_viewers(f, local) } else { store_viewers(f, local, []) };
+  param_idx = -1;
+  for arg in args {
+    i = arg#index;
+    if i == buf_idx {
+      continue;
+    }
+    if (match scope_fn::unspan(arg) { NdVar { n: x } => x == local, _ => false }) {
+      if param_idx >= 0 {
+        return -1;
+      }
+      param_idx = i;
+      continue;
+    }
+    if scope_fn::names_var(arg, local) {
+      return -1;
+    }
+    for w in viewers {
+      if scope_fn::names_var(arg, w) {
+        return -1;
+      }
+    }
+  }
+  if param_idx < 0 {
+    return -1;
+  }
+  if read_across(fx, site, viewers) {
+    return -1;
+  }
+  attr = callee.attributes[param_idx]!;
+  at = attr.typedef[0] ?? ir::TyVoid;
+  if attr.hidden || scope_fn::base(at) is TyRefVar {
+    return -1;
+  }
+  if own::heap_def_nr(at) != td {
+    return -1;
+  }
+  // The callee's half reads its body as Rust has it now: settled where it was laid out before
+  // this function, which this pass did not do for a function it refused.
+  if scope_fn::has(fx.refused_nrs, callee_nr) {
+    if fx.why == "" {
+      fx.why = "rebind_place::rewrite: a callee this pass refused decides the rebind";
+    }
+    return -1;
+  }
+  pf = parse_fns(fx.pv, callee_nr);
+  narrow = callee_safe(b, callee_nr, param_idx, td, pf, false);
+  wide = callee_safe(b, callee_nr, param_idx, td, pf, true);
+  if narrow != wide {
+    if fx.why == "" {
+      fx.why = "rebind_place::rewrite: the callee's parameter viewers decide (Variable::viewed, not in the image)";
+    }
+    return -1;
+  }
+  if narrow { buf_idx } else { -1 }
+}
+
+fn parse_fns(pv: ParseVars, d: integer) -> ir::Function? {
+  for x in pv.defs {
+    if x == d {
+      return pv.fns[x#index]!;
+    }
+  }
+  null
+}
+
+// `ownership_evidence_with`'s evidence is `Derived` or `Minted`: a binding whose right-hand
+// side holds a store, or an `OpDatabase` into it.
+fn has_evidence(b: ir::Bundle, defs: own::Defs, v: integer) -> boolean {
+  for k in 0..len(defs.rhs_var) {
+    if defs.rhs_var[k]! == v && !own::holds_no_store(b, defs.rhs[k]!) {
+      return true;
+    }
+  }
+  scope_fn::has(defs.db_vars, v)
+}
+
+// port: rebind_place.rs fn admit_callee — the buffer's argument index, -1 for a decline.
+fn admit_callee(b: ir::Bundle, fx: Facts, callee_nr: integer, args: vector<ir::Node>) -> integer {
+  if callee_nr == fx.d_nr || callee_nr >= len(b.data.definitions) {
+    return -1;
+  }
+  callee = b.data.definitions[callee_nr]!;
+  if callee.def_type != 1 || !has_body(callee) || callee.rust != "" || callee.native != "" {
+    return -1;
+  }
+  if callee.name.contains("__lambda") {
+    return -1;
+  }
+  hb = binds::hidden_return_buffer_attr(callee);
+  if hb == null {
+    return -1;
+  }
+  buf_idx = hb!;
+  if callee.attributes[buf_idx]!.name != "__retbuf" || len(args) <= buf_idx {
+    return -1;
+  }
+  buf = match scope_fn::unspan(args[buf_idx]!) { NdVar { n } => n, _ => return -1 };
+  if !scope_fn::is_compiler_generated(fx.f, buf) || !scope_fn::name(fx.f, buf).starts_with("__ref_") {
+    return -1;
+  }
+  buf_idx
+}
+
+// The deps closure of `start`, through `f`'s current deps and, where `pf` is given, the
+// parse's too.
+fn closure(f: ir::Function, pf: ir::Function?, start: integer) -> vector<integer> {
+  seen: vector<integer> = [];
+  stack: vector<integer> = [start];
+  while len(stack) > 0 {
+    v = stack[len(stack) - 1]!;
+    stack.remove(len(stack) - 1);
+    ds = scope_fn::deps(f, v);
+    if pf != null && v < scope_fn::count(pf!) {
+      ds += scope_fn::deps(pf!, v);
+    }
+    for d in ds {
+      if d < scope_fn::count(f) && !scope_fn::has(seen, d) {
+        seen += [d];
+        stack += [d];
+      }
+    }
+  }
+  seen
+}
+
+// port: rebind_place.rs fn own_buffer_viewers — the locals whose deps close over `buffer`.
+fn own_buffer_viewers(f: ir::Function, buffer: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for w in 0..scope_fn::count(f) {
+    if w != buffer && scope_fn::has(closure(f, null, w), buffer) {
+      out += [w];
+    }
+  }
+  out
+}
+
+// port: variables/mod.rs fn viewers_of — `extra`: locals counted as viewing `root`'s store
+// whatever their deps say (an earlier bind's view, `Variable::viewed`).
+fn store_viewers(f: ir::Function, root: integer, extra: vector<integer>) -> vector<integer> {
+  return store_viewers_with(f, null, root, extra);
+}
+
+fn store_viewers_with(f: ir::Function, pf: ir::Function?, root: integer, extra: vector<integer>) -> vector<integer> {
+  roots = closure(f, pf, root);
+  roots += [root];
+  from_caller = false;
+  for r in roots {
+    if scope_fn::is_argument(f, r) {
+      from_caller = true;
+    }
+  }
+  foreign: vector<integer> = [];
+  if from_caller {
+    for w in 0..scope_fn::count(f) {
+      if w != root && scope_fn::is_argument(f, w) && heap_dep(scope_fn::tp(f, w)) {
+        foreign += [w];
+      }
+    }
+  }
+  out: vector<integer> = [];
+  for w in 0..scope_fn::count(f) {
+    if w == root {
+      continue;
+    }
+    hit = scope_fn::has(foreign, w) || scope_fn::has(extra, w);
+    if !hit {
+      for d in closure(f, pf, w) {
+        if scope_fn::has(roots, d) || scope_fn::has(foreign, d) || scope_fn::has(extra, d) {
+          hit = true;
+        }
+      }
+    }
+    if hit {
+      out += [w];
+    }
+  }
+  out
+}
+
+fn heap_dep(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyReference => true,
+    TyVector => true,
+    TyEnum { is_ref } => is_ref,
+    TySorted => true,
+    TyHash => true,
+    TyIndex => true,
+    TyRadix => true,
+    TyTrie => true,
+    _ => false
+  }
+}
+
+// The locals of `code` bound (to a non-null value) more than once.
+fn multi_bound(code: ir::Node, n: integer) -> vector<integer> {
+  counts: vector<integer> = [for _ in 0..n { 0 }];
+  count_binds(code, counts);
+  [for c in counts if c > 1 { c#index }]
+}
+
+fn count_binds(n: ir::Node, counts: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: v, inner } => if !(scope_fn::unspan(inner) is NdNull) && v < len(counts) {
+      counts[v] = counts[v]! + 1;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    count_binds(c, counts);
+  }
+}
+
+struct Cx {
+  b: ir::Bundle,
+  vars: ir::Function,
+  buf_var: integer,
+  p_var: integer,
+  viewers: vector<integer>,
+  vec_offs: vector<integer>,
+  get_field: integer
+}
+
+// port: rebind_place.rs fn callee_safe — every exit answers parameter `k` or a literal built into
+// `__retbuf` that is safe when the two are one record.  `wide`: the parameter's viewers widened
+// by every local bound more than once (an earlier bind's view).
+fn callee_safe(b: ir::Bundle, fnr: integer, k: integer, td: integer, pf: ir::Function?, wide: boolean) -> boolean {
+  callee = b.data.definitions[fnr]!;
+  vars = callee.variables;
+  buf_var = scope_fn::var(vars, "__retbuf");
+  if buf_var < 0 || !scope_fn::is_argument(vars, buf_var) {
+    return false;
+  }
+  p_var = scope_fn::var(vars, callee.attributes[k]!.name);
+  if p_var < 0 || !scope_fn::is_argument(vars, p_var) {
+    return false;
+  }
+  struct_tp = b.data.definitions[td]!.known_type;
+  vec_offs: vector<integer> = [];
+  for a in b.data.definitions[td]!.attributes {
+    if scope_fn::base(a.typedef[0] ?? ir::TyVoid) is TyVector {
+      vec_offs += [field_position(b, struct_tp, a.name)];
+    }
+  }
+  code = callee.code[0]!;
+  extra: vector<integer> = if wide { multi_bound(code, scope_fn::count(vars)) } else { [] };
+  viewers = store_viewers_with(vars, pf, p_var, extra);
+  viewers += [p_var];
+  cx = Cx { b: b, vars: vars, buf_var: buf_var, p_var: p_var, viewers: viewers, vec_offs: vec_offs, get_field: scope_fn::def_nr(b, "OpGetField") };
+  body = match scope_fn::unspan(code) { NdBlock { block } => block[0]!, _ => return false };
+  if !returns_ok(cx, code) {
+    return false;
+  }
+  n = len(body.operators);
+  if n == 0 {
+    return false;
+  }
+  last = body.operators[n - 1]!;
+  if !(scope_fn::unspan(last) is NdReturn) && !exit_ok(cx, last) {
+    return false;
+  }
+  objects_ok(cx, code)
+}
+
+// `Stores::position`: the byte offset of field `name` of type `tp`, 65535 for none.
+fn field_position(b: ir::Bundle, tp: integer, name: text) -> integer {
+  if tp < 0 || tp >= len(b.types) || len(b.types[tp].parts) == 0 {
+    return 65535;
+  }
+  fields: vector<ir::DbField> = match b.types[tp].parts[0]! { PtStruct { fields } => fields, PtEnumValue { fields } => fields, _ => [] };
+  for fl in fields {
+    if fl.name == name {
+      return fl.position;
+    }
+  }
+  65535
+}
+
+// Every `return`, wherever it stands.
+fn returns_ok(cx: Cx, n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdReturn { inner } => if !exit_ok(cx, inner) { return false; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if !returns_ok(cx, c) {
+      return false;
+    }
+  }
+  true
+}
+
+// Every literal that yields the buffer.
+fn objects_ok(cx: Cx, n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "Object" && yields_buffer(cx, bl) && !object_ok(cx, bl) {
+        return false;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if !objects_ok(cx, c) {
+      return false;
+    }
+  }
+  true
+}
+
+fn reads_viewer(cx: Cx, v: ir::Node) -> boolean {
+  for w in cx.viewers {
+    if scope_fn::names_var(v, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// `Var(v)` or `OpGetField(Var(v), …)`.
+fn targets(cx: Cx, a: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(a) {
+    NdVar { n: x } => x == v,
+    NdCall { def_nr, args } => def_nr == cx.get_field && len(args) > 0 && (match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == v, _ => false }),
+    _ => false
+  }
+}
+
+// The field offset of `OpGetField(Var(v), Int(off), _)`, null for none.
+fn field_off(cx: Cx, a: ir::Node, v: integer) -> integer? {
+  match scope_fn::unspan(a) {
+    NdCall { def_nr, args } => {
+      if def_nr != cx.get_field || len(args) != 3 || !(match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == v, _ => false }) {
+        return null;
+      }
+      match scope_fn::unspan(args[1]!) { NdInt { n: off } => off, _ => null }
+    },
+    _ => null
+  }
+}
+
+fn yields_buffer(cx: Cx, bl: ir::Block) -> boolean {
+  n = len(bl.operators);
+  if n == 0 {
+    return false;
+  }
+  match scope_fn::unspan(bl.operators[n - 1]!) {
+    NdVar { n: v } => v == cx.buf_var,
+    NdReturn { inner } => match scope_fn::unspan(inner) { NdVar { n: v } => v == cx.buf_var, _ => false },
+    _ => false
+  }
+}
+
+// An exit answers the parameter, the buffer, or a literal that yields the buffer.
+fn exit_ok(cx: Cx, e: ir::Node) -> boolean {
+  match scope_fn::unspan(e) {
+    NdVar { n: v } => v == cx.p_var || v == cx.buf_var,
+    NdReturn { inner } => exit_ok(cx, inner),
+    NdBlock { block } => block[0]!.name == "Object" && yields_buffer(cx, block[0]!),
+    _ => false
+  }
+}
+
+fn is_mint(cx: Cx, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => scope_args::def_name(cx.b, def_nr) == "OpDatabase" && len(args) > 0 && (match scope_fn::unspan(args[0]!) { NdVar { n: w } => w == cx.buf_var, _ => false }),
+    _ => false
+  }
+}
+
+// port: rebind_place.rs fn object_ok — the literal's writes are safe when the buffer IS the
+// parameter's record.
+fn object_ok(cx: Cx, bl: ir::Block) -> boolean {
+  n = len(bl.operators);
+  if n == 0 {
+    return false;
+  }
+  seen_write = false;
+  for op in bl.operators[0..n - 1] {
+    match scope_fn::unspan(op) {
+      NdIf { t, f } => {
+        guarded = (is_mint(cx, f) && scope_fn::unspan(t) is NdNull) || (is_mint(cx, t) && scope_fn::unspan(f) is NdNull);
+        if !guarded {
+          return false;
+        }
+      },
+      NdSet { var: target, inner } => {
+        if scope_fn::is_argument(cx.vars, target) {
+          return false;
+        }
+        if seen_write && reads_viewer(cx, inner) {
+          return false;
+        }
+      },
+      NdCall { def_nr, args } => {
+        name = scope_args::def_name(cx.b, def_nr);
+        if name == "OpDatabase" {
+          return false;
+        }
+        if name.starts_with("OpFree") || len(args) == 0 {
+          continue;
+        }
+        first = args[0]!;
+        if targets(cx, first, cx.buf_var) {
+          if name == "OpSetInt4" && len(args) > 1 {
+            off = match scope_fn::unspan(args[1]!) { NdInt { n: o } => o, _ => -1 };
+            if off >= 0 && scope_fn::has(cx.vec_offs, off) {
+              return false;
+            }
+          }
+          if name == "OpReplaceVector" && len(args) == 3 {
+            fo = field_off(cx, first, cx.buf_var);
+            if fo != null {
+              po = field_off(cx, args[1]!, cx.p_var);
+              if po != null && po! == fo! {
+                seen_write = true;
+                continue;
+              }
+            }
+          }
+          for a in args {
+            if a#index >= 1 && reads_viewer(cx, a) {
+              return false;
+            }
+          }
+          seen_write = true;
+        } else {
+          if targets(cx, first, cx.p_var) && !name.starts_with("OpGet") && !name.starts_with("OpConv") {
+            return false;
+          }
+          if seen_write {
+            for a in args {
+              if reads_viewer(cx, a) {
+                return false;
+              }
+            }
+          }
+        }
+      },
+      _ => return false
+    }
+  }
+  true
+}
