@@ -253,6 +253,10 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
         free = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: t }] }, t: free, f: ir::NdNull };
       }
     }
+    // loft#2648 — a value that may be any of several variables is freed only where it is none.
+    for w in scope_scan::list_of(s.lift_extra_witnesses, v) {
+      free = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: w }] }, t: free, f: ir::NdNull };
+    }
     ls += [free];
   } else if is_work_ref && pw >= 0 {
     handed_out = pw == ret_var;

@@ -76,6 +76,10 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     minted_pairs: [],
     lift_join_witness: [],
     lift_decl_depth: [],
+    lift_extra_witnesses: [],
+    pending_join_witness: 65535,
+    pending_extra_witnesses: [],
+    consumed_lifts: [],
     lift_viewers: [],
     view_temps: view_temps_in(orig_code, orig_vars, ops),
     literal_moves: [],
@@ -169,6 +173,10 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   }
   if s.rbuf_flag >= 0 {
     head += [scope_fn::v_set(s.rbuf_flag, ir::NdBoolean { b: false })];
+  }
+  // @FR-O-Override — a temp whose store a consuming op takes over owns nothing at any later free.
+  for v in s.free_transferred {
+    function.variables[v].skip_free = true;
   }
   // `scan_args`' lifts are assigned inside conditional branches but freed at function exit:
   // their null-inits reserve the slot on every path.

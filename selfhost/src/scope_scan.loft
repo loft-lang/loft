@@ -20,6 +20,7 @@ use scope_scan_set;
 use scope_branches;
 use scope_convert;
 use scope_args;
+use scope_inline_returns;
 use scope_free_vars;
 use scope_get_free_vars;
 use opt_names;
@@ -179,6 +180,13 @@ pub struct Scopes {
   // temp was declared at.
   pub lift_join_witness: vector<integer>,
   pub lift_decl_depth: vector<integer>,
+  // loft#2648 — the further witnesses a lift's free compares against; the witnesses the next
+  // `new_lift_var` takes (`inline_struct_return` sets them, `u16::MAX` for none).
+  pub lift_extra_witnesses: vector<VarList>,
+  pub pending_join_witness: integer,
+  pub pending_extra_witnesses: vector<integer>,
+  // loft#2319 — the lifts a call consumes, read back as null after it.
+  pub consumed_lifts: vector<integer>,
   // `@FR-H-FreeTwice` — the lift temps whose store a local may name.
   pub lift_viewers: vector<VarList>,
   // `@FR-H-FreeTwice` — per local, the frame temporaries its assignments view
@@ -560,33 +568,59 @@ pub fn variables(s: Scopes, to_scope: integer) -> vector<integer> {
   res
 }
 
-// port: scan.rs fn new_lift_var — a `__lift_N` temporary that owns an inline value.
+// port: scan.rs fn new_lift_var — a `__lift_N` temporary that owns an inline value, taking the
+// join witnesses `inline_struct_return` left for it.
 pub fn new_lift_var(s: Scopes, f: ir::Function, t: ir::TypeT) -> integer {
   s.lift_counter += 1;
   tmp = scope_fn::add_temp_var(f, "__lift_{s.lift_counter}", t);
   if !scope_fn::has(f.inline_refs, tmp) {
     f.inline_refs += [tmp];
   }
+  witness = s.pending_join_witness;
+  s.pending_join_witness = 65535;
+  extra = copy_ints(s.pending_extra_witnesses);
+  s.pending_extra_witnesses.clear();
+  if witness != 65535 {
+    put(s.lift_join_witness, tmp, witness);
+    if len(extra) > 0 {
+      for w in extra {
+        list_add(s.lift_extra_witnesses, tmp, w);
+      }
+    }
+  }
+  put(s.lift_decl_depth, tmp, len(s.loops));
   set_scope_of(s, tmp, s.scope);
   s.var_order += [tmp];
   s.lift_vars += [tmp];
   tmp
 }
 
-// port: scan.rs fn lift_set — the pairing half asks `use_analysis::adopts_minted_at_bind` of a
-// loft callee, which this transcription refuses.
+// port: scan.rs fn lift_set — a lifted `??` whose default is a literal accumulator frees against
+// it; a lifted loft call that adopts its callee's minted store pairs the buffers it hands over.
 pub fn lift_set(s: Scopes, b: ir::Bundle, tmp: integer, value: ir::Node, f: ir::Function) -> ir::Node {
-  match scope_fn::unspan(value) {
-    NdBlock { block } => if block[0].name == "ncc" {
-      refuse(s, "scan::lift_set: a `??` value lifted (ncc_literal_accumulators)");
-    },
-    NdCall { def_nr } => {
-      d = b.data.definitions[def_nr];
-      if d != null && is_loft_defined(d!) {
-        refuse(s, "scan::lift_set: a loft call lifted (use_analysis::adopts_minted_at_bind)");
+  unspanned = scope_fn::unspan(value);
+  match unspanned {
+    NdBlock { block } => if block[0].name == "ncc" && get(s.lift_join_witness, tmp) < 0 && env_variable("LOFT_NO_NCC_LITERAL_WITNESS") == null {
+      accs = scope_inline_returns::ncc_literal_accumulators(block[0].operators, f);
+      if len(accs) == 1 {
+        put(s.lift_join_witness, tmp, accs[0]!);
       }
     },
     _ => {}
+  }
+  fn_nr = match unspanned { NdCall { def_nr } => def_nr, _ => -1 };
+  if fn_nr >= 0 && fn_nr < len(b.data.definitions) {
+    d = b.data.definitions[fn_nr]!;
+    if binds::is_loft_defined(d) && !binds::return_adopts_fresh_store(d) {
+      oracle_guard(s, unspanned);
+      if binds::adopts_minted_at_bind(b, s.own_ops, f, tmp, unspanned) {
+        f.variables[tmp].deferred_first_bind = true;
+        if scope_fn::has(s.drop_transferred, tmp) || scope_fn::has(s.free_transferred, tmp) {
+          return scope_fn::v_set(tmp, value);
+        }
+        scope_scan_set::pair_call_buffers(s, f, tmp, unspanned, false, true, false, false);
+      }
+    }
   }
   scope_fn::v_set(tmp, value)
 }
@@ -729,16 +763,23 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       // #490 — a discarded result that owns a fresh store is bound to a `__lift_N`.
       match scanned {
         NdInsert { items } => {
-          if len(items) > 0 && scope_args::inline_struct_return(s, b, items[len(items) - 1]!, -1, f) {
-            refuse(s, "inline_returns::inline_struct_return: a discarded heap result");
+          k = len(items);
+          tp = if k > 0 { scope_inline_returns::inline_struct_return(s, b, items[k - 1]!, -1, f) } else { null };
+          if tp == null {
+            return ir::NdDrop { inner: scanned };
           }
-          ir::NdDrop { inner: scanned }
+          tmp = new_lift_var(s, f, tp!);
+          ops: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+          ops += [lift_set(s, b, tmp, items[k - 1]!, f)];
+          ir::NdInsert { items: ops }
         },
         _ => {
-          if scope_args::inline_struct_return(s, b, scanned, -1, f) {
-            refuse(s, "inline_returns::inline_struct_return: a discarded heap result");
+          tp = scope_inline_returns::inline_struct_return(s, b, scanned, -1, f);
+          if tp == null {
+            return ir::NdDrop { inner: scanned };
           }
-          ir::NdDrop { inner: scanned }
+          tmp = new_lift_var(s, f, tp!);
+          lift_set(s, b, tmp, scanned, f)
         }
       }
     },
