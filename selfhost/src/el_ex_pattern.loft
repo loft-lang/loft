@@ -869,8 +869,12 @@ pub fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn
             // `field_pattern_rename`: `field: name` with a binding name binds the field as `name`.
             bname = if pat == null { fname } else { rename_of(e, pat!) };
             if bname != "" {
-              // A text field binds a text of its own, typed as the field (`s#1 = OpGetText(b, 8)`).
-              if !el_convert::plain_scalar(el_types::base(ft)) && !(el_types::base(ft) is TyText) {
+              // A text field binds a text of its own, typed as the field (`s#1 = OpGetText(b, 8)`);
+              // a vector field a view of the subject's (`v#1: vector<integer>["b"]`).
+              if el_types::base(ft) is TyVector && !(ft is TyOptional) {
+                vsrc = el_ex_match::match_borrow_source(e, vars, x.code);
+                ft = el_types::with_deps(el_types::without_deps(ft), if vsrc >= 0 { [vsrc] } else { [] });
+              } else if !el_convert::plain_scalar(el_types::base(ft)) && !(el_types::base(ft) is TyText) {
                 el::refuse(e, "a struct pattern binding of this type: {type_kind(ft)}");
                 return null;
               }
@@ -880,6 +884,10 @@ pub fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn
               }
               bv = el_vars::loop_variable(vars, id, ft);
               el_vars::set_defined(vars, bv);
+              // (A vector field's binding is a view: it frees nothing, `mark_field_capture_view`.)
+              if el_types::base(ft) is TyVector {
+                el_vars::set_skip_free(vars, bv, "mark_field_capture_view");
+              }
               r.binds += [el_ir::v_set(bv, read!)];
               slot = -1;
               for s0 in shared {
