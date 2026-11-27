@@ -2522,6 +2522,11 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
     }
     x = rx!;
   }
+  // (…and a struct enum's `E?` field slot bound to a local is the pointer too,
+  // `read_through_enum_slot`.)
+  if op == "=" && !is_nullable_wrapper(e, x.tp) && !(match e.p.nodes[rhs!] { SUnary { op: uo } => uo == "&", _ => false }) {
+    x = ex(el_ex_into::enum_slot_read(e, x.code, x.tp), x.tp);
+  }
   // A function value read off a field and bound takes a copy of the field's closure record.
   if op == "=" {
     ffr = el_types::base(x.tp) is TyFunction && match el_ir::unspan(x.code) { NdBlock { block: fb } => fb[0].name == "fn_ref_field_read", _ => false };
