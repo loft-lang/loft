@@ -72,7 +72,13 @@ fn assoc_field_type(e: el::El, vars: el_vars::Vars, st: integer) -> ir::TypeT? {
   if nm == "" || el_vars::var(vars, nm) < 0 {
     return null;
   }
-  rd = match el_types::base(name_expression(e, vars, nm, "", false).tp) { TyReference { n: rn } => rn, _ => -1 };
+  nt = name_expression(e, vars, nm, "", false).tp;
+  rd = match el_types::base(nt) { TyReference { n: rn } => rn, _ => -1 };
+  // (A nullable struct read off its `__nullable<S>` carrier names `S`'s field, `@FR-N-Shape`.)
+  if el_ex_base::is_nullable_wrapper(e, nt) {
+    cn = match el_types::base(nt) { TyEnum { n: cen } => el::def(e, cen).name, TyReference { n: crn } => el::def(e, crn).name, _ => "" };
+    rd = if len(cn) > 12 { el::def_nr(e, cn[11..len(cn) - 1]) } else { -1 };
+  }
   if rd < 0 {
     return null;
   }
