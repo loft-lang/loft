@@ -446,7 +446,10 @@ impl Scopes<'_> {
                 // it is the store returned.  `LOFT_NO_JOIN_RETURN_BACKINGS=1` keeps them, and the
                 // guards the join leg re-keys below, as before.
                 let live_here = self.variables(to_scope);
-                for &v in sources.iter().filter(|_| crate::keys::join_return_backings()) {
+                for &v in sources
+                    .iter()
+                    .filter(|_| crate::keys::join_return_backings())
+                {
                     if !matches!(
                         function.tp(v).base(),
                         Type::Reference(_, _) | Type::Enum(_, true, _)
