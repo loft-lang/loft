@@ -129,6 +129,10 @@ pub struct El {
   // second pass names it as the function starts, so a caller sees it whatever the body's
   // delivery then does — a refused callee included.
   pub owed_buffer: vector<integer>,
+  // The function the second pass is reading hands one of its parameters back from a tail (a
+  // bare name in a tail or an arm): Rust's first pass gave its result that borrow, so a call of
+  // it inside its own body gives no store away (`call_gives_away_its_store`).
+  pub self_view_tail: boolean,
   // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
   // shared with the lambdas its lambdas make; cleared as each pass starts.
   pub lambda_roots: vector<text>,

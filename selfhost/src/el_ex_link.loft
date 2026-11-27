@@ -143,6 +143,11 @@ pub fn gives_away_its_store(e: el::El, code: ir::Node) -> boolean {
   match el_ir::unspan(code) {
     NdCall { def_nr } => {
       cd = el::def(e, def_nr);
+      // (A call of the function being read, which hands a parameter back: the borrow Rust's
+      // first pass gave its result, which this port's delivery names only at the tail.)
+      if def_nr == e.context && e.self_view_tail {
+        return false;
+      }
       starts_with(cd.name, "n_") && !((cd.code[0] ?? ir::NdNull) is NdNull) && !returns_argument_view(cd)
     },
     NdBlock { block } => block[0].name == "Object",

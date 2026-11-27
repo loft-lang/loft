@@ -2097,6 +2097,19 @@ fn enum_attribute(e: el::El, d: integer, name: text, tp: ir::TypeT, nr: integer)
 }
 
 
+// Does a body hand one of `names` back as it stands — a bare name ending the body, a branch or a
+// `match` arm there, or a `return` of one?
+fn tail_names_one_of(e: el::El, n: integer, names: vector<text>) -> boolean {
+  match e.p.nodes[n] {
+    SName { name: tn, member: tm } => tm == "" && names.contains(tn),
+    SBlock { stmts } => len(stmts) > 0 && tail_names_one_of(e, stmts[-1]!, names),
+    SStmt { e: se, semi } => !semi && se != null && tail_names_one_of(e, se!, names),
+    SIf { then: it, other: io } => tail_names_one_of(e, it, names) || (io != null && tail_names_one_of(e, io!, names)),
+    SMatch { arms } => len([for a in arms if match e.p.nodes[a] { SArm { body: ab } => ab != null && tail_names_one_of(e, ab!, names), _ => false } { 1 }]) > 0,
+    _ => false
+  }
+}
+
 // A type in an interface member's signature: `Self.<Name>` is the interface's associated type
 // (`<Interface>.<Name>`, registered above); anything else as any type is read.
 fn iface_type(e: el::El, d: integer, tn: integer) -> ir::TypeT? {
@@ -2737,6 +2750,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       seeds = el_cell::flip(e, vars);
     }
     vars.start_ret_deps = el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid);
+    e.self_view_tail = !e.first_pass && body != null && tail_names_one_of(e, body!, [for ta in arguments { ta.name }]);
     // (The return buffer the first pass held back from the result is named before the body.)
     if !e.first_pass && e.owed_buffer.contains(e.context) {
       oba = el_ex_base::attr_nr(el::def(e, e.context), "__retbuf");
