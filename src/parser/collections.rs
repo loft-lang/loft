@@ -5868,6 +5868,60 @@ use #count instead"
         d_nr
     }
 
+    /// Lower each whole-value bind of the par body's `var` (the loop element or the result) to
+    /// what the bind means once `var` is substituted by `accessor`, and answer the binds left
+    /// holding a VIEW.  `keep = e` was decided as a copy of `Var(e)` (`@FR-B-Copy`, the
+    /// whole-value arm in `objects.rs`), and `generate_set` copies a VAR; the substitution turns
+    /// that var into the accessor's read, so no copy was made and a write through `keep` landed
+    /// in the caller's record (loft#2670).  A non-null record or struct-enum bind is therefore
+    /// built here as the copy itself — a fresh store in `keep`, the accessor's record copied in —
+    /// which `keep` owns and its scope releases each row.  Every other bind stays a view of the
+    /// accessor and is answered so the caller marks it skip-free (loft#1044); a TEXT bind copies
+    /// its bytes in `Set` already and is neither (loft#1357).
+    fn lower_whole_binds(&mut self, block: &mut Value, var: u16, accessor: &Value) -> Vec<u16> {
+        let mut views = Vec::new();
+        let mut copies: Vec<(u16, i32)> = Vec::new();
+        for t in elem_borrow_bindings(block, var) {
+            let tp = self.vars.tp(t).clone();
+            let td = match &tp {
+                Type::Reference(td, _) | Type::Enum(td, true, _) => Some(*td),
+                _ => None,
+            };
+            if matches!(tp.base(), Type::Text(_)) {
+                continue;
+            }
+            if let Some(td) = td
+                && !self.vars.is_skip_free(t)
+            {
+                copies.push((t, i32::from(self.data.def(td).known_type())));
+            } else {
+                views.push(t);
+            }
+        }
+        if copies.is_empty() {
+            return views;
+        }
+        let db_d = self.data.def_nr("OpDatabase");
+        let copy_d = self.data.def_nr("OpCopyRecord");
+        block.map_nodes(&mut |n| {
+            if let Value::Set(t, from) = n
+                && matches!(from.unspan(), Value::Var(src) if *src == var)
+                && let Some(&(_, kt)) = copies.iter().find(|(c, _)| c == t)
+            {
+                let t = *t;
+                *n = Value::Insert(vec![
+                    crate::data::v_set(t, Value::Null),
+                    Value::Call(db_d, vec![Value::Var(t), Value::Int(kt)]),
+                    Value::Call(
+                        copy_d,
+                        vec![accessor.clone(), Value::Var(t), Value::Int(kt)],
+                    ),
+                ]);
+            }
+        });
+        views
+    }
+
     /// The `par` result binding's type with its borrows in THIS frame.  A worker's return deps
     /// are its ATTRIBUTE indices (generics.rs re-attaches them as such): parameter 0 is the
     /// loop element, so a result that borrows it views what the element views — the iterated
@@ -6629,12 +6683,10 @@ use #count instead"
             // decided over `Var(b_var)`, which this substitution turns into that read.  The
             // element's bindings below take the same mark for the same reason; a text bind
             // copies its bytes and keeps its free (loft#1357).
-            let result_views = elem_borrow_bindings(&block, b_var);
+            let result_views = self.lower_whole_binds(&mut block, b_var, &get_call);
             replace_var_in_ir(&mut block, b_var, &get_call);
             for v in result_views {
-                if !matches!(self.vars.tp(v).base(), Type::Text(_)) {
-                    self.vars.set_skip_free(v);
-                }
+                self.vars.set_skip_free(v);
             }
         }
 
@@ -6663,28 +6715,15 @@ use #count instead"
                 self.get_field(elm_td, usize::MAX, a_get_vec)
             }
         };
-        // Any body variable BOUND to the element accessor holds a borrowed view of the
-        // input vector — the same thing the loop variable held before this substitution
-        // inlined it.  A binding drops the RHS's deps (`_ = e` gives its discard a bare
-        // `ref(T)`), and the body then freed that view once per ROW: with a struct
-        // element, each iteration freed one of the caller's records, and the vector read
-        // back correct bytes until something reused the arena (`LOFT_POISON=1` is what
-        // shows it).  The sequential form escapes it because its binding copies a VAR
-        // whose type still carries the dep.
-        //
-        // Marking the bound var skip-free says exactly what is true — the loop does not
-        // own what it is looking at — and leaves every other free in the body alone.
-        //
-        // A TEXT binding is the exception: a text `Set` copies bytes into the binding's own
-        // `String` (`OpAppendText`), so `_ = e` over a `vector<text>` owns what it holds and
-        // marking it never-free orphaned one buffer per row (loft#1357).  The sequential
-        // form frees the same binding; so does this one now.
-        let borrowed_views = elem_borrow_bindings(&block, elem_var);
+        // A body variable BOUND to the element as a whole is a copy of it (`@FR-B-Copy`,
+        // loft#2670), built by `lower_whole_binds` before this substitution takes the variable
+        // the copy was decided over.  A bind it cannot copy (a nullable one, a vector, one a
+        // site already declared not to own) VIEWS the caller's vector and is marked skip-free:
+        // freed once per ROW, it released the caller's records (loft#1044, seen only under
+        // `LOFT_POISON=1`).  A TEXT bind copies its bytes and keeps its free (loft#1357).
+        let borrowed_views = self.lower_whole_binds(&mut block, elem_var, &a_accessor);
         replace_var_in_ir(&mut block, elem_var, &a_accessor);
         for v in borrowed_views {
-            if matches!(self.vars.tp(v).base(), Type::Text(_)) {
-                continue;
-            }
             self.vars.set_skip_free(v);
         }
         let idx_inc = v_set(
