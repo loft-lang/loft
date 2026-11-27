@@ -213,11 +213,11 @@ case past it (QUALITY-history.md B8i).
 **OPEN: 1.**  The record of the others is in the companion
 [iteration-history.md](iteration-history.md).
 
-- **D-iter-19** (loft#2658's remainder) — `(I-Reduce)`: over a source that is not a vector, `reduce`
+- **D-iter-19** (loft#2658's remainder) — `(I-Reduce)`: over a source that is not a vector, `reduce` <!-- doc-lint: ok -->
   folds into a scalar or a `text` only; a collection accumulator is refused, naming the loop.  A
   vector's collection fold is the declaration `reduce<T, U>`, declared over `vector<T>`, and the
-  special form still refuses a collection accumulator (loft#951).  **Fix.**  Either the special
-  form folds a collection accumulator (what loft#951 refused), or the declaration is reached for
+  special form still refuses a collection accumulator.  **Fix.**  Either the special form folds a
+  collection accumulator (lifting that refusal), or the declaration is reached for
   any source.  Measured: `s.reduce(init, |a, e| { a + [e.v] })` over a `sorted` is refused.
 
 ## Conformance

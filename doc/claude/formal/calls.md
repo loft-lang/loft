@@ -487,7 +487,7 @@ in `src/parser/mod.rs`) — `tests/scripts/a-type-named-above-its-*.loft` in one
 
 **OPEN: 1.**  The closed record is in [calls-history.md](calls-history.md).
 
-- **D-call-32** (loft#2659) — `(F-Ret)`: its exception names *"a `&T` return … an
+- **D-call-32** (loft#2659) — `(F-Ret)`: its exception names *"a `&T` return … an <!-- doc-lint: ok -->
   explicit borrow of an addressable input"*, and the compiler refuses every `&` return type.
   The return already records the borrow (`Deps { items: [0] }`, `(O-Move)`) and a local link
   already carries the dependency the reshape refusals read; the caller binds the result as a
