@@ -1476,7 +1476,8 @@ pub fn deliverable_arms(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean 
     NdInsert { items } => len(items) > 0 && deliverable_arms(e, vars, items[-1]!),
     // (`materialize_vector_arms_collect`: a projection is copied in; a call handed a buffer of its
     // own (`__ref_N`) builds into the function's instead.)
-    NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || projection_op(el::def(e, def_nr).name) || len(hidden_ref_args(e, vars, n)) > 0 || calls_into_buffer(e, vars, args),
+    // (…and a lambda's vector capture, read off its closure record, is copied in as a projection is.)
+    NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || projection_op(el::def(e, def_nr).name) || len(hidden_ref_args(e, vars, n)) > 0 || calls_into_buffer(e, vars, args) || (el::def(e, def_nr).name == "OpGetDbRef" && e.closure_var >= 0 && len(args) == 2 && el_ir::unspan(args[0]!) == ir::NdVar { n: e.closure_var }),
     _ => false
   }
 }
@@ -1925,8 +1926,10 @@ pub fn deliver_arms(e: el::El, vars: el_vars::Vars, n: ir::Node, rb: integer, re
         }
         return c;
       }
-      // A projection is copied in (`is_projection_op`).
-      if projection_op(el::def(e, def_nr).name) {
+      // A projection is copied in (`is_projection_op`) — and so is a lambda's vector CAPTURE,
+      // read off its closure record (`OpGetDbRef(__closure, pos)`).
+      cap_read = el::def(e, def_nr).name == "OpGetDbRef" && e.closure_var >= 0 && len(args) == 2 && el_ir::unspan(args[0]!) == ir::NdVar { n: e.closure_var };
+      if projection_op(el::def(e, def_nr).name) || cap_read {
         b = ir::NdVar { n: rb };
         return ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, n, ir::NdInt { n: rec }]), b] };
       }
