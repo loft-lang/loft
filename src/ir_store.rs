@@ -1730,29 +1730,35 @@ pub struct RunFnRefShape {
     pub hidden: Vec<i64>,
 }
 
-/// Per native index: the definition a `loft_shared_<name>` native (the compiled standard
+/// Per native index: the definition a `loft_shared_<…>` native (the compiled standard
 /// library, @PLN181) was compiled from, whose bytecode body the loft runner runs in its place;
 /// -1 for every other native, the `#dest` forms included (they pop a destination and push
 /// nothing, which the body does not).  A plain call passes the body's own parameters, hidden
 /// return and work buffers included, and leaves what the body's return leaves.
+///
+/// The definition is the one whose `native` IS the symbol (`native_adopt::mark_exports` writes
+/// it): the symbol leads with the library's label (`loft_shared_std__t_4text_dir`), so it is no
+/// definition's name.
 #[must_use]
 pub fn run_image_shared(
     data: &Data,
     library_names: &crate::fxhash::FxHashMap<String, u16>,
 ) -> Vec<i64> {
+    let by_symbol: crate::fxhash::FxHashMap<&str, u32> = (0..data.definitions())
+        .filter(|&d| data.def(d).native().starts_with("loft_shared_"))
+        .map(|d| (data.def(d).native(), d))
+        .collect();
     let mut out: Vec<i64> = Vec::new();
     for (name, &idx) in library_names {
         let i = usize::from(idx);
         if out.len() <= i {
             out.resize(i + 1, -1);
         }
-        if let Some(def) = name.strip_prefix("loft_shared_")
-            && !def.contains('#')
+        if name.starts_with("loft_shared_")
+            && !name.contains('#')
+            && let Some(&nr) = by_symbol.get(name.as_str())
         {
-            let nr = data.def_nr(def);
-            if nr != u32::MAX {
-                out[i] = i64::from(nr);
-            }
+            out[i] = i64::from(nr);
         }
     }
     out
