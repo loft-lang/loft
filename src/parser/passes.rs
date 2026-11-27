@@ -233,6 +233,32 @@ impl Parser {
             self.check_subrule_wellformedness();
             self.assert_pass2_def_attr_stable(&pass1_attr_counts);
             self.after_pass2();
+            // @PLN233 phase 2a PROBE (`LOFT_PASS2_REPEAT=1`): pass 2 once more, so every
+            // caller reads the returns pass 2 settled; reports whether they are then stable.
+            if std::env::var_os("LOFT_PASS2_REPEAT").is_some() {
+                let before: Vec<Vec<u16>> = (0..self.data.definitions())
+                    .map(|d| self.data.def(d).returned().depend())
+                    .collect();
+                self.applied_imports.clear();
+                self.deferred_unknown.clear();
+                self.deferred_import_misses.clear();
+                self.resolutions.clear();
+                self.data.reset();
+                if !default {
+                    self.data.source = crate::data::MAIN_SOURCE;
+                }
+                self.lambda_counters.clear();
+                self.fn_lambdas.clear();
+                self.store_handoffs.clear();
+                Self::load_main_file(&mut self.lexer, filename, content);
+                self.parse_file();
+                self.resolve_deferred_unknowns();
+                self.after_pass2();
+                let changed = (0..before.len().min(self.data.definitions() as usize))
+                    .filter(|&d| self.data.def(d as u32).returned().depend() != before[d])
+                    .count();
+                eprintln!("pass2-repeat: {changed} return(s) changed on the repeat");
+            }
         }
         self.backfill_native_symbol_crates();
         // Plan-07 phase 4h — emit `not null` field-reminder hints
