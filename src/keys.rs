@@ -560,6 +560,14 @@ pub fn uaf_check_enabled() -> bool {
     *UAF.get_or_init(|| env_set("LOFT_UAF"))
 }
 
+/// `LOFT_RETURN_DRIFT` — @PLN233 phase 0: report each function whose return dependencies pass 2
+/// changed from pass 1 (`Parser::report_return_drift`), the census of the stale-borrow class of
+/// loft#2660 (`scripts/return_drift.py`).  A measurement, off by default: one cached env read.
+pub fn return_drift_enabled() -> bool {
+    static DRIFT: OnceLock<bool> = OnceLock::new();
+    *DRIFT.get_or_init(|| env_set("LOFT_RETURN_DRIFT"))
+}
+
 /// `LOFT_UAF_SRC` — the cheap companion to `LOFT_UAF`: record each free's pc and
 /// report when `do_copy_record` reads a still-freed SOURCE, but SKIP the expensive
 /// per-op frame scan (which floods + slows a real-scale run past its timeout before

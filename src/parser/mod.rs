@@ -1090,6 +1090,10 @@ pub struct Parser {
     /// may not grow its signature; one at or above it (a generic instance, a lazy wrapper, a
     /// bound stub) first exists on pass 2, which is its only parse.  `u32::MAX` during pass 1.
     pub(crate) pass1_defs: u32,
+    /// @PLN233 phase 0 — each pass-1 definition's return dependencies, snapshotted as pass 1
+    /// ends, so `after_pass2` can report a function whose return protocol pass 2 changed
+    /// (`LOFT_RETURN_DRIFT=1`).  Empty unless that switch is set.
+    pub(crate) pass1_returns: Vec<Vec<u16>>,
     /// `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet
     /// declared, `(function, local, callee, line)`: its return type was unknown there, so a `τ?`
     /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
@@ -2297,6 +2301,7 @@ impl Parser {
             par_replay_body: None,
             late_text_tails: Vec::new(),
             pass1_defs: u32::MAX,
+            pass1_returns: Vec::new(),
             late_call_joins: Vec::new(),
             tuple_param_seeds: Vec::new(),
             last_forward_call: None,

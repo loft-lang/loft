@@ -1,0 +1,7 @@
+# The return-drift census (scripts/return_drift.py, @PLN233): counts over the corpus.
+# A ratchet: `harmful` may fall and may not rise.
+drift-names	1265
+drift-programs	680
+harmful	229
+harmful-names	195
+harmful-programs	98

@@ -540,6 +540,46 @@ impl Parser {
         // After the promotion: a store instance clones its function's FINAL signature, and a
         // call it retargets already carries any buffer the promotion added.
         self.mint_store_text_instances();
+        self.report_return_drift();
+    }
+
+    /// @PLN233 phase 0 (`LOFT_RETURN_DRIFT=1`) — each function whose return dependencies pass 2
+    /// changed from what pass 1 recorded, one line on stderr:
+    /// `return-drift <name> <file>:<line> pass1=[…] pass2=[…] harmful|benign`.  HARMFUL is pass 1
+    /// recording a borrow of a VISIBLE parameter that pass 2 dropped: a caller typed on pass 1
+    /// keeps that borrow (the variable deps are unioned across the passes, `Function::append`),
+    /// reads its owned result as a view, and never frees it (loft#2660).
+    fn report_return_drift(&mut self) {
+        if self.pass1_returns.is_empty() {
+            return;
+        }
+        let snapshot = std::mem::take(&mut self.pass1_returns);
+        for (d, before) in snapshot.iter().enumerate() {
+            let d = d as u32;
+            if d >= self.data.definitions() || !matches!(self.data.def_type(d), DefType::Function) {
+                continue;
+            }
+            let after = self.data.def(d).returned().depend();
+            if *before == after {
+                continue;
+            }
+            let attrs = self.data.attributes(d);
+            let harmful = before.iter().any(|&j| {
+                (j as usize) < attrs
+                    && !self.data.attr_name(d, j as usize).starts_with("__")
+                    && !after.contains(&j)
+            });
+            let def = self.data.def(d);
+            eprintln!(
+                "return-drift\t{}\t{}:{}\tpass1={:?}\tpass2={:?}\t{}",
+                def.original_name(),
+                def.position.file,
+                def.position.line,
+                before,
+                after,
+                if harmful { "harmful" } else { "benign" }
+            );
+        }
     }
 
     /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
@@ -578,6 +618,11 @@ impl Parser {
         // Last: every definition pass 1 parsed now exists, and those numbered from here on
         // first exist on pass 2 (`text_return`'s pass-2 promotion gate reads it).
         self.pass1_defs = self.data.definitions.len() as u32;
+        if crate::keys::return_drift_enabled() {
+            self.pass1_returns = (0..self.pass1_defs)
+                .map(|d| self.data.def(d).returned().depend())
+                .collect();
+        }
     }
 
     /// `@FR-N-Join` — an inferred local is the join of every value bound to it, optional iff
