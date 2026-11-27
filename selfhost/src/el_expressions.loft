@@ -903,6 +903,12 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
           view_answer = true;
         }
       }
+      // …and so does a slice `match` whose every arm is such a literal: each built in its own
+      // work ref, handed up as it is (`ref_return` takes no promotion: `last=vector_match`).
+      if built == null && match el_ir::unspan(body_tail(code)) { NdBlock { block: vmt } => vmt[0].name == "vector_match", _ => false } && cursor_arms_answer(e, vars, body_tail(code)) && view_arm_param(e, vars, body_tail(code)) < 0 {
+        built = code;
+        arms_answer = true;
+      }
       // A `#native` callee's struct-enum answer is a store of its own, handed up as it is
       // (`classify_reference_delivery` is the struct's; a struct enum's tail call stays `AsIs`).
       if built == null && el_types::struct_enum_def(result) >= 0 && !(result is TyOptional) && match body_tail(code) { NdCall { def_nr: ntd } => starts_with(el::def(e, ntd).name, "n_") && ((el::def(e, ntd).code[0] ?? ir::NdNull) is NdNull), _ => false } {

@@ -944,7 +944,7 @@ fn integer_bytes(s: ir::IntegerSpec) -> integer {
 
 // `Function::variant_join` (`@FR-C-Var`): two different variants of one struct enum — or a
 // variant and the enum — joined to the enum, `?` when either is; null for any other pair.
-fn variant_join(e: el::El, cur: ir::TypeT, t: ir::TypeT) -> ir::TypeT? {
+pub fn variant_join(e: el::El, cur: ir::TypeT, t: ir::TypeT) -> ir::TypeT? {
   cb = el_types::base(cur);
   tb = el_types::base(t);
   ce = variant_enum(e, cb);
