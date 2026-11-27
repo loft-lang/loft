@@ -41,7 +41,7 @@ revisit trigger).
 
 | ID | Restriction | Bites? | Verdict | Cause | Probes |
 |---|---|---|---|---|---|
-| R11 | Consumers work around restrictions loft has lifted | **yes** — dryopea's notes cite 13 loft issues, all closed | lifted; the notes are stale | nothing tells a consumer an issue closed | 42–47 |
+| R11 | Consumers work around restrictions loft has lifted | **yes** — dryopea's notes cite 13 loft issues, all closed | lifted; the notes are stale | nothing tells a consumer an issue closed | 42–51 |
 | R10 | A function cannot return a place (`-> &T`) | **yes** — dryopea's lost writes through an accessor (loft#894, LOFT_GOTCHAS.md § Values, copies and tail calls) | real, and the rules allow it | the refusal at the `&` return type; `(F-Ret)` names a `&T` return as its exception | 18, 19 |
 | R1 | No proof against aliasing or data races | one loft-found case (loft#1605); no consumer | partial; the data-race half is not one | @C79, @C86; `par` isolation | 03, 04, 13, 14, 16 |
 | R2 | No moves, no consuming `self` | through R10: copies are what accessors lose writes to | by design | @C86 | 03 |
@@ -114,7 +114,7 @@ revisit trigger).
   gotchas and `docs/LOFT_GOTCHAS.md` steer its code by thirteen loft issues — loft#873, #876,
   #877, #880, #894, #914, #915, #918, #935, #955, #962, #969, #974 — and **all thirteen are
   closed**.  hexbody's `CLAUDE.md` carries the loop-variable rule too.
-- **Measured on main** (probes 42–47, both backends):
+- **Measured on main** (probes 42–51, both backends):
 
   | Workaround the consumer still writes | Issue | On main |
   |---|---|---|
@@ -123,14 +123,20 @@ revisit trigger).
   | a struct always built from `*_empty()`, never a partial literal; fields named so that zero is the safe value (`top_removed` for `has_top`) | #914, #876 | a declared default is honoured (`200`); an undeclared one gets `advice[omitted-field-zero]` |
   | a call bound to a local before it is indexed in tail position | #877 | `steps(a)[0] ?? -1` answers `5` |
   | an accessor never written through | #894 | still lost, and now warned — that one is R10 |
+  | a struct with a `hash` field never interpolated | #873 | prints `{h:[{k:"a",v:1}],n:3}` |
+  | an inner tail call bound to a local before returning | #880 | two nested tail calls keep the loop's 4 cells |
+  | a helper declared above its caller before a local binds its call | #918 | a call to a lower function binds: `later 6` |
+  | a keyed record read inline, never through an accessor | #974 | three accessor reads with a struct made between: `2 2 2` |
 
 - **Cause.**  Nothing in loft: the notes were written when the defects were live, and nothing
   tells a consumer that a cited issue closed.
 - **Can we lift it?**  The restrictions are already lifted; what is left is the consumers'
   notes.  Their trees are read-only to this stream, so the report lands here, for their agents:
   each row above is a line in their notes to retire, and the probe beside it is the evidence.
-  Of the thirteen issues, only the five in the table are re-measured; the other eight are
-  closed, not yet re-run.
+  Nine of the thirteen issues are re-measured, and every one holds.  Four are closed and not yet
+  re-run, because their shapes need more than one file: #935 (a very large function), #962 (a
+  const read through an aggregator module), #969 (two library functions over one field), and
+  #876's JSON-cast half.
 
 ### R1 — aliasing and data races
 

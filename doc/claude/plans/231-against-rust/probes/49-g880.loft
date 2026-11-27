@@ -1,0 +1,7 @@
+// @PLN231 R11 probe — a struct built in a loop, returned through two nested tail calls (loft#880)
+// Expect on both backends: cells 4
+struct G { cells: vector<integer> }
+fn build(n: integer) -> G { g = G { cells: [] }; i = 0; while i < n { g.cells += [i]; i += 1; } g }
+fn wrap1(n: integer) -> G { build(n) }
+fn wrap2(n: integer) -> G { wrap1(n) }
+fn main() { g = wrap2(4); println("cells {len(g.cells)}"); }
