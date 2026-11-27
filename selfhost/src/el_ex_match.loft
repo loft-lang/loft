@@ -279,8 +279,9 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
     }
     // (A call answering a view of its arguments keeps what it borrows of the program's locals —
     // `["w"]` — but not a store a literal argument minted for the call, `__vdb_N`.)
+    // (And it is held never nullable, as any held subject is.)
     if view_call {
-      ht = el_types::with_deps(ht, [for hd2 in el_types::deps(ht) if hd2 >= len(vars.vars) || !starts_with(el_vars::name_of(vars, hd2), "__vdb_") { hd2 }]);
+      ht = el_types::with_deps(el_types::base(ht), [for hd2 in el_types::deps(ht) if hd2 >= len(vars.vars) || !starts_with(el_vars::name_of(vars, hd2), "__vdb_") { hd2 }]);
     }
     held = match_subject(e, vars, ht);
     el_vars::set_defined(vars, held);
