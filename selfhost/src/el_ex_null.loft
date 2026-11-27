@@ -2811,6 +2811,48 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
     if result is TyOptional && el_types::base(result) is TyVector && match el_ir::unspan(v.code) { NdVar { n: olv } => !vars.vars[olv].argument && el_types::base(el_vars::tp(vars, olv)) is TyVector, _ => false } {
       return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
     }
+    // (…while a vector PARAMETER is copied into the buffer where it is returned, as from a
+    // dense result: `clear + append + Return(buf)`.)
+    if result is TyOptional && el_types::base(result) is TyVector {
+      match el_ir::unspan(v.code) {
+        NdVar { n: opv } => {
+          if vars.vars[opv].argument && !hidden_param(e, vars, opv) && el_types::base(el_vars::tp(vars, opv)) is TyVector {
+            // (`ref_return(…, MidReturn)` answers `MergeAttr` on the first pass: the result names
+            // the parameter until the delivery makes it the buffer.)
+            opa = attr_nr(el::def(e, e.context), el_vars::name_of(vars, opv));
+            opr = el::def(e, e.context).returned[0] ?? result;
+            if e.first_pass && opa >= 0 && !el_types::deps(opr).contains(opa) {
+              e.b.data.definitions[e.context].returned = [ir::TyOptional { inner: el_types::with_deps(el_types::base(opr), el_types::deps(opr) + [opa]) }];
+            }
+            if e.first_pass {
+              return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+            }
+            // (…and on the second, where it is copied into the buffer, the result names the
+            // buffer in the parameter's place.)
+            // (The buffer's attribute by its variable's name: renamed onto a local, it is that.)
+            obf = vector_buffer(e, vars);
+            oba = if obf >= 0 { attr_nr(el::def(e, e.context), el_vars::name_of(vars, obf)) } else { -1 };
+            if oba >= 0 {
+              opr2 = el::def(e, e.context).returned[0] ?? result;
+              ods: vector<integer> = [];
+              for od in el_types::deps(opr2) {
+                nd = if od == opa { oba } else { od };
+                if !ods.contains(nd) {
+                  ods += [nd];
+                }
+              }
+              e.b.data.definitions[e.context].returned = [ir::TyOptional { inner: el_types::with_deps(el_types::base(opr2), ods) }];
+            }
+            orw = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+            if obf >= 0 && orw >= 0 {
+              ob = ir::NdVar { n: obf };
+              return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [ob]), el_ir::cl(e, "OpAppendVector", [ob, v.code, ir::NdInt { n: orw }]), ir::NdReturn { inner: ob }] }, ir::TyNever);
+            }
+          }
+        },
+        _ => {}
+      }
+    }
     // (A fresh literal from a `vector<T>?` function is returned as it is too: a trailing one is
     // the tail the delivery renames the buffer onto, as the dense result's.)
     if result is TyOptional && el_types::base(result) is TyVector && (e.p.nodes[x!] is SVecLit || e.p.nodes[x!] is SComprehension) && (e.first_pass || match el_ir::unspan(v.code) { NdBlock { block: ob } => literal_backing_store(ob[0]) >= 0, _ => false }) {

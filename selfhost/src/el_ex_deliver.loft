@@ -102,12 +102,19 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     // (A `τ?` body whose every early exit is `return null` delivers nothing through them.)
     null_exits = result is TyOptional && len(bl.operators) > 0 && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) == el_ex_copy::null_returns_in(e, bl.operators[0..len(bl.operators) - 1]);
     // (A `τ?` body ending in `null` promotes nothing: an early exit answering a fresh literal or
-    // a vector local of its own returns it as it stands, in its own store.)
+    // a vector local of its own returns it as it stands, in its own store; a parameter's was
+    // copied into the buffer at its `return`.)
     null_tail = result is TyOptional && (el_ir::is_null(tail) || match tail { NdCall { def_nr: ntd, args: nta } => len(nta) == 0 && el::def(e, ntd).name == "OpNullRefSentinel", _ => false });
     if null_tail && len(bl.operators) > 0 {
       nmids = bl.operators[0..len(bl.operators) - 1];
-      if el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) {
+      if el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) + el_ex_copy::buffer_returns(nmids, rb) {
         null_exits = true;
+        // (An exit answering the buffer makes the body borrow what it handed back.)
+        if el_ex_copy::buffer_returns(nmids, rb) > 0 {
+          nps = el_ex_copy::returned_params(e, vars, nmids, rb);
+          bl.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(nps) > 0 { nps } else { [rb] }) }];
+          return ir::NdBlock { block: [bl] };
+        }
       }
     }
     if len(bl.operators) > 0 && !null_exits && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
@@ -153,8 +160,12 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
         bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1], ir::NdInt { n: row }]), b], own, "one_buffer_vec_copy");
         ps = el_ex_copy::returned_params(e, vars, bl.operators[0..len(bl.operators) - 1], rb);
-        bl.result = [el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(ps) > 0 { ps } else { [rb] })];
-        bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), bl.operators[0]] };
+        lbt = el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(ps) > 0 { ps } else { [rb] });
+        bl.result = [if result is TyOptional { ir::TyOptional { inner: lbt } } else { lbt }];
+        // (The leading clear is the dense result's step: a `vector<T>?` tail clears on each path.)
+        if !(result is TyOptional) {
+          bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), bl.operators[0]] };
+        }
         return ir::NdBlock { block: [bl] };
       }
       // A trailing `return v` of a local with a literal backing: the buffer is renamed onto that
