@@ -228,11 +228,15 @@ fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT, ae: intege
     }
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
   }
-  rt = el_types::with_deps(ir::TyReference { n: vd, dep: [] }, el_types::deps(x.tp));
+  // (The variant is a view of its subject: a variable's cast borrows that variable,
+  // `n as Bin?` is `ref(Bin)["n"]?`.)
+  rt = el_types::with_deps(ir::TyReference { n: vd, dep: [] }, match el_ir::unspan(x.code) { NdVar { n: xv } => [xv], _ => el_types::deps(x.tp) });
   if checked {
     rt = ir::TyOptional { inner: rt };
   }
-  if e.first_pass {
+  // (A variable's cast is built on the first pass too: a tail reading it sees the parameter it
+  // hands back, `MergeAttr`.)
+  if e.first_pass && !(el_ir::unspan(x.code) is NdVar) {
     return ex(ir::NdNull, rt);
   }
   test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }])]), ir::NdInt { n: disc }]);

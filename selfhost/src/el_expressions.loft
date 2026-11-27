@@ -2926,7 +2926,7 @@ pub fn param_join_return(e: el::El, vars: el_vars::Vars, code: ir::Node) -> ir::
       NdBlock { block: lb } => lb[0].name == "Object" || lb[0].name == "EnumUnitLit",
       // (On pass 1 a user call answering a fresh record — its return borrows nothing yet, a
       // recursive call above all — names no candidate: Rust's `ls` lists the other arms only.)
-      NdCall { def_nr, args } => (len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel") || (starts_with(el::def(e, def_nr).name, "n_") && len(el::def(e, def_nr).returned) > 0 && (!e.first_pass || len(el_types::deps(el::def(e, def_nr).returned[0])) == 0)),
+      NdCall { def_nr, args } => (len(args) == 0 && (el::def(e, def_nr).name == "OpNullRefSentinel" || el::def(e, def_nr).name == "OpConvRefFromNull")) || (starts_with(el::def(e, def_nr).name, "n_") && len(el::def(e, def_nr).returned) > 0 && (!e.first_pass || len(el_types::deps(el::def(e, def_nr).returned[0])) == 0)),
       NdNull => e.first_pass,
       _ => false
     };
