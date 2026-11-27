@@ -665,6 +665,16 @@ pub(super) fn witness_set_kind(
                     crate::use_analysis::Own::Owned | crate::use_analysis::Own::Unknown
                 )
         }
+        // The `!` discharge (`{ _ncr_N = call(…); check; _ncr_N }`): `_ncr_N` is the value the
+        // block hands out, so no scope frees it, and its first bind's lowering decides what it
+        // holds.  Where that lowering leaves it a store of its own on every run (a copy, an
+        // adopted answer, or the runtime choice of the two for a callee that may answer its
+        // argument), the bind is a mint, whatever the oracle says the CALL may answer: read as
+        // a view, the witness was released and never re-pointed, and the store was freed by
+        // nobody (loft#2669).
+        Value::Block(b) if b.name == "ncr" && ncr_tail_holds_own_store(b, function, data, d_nr) => {
+            true
+        }
         Value::Block(b) => {
             let into_work_ref = b.operators.last().is_some_and(|last| {
                 matches!(last.unspan(), Value::Var(r)
@@ -698,6 +708,23 @@ pub(super) fn witness_set_kind(
     } else {
         WitnessSet::Mint
     }
+}
+
+/// The `!` discharge block's tail is its `_ncr_N`, and that temp's own bind in the block leaves
+/// it holding a store of its own on every run (`FirstArm::holds_own_store`).
+fn ncr_tail_holds_own_store(
+    b: &crate::data::Block,
+    function: &Function,
+    data: &Data,
+    d_nr: u32,
+) -> bool {
+    let Some(Value::Var(t)) = b.operators.last().map(Value::unspan) else {
+        return false;
+    };
+    b.operators.iter().any(|op| {
+        matches!(op.unspan(), Value::Set(x, rhs) if x == t
+            && crate::bind_lowering::first_arm(data, d_nr, function, *t, rhs).holds_own_store())
+    })
 }
 
 /// Does every store `value` can deliver belong to a COMPILER TEMP — a call's work-ref or

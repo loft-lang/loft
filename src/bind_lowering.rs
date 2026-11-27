@@ -137,6 +137,29 @@ fn trace_call_facts(
 }
 
 impl FirstArm {
+    /// Does `v` end this first bind holding a store of its OWN on every run — a copy, an
+    /// adopted fresh answer, or a runtime choice between the two (`F2`–`F9c`)?  The question a
+    /// holder of `v`'s value asks to know it took a store nobody else releases (an owner
+    /// witness binding the `!` discharge's `_ncr_N`, loft#2669).  A nullable join may also end
+    /// null, which holds no store and so changes no answer a release guards.
+    #[must_use]
+    pub fn holds_own_store(self) -> bool {
+        matches!(
+            self,
+            FirstArm::RecordCopyCall { .. }
+                | FirstArm::RecordVarCopy { .. }
+                | FirstArm::ElementCopy { .. }
+                | FirstArm::TupleElementCopy { .. }
+                | FirstArm::CallRefJoin { .. }
+                | FirstArm::NullableCallCopy { .. }
+                | FirstArm::NullableCallJoin { .. }
+                | FirstArm::OpaqueCallRef { .. }
+                | FirstArm::CallJoin { .. }
+                | FirstArm::CallAdopt
+                | FirstArm::CallCopy { .. }
+        )
+    }
+
     /// The facts a first bind's lowering acted on, for `LOFT_TRACE_BIND`: the join's base, the
     /// copy's source, and the callee's facts (`trace_call_facts`).  Empty when there are none.
     #[must_use]
