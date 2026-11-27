@@ -1230,6 +1230,19 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
           // replay, so it is hoisted into a function of its own, `n___dflt_<Struct>_<field>`,
           // minted here on the first pass and re-read into it on the second; the stored default
           // is the call (`default_value_fn`).  A template's field is not hoisted.
+          // (A default reading `$` that no construction site can replay — anything but plain
+          // arithmetic over the record's fields — is a function OF THE RECORD in Rust,
+          // `t_<n><S>___dflt_<S>_<field>` (its `self` is `$`): registered here on the first pass,
+          // the default itself not carried.)
+          if e.first_pass && reads_dollar(e, fi!) && dollar_hoists(e, fi!, t!) && len(e.type_vars) == 0 {
+            sn = el::def(e, d).name;
+            mname = "t_{len(sn)}{sn}___dflt_{sn}_{fname}";
+            if el::def_nr(e, mname) < 0 {
+              mat = match e.p.nodes[fi!] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => leftmost_token(e, fi!) };
+              md = el::add_def(e, mname, el::pos_at(e, mat), el::DT_FUNCTION);
+              el::set_returned(e, md, t!);
+            }
+          }
           if hoists_default(e, fi!, t!) && len(e.type_vars) == 0 {
             dv = hoisted_default(e, "__dflt_{el::def(e, d).name}_{fname}", tn!, fi!);
           } else {
@@ -1370,6 +1383,40 @@ fn names_any(e: el::El, n: integer, names: vector<text>) -> boolean {
   false
 }
 
+// The first token of an expression: a binary's left operand, a member's object, down to `$`.
+fn leftmost_token(e: el::El, n: integer) -> integer {
+  match e.p.nodes[n] {
+    SDollar { at } => at,
+    SBin { l } => leftmost_token(e, l),
+    // (A unary operator is its own first token: `-100` stands at its `-`.)
+    SUnary { at: ua } => ua,
+    SMember { e: me } => if me != null { leftmost_token(e, me!) } else { el_ex_null::node_start(e, n) },
+    _ => el_ex_null::node_start(e, n)
+  }
+}
+
+// Does a `$`-reading default build a value no construction site replays in place?  A text
+// (other than a field read), a vector, a record literal, a branch, a match or a `??` does; plain
+// arithmetic, a scalar call (`len($.name)`) and a tuple of plain values (`($.n, 2)`) do not.
+fn dollar_hoists(e: el::El, init: integer, t: ir::TypeT) -> boolean {
+  if builds_value(e, init) || has_coalesce(e, init) {
+    return true;
+  }
+  el_types::base(t) is TyText && !(e.p.nodes[init] is SMember || e.p.nodes[init] is SName || e.p.nodes[init] is SDollar)
+}
+
+fn builds_value(e: el::El, n: integer) -> boolean {
+  if e.p.nodes[n] is SIf || e.p.nodes[n] is SMatch || e.p.nodes[n] is SVecLit || e.p.nodes[n] is SStructLit || e.p.nodes[n] is SComprehension || e.p.nodes[n] is SBlock || e.p.nodes[n] is SString {
+    return true;
+  }
+  for c in el_length::children(e, n) {
+    if builds_value(e, c) {
+      return true;
+    }
+  }
+  false
+}
+
 fn has_coalesce(e: el::El, n: integer) -> boolean {
   match e.p.nodes[n] {
     SBin { op: cop } => { if cop == "??" { return true; } },
@@ -1405,7 +1452,7 @@ fn hoisted_default(e: el::El, name: text, tn: integer, init: integer) -> ir::Nod
     e.dflt_vars += 1;
   }
   // (An `if` or a `match` default stands at its keyword.)
-  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => el_ex_null::node_start(e, init) };
+  at = match e.p.nodes[init] { SVecLit { at: va } => va, SString { at: sa } => sa, SStructLit { at: la } => la, SCall { at: ca } => ca, SIf { at: ia } => ia, SMatch { at: ma } => ma, _ => leftmost_token(e, init) };
   // (The default is no statement of a block in Rust, so it carries no line marker: the
   // synthetic statement stands at token 0, which gives none.)
   e.p.nodes += [SStmt { at: 0, e: init, semi: false, orelse: null }];
@@ -2251,7 +2298,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           // (A scalar, a text or a tuple default is replayed at each call, reading the earlier
           // arguments in place: Rust hoists none of those.)
           heap_default = !el_convert::plain_scalar(el_types::base(t!)) && !(el_types::base(t!) is TyText) && !(el_types::base(t!) is TyTuple) && !(el_types::base(t!) is TyEnum && match el_types::base(t!) { TyEnum { is_ref } => !is_ref, _ => false });
-          if d == null && heap_default && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
+          // (…and so is a nullable narrow parameter's, which the checked narrowing hoists
+          // whatever it reads: `a: u8? = b + 1`.)
+          if d == null && (heap_default || hoists_default(e, init!, t!)) && e.first_pass && tp != null && !amp && !method && an != "self" && an != "both" && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && !reads_dollar(e, init!) && el::def_nr(e, "n___dflt_{name}_{an}") < 0 {
             _ = hoisted_default(e, "__dflt_{name}_{an}", tp!, init!);
           }
           // (A default refused — the refusal stands — still leaves the function registered,
