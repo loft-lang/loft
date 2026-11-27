@@ -214,6 +214,8 @@ instances; Rust-only definitions 267), one to four per program.  What each open 
   it qualified (measured) gives the row but out of Rust's order: the port makes `vector<Item>` /
   `vector<Ev2209>` at the empty declared literal (`vector_of` over a library row), Rust at the
   fill — so the empty-declared-literal case of that rule is wrong too.  Both needed together.
+  2435 has the same repeated name (`g_key_2435_b_lib::Fill` beside `_a_lib::Fill`): the qualified
+  registration alone moves it one line the wrong way (measured), so it waits for the same pair.
 - iterator element vectors: DONE (23e4ed95e: the base carries no program-specific row;
   fee317776: a generator handle is stored as its `DbRef` row, so a `vector<iterator<T>>` field
   has content and names `vector<iterator>`).  Open in that family: a nullable vector element's
