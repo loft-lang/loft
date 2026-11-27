@@ -1,0 +1,127 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/same_read.rs` transcribed (`@FR-R-SameRead`): two equal discharged reads in one
+// statement are one read.  So far the questions other passes ask of it (`pure`, `discharge`,
+// `plain_read`, which `single_use` reads); the pass itself is not transcribed.
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+
+// The operator families that read or compute without writing anything.
+PURE = ["OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpLand", "OpLor", "OpEor", "OpSLeft", "OpSRight",
+  "OpEq", "OpNe", "OpLt", "OpLe", "OpGt", "OpGe", "OpConv", "OpCast", "OpGet", "OpLength",
+  "OpNot", "OpNeg", "OpAbs", "OpMath", "OpVecGet", "OpSize", "OpIntV"];
+
+// The read operators a discharged read may be built from.
+READS = ["OpGet", "OpVecGet", "OpLength", "OpSize"];
+
+fn named(b: ir::Bundle, op: integer, families: vector<text>) -> boolean {
+  name = ir_pass_tree::def_name(b, op);
+  for f in families {
+    if name.starts_with(f) {
+      return true;
+    }
+  }
+  false
+}
+
+// The parts of a discharge block: the temporary, the read, the conversion test's operator and
+// the default.  `t` is -1 for no discharge block.
+pub struct Discharge {
+  t: integer,
+  read: ir::Node,
+  conv: integer,
+  dflt: ir::Node
+}
+
+pub fn discharge(v: ir::Node) -> Discharge {
+  none = Discharge { t: -1, read: ir::NdNull, conv: -1, dflt: ir::NdNull };
+  bl = match scope_fn::unspan(v) { NdBlock { block } => block[0]!, _ => return none };
+  if bl.name != "ncc" {
+    return none;
+  }
+  ops = [for o in bl.operators if !(o is NdLine) { o }];
+  if len(ops) != 2 {
+    return none;
+  }
+  t = -1;
+  read = ir::NdNull;
+  match ops[0]! {
+    NdSet { var, inner } => { t = var; read = inner; },
+    _ => return none
+  }
+  test = ir::NdNull;
+  then_arm = ir::NdNull;
+  dflt = ir::NdNull;
+  match ops[1]! {
+    NdIf { cond, t: th, f } => { test = cond; then_arm = th; dflt = f; },
+    _ => return none
+  }
+  conv = ir_pass_tree::call_def(test);
+  if conv < 0 {
+    return none;
+  }
+  cargs = ir_pass_tree::args_of(test);
+  if len(cargs) == 1 && (ir_pass_tree::var_of(cargs[0]!) ?? -1) == t && (ir_pass_tree::var_of(then_arm) ?? -1) == t {
+    Discharge { t: t, read: read, conv: conv, dflt: dflt }
+  } else {
+    none
+  }
+}
+
+// Is `v` built only from read operators, locals and literals?
+pub fn plain_read(b: ir::Bundle, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar => true,
+    NdTupleGet => true,
+    NdInt => true,
+    NdLong => true,
+    NdCall { def_nr, args } => {
+      if !named(b, def_nr, READS) {
+        return false;
+      }
+      for a in args {
+        if !plain_read(b, a) {
+          return false;
+        }
+      }
+      true
+    },
+    _ => false
+  }
+}
+
+// port: same_read.rs fn pure — can evaluating `v` change what a plain read answers?  Every call
+// must be a pure operator; any other node that is not a value is refused.
+pub fn pure(b: ir::Bundle, v: ir::Node) -> boolean {
+  match v {
+    NdSpan { inner } => pure(b, inner),
+    NdVar => true,
+    NdTupleGet => true,
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdNull => true,
+    NdCall { def_nr, args } => {
+      if !named(b, def_nr, PURE) {
+        return false;
+      }
+      for a in args {
+        if !pure(b, a) {
+          return false;
+        }
+      }
+      true
+    },
+    NdBlock => {
+      d = discharge(v);
+      d.t >= 0 && plain_read(b, d.read) && pure(b, d.dflt)
+    },
+    NdIf { cond, t, f } => pure(b, cond) && pure(b, t) && pure(b, f),
+    _ => false
+  }
+}

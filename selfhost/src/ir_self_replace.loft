@@ -1,0 +1,141 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/self_replace.rs` transcribed (`@FR-R-SelfReplace`): a vector delivered into the
+// buffer it already is, dropped.  A view `x = OpGetField(b, 0, …)` of the body's own statement
+// list, neither it nor its buffer assigned, re-pointed or freed after the bind, makes every later
+// `OpReplaceVector(b, x, …)` a no-op: it becomes an empty `Insert`.
+
+use ir;
+use scope_fn;
+use lower;
+use binds;
+use ir_pass_tree;
+
+// May the call `op(args)` change which record `Var(v)` names?  A variable handed to an
+// operator's `const` parameter is its SLOT; a free releases what its first argument names.  A
+// parameter list shorter than the call answers yes.
+fn repoints(b: ir::Bundle, op: integer, args: vector<ir::Node>, v: integer) -> boolean {
+  def = b.data.definitions[op]!;
+  for a in args {
+    i = a#index;
+    if (ir_pass_tree::var_of(a) ?? -1) == v {
+      at = def.attributes[i];
+      if (i == 0 && def.name.starts_with("OpFreeRef")) || at == null || at!.constant {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// `any_node`: is `v` assigned, re-pointed or freed anywhere in `n`?
+fn disturbs(b: ir::Bundle, n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdSet { var } => if var == v { return true; },
+    NdTuplePut { var } => if var == v { return true; },
+    NdIter { var } => if var == v { return true; },
+    NdCall { def_nr, args } => if repoints(b, def_nr, args, v) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if disturbs(b, c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+fn disturbed(b: ir::Bundle, code: vector<ir::Node>, from: integer, v: integer) -> boolean {
+  for k in from..len(code) {
+    if disturbs(b, code[k]!, v) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Count { n: integer }
+
+// `map_nodes` over one statement: each `OpReplaceVector(b, x, …)` (under its spans) dropped.
+fn drop_replace(n: ir::Node, replace: integer, bv: integer, x: integer, c: Count) -> ir::Node {
+  if ir_pass_tree::is_call(n, replace) {
+    a = ir_pass_tree::args_of(n);
+    if len(a) > 1 && (ir_pass_tree::var_of(a[0]!) ?? -1) == bv && (ir_pass_tree::var_of(a[1]!) ?? -1) == x {
+      c.n += 1;
+      return ir::NdInsert { items: [] };
+    }
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for k in kids { drop_replace(k, replace, bv, x, c) }])
+}
+
+// port: self_replace.rs fn drop_in — the self-replaces of one body's statement list dropped.
+fn drop_in(b: ir::Bundle, ops: vector<ir::Node>, replace: integer, field: integer, c: Count) {
+  views_k: vector<integer> = [];
+  views_x: vector<integer> = [];
+  views_b: vector<integer> = [];
+  for s in ops {
+    match scope_fn::unspan(s) {
+      NdSet { var, inner } => {
+        if ir_pass_tree::is_call(inner, field) {
+          a = ir_pass_tree::args_of(inner);
+          bv = ir_pass_tree::var_of(a[0] ?? ir::NdNull);
+          if len(a) >= 2 && bv != null && (ir_pass_tree::int_of(a[1]!) ?? -1) == 0 && scope_fn::unspan(a[1]!) is NdInt {
+            views_k += [s#index];
+            views_x += [var];
+            views_b += [bv!];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  for k in views_k {
+    x = views_x[k#index]!;
+    bv = views_b[k#index]!;
+    if x == bv || disturbed(b, ops, k + 1, x) || disturbed(b, ops, k + 1, bv) {
+      continue;
+    }
+    for j in k + 1..len(ops) {
+      ops[j] = drop_replace(ops[j]!, replace, bv, x, c);
+    }
+  }
+}
+
+// port: self_replace.rs fn rewrite_program — every proven self-replace of the program dropped.
+pub fn rewrite_program(b: ir::Bundle) {
+  if (env_variable("LOFT_NO_SELF_REPLACE") ?? "0") != "0" {
+    return;
+  }
+  replace = lower::find(b, "OpReplaceVector") ?? -1;
+  field = lower::find(b, "OpGetField") ?? -1;
+  if replace < 0 || field < 0 {
+    return;
+  }
+  for d in b.data.definitions {
+    if d.def_type != 1 || !binds::is_loft_defined(d) {
+      continue;
+    }
+    code = d.code[0]!;
+    bl = match scope_fn::unspan(code) { NdBlock { block } => block[0]!, _ => continue };
+    ops = [for o in bl.operators { o }];
+    c = Count { n: 0 };
+    drop_in(b, ops, replace, field, c);
+    if c.n > 0 {
+      b.data.definitions[d#index].code = [replace_body(code, ops)];
+    }
+  }
+}
+
+// `code` with the block under its spans holding `ops`.
+fn replace_body(code: ir::Node, ops: vector<ir::Node>) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_body(inner, ops) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ops)] },
+    _ => code
+  }
+}
