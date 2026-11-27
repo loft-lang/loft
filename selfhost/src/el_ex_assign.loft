@@ -1676,7 +1676,8 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           return ex(ir::NdNull, ir::TyVoid);
         }
         el_vars::in_use(vars, tvar, true);
-        if op == "=" && (el_convert::plain_scalar(mt) || mt is TyText) {
+        // (A `τ?` scalar member is written as its `τ` is: `u.0 = 5`.)
+        if op == "=" && (el_convert::plain_scalar(el_types::base(mt)) || mt is TyText) {
           sv = stored(e, vars, tx, mt);
           if sv != null {
             put = ir::NdTuplePut { var: tvar, idx: tix, inner: el_convert::guard_range(e, sv!, mt, tx.tp, false) };
