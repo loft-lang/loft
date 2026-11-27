@@ -115,6 +115,18 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   at another position and `main_vector<E>` left untyped (`al_2` in the session's `p/`).
 - The N-Join deviation mirrored in `el_ex_match.loft` (`null_arm && !enum_subject && sd < 0`):
   drop the clause once Rust is fixed.
+- `t += 8` through a `t: &text?` link (1827's `add_q`): Rust wraps the append in one more
+  destination test, `if OpConvBoolFromText(t) { <the append> } else null`, whose source was not
+  found; widening the port's `stack` to `&text?` alone gives a silent differ, so it stays refused.
+- `"{for _ in 0..2 {1}}"` at a text function's TAIL: Rust appends `[`/`,`/`]` with
+  `OpAppendText` into a work text, the port with `OpAppendStackText` (probe `us2`); bound to a
+  local both agree.
+- A record-answering function whose tail is `t as Mix` (a text cast, probe `ca2`) and the
+  record-return family in general (`a function returning a record from something other than a
+  literal`, `a return of a record that is not a literal`): R-HostStore's recursive struct-enum
+  with early variant returns is the deep case.
+- A write through an `is` capture of a heap payload: Rust routes it back to the field
+  (`mv_field_origin`, loft#1160); the port binds the view only.
 
 ## Tools
 
