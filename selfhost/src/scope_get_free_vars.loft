@@ -76,6 +76,11 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     if bt is TyFunction {
       continue;
     }
+    // A `&` local releases nothing: the place it names is the caller's (none of the sweep's
+    // arms matches `RefVar`).
+    if bt is TyRefVar {
+      continue;
+    }
     // `outer_collection_backing`, `outer_tuple_backings`, the owner witness, the store
     // release with its `leaves_frame`, `OpFreeRefIfDistinct` pairings and drop hooks, a
     // generator handle's release, a fn-ref's closure: each asks a pass not transcribed.

@@ -62,6 +62,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     whole_value_hoists: whole_value_hoists_in(b, orig_code, orig_vars),
     first_set: scope_fn::NONE,
     null_led: null_led_in(b, orig_code),
+    displaced_owned: [],
     null_led_first: [],
     split_from: [],
     split_count: [],
@@ -117,6 +118,15 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     why: "",
     whys: []
   };
+  // @PLN85 `local_source` — read before any dep strip below.  A right-hand side the oracle
+  // classified reads a refused callee's summary through the stale-callee guard.
+  if env_variable("LOFT_NO_JOIN_OWN") == null {
+    rhss: vector<ir::Node> = [];
+    s.displaced_owned = own::displaced_owned_slots(b, orig_code, orig_vars, rhss);
+    for r in rhss {
+      scope_scan::oracle_guard(s, r);
+    }
+  }
   s.null_led_first = null_led_first_binds_in(b, orig_code);
   s.literal_moves = literal_moves_in(b, orig_code, orig_vars, s.null_led_first);
   function = scope_fn::copy_function(orig_vars);

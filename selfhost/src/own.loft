@@ -1889,6 +1889,45 @@ fn any_return(f: ir::Function, l: vector<ir::Node>) -> boolean {
   false
 }
 
+// src/use_analysis.rs fn displaced_owned_slots — the heap slots holding an OWNED store a later
+// `Borrowed`/`Join` reassignment displaces (`reassign_sites_of`, prior Owned or Unknown), read
+// off the pre-scope `code`; a parameter slot is the witness mechanism's.  `rhss` collects every
+// reassigned slot's right-hand sides, which the caller asks the stale-callee guard of.
+pub fn displaced_owned_slots(b: ir::Bundle, code: ir::Node, func: ir::Function, rhss: vector<ir::Node>) -> vector<integer> {
+  ops = ops_of(b);
+  defs = new_defs();
+  collect_defs(b, [code], ops, defs);
+  vars: vector<integer> = [];
+  for v in defs.rhs_var {
+    if !has(vars, v) {
+      vars += [v];
+    }
+  }
+  vars.sort();
+  out: vector<integer> = [];
+  st = new_state(ops);
+  for v in vars {
+    mine = [for k in 0..len(defs.rhs_var) if defs.rhs_var[k]! == v { defs.rhs[k]! }];
+    n = len(mine);
+    x = func.variables[v];
+    if n < 2 || x == null || !has_heap_dep(x!.type_def[0] ?? ir::TyVoid) {
+      continue;
+    }
+    rhss += mine;
+    prior = classify(b, st, mine[0]!, func, defs);
+    for k in 1..n - 1 {
+      prior = join(prior, classify(b, st, mine[k]!, func, defs));
+    }
+    rhs = classify(b, st, mine[n - 1]!, func, defs);
+    prior_owned = match prior { Owned => true, Unknown => true, _ => false };
+    rhs_borrow = match rhs { Borrowed => true, Join => true, _ => false };
+    if prior_owned && rhs_borrow && !x!.argument {
+      out += [v];
+    }
+  }
+  out
+}
+
 // src/use_analysis.rs:5033 fn ownership_of.
 pub fn ownership_of(b: ir::Bundle, ops: Ops, d_nr: integer, value: ir::Node) -> Own {
   ownership_of_with(b, ops, d_nr, value, function_defs(b, d_nr, ops))

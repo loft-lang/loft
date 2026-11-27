@@ -150,6 +150,9 @@ pub struct Scopes {
   pub whole_value_hoists: vector<integer>,
   pub first_set: integer,
   pub null_led: vector<integer>,
+  // @PLN85 `local_source` — the slots whose owned store a later borrow or join displaces
+  // (`use_analysis::displaced_owned_slots`, on the pre-scope body).
+  pub displaced_owned: vector<integer>,
   pub null_led_first: vector<integer>,
   // The scope pass's split copies, each with the variable it was split from and its binds.
   pub split_from: vector<integer>,
