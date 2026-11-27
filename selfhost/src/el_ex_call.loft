@@ -2830,9 +2830,21 @@ pub fn append_spec(e: el::El, list: vector<ir::Node>, var: integer, val: ir::Nod
       // A formatted `vector<float?>` (`integer?`, `boolean?`) makes the plain scalar's
       // `vector<…>` definition where it is rendered — not carried: refused by name.
       fbn = el_types::nullable_scalar_elem(e, inner);
-      if !e.first_pass && fbn != "" && el::def_nr(e, "vector<{fbn}>") < 0 {
-        el::refuse(e, "a formatted vector of nullable scalars whose plain vector has no definition yet");
-        return;
+      // (Registered first, as Rust makes it where the vector is rendered — a nullable vector
+      // element's plain vector too, `vector<vector<integer>>` for a `vector<vector<integer>?>` —
+      // then refused: register, then refuse.)
+      pin = match inner { TyOptional { inner: oi } => oi, _ => ir::TyVoid };
+      pvn = if fbn != "" { fbn } else if pin is TyVector { el_types::elem_name(e, pin) } else { "" };
+      if pvn != "" && el::def_nr(e, "vector<{pvn}>") < 0 {
+        // (At the lexer's place past the format string: the placeholder, its `}` and the closing
+        // quote read.)
+        pvd = el::add_def(e, "vector<{pvn}>", el::pos_at(e, if e.at >= 0 { e.at + 3 } else { 0 }), el::DT_VECTOR);
+        e.b.data.definitions[pvd].returned = [ir::TyVector { inner: el_types::without_deps(pin), dep: [] }];
+        e.b.data.definitions[pvd].parent = el_ex_base::type_def_nr(e, el_types::without_deps(pin));
+        if fbn != "" && !e.first_pass {
+          el::refuse(e, "a formatted vector of nullable scalars whose plain vector has no definition yet");
+          return;
+        }
       }
       // The first pass knows no row of a struct this file declares (`format_vector_row` answers
       // 0 there): the second pass's is the one kept.
