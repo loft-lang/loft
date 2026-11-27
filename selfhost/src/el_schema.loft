@@ -666,6 +666,18 @@ fn fill_database(e: el::El, d: integer) {
           TyFunction { args: _ } => { vtd = el::source_nr(e, 0, "i32"); },
           // (A generator handle's is the library's `iterator`: `vector<iterator>`.)
           TyIterator { step: _ } => { vtd = el::source_nr(e, 0, "iterator"); },
+          // (A nullable vector's is its vector's, named from the vector and parented on the
+          // element it holds: `vector<vector<Ent>>`, parent `Ent`.)
+          TyOptional { inner: ovi } => match el_types::base(ovi) {
+            TyVector { inner: ove } => {
+              ovk = el_types::type_key_name(e, el_types::base(ovi));
+              if ovk != "" {
+                vtn = "vector<{ovk}>";
+                vtd = match el_types::base(ove) { TyReference { n: oen } => oen, TyEnum { n: oen } => oen, _ => if el::source_nr(e, 0, el_types::elem_name(e, el_types::base(ove))) >= 0 { el::source_nr(e, 0, el_types::elem_name(e, el_types::base(ove))) } else { el::source_nr(e, 0, "vector") } };
+              }
+            },
+            _ => {}
+          },
           TyReference { n: vrn, dep: vrd } => { if len(vrd) == 0 && el_types::type_var(e, vti) < 0 { vtd = vrn; } },
           TyEnum { n: ven } => { if el_types::type_var(e, vti) < 0 { vtd = ven; } },
           TyVector { inner: _ } => {
@@ -875,6 +887,17 @@ fn store_type(e: el::El, t: ir::TypeT, field: boolean) -> integer {
       if inner is TyTuple {
         tc = content_type(e, inner);
         return if tc < 0 { -1 } else { vector_type(e, tc) };
+      }
+      // (A nullable vector element is stored as the vector it holds, its null the empty handle:
+      // `vector<vector<Ent>?>` is laid out as `vector<vector<Ent>>`.)
+      match inner {
+        TyOptional { inner: ov } => {
+          if el_types::base(ov) is TyVector {
+            oc = content_type(e, el_types::base(ov));
+            return if oc < 0 { -1 } else { vector_type(e, oc) };
+          }
+        },
+        _ => {}
       }
       // (…and a generator handle's by the `DbRef` row it is stored as.)
       if inner is TyIterator {
