@@ -1993,6 +1993,8 @@ pub fn constant_expr(e: el::El, n: integer) -> boolean {
       true
     },
     SUnary { e: ue } => ue != null && constant_expr(e, ue!),
+    // (A tuple of constants, `(1, 2)`: `const_vector_blocker` folds a tuple element's members.)
+    STupleLit { elems: tes } => len(tes) > 0 && len([for te in tes if !constant_expr(e, te) { te }]) == 0,
     SParen { e: pe } => pe != null && constant_expr(e, pe!),
     // What `const_eval` folds: a cast and arithmetic over constants, a named constant, and a
     // record literal whose every field is one.
