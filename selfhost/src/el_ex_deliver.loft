@@ -101,6 +101,15 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     tail_buf = match tail { NdVar { n } => if hidden_param(e, vars, n) { n } else { -1 }, _ => -1 };
     // (A `τ?` body whose every early exit is `return null` delivers nothing through them.)
     null_exits = result is TyOptional && len(bl.operators) > 0 && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) == el_ex_copy::null_returns_in(e, bl.operators[0..len(bl.operators) - 1]);
+    // (A `τ?` body ending in `null` promotes nothing: an early exit answering a fresh literal or
+    // a vector local of its own returns it as it stands, in its own store.)
+    null_tail = result is TyOptional && (el_ir::is_null(tail) || match tail { NdCall { def_nr: ntd, args: nta } => len(nta) == 0 && el::def(e, ntd).name == "OpNullRefSentinel", _ => false });
+    if null_tail && len(bl.operators) > 0 {
+      nmids = bl.operators[0..len(bl.operators) - 1];
+      if el_ex_copy::returns_in(nmids) == el_ex_copy::literal_returns(nmids) + el_ex_copy::local_vector_returns(vars, nmids) + el_ex_copy::null_returns_in(e, nmids) {
+        null_exits = true;
+      }
+    }
     if len(bl.operators) > 0 && !null_exits && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
       row = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
       if tail_buf >= 0 && row >= 0 {
