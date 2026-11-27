@@ -105,3 +105,48 @@ Step 2's order — the refusals ranked by the definitions where they are the ONL
 The survey looked an unscoped definition up by its name cut at the first `#`, so a dispatch or
 generic instance (`t_18Circle#Tri#integer_tag`) counted as differ; fixed, which moved ≈620 of
 the slice's differ to unscoped.
+
+## Passes
+
+Step 4's second half: the IR passes `compile::close_program` runs after the scope pass,
+transcribed one module per Rust module (`selfhost/src/ir_<module>.loft`, the same function names)
+and called from `ir_passes::close_program` in Rust's order.  Shared tree helpers are
+`ir_pass_tree.loft` (a node rebuilt over new children, `add_unique`, and `relayout`, which lays the
+frame out again with `scope::intervals` / `scope::assign_slots` as Rust's
+`compute_function_intervals` / `assign_function_slots` do).  A pass that cannot carry a definition
+refuses it by name; none needs to yet.
+
+The gate is `selfhost/bench/passes_survey.py` (Rust's image right after the scope pass, through the
+loft passes, against Rust's image after `close_program`, per definition).  Each commit was checked
+against the previous verdict file: no agreeing definition lost.
+
+| measured | programs agree | definitions agree | differ |
+|---|---|---|---|
+| no pass (baseline) | 1 067 / 2 277 | 34 122 / 37 796 | 3 674 |
+| the transcribed passes below | 1 843 / 2 277 | 36 413 / 37 796 | 1 383 |
+
+**Transcribed:** `arg_copy` (judged by `opt_writes::blocks_plain`, the C writer's port of
+`writes_store`), `leaf_inline` (ranges and non-sentinel facts from `opt_range` / `opt_non_sentinel`;
+the IR phase asks the latter with the program-wide parameter fact off, `new_ir_proof`),
+`zero_count`, `exp_pow`, `forward_walk`, `self_replace`, `in_range` (with its field clause, which
+`forward_walk` asks), `single_use` (with `same_read`'s `pure`/`discharge`/`plain_read`),
+`discharge_into`, `keyed_entry` (with `keyed_place::site`), `text_len`, and `complete_write`'s
+fresh-field flags.
+
+**Not transcribed**, with what the remaining differences rank them by (first-difference shapes of
+the last run, ≈800 of the 1 383 classified):
+
+| pass | differ (≈) | what it needs first |
+|---|---|---|
+| `value_record` | 450 | the program plan (`opt_vr*.loft` port it for the C writer: check it matches `value_records_twinned`), then `value_record.rs` itself (3 300 lines) |
+| `loop_buffer` | 210 | `hoist::loop_buffers`, and `buffer_owner::owners`' two unported owners: `hoist::invariant_literals` and `hoist::element_first` |
+| `elem_first` | 30 | `hoist::element_first` (≈1 000 lines with its helpers, `namings_avoid_place` among them) |
+| `tail_self` | 22 | `tail_frame.rs` |
+| `loop_record`, `lift_reuse` | 20 | `buffer_owner::owners` (as `loop_buffer`); tuple lifts (as `value_record`) |
+| `same_read` | 10 | the pass itself (its guard, get-or-insert and match clauses) |
+| `fill_loop` | — | `Data::vector_element_type` and `Stores::vector` over the image's types |
+
+Also open: `complete_write`'s stored fact (`Definition::no_prefill`, decided by
+`loop_records::group_covers_type`) is not computed — the gate does not print it, so the writers
+read Rust's; `ledger_sites` (inert without `LOFT_LEDGER`) and `sync_capture_ownership` are not
+called.  The survey takes ≈80 s at `--jobs 5`; `LOFT_PASSES_BIN` reuses a built `passed`.
