@@ -36,6 +36,10 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   for d in b.data.definitions {
     program += [if d.def_type != 1 || len(d.code) == 0 || d.source == 0 { "" } else { program_rewrites(b, free, d.code[0]!, d.variables) }];
   }
+  // The functions refused so far: Rust laid each out before the ones after it, so a summary of
+  // one of them (`use_analysis::return_ownership`) reads its SETTLED body, which the image here
+  // does not hold.
+  refused_nrs: vector<integer> = [];
   for d in b.data.definitions {
     if d.def_type != 1 || len(d.code) == 0 || d.source == 0 {
       continue;
@@ -46,7 +50,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why == "" {
       why = join_rewrites(b, orig_code, d.variables);
     }
-    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables);
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, d.variables, stale_callee(b, d_nr, orig_code, refused_nrs));
     if why == "" {
       why = ph.why;
     }
@@ -69,6 +73,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
         why = all.join(" | ");
       }
       refused += ["{d.name}: {why}"];
+      refused_nrs += [d_nr];
       continue;
     }
     // `@FR-R-Wrapper` — decided last, so every rewrite above sees the IR it saw before.
@@ -82,6 +87,43 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     b.data.definitions[d_nr].code = [scope::zero_var_size(code)];
   }
   refused
+}
+
+// The first function reachable from `code` through calls and function values that Rust laid
+// out before `d_nr` while this pass refused it, "" for none: an ownership summary read through
+// it would read a body this image does not hold.
+fn stale_callee(b: ir::Bundle, d_nr: integer, code: ir::Node, refused_nrs: vector<integer>) -> text {
+  todo: vector<integer> = [];
+  callees(code, todo);
+  seen: vector<integer> = [];
+  while len(todo) > 0 {
+    c = todo[len(todo) - 1]!;
+    todo = todo[0..len(todo) - 1];
+    if scope_fn::has(seen, c) || c == d_nr {
+      continue;
+    }
+    seen += [c];
+    cd = b.data.definitions[c];
+    if cd == null || cd!.def_type != 1 || cd!.source == 0 || len(cd!.code) == 0 {
+      continue;
+    }
+    if c < d_nr && scope_fn::has(refused_nrs, c) {
+      return cd!.name;
+    }
+    callees(cd!.code[0]!, todo);
+  }
+  ""
+}
+
+fn callees(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdCall { def_nr } => out += [def_nr],
+    NdFnRef { def_nr } => out += [def_nr],
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    callees(c, out);
+  }
 }
 
 // The whole-program rewrites `check` runs on the parser's bodies before the loop, each refused
@@ -187,19 +229,20 @@ fn join_triggers(b: ir::Bundle, n: ir::Node, w: Trigger) {
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
   // `lastuse_reclaim` — a store built in the body scope that is dead before another one is
-  // built there (`reclaim_free_intent`) is freed early: it needs two such stores.
+  // built there (`reclaim_free_intent`) is freed early: it needs two such stores, each a
+  // vector's `__vdb_N` backing (`reclaim_safe`).
   body_scope = match scope_fn::unspan(code) { NdBlock { block } => block[0].scope, _ => -1 };
   built: vector<integer> = [];
   database_targets(b, code, built);
   in_body = 0;
   for x in built {
     v = f.variables[x];
-    if v != null && v!.scope == body_scope {
+    if v != null && v!.scope == body_scope && v!.name.starts_with("__vdb") {
       in_body += 1;
     }
   }
   if in_body >= 2 {
-    note(w, "last_use::lastuse_reclaim: two stores built in the body scope");
+    note(w, "last_use::lastuse_reclaim: two vector backings built in the body scope");
   }
   for x in f.variables {
     if x.name.starts_with("__place") && scope_fn::is_record(x.type_def[0] ?? ir::TyVoid) {
@@ -285,19 +328,14 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
           note(w, "stored_refs::insert_evacuations: a reference to a local's record stored");
         }
       }
-      if nm == "OpNewRecord" && len(args) > 0 {
-        match scope_fn::unspan(args[0]!) {
-          NdVar { n: x } => if scope_fn::is_argument(f, x) {
-            note(w, "place_result::rewrite: an element appended to a parameter's collection");
-          },
-          _ => {}
-        }
-      }
+      // `place_result` (both clauses) and `literal_append` store a record by copying it into
+      // an appended element (`_elm_N`) or a field of one.
       if nm == "OpCopyRecord" && len(args) > 1 {
+        er = root_var(b, args[1]!);
+        if er >= 0 && scope_fn::name(f, er).starts_with("_elm_") {
+          note(w, "place_result::rewrite / literal_append::rewrite: a record copied into an appended element");
+        }
         match scope_fn::unspan(args[1]!) {
-          NdVar { n: x } => if scope_fn::name(f, x).starts_with("_elm_") {
-            note(w, "literal_append::rewrite: a bound literal copied into an element");
-          },
           NdCall { def_nr: g, args: ga } => {
             src = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
             host = if len(ga) > 0 { match scope_fn::unspan(ga[0]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };

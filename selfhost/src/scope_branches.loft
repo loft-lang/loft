@@ -168,6 +168,11 @@ fn adopt_check(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer
   if len(found) != 1 {
     return;
   }
+  // The oracle is read only past the callee's record-shape test (`may_hand_back_a_caller_store`).
+  vt = scope_fn::base(scope_fn::tp(f, v));
+  if scope_fn::is_record(vt) || vt is TyVector {
+    scope_scan::oracle_guard(s);
+  }
   if binds::adopts_minted_at_bind(b, s.own_ops, f, v, found[0]!) {
     f.variables[v].deferred_first_bind = true;
   }

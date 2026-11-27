@@ -163,6 +163,9 @@ pub struct Scopes {
   pub arm_lift_temps: vector<integer>,
   pub free_transferred: vector<integer>,
   pub local_owns: vector<integer>,
+  // A callee Rust laid out before this function and this pass refused (`check`): an ownership
+  // summary read through it reads its settled body, which the image does not hold.
+  pub stale_callee: text,
   // The first refusal met, "" while the scan is in its domain.
   pub why: text,
   // Every refusal met, in order (`LOFT_SCOPE_ALL_REASONS=1` reports them all: what ranks the
@@ -246,8 +249,16 @@ pub fn defs(s: Scopes, b: ir::Bundle) -> own::Defs {
   s.fn_defs[0]
 }
 
+// Refuse where an ownership summary would read a stale callee (`stale_callee`).
+pub fn oracle_guard(s: Scopes) {
+  if s.stale_callee != "" {
+    refuse(s, "use_analysis::return_ownership: a callee laid out earlier was refused (its summary reads its settled body)");
+  }
+}
+
 // port: use_analysis.rs fn ownership_of_with, memoised per function as `scan_set` asks it.
 pub fn ownership(s: Scopes, b: ir::Bundle, value: ir::Node) -> own::Own {
+  oracle_guard(s);
   own::ownership_of_with(b, s.own_ops, s.d_nr, value, defs(s, b))
 }
 

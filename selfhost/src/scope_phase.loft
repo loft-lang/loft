@@ -30,7 +30,7 @@ pub struct Phase {
 // port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
 // `confined`, `sunk` and `late_owners` are empty on every phase this transcription runs (the
 // confinement rescan, the written-out arms and the late owners are facts of stores).
-pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function) -> Phase {
+pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: text) -> Phase {
   s = scope_scan::Scopes {
     ops: ops,
     d_nr: d_nr,
@@ -90,6 +90,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     arm_lift_temps: [],
     free_transferred: [],
     local_owns: [],
+    stale_callee: stale,
     why: "",
     whys: []
   };
@@ -281,10 +282,11 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, code: 
       scope_scan::refuse(s, "use_analysis::lease_calls: a record type with a copy hook");
     }
   }
-  // `owner_witness_locals` (loft#1336, @FR-O-Witness).
-  ow = scope_witness::owner_witness_may_fire(code, f);
+  // `owner_witness_locals` (loft#1336, @FR-O-Witness): a local whose assignments mix ownership
+  // takes a witness, whose releases are not transcribed.
+  ow = scope_witness::owner_witness_locals(s, b, code, f);
   if ow >= 0 {
-    scope_scan::refuse(s, "witness::owner_witness_locals: a record local bound twice or from a choice");
+    scope_scan::refuse(s, "witness::owner_witness_locals: a record local whose assignments mix ownership");
   }
   // `view_rebind_locals` (loft#2145) — a view local handed to a `&` heap parameter.
   if amp_view_local(s, b, code, f) {
@@ -361,15 +363,36 @@ fn view_of_disturbed_container(b: ir::Bundle, code: ir::Node, f: ir::Function) -
 fn view_containers(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
   match scope_fn::unspan(n) {
     NdSet { var, inner } => if scope_fn::is_record(scope_fn::tp(f, var)) {
+      // A view the walk copies is read through `plain_element_read` too: a SILENT element read
+      // (`OpGetVectorNullable`, `OpVectorRefNullable`) names its container as the plain one does.
       c = binds::projection_container_var(b, inner);
-      if c != null && !scope_fn::has(out, c!) {
-        out += [c!];
+      r = if c != null { c! } else { read_root(b, inner) };
+      if r >= 0 && !scope_fn::has(out, r) {
+        out += [r];
       }
     },
     _ => {}
   }
   for x in scope_fn::children(n) {
     view_containers(b, x, f, out);
+  }
+}
+
+// The variable a chain of reads (`OpGet*`, `OpVectorRef*`) is rooted at, -1 for none.
+fn read_root(b: ir::Bundle, n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      if (nm.starts_with("OpGet") || nm.starts_with("OpVectorRef")) && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: x } => x,
+          _ => read_root(b, args[0]!)
+        }
+      } else {
+        -1
+      }
+    },
+    _ => -1
   }
 }
 

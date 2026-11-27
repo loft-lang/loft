@@ -79,7 +79,9 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   was_in_scope = scope_scan::in_scope(s, v);
   value_null = value is NdNull;
   displaced = scope_drops::no_pre_post();
-  if was_in_scope && !value_null {
+  // `displaced_drop` answers none for a value with no record (`heap_def_nr`), so the oracle
+  // `rhs_owned` reads is asked only of a record binding.
+  if was_in_scope && !value_null && scope_fn::is_record(t) {
     rhs_owned = ref_rhs_owned(s, b, value) || copy_flagged_on_target(s, v, value) || var_bind_copies(b, f, v, value);
     displaced = scope_drops::displaced_drop(s, b, v, rhs_owned, f);
   }
@@ -272,6 +274,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if fn_nr != null && binds::is_loft_defined(b.data.definitions[fn_nr!]!) {
       callee = b.data.definitions[fn_nr!]!;
       adopts_fresh_store = binds::return_adopts_fresh_store(callee);
+      scope_scan::oracle_guard(s);
       adopts_minted = binds::adopts_minted_at_bind(b, s.own_ops, f, v, unspanned);
       // @PLN85 `local_source` — `displaced_owned_slots` names a slot whose OWNED store a later
       // borrow or join displaces; it needs a second bind of the slot.
