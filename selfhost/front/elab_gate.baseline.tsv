@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d5e4e3311b29d6c84abe705e2da8dfabb1a9d6f7
+suite	dcd31a9cb1d5f96dfe99a5225f13f6ae2d381129
 
-layer	elab	agree	1636	of	2278
+layer	elab	agree	1637	of	2279
 elab	refused	lib/audience_crystal/src/audience_crystal.loft
 elab	refused	lib/audience_crystal/tests/01-editor-helpers.loft
 elab	refused	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -13415,7 +13415,7 @@ elab-functions	agree	tests/scripts/store_compact_b2.loft::n_report
 elab-functions	agree	tests/scripts/store_compact_b2.loft::vector<Leaf>
 elab-functions	agree	tests/scripts/store_compact_b2.loft::vector<Tag>
 
-layer	elab-pass1	agree	18118	of	20614
+layer	elab-pass1	agree	18122	of	20620
 elab-pass1	agree	lib/code.loft::t_4Code_add_block
 elab-pass1	agree	lib/code.loft::t_4Code_add_if
 elab-pass1	agree	lib/code.loft::t_4Code_add_loop
@@ -15211,6 +15211,10 @@ elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arm
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft::n_test_a_place_subject_returns_a_binding_or_a_built_local
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft::n_test_a_plain_enum_returns_a_literal_or_a_built_local
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft::n_test_a_struct_match_returns_a_field_or_a_built_local
+elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::n_first
+elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::n_hurt
+elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::n_main
+elab-pass1	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::t_5State_top
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft::n_same
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft::n_test_a_borrowing_result_is_copied_at_its_bind
 elab-pass1	agree	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft::n_test_each_result_is_independent
