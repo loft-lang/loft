@@ -849,6 +849,11 @@ pub fn load_base(el: El, base: ir::Bundle, upto: integer, types_upto: integer) {
       break;
     }
     el.b.data.definitions += [d];
+    // (A row Rust minted for THIS program — past the empty program's types — is not the
+    // library's: the definition arrives without it, and the port mints it where Rust does.)
+    if d.known_type != NO_TYPE && d.known_type >= types_upto {
+      el.b.data.definitions[d#index].known_type = NO_TYPE;
+    }
   }
   for t in base.types {
     if t#index >= types_upto {
