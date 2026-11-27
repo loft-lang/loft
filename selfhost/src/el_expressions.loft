@@ -798,6 +798,20 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
       // A `null` tail answers the sentinel and delivers nothing into the buffer.
       if built == null && el_ex_copy::null_sentinel_tail(e, code) {
         built = code;
+        // (A struct enum's bound buffer an earlier exit copied into: the body answers it, typed
+        // as borrowing it, as the result names it.)
+        nsa = attr_nr(el::def(e, e.context), "__retbuf");
+        if rb >= 0 && nsa >= 0 && el_types::struct_enum_def(result) >= 0 && el_types::deps(el::def(e, e.context).returned[0] ?? ir::TyVoid).contains(nsa) {
+          match code {
+            NdBlock { block: nsb } => {
+              nsl = nsb[0];
+              nsown = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
+              nsl.result = [if result is TyOptional { ir::TyOptional { inner: nsown } } else { nsown }];
+              built = ir::NdBlock { block: [nsl] };
+            },
+            _ => {}
+          }
+        }
       }
       // A body ending in a `return` delivered its value already (`record_return`).
       if built == null && el_ex_deliver::ends_in_return(code) {
@@ -2294,7 +2308,12 @@ pub fn materialize_if_tail(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: i
     return null;
   }
   owned = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
-  arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
+  // (A `τ?` branch is copied arm by arm, each view where present — the sentinel where absent —
+  // as a `τ?` join is: `copy_arms`.)
+  arms: ir::Node? = if result is TyOptional { el_ex_copy::copy_arms(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, td, owned) } else { null };
+  if arms == null {
+    arms = materialize_arm(e, vars, el_ir::unspan(el_ir::last(bl.operators)), rb, kt, owned, any_block: true);
+  }
   if arms == null {
     return null;
   }

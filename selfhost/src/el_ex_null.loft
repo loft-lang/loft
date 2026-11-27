@@ -3586,7 +3586,8 @@ pub fn materialised_return(e: el::El, vars: el_vars::Vars, v: Ex, w: integer, re
   // `MaterializeView` for a returned JOIN whose arms read into locals or inline calls' results
   // (`return if c { src.h } else { JH { … } }`): the work ref is minted on both passes and the
   // buffer renamed onto it (a struct enum's is bound instead), each arm copied on the second.
-  if x is NdIf && el_ex_copy::record_result(result) && el::def(e, d).def_type != el::DT_GENERIC && el_expressions::bind_leaves(e, vars, x) > 0 {
+  // (A `τ?` struct enum's join too, its buffer bound: `return if c { g[0] } else { null }`.)
+  if x is NdIf && (el_ex_copy::record_result(result) || (result is TyOptional && el_types::struct_enum_def(result) >= 0)) && el::def(e, d).def_type != el::DT_GENERIC && el_expressions::bind_leaves(e, vars, x) > 0 {
     jenum = el_convert::struct_enum(el_types::base(result));
     jtd = heap_def(el_types::base(result));
     // (`return_views_local`: the work ref is minted only where an arm views a store of the
