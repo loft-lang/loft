@@ -1,0 +1,8 @@
+// @PLN231 R10 probe — a link rooted in a PARAMETER, made inside a callee (the place a -> &T return would come from)
+// Expect on both backends: 90 / 50
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy>, name: text }
+fn hurt(e: Enemy, d: integer) { e.hp -= d; }
+fn mk() -> State { State { enemies: [Enemy { hp: 100 }, Enemy { hp: 50 }], name: "s" } }
+fn hurt_first(st: State, d: integer) { e = &st.enemies[0]; e.hp -= d; }
+fn main() { s = mk(); hurt_first(s, 10); println("{s.enemies[0].hp} / {s.enemies[1].hp}"); }

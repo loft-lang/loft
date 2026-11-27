@@ -1,0 +1,12 @@
+// @PLN231 R10 probe — what a call result that borrows a parameter carries, against a link
+// Expect: LOFT_VAR_TABLE=n_first shows the return typed Reference(…, Deps { items: [0] });
+// LOFT_VAR_TABLE=n_main shows `e` OWNS (copied at the bind) and `l` deps=[st(0)]
+struct Enemy { hp: integer }
+struct State { enemies: vector<Enemy> }
+fn first(s: State) -> Enemy { s.enemies[0] }
+fn main() {
+  st = State { enemies: [Enemy { hp: 100 }] };
+  e = first(st);
+  l = &st.enemies[0];
+  println("{e.hp} {l.hp}");
+}

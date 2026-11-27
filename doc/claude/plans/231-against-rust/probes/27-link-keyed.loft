@@ -1,0 +1,4 @@
+// @PLN231 R10 probe — a link to an element of a keyed collection
+// Expect on both backends: 40
+struct E { k: text, v: integer }
+fn main() { h: hash<E[k]> = [E { k: "a", v: 50 }]; e = &h["a"]; e.v -= 10; println("{h["a"].v}"); }
