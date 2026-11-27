@@ -3,9 +3,9 @@
 # suite commit it was written against (tests/loft-suite.pin); `layer` heads each block; each other
 # row is an item of that layer that does not agree yet.  Re-pin only in the commit whose change
 # moves it, with the reason.
-suite	d5e4e3311b29d6c84abe705e2da8dfabb1a9d6f7
+suite	dcd31a9cb1d5f96dfe99a5225f13f6ae2d381129
 
-layer	scope	agree	142	of	2278
+layer	scope	agree	142	of	2279
 scope	unscoped	lib/audience_crystal/src/audience_crystal.loft
 scope	unscoped	lib/audience_crystal/tests/01-editor-helpers.loft
 scope	unscoped	lib/audience_crystal/tests/02-gridmesh-equiv.loft
@@ -202,6 +202,7 @@ scope	unscoped	loft-suite/rules/calls/F-Ret/a-part-of-a-calls-result-returned-is
 scope	unscoped	loft-suite/rules/calls/F-Ret/a-recursive-call-after-an-early-fresh-return-may-still-answer-its-argument.loft
 scope	unscoped	loft-suite/rules/calls/F-Ret/a-stored-reference-returned-hands-back-a-fresh-copy-however-it-is-spelled.loft
 scope	unscoped	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft
+scope	unscoped	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft
 scope	unscoped	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft
 scope	differ	loft-suite/rules/calls/F-Return/2551-a-coalesce-return-answers-its-own-value.loft
 scope	unscoped	loft-suite/rules/calls/F-Return/2555-a-return-nested-in-a-binds-value-releases-its-literal.loft
@@ -2143,7 +2144,7 @@ scope	unscoped	tests/scripts/the-reference-safety-traps-are-what-it-catalogues.l
 scope	unscoped	tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft
 scope	unscoped	tests/scripts/two-vectors-pushed-in-lockstep-share-a-length-local.loft
 
-layer	scope-functions	agree	19904	of	37800
+layer	scope-functions	agree	19910	of	37809
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::BRANCH_LEN_BASE
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::BRANCH_SPACING
 scope-functions	agree	lib/audience_crystal/src/audience_crystal.loft::CONNECT_TICKS
@@ -4133,6 +4134,12 @@ scope-functions	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-eac
 scope-functions	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft::vector<P>
 scope-functions	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft::vector<T>
 scope-functions	agree	loft-suite/rules/calls/F-Ret/a-text-match-tail-answers-each-arms-value-whatever-its-lowering-or-declaration-order.loft::vector<Val>
+scope-functions	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::Enemy
+scope-functions	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::State
+scope-functions	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::n_first
+scope-functions	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::n_hurt
+scope-functions	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::t_5State_top
+scope-functions	agree	loft-suite/rules/calls/F-Ret/a-write-into-a-call-result-is-lost-and-says-so.loft::vector<Enemy>
 scope-functions	agree	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft::In
 scope-functions	agree	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft::S
 scope-functions	agree	loft-suite/rules/calls/F-Ret/each-result-is-a-fresh-record-written-to-its-defaults.loft::n_same
