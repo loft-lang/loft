@@ -13,7 +13,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 |---|---|
 | A — Which restrictions bite | 🟡 the loft tracker and four consumers' loft notes read (dryopea, crawler, moros, routing); R10 bites, the rest show no consumer evidence yet |
 | B — Cause and lift per biting restriction | 🟡 R10 feasible (probes 20–30); `map`/`filter`/`reduce` feasible (R5); the others carry a first reading |
-| C — Lifts | ⏸️ each lift the owner approves becomes its own plan or fix |
+| C — Out of the plan | 🟡 R10 → loft#2659 + D-call-32; R5 → loft#2658 + D-iter-18.  The rest stay verdicts here until the owner picks one |
 
 ## Goal
 
@@ -102,9 +102,9 @@ revisit trigger).
      is on BOTH parameters, so the caller's reshape check must hold both arguments.
   4. The rule text: `(F-Ret)` says "an addressable input" — the lift above is that rule, so the
      rule needs no change; LOFT_DECLARATIONS.md's "no `&T` return type" does.
-- **Verdict.** Liftable, narrowly, and the formal rule already describes it.  What leaves the
-  plan is a deviation entry under `formal/calls.md` and an issue carrying the probe table and
-  the four questions above.
+- **Verdict.** Liftable, narrowly, and the formal rule already describes it.  Out of the plan as
+  [loft#2659](https://github.com/loft-lang/loft/issues/2659) (the probe table and the four
+  questions) and the deviation **D-call-32** in `formal/calls.md`.
 
 ### R1 — aliasing and data races
 
@@ -199,8 +199,9 @@ revisit trigger).
   it: the rules give a vector result, which is also what a Rust user's `.collect()` gives.
   Fusing `map(filter(…))` into one loop is not part of it either: the rules finish `filter`
   before `map` starts, and an impure lambda would see the difference.
-- **Verdict.**  Liftable, and the rules already say how.  What leaves the plan is a deviation
-  entry under `formal/iteration.md` and an issue carrying the table above.
+- **Verdict.**  Liftable, and the rules already say how.  Out of the plan as
+  [loft#2658](https://github.com/loft-lang/loft/issues/2658) and the deviation **D-iter-18** in
+  `formal/iteration.md`.
 
 ### R6 — closure limits
 
