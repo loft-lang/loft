@@ -1215,9 +1215,12 @@ fn parse_fields(e: el::El, d: integer, fields: vector<integer>) {
     match e.p.nodes[f] {
       SFieldDecl { public, lexeme, fixed, name: fname, mods } => {
         tn = field_type_node(e, mods);
-        if lexeme || tn == null {
+        if tn == null {
           el::refuse(e, "a struct field with a modifier, a default or a capture");
           continue;
+        }
+        if lexeme && !e.lexeme_fields.contains("{d}:{fname}") {
+          e.lexeme_fields += ["{d}:{fname}"];
         }
         t = el_types::parse_type(e, tn!);
         if t == null {

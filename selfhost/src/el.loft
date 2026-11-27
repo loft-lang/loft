@@ -166,6 +166,9 @@ pub struct El {
   pub null_widened: vector<integer>,
   // The definitions declared `value struct`: a comparison of two is spelled field by field.
   pub value_structs: vector<integer>,
+  // `Attribute::lexeme` (@PLN35): the `#lexeme` fields of token-enum variants, `"<def>:<field>"`
+  // — parse-time only, as Rust's is (no image carries it).
+  pub lexeme_fields: vector<text>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
   // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
@@ -288,6 +291,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     at: -1,
     null_widened: [],
     value_structs: [],
+    lexeme_fields: [],
     slot_links: [],
     subject_sites: [],
     subject_names: [],
