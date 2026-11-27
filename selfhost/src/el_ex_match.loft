@@ -908,7 +908,23 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
               }
               et = elems[pe#index]!;
               tget = ir::NdTupleGet { var: tmp, idx: pe#index };
+              // `name: <pattern>` on a scalar or text member: the name bound first (Rust's
+              // `peek_named_arg` binding), then the pattern read at the member as written alone.
+              tpe = pe;
               match e.p.nodes[pe] {
+                PCap { name: tcn, pat: tcp } => {
+                  if tcp != null && struct_enum_of(e, et) < 0 && (el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
+                    tcv = pattern_bind(vars, tcn, et, tnames);
+                    tbinds += [el_ir::v_set(tcv, tget)];
+                    tpe = tcp!;
+                  }
+                },
+                _ => {}
+              }
+              if e.p.nodes[tpe] is PWild {
+                continue;
+              }
+              match e.p.nodes[tpe] {
                 PLit { e: tle } => {
                   if tle == null || struct_enum_of(e, et) >= 0 {
                     el::refuse(e, "a tuple pattern literal on a member of this type: {type_kind(et)}");
@@ -935,7 +951,7 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
                 },
                 _ => {}
               }
-              tbn = el_ex_pattern::rename_of(e, pe);
+              tbn = el_ex_pattern::rename_of(e, tpe);
               if tbn != "" && struct_enum_of(e, et) < 0 {
                 if !el_ex_call::scalar(el_types::base(et)) && !(el_types::base(et) is TyText) {
                   el::refuse(e, "a tuple pattern binding of a member of this type: {type_kind(et)}");
@@ -945,12 +961,27 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
                 tbinds += [el_ir::v_set(tbv, tget)];
                 continue;
               }
+              // A plain struct member's `S { … }` (`parse_field_sub_pattern` over the member): its
+              // bare fields bound, its sub-patterns `field_sub` tests (`struct_alternative`).
+              tpd = struct_ref(e, el_types::base(et));
+              if tpd >= 0 && struct_enum_of(e, et) < 0 && e.p.nodes[tpe] is PName {
+                tsa = el_ex_pattern::struct_alternative(e, vars, ex(tget, et), tpd, tpe, []);
+                if tsa == null {
+                  return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+                }
+                tbinds += tsa!.binds;
+                tnames += tsa!.names;
+                for tsc in tsa!.conds {
+                  cond = if cond == null { tsc } else { el_ir::v_if(cond!, tsc, ir::NdBoolean { b: false }) };
+                }
+                continue;
+              }
               sd = struct_enum_of(e, et);
               if sd < 0 {
                 el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
                 return ex(ir::NdNull, ir::TyUnknown { n: 0 });
               }
-              mc = member_cond(e, vars, pe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
+              mc = member_cond(e, vars, tpe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
               if mc.refused {
                 return ex(ir::NdNull, ir::TyUnknown { n: 0 });
               }
