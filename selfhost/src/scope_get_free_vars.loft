@@ -67,6 +67,17 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       record_release(s, b, f, v, ret_var, delivered, ls);
       continue;
     }
+    // A generator HANDLE owns its coroutine frame (loft#835): released unless it is a view of a
+    // member (`skip_free`) or was moved into a field or an element (loft#1585); one moved in a
+    // branch arm is released on the paths that did not move it.
+    if bt is TyIterator {
+      if !scope_fn::is_skip_free(f, v) && !scope_fn::has(s.drop_transferred, v) {
+        free = ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: v }] };
+        hv = scope_scan::get(s.handed_off, v);
+        ls += [if hv >= 0 { ir::NdIf { cond: ir::NdVar { n: hv }, t: ir::NdNull, f: free } } else { free }];
+      }
+      continue;
+    }
     // A fn-ref local releases its closure store (`Type::Function`, asked BARE: a `fn(…)?`
     // matches none of the sweep's arms and is released by nobody).
     if t is TyFunction {

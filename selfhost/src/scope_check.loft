@@ -55,6 +55,7 @@ use scope_return_field;
 use scope_exit_vector;
 use scope_const_fn;
 use scope_exit_record;
+use scope_handles;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -149,12 +150,11 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     jr = scope_join_rewrite::write_out_joined_copies(b, d.code[0]!, d.variables);
     vars = scope_fn::copy_function(d.variables);
     orig_code = scope_join_rewrite::reassociate_coalesce_chains(b, jr.code, vars);
+    // `(G-Hold)` — a generator handle shared by a second holder takes a hold on its frame.
+    orig_code = scope_handles::retain_shared_handles(b, d_nr, orig_code, vars);
     why = program[d_nr] ?? "";
     if why == "" {
       why = jr.why;
-    }
-    if why == "" {
-      why = join_rewrites(vars);
     }
     stale = stale_callees(b, d_nr, orig_code, refused_nrs);
     ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], [], []);
@@ -225,7 +225,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why != "" {
       if all_reasons {
         all: vector<text> = [];
-        for r in [program[d_nr] ?? "", jr.why, join_rewrites(vars)] {
+        for r in [program[d_nr] ?? "", jr.why] {
           if r != "" {
             all += [r];
           }
@@ -430,19 +430,6 @@ fn note(w: Trigger, why: text) {
     w.why = why;
   }
 }
-
-// `retain_shared_handles` — the one rewrite `check` runs on each body before its scan that is
-// not carried (`write_out_joined_copies` and `reassociate_coalesce_chains` are
-// `scope_join_rewrite`'s).
-fn join_rewrites(f: ir::Function) -> text {
-  for v in f.variables {
-    if scope_fn::base(v.type_def[0] ?? ir::TyVoid) is TyIterator {
-      return "handles::retain_shared_handles: a generator handle";
-    }
-  }
-  ""
-}
-
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
 // is in the body: `place_result`, `byte_copy`'s vector clause.

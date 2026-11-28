@@ -60,10 +60,11 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   // A keyed binding (step 6) takes the collection legs: its clear on a rebind to `[]` (@P302),
   // its scope-end release through its self-dep; the generator walk of a keyed type whose records
   // hold a handle refuses.  A `&` to a record or a vector (step 8) takes the record and vector
-  // legs, its `&`-ness carried as `publishes_through_ref`.
-  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !heap_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) && !scope_fn::is_keyed(t) {
-    // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox, the
-    // keyed materialise copies, the generator handle frees.
+  // legs, its `&`-ness carried as `publishes_through_ref`.  A generator handle binding takes
+  // its frame release on a rebind (@FR-G-Hold); a handle view of a member and one of its own
+  // (`handle_views`) refuses in the phase.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !heap_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) && !scope_fn::is_keyed(t) && !(scope_fn::base(t) is TyIterator) {
+    // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox.
     scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
     if !scope_scan::in_scope(s, v) {
       scope_scan::register_binding(s, v, f);
@@ -114,6 +115,9 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   // #316 — capture BEFORE put_scope below: an ownership-transition free only applies to a
   // REassignment.
   was_in_scope = scope_scan::in_scope(s, v);
+  // Read before the retirement below clears it: a generator handle moved into a container
+  // (loft#1585) is the container's, and its rebind must not free it.
+  handle_moved = scope_fn::has(s.drop_transferred, v);
   value_null = value is NdNull;
   displaced = scope_drops::no_pre_post();
   // `displaced_drop` answers none for a value with no record (`heap_def_nr`), so the oracle
@@ -132,8 +136,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     return ir::NdInsert { items: [] };
   }
   transition_free: ir::Node? = null;
-  // The TUPLE transition, the keyed generator walk and the generator HANDLE's frame release
-  // are reached only for those kinds, which refuse above.
+  // The TUPLE transition is reached only for a tuple, which refuses above.
   // loft#1126 / @FR-O-Latest — `v = f(…, v, …)` with `v` at `f`'s hidden buffer position, where
   // `f` mints a store of its own.  `Function::entry_witness` is minted only for a hidden return
   // buffer, which the phase refuses.
@@ -146,7 +149,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   }
   // loft#1601, @FR-G-Hold — a keyed collection rebound releases the generator frames its records
   // hold through its type's walk (`keyed_frames_name`), not transcribed.
-  if transition_free == null && was_in_scope && scope_drops::keyed_holds_generator(b, t) && !scope_fn::reads_var(value, v) && !scope_fn::reads_var(value, ov) {
+  if transition_free == null && was_in_scope && scope_drops::keyed_holds_generator(b, t) && !scope_fn::names_var(value, v) && !scope_fn::names_var(value, ov) {
     self_only = true;
     for d in scope_fn::deps(f, v) {
       if d != v && d != ov {
@@ -156,6 +159,16 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if self_only {
       scope_scan::refuse(s, "scan_set: a keyed collection whose records hold a generator, rebound (keyed_frames_name)");
     }
+  }
+  // A generator HANDLE owns its frame (@FR-G-Hold), so reassigning one releases the frame it
+  // held, as its scope end would have (loft#835) — not for a view of a member (`skip_free`),
+  // nor a handle moved into a container, nor where the right-hand side reads the handle it
+  // replaces.  One moved in a branch arm, or a view (`handle_views`), is released on the paths
+  // where its flag says it owns.
+  if transition_free == null && was_in_scope && scope_fn::base(scope_fn::tp(f, v)) is TyIterator && !scope_fn::is_skip_free(f, v) && !handle_moved && !scope_fn::names_var(value, v) && !scope_fn::names_var(value, ov) {
+    gfree = scope_drops::free_ref(s, v);
+    hv = scope_scan::get(s.handed_off, v);
+    transition_free = if hv >= 0 { ir::NdIf { cond: ir::NdVar { n: hv }, t: ir::NdNull, f: gfree } } else { gfree };
   }
   // A `??` hoist that OWNS its subject is re-bound on every pass of a loop.
   // `@FR-O-Buffer`, loft#2673 — not where the hoist was promoted onto the return buffer: the

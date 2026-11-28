@@ -11,6 +11,7 @@
 
 use ir;
 use scope_fn;
+use scope_handles;
 use scope_scan;
 use binds;
 use own;
@@ -384,6 +385,18 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
       _ => {}
     }
   }
+  // A generator handle MOVED into a field or an element (`handoff::handle_handoff`, loft#1585):
+  // `collect_drop_transferred` and, in a branch arm, `arm_container_handoffs`' per-path flag are
+  // not transcribed.
+  if moves_a_handle(b, code, f) {
+    scope_scan::refuse(s, "handoff::handle_handoff: a generator handle moved into a container");
+  }
+  // `mixed_handle_views` — a handle local given a member's handle and one of its own: its
+  // per-path flag (`mint_handoff_flag`) and the tagged leaves are not transcribed.
+  // (`owned_handle_members` answers only for a tuple, which refuses where it is bound.)
+  if len(scope_handles::mixed_handle_views(b, code, f)) > 0 {
+    scope_scan::refuse(s, "handles::mixed_handle_views: a handle view of a member and of its own (handle_views)");
+  }
   // `(H-Copy-Lease)` — `lease_calls` runs a type's `OpCopy` on every copy of it: a record local
   // of a type with a copy hook.
   for v in f.variables {
@@ -408,6 +421,29 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   if len(scope_view_walk::collect_views_to_materialise(b, code, f, s.ops.disturbed)) > 0 {
     scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a view used after a disturbance of its container (the materialise legs)");
   }
+}
+
+// port: handoff.rs fn handle_handoff, asked of every call: `OpSetDbRef(host, pos, g)` with `g` a
+// generator handle local.
+fn moves_a_handle(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if len(args) > 2 && scope_args::def_name(b, def_nr) == "OpSetDbRef" {
+      match scope_fn::unspan(args[2]!) {
+        NdVar { n: g } => if scope_fn::base(scope_fn::tp(f, g)) is TyIterator {
+          return true;
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if moves_a_handle(b, c, f) {
+      return true;
+    }
+  }
+  false
 }
 
 // port: closure_keep.rs fn closure_keep_set, its `shared` answer over the holders and links
