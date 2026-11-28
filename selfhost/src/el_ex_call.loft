@@ -2337,10 +2337,6 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   for i in el_types::deps(el_types::base(ret)) {
     if i < visible && !e.first_pass {
       pborrow = true;
-      if !(i < len(list) && el_ir::unspan(list[i]!) is NdVar) {
-        el::refuse(e, "a call whose vector result borrows a parameter");
-        return null;
-      }
     }
   }
   nm = el_types::elem_name(e, inner);
@@ -2362,7 +2358,21 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
       if pi >= 0 && pi < visible && pi < len(list) {
         match el_ir::unspan(list[pi]!) {
           NdVar { n: pv } => { if !p1.contains(pv) { p1 += [pv]; } },
-          _ => {}
+          // (A temporary handed in borrows what it is built in — a literal's own store,
+          // `s: vector<integer>["__vdb_1"]?` — else the buffer handed alongside it.)
+          _ => {
+            if !e.first_pass {
+              tds = match el_ir::unspan(list[pi]!) { NdBlock { block: tab } => el_types::deps(tab[0].result[0] ?? ir::TyVoid), _ => [] };
+              if len(tds) == 0 {
+                tds = [buf];
+              }
+              for td in tds {
+                if !p1.contains(td) {
+                  p1 += [td];
+                }
+              }
+            }
+          }
         }
       } else if pi >= 0 && pi < len(el::def(e, d).attributes) && el::def(e, d).attributes[pi]!.hidden && !p1.contains(buf) {
         // (…and a callee whose result names its own buffer there answers a borrow of the one

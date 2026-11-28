@@ -457,8 +457,35 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
     match code {
       NdBlock { block } => {
         ob = block[0];
+        // (A body's last `return v;` is its tail value `v`, as Rust's parser leaves it.)
+        was_return = false;
+        if len(ob.operators) > 0 {
+          match el_ir::unspan(ob.operators[-1]) {
+            NdReturn { inner: rti } => { if !(rti is NdNull) { ob.operators[-1] = el_ir::respan(ob.operators[-1], rti); was_return = true; } },
+            _ => {}
+          }
+        }
         ostore = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdBlock { block: tb } => literal_backing_store(tb[0]), _ => -1 } } else { -1 };
         mids = ob.operators[0..(if len(ob.operators) > 0 { len(ob.operators) - 1 } else { 0 })];
+        // `MergeAttr`: a local whose borrows are all visible parameters, answered by the body's last
+        // `return v;`, is handed up as it is, the result borrowing those parameters (`ls = ["w"]`).
+        // (As a plain tail `v` it is copied in, `Bind`, below.)
+        mpl = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdVar { n: mpv } => if !vars.vars[mpv].argument && (el_types::base(el_vars::tp(vars, mpv)) is TyVector) { mpv } else { -1 }, _ => -1 } } else { -1 };
+        mpd = if mpl >= 0 { el_types::deps(el_vars::tp(vars, mpl)) } else { [] };
+        param_view = mpl >= 0 && len(mpd) > 0 && len([for mq in mpd if mq < 0 || mq >= len(vars.vars) || !vars.vars[mq]!.argument || hidden_param(e, vars, mq) { 1 }]) == 0;
+        if was_return && param_view && el_ex_copy::returns_in(mids) == 0 {
+          mret = el::def(e, d).returned[0];
+          mds = el_types::deps(mret);
+          for mq in mpd {
+            mqa = attr_nr(el::def(e, d), el_vars::name_of(vars, mq));
+            if mqa >= 0 && !mds.contains(mqa) {
+              mds += [mqa];
+            }
+          }
+          e.b.data.definitions[d].returned = [el_types::with_deps(mret, mds)];
+          ob.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+          return ir::NdBlock { block: [ob] };
+        }
         if lit_syntax && ostore >= 0 && starts_with(el_vars::name_of(vars, ostore), "__vdb_") && el_ex_copy::returns_in(mids) == el_ex_copy::null_returns_in(e, mids) {
           rename_onto(e, vars, rb, ostore);
           ob.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
@@ -481,7 +508,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         // (A local that views another local, `e = vv[0]; e` — `Bind` on the first pass — is
         // copied in where present, as a nullable one is, its store not its own to free; dense or
         // `vector<T>["vv"]?`, an element read of a vector of vectors.)
-        vtl = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdVar { n: vtv } => if !vars.vars[vtv].argument && el_types::base(el_vars::tp(vars, vtv)) is TyVector && el_ex_copy::views_a_local(vars, vtv) { vtv } else { -1 }, _ => -1 } } else { -1 };
+        vtl = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdVar { n: vtv } => if !vars.vars[vtv].argument && el_types::base(el_vars::tp(vars, vtv)) is TyVector && (el_ex_copy::views_a_local(vars, vtv) || (param_view && vtv == mpl)) { vtv } else { -1 }, _ => -1 } } else { -1 };
         if vtl >= 0 && nrow >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && el_ex_copy::returns_in(mids) == 0 {
           b = ir::NdVar { n: rb };
           copy = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, ir::NdVar { n: vtl }, ir::NdInt { n: nrow }]), b] };
