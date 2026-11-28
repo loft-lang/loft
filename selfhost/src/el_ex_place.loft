@@ -94,6 +94,36 @@ pub fn replaces_walked_source(e: el::El, vars: el_vars::Vars, root: integer) -> 
   false
 }
 
+// Does a write to the place `pl` replace a vector an open loop walks — `pl` the walked read
+// itself or a container on its access path (`d`, `d.src` for a walk over `d.src`)?
+pub fn place_replaces_walk(e: el::El, vars: el_vars::Vars, pl: ir::Node) -> boolean {
+  up = el_ir::unspan(pl);
+  for av in vars.active_values {
+    if el_ir::is_null(av) || !(el_types::base(el_ex_vector::linked_vector(place_type(e, vars, av))) is TyVector) {
+      continue;
+    }
+    cur = el_ir::unspan(av);
+    more = true;
+    while more {
+      if cur == up {
+        return true;
+      }
+      more = false;
+      match cur {
+        NdCall { def_nr: cd, args: ca } => {
+          cn = el::def(e, cd).name;
+          if len(ca) > 0 && (cn == "OpGetField" || cn == "OpGetVector" || cn == "OpGetVectorNullable" || cn == "OpVectorRef") {
+            cur = el_ir::unspan(ca[0]!);
+            more = true;
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  false
+}
+
 // Does `n` write variable `x` — a `Set` of it, or a `&` argument naming it (`OpCreateStack`)?
 fn writes_var(e: el::El, n: ir::Node, x: integer) -> boolean {
   match el_ir::unspan(n) {
@@ -280,7 +310,11 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     el::refuse(e, "a compound write to a narrow field of a keyed record");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) {
+  // (Rust's walk takes its copy where anything under the walked root but a vector ELEMENT is
+  // written whole — a sibling vector field's too; an element, `d.out[0] = T { … }` over a walk of
+  // `d.src`, is built in place, and the walk reads its view, unless it is the walk's own path.)
+  elem_place = match el_ir::unspan(p.code) { NdCall { def_nr: epd } => el::def(e, epd).name == "OpGetVector" || el::def(e, epd).name == "OpGetVectorNullable", _ => false };
+  if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) && (place_replaces_walk(e, vars, p.code) || !elem_place) {
     el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
     return ex(ir::NdNull, ir::TyVoid);
   }
