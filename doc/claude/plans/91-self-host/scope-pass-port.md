@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 647 of 1 189 programs agree; 256 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 9) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 9): 1 508 of 2 282 programs, 34 197 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 689 of 1 189 programs agree; 214 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 10) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 10): 1 604 of 2 282 programs, 34 800 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -538,6 +538,45 @@ Sole refusal families now (scope gate, programs): the view walk's materialise le
 scan, `view_bind_bases`, the per-`Set` release and alias hooks in `scan_set`, the scope-end
 `release_witness`, the split propagation) rather than one module; the view walk's legs need its
 sparings transcribed first, so that the walk answers exactly where it now answers a superset.
+
+**Step 10 (2026-11-28) — `exit_vector`, loft#2673/#2674, `const_fn`.**  `scope_exit_vector.loft`
+is `exit_vector.rs` whole (`(R-ExitVector)`): the admission records each site by its path
+through the body, as Rust's does, and the plans are applied by those paths; the wrapper's field
+type is compared as `Type`'s equality reads it (an integer's `forced_size` left out).
+`scope_const_fn.loft` is `const_fn.rs` whole (`@FR-R-Const`: the twin copy and the read-only
+call's constant view, with `use_analysis::read_only_uses`, whose admitted calls Rust keys by
+address and the port by path).  The image carries the one fact it needs,
+`Definition.const_linked` (byte 214, `literal_const != u32::MAX`; `ir_read` relinks the twin by
+name), because a twin pass 1 made and pass 2 unlinked keeps its `__const_` name.  One case is
+refused by name: a twin copy whose element is a tuple (`Data::vector_element_type` reaches a
+tuple through `type_elm`, which the port does not derive).
+
+The Rust fixes for loft#2673 and loft#2674 (fx `4867bd642..e792815ae`) are cherry-picked
+beneath, and the port follows their scope-pass halves with their switches: a `??` hoist promoted
+onto the return buffer takes no plain transition free where it has an entry witness
+(`LOFT_NO_NCC_ENTRY_GUARD`); `delivered_work_ref` needs every return to hand the parameter back
+(`LOFT_NO_DELIVERED_EVERY_RETURN`); a first bind of a delivering call is not hoisted out of its
+preamble (`LOFT_NO_DELIVERED_FIRST_ADOPT`).  Without the port they made five definitions differ.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 9 | 1 508 / 2 282 | 34 197 / 40 088 | 0 | 647 |
+| + `exit_vector` | 1 563 | 34 521 | 0 | 673 |
+| + loft#2673/#2674 and the port's halves | 1 563 | 34 521 | 0 | (with the next) |
+| + `const_fn` (`const_linked` in the image) | 1 604 / 2 282 | 34 800 / 40 088 | 0 | 689 |
+
+No definition that agreed was lost at any step, nor a whole-path program.  The loft elaborator
+does not carry the parser halves of loft#2673/#2674 (`ref_return`'s buffer note, the self-copy
+guard); the whole path showed no difference for it on the corpus.  The stale-callee cascade: 376 definitions are
+refused for nothing else (517 at step 9), in 223 programs (340); its first refusal now stands in
+160 programs.  Behind it, by programs: a returned join's hooks (`returns`: keyed, generator,
+tuple and fn-ref returns) 103, drop cascades 81, `scan` 62, `scan_set` 46, `arm_lift` 43, the owner
+witness 43, `exit_record` 33, tuple members 30.  By first refusal: closure records 143, tuple
+bindings 134, closure cascades 121, drop hooks 85, generator handles 71, keyed and generator
+returns 70 each.
+
+Sole refusal families now (programs): the view walk's materialise legs 52, `place_result` 29,
+`owner_witness_locals` 23, the value-form remainder 11, `callref_collection_join_base` 9.
 
 ## Passes
 
