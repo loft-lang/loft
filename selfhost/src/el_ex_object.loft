@@ -1528,10 +1528,36 @@ pub fn destructure_assign(e: el::El, vars: el_vars::Vars, places: vector<integer
       return ex(ir::NdNull, ir::TyVoid);
     }
     // A declared local takes the member as its `=` does — converted, a narrow one checked
-    // (`implicit_checked_narrow`): not carried unless the types are the same.
+    // (`convert`: `a: u8? = …` reads the member through its `dn4cast`), the local keeping the
+    // type its author declared.
     if vars.annotated.contains(v) && !(el_vars::tp(vars, v) == et) {
-      el::refuse(e, "a destructure into a declared local of another type");
-      return ex(ir::NdNull, ir::TyVoid);
+      dt = el_vars::tp(vars, v);
+      if !el_convert::plain_scalar(el_types::base(dt)) {
+        el::refuse(e, "a destructure into a declared local of another type");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      el_vars::drop_use(vars, v);
+      if e.first_pass {
+        steps += [el_ir::v_set(v, ir::NdTupleGet { var: tmp, idx: i })];
+        continue;
+      }
+      // (`destructure_constant_member`: a constant member of a tuple literal is read as itself.)
+      dsrc: ir::Node = ir::NdTupleGet { var: tmp, idx: i };
+      match el_ir::unspan(x.code) {
+        NdTuple { items: dits } => {
+          if is_scalar(et) && match el_ir::unspan(dits[i] ?? ir::NdNull) { NdInt { n: _ } => true, NdFloat { f: _ } => true, NdSingle { f: _ } => true, NdBoolean { b: _ } => true, _ => false } {
+            dsrc = dits[i]!;
+          }
+        },
+        _ => {}
+      }
+      dc = el_convert::convert_store(e, vars, dsrc, et, dt);
+      if dc == null {
+        el::refuse(e, "a destructure into a declared local of another type");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      steps += [el_ir::v_set(v, dc!)];
+      continue;
     }
     if !el_vars::change_var_type(e, vars, v, et) {
       el::refuse(e, "a destructure that changes a local's type");
