@@ -222,7 +222,21 @@ pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: in
   if found == null {
     return null;
   }
-  c = found!;
+  assign_place(e, vars, op, found!, rhs)
+}
+
+// A declared local the closures write (`s: text? = "a"`): on the second pass it is its cell, and
+// the declaration writes the cell as a plain bind does.  Null where the local is no cell.
+pub fn declared_assign(e: el::El, vars: el_vars::Vars, v: integer, rhs: integer) -> Ex? {
+  cd = cell_of(e, el_vars::tp(vars, v));
+  if cd < 0 {
+    return null;
+  }
+  // (A declaration is the local's first write: its cell is allocated here.)
+  assign_place(e, vars, "=", Place { place: ir::NdVar { n: v }, cd: cd, v: v }, rhs, first: true)
+}
+
+fn assign_place(e: el::El, vars: el_vars::Vars, op: text, c: Place, rhs: integer, first: boolean = false) -> Ex? {
   x = el_ex_assign::expression(e, vars, rhs);
   if c.cd == -2 {
     return ex(ir::NdNull, ir::TyVoid);
@@ -265,7 +279,7 @@ pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: in
     return ex(ir::NdNull, ir::TyVoid);
   }
   write = el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, conv!]);
-  if c.v >= 0 && !el_vars::was_defined(vars, c.v) {
+  if c.v >= 0 && (first || !el_vars::was_defined(vars, c.v)) {
     el_vars::set_defined(vars, c.v);
     return ex(ir::NdInsert { items: [el_ir::v_set(c.v, ir::NdNull), el_ir::cl(e, "OpDatabase", [ir::NdVar { n: c.v }, ir::NdInt { n: el::def(e, c.cd).known_type }]), write] }, ir::TyVoid);
   }

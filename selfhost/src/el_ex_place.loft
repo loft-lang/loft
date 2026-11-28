@@ -2620,6 +2620,16 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   if ended >= 0 && ended == v {
     v = el_ex_assign::split_ended_bind(e, vars, v, declared!, el_ex_null::node_start(e, rhs!) - 1, false);
   }
+  // (A declared local a closure writes is its cell on the second pass: written as the cell.)
+  if !e.first_pass {
+    dcell = el_cell::declared_assign(e, vars, v, rhs!);
+    if dcell != null {
+      if !vars.annotated.contains(v) {
+        vars.annotated += [v];
+      }
+      return dcell!;
+    }
+  }
   if !el_vars::change_var_type(e, vars, v, declared!) {
     el::refuse(e, "a declaration that changes a local's type");
   }
