@@ -277,6 +277,11 @@ pub struct Vars {
   pub clos_w: vector<integer>,
   // the cast being read is the left side of a `??`, which makes a narrowing one checked
   pub dn4_coalesce: boolean = false,
+  // A `??`'s subject that is a text parse to an enum built nothing on the first pass: Rust's
+  // first pass mints no holder for it.
+  pub p1_no_holder: boolean = false,
+  // The cast being read is a bind's value (`n == read_into` while a bind's value is read).
+  pub cast_bind_read: boolean = false,
   // A destructure's right-hand call may answer a BOXED tuple (`boxed_tuple_return`): its record.
   pub boxed_tuple_at: integer = -1,
   // The subject node of the `match` being read: its temp is named for this site.

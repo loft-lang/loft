@@ -291,11 +291,15 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // `__ncc_N` keeps its number.
   subject = x.code;
   held = -1;
+  no_holder = vars.p1_no_holder;
+  vars.p1_no_holder = false;
   match x.code {
     NdVar { n: _ } => {},
     _ => {
-      held = el_vars::create_unique(vars, "_ncc", lhs);
-      subject = ir::NdVar { n: held };
+      if !(e.first_pass && no_holder) {
+        held = el_vars::create_unique(vars, "_ncc", lhs);
+        subject = ir::NdVar { n: held };
+      }
     }
   }
   if e.first_pass {
