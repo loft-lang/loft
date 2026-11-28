@@ -19,14 +19,27 @@ use binds;
 use own;
 use opt_names;
 
-// port: free_vars.rs struct Delivered — the return's sources (`arm_dropped` and `moved_out`
-// are facts of records, never set here).
+// port: free_vars.rs struct Delivered — the return's sources; the locals whose hook the return
+// already placed (`arm_dropped`); the holders whose record it may be handing out
+// (`moved_out`: the returned local `moved_x`, -1 for none, and its `moved_holders`).
 pub struct Delivered {
-  pub sources: vector<integer>
+  pub sources: vector<integer>,
+  pub arm_dropped: vector<integer>,
+  pub moved_x: integer,
+  pub moved_holders: vector<integer>
 }
 
 pub fn no_delivery() -> Delivered {
-  Delivered { sources: [] }
+  Delivered { sources: [], arm_dropped: [], moved_x: -1, moved_holders: [] }
+}
+
+// port: get_free_vars.rs `unless_moved` — a holder's hook runs only where it holds a record
+// other than the one this return hands out (loft#1628).
+pub fn unless_moved(s: scope_scan::Scopes, b: ir::Bundle, d: Delivered, h: integer, hook: ir::Node?) -> ir::Node? {
+  if hook == null || d.moved_x < 0 || !scope_fn::has(d.moved_holders, h) {
+    return hook;
+  }
+  ir::NdIf { cond: ir::NdCall { def_nr: scope_fn::def_nr(b, "OpNeRef"), args: [ir::NdVar { n: h }, ir::NdVar { n: d.moved_x }] }, t: hook!, f: ir::NdNull }
 }
 
 // port: free_vars.rs fn text_buffer_in_frame — `tp` with a dep on the hidden TEXT buffer
@@ -133,6 +146,38 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
       scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a {scope_fn::kind_name(tp)} return");
     }
   }
+  // loft#1515 shape 2 — a join-return's source HOOKS move into its arms, where the arm is the
+  // path (`move_join_hooks_into_arms`); D-heap-7 a return copying a whole local moves its
+  // release (`return_copies_whole_local`); loft#1623 the temps a joined binding borrows
+  // (`return_copies_view_holders`); loft#1628 the holders of a witnessed local's record
+  // (`return_moved_holders`).
+  arm_dropped: vector<integer> = [];
+  moved_x = -1;
+  moved_holders: vector<integer> = [];
+  if is_return {
+    armed = move_join_hooks_into_arms(s, b, expr, f, arm_dropped);
+    if len(arm_dropped) > 0 {
+      expr = armed;
+    }
+    whole = return_copies_whole_local(s, b, expr, f);
+    if whole >= 0 && !scope_fn::has(arm_dropped, whole) {
+      arm_dropped += [whole];
+    }
+    copied = return_copied_local(s, expr, f);
+    if copied >= 0 {
+      for w in scope_scan::list_of(s.join_holders, copied) {
+        if !scope_fn::has(arm_dropped, w) {
+          arm_dropped += [w];
+        }
+      }
+      ow = scope_scan::get(s.owner_witness, copied);
+      if ow >= 0 {
+        moved_x = copied;
+        moved_holders = [ow];
+        moved_holders += scope_scan::list_of(s.witness_aliases, copied);
+      }
+    }
+  }
   ret_var = returned_var_null_unified(expr, s.ops.null_ref_sentinel);
   sources: vector<integer> = [];
   // @PLN85 P4-records — the record sources whose free is decided at run time against the
@@ -235,7 +280,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
       }
     }
   }
-  ls = scope_get_free_vars::get_free_vars(s, b, f, to_scope, tp, ret_var, Delivered { sources: sources });
+  ls = scope_get_free_vars::get_free_vars(s, b, f, to_scope, tp, ret_var, Delivered { sources: sources, arm_dropped: arm_dropped, moved_x: moved_x, moved_holders: moved_holders });
   // loft#2671 — a backing the sweep already releases is that free's; and a buffer guarded against
   // a source that owns nothing needs the join leg's temp to be re-keyed on.
   if len(join_backings) > 0 {
@@ -277,7 +322,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     }
     result += ls;
     for src in null_arm {
-      hook = scope_drops::scope_end_drop(s, b, f, src);
+      hook = if scope_fn::has(arm_dropped, src) { null } else { scope_drops::scope_end_drop(s, b, f, src) };
       if hook != null {
         result += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: src }, ir::NdVar { n: tmp }] }, t: hook!, f: ir::NdNull }];
       }
@@ -702,6 +747,286 @@ fn return_borrows_closure(d: ir::Definition) -> boolean {
     }
   }
   false
+}
+
+// The name a `materialized_view_return` block takes once its join's hooks moved into the arms:
+// the marker that keeps the rewrite idempotent across the scan's phases.
+ARMED_VIEW_RETURN = "materialized_view_return_armed";
+
+// port: returns.rs fn is_presence_tested_copy — `if <test> { absent } else { copy }`, the
+// present-only delivery of a local that may hold nothing.
+fn is_presence_tested_copy(absent: ir::Node, copy: ir::Node) -> boolean {
+  null_leaf = match scope_fn::unspan(absent) {
+    NdNull => true,
+    NdCall { args } => len(args) == 0,
+    _ => false
+  };
+  null_leaf && match scope_fn::unspan(copy) {
+    NdBlock { block } => block[0].name == "materialized_view_return" || block[0].name == ARMED_VIEW_RETURN,
+    _ => false
+  }
+}
+
+// port: returns.rs fn return_tail — the value a return yields.
+fn return_tail(v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { inner } => return_tail(inner),
+    NdReturn { inner } => return_tail(inner),
+    NdInsert { items } => if len(items) > 0 { return_tail(items[len(items) - 1]!) } else { v },
+    NdIf { t, f } => if is_presence_tested_copy(t, f) { return_tail(f) } else { v },
+    _ => v
+  }
+}
+
+// port: returns.rs fn return_copied_local — the frame's own local a return COPIES onto the
+// return buffer (the source of the first `OpCopyRecord` that qualifies), -1 for none.
+fn return_copied_local(s: scope_scan::Scopes, expr: ir::Node, f: ir::Function) -> integer {
+  ops: vector<ir::Node> = [];
+  match return_tail(expr) {
+    NdBlock { block } => {
+      if block[0].name != "materialized_view_return" && block[0].name != ARMED_VIEW_RETURN {
+        return -1;
+      }
+      ops = block[0].operators;
+    },
+    _ => { return -1; }
+  }
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdCall { def_nr, args } => if def_nr == s.ops.copy_record && len(args) >= 2 {
+        src = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+        dest = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
+        if src >= 0 && dest >= 0 && src != dest && !scope_fn::is_argument(f, src) {
+          return src;
+        }
+      },
+      _ => {}
+    }
+  }
+  -1
+}
+
+// port: returns.rs fn return_copies_whole_local — D-heap-7, the whole LOCAL a return copies
+// onto the return buffer when the copy owns that local's release; -1 for none.
+fn return_copies_whole_local(s: scope_scan::Scopes, b: ir::Bundle, expr: ir::Node, f: ir::Function) -> integer {
+  ops: vector<ir::Node> = [];
+  match return_tail(expr) {
+    NdBlock { block } => {
+      if block[0].name != "materialized_view_return" && block[0].name != ARMED_VIEW_RETURN {
+        return -1;
+      }
+      ops = block[0].operators;
+    },
+    _ => { return -1; }
+  }
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdCall { def_nr, args } => if def_nr == s.ops.copy_record && len(args) >= 2 {
+        src = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+        dest = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
+        if src >= 0 && dest >= 0 && src != dest && !scope_fn::is_argument(f, src) && scope_scan::get(s.view_backing, src) < 0
+          && scope_fn::proxy_says_owned(f, src) && scope_drops::drop_hook(s, b, f, src) != null {
+          return src;
+        }
+      },
+      _ => {}
+    }
+  }
+  -1
+}
+
+// What ONE arm of a join-return hands out (`ArmHandOff`): `v * 2` a MEMBER of local `v`,
+// `v * 2 + 1` the whole local `v`, -1 nothing a local owns.
+fn arm_hand_off(s: scope_scan::Scopes, arm: ir::Node, f: ir::Function) -> integer {
+  match scope_fn::unspan(arm) {
+    NdBlock { block } => {
+      k = len(block[0].operators);
+      if k == 0 { -1 } else { arm_hand_off(s, block[0].operators[k - 1]!, f) }
+    },
+    NdInsert { items } => if len(items) == 0 { -1 } else { arm_hand_off(s, items[len(items) - 1]!, f) },
+    NdVar { n: v } => if scope_fn::is_argument(f, v) { -1 } else { v * 2 + 1 },
+    NdCall { def_nr } => if def_nr == s.ops.get_field {
+      pr = scope_scan_set::field_projection_root(arm, s.ops.get_field);
+      src = if pr >= 0 { pr / 4294967296 } else { -1 };
+      if src >= 0 && !scope_fn::is_argument(f, src) { src * 2 } else { -1 }
+    } else {
+      -1
+    },
+    _ => -1
+  }
+}
+
+// port: returns.rs fn join_arm_hand_offs — every arm of a join, in order; false where the value
+// is not a join.
+fn join_arm_hand_offs(s: scope_scan::Scopes, value: ir::Node, f: ir::Function, out: vector<integer>) -> boolean {
+  match scope_fn::unspan(value) {
+    NdIf { t, f: e } => {
+      join_arm_hand_offs(s, t, f, out);
+      join_arm_hand_offs(s, e, f, out);
+      true
+    },
+    _ => {
+      out += [arm_hand_off(s, value, f)];
+      false
+    }
+  }
+}
+
+// The join a `materialized_view_return`'s copy reads (`materialised_join_mut`), null where the
+// return has no such shape.
+fn materialised_join(s: scope_scan::Scopes, expr: ir::Node) -> ir::Node? {
+  match return_tail(expr) {
+    NdBlock { block } => {
+      if block[0].name != "materialized_view_return" && block[0].name != ARMED_VIEW_RETURN {
+        return null;
+      }
+      for op in block[0].operators {
+        match op {
+          NdCall { def_nr, args } => if def_nr == s.ops.copy_record && len(args) > 0 {
+            return args[0]!;
+          },
+          _ => {}
+        }
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+// `materialised_join_mut`'s rewrite: the block renamed to the armed name, and its copy's source
+// replaced by `join` (`return_tail`'s walk, rebuilt).
+fn rearm_return(s: scope_scan::Scopes, v: ir::Node, join: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rearm_return(s, inner, join) },
+    NdReturn { inner } => ir::NdReturn { inner: rearm_return(s, inner, join) },
+    NdInsert { items } => if len(items) > 0 {
+      k = len(items);
+      out: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+      out += [rearm_return(s, items[k - 1]!, join)];
+      ir::NdInsert { items: out }
+    } else {
+      v
+    },
+    NdIf { cond, t, f } => if is_presence_tested_copy(t, f) { ir::NdIf { cond: cond, t: t, f: rearm_return(s, f, join) } } else { v },
+    NdBlock { block } => {
+      bl = block[0];
+      done = false;
+      ops: vector<ir::Node> = [];
+      for op in bl.operators {
+        nop = op;
+        if !done {
+          match op {
+            NdCall { def_nr, args } => if def_nr == s.ops.copy_record && len(args) > 0 {
+              nargs: vector<ir::Node> = [join];
+              nargs += args[1..];
+              nop = ir::NdCall { def_nr: def_nr, args: nargs };
+              done = true;
+            },
+            _ => {}
+          }
+        }
+        ops += [nop];
+      }
+      ir::NdBlock { block: [ir::Block { name: ARMED_VIEW_RETURN, operators: ops, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => v
+  }
+}
+
+// port: returns.rs fn inject_per_arm — each arm of the join given the hooks its own path owes.
+fn inject_per_arm(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, f: ir::Function, sources: vector<integer>) -> ir::Node {
+  match value {
+    NdSpan { pos, inner } => if scope_fn::unspan(inner) is NdIf {
+      return ir::NdSpan { pos: pos, inner: inject_per_arm(s, b, inner, f, sources) };
+    },
+    NdIf { cond, t, f: e } => {
+      return ir::NdIf { cond: cond, t: inject_per_arm(s, b, t, f, sources), f: inject_per_arm(s, b, e, f, sources) };
+    },
+    _ => {}
+  }
+  mine = arm_hand_off(s, value, f);
+  ops: vector<ir::Node> = [];
+  for v in sources {
+    // An arm handing the whole record out MOVED it: this arm owes nothing for it.
+    if mine == v * 2 + 1 {
+      continue;
+    }
+    hook = scope_drops::drop_hook(s, b, f, v);
+    if hook != null {
+      ops += [hook!];
+    }
+  }
+  inject_before_arm_value(value, ops)
+}
+
+// port: returns.rs fn inject_before_arm_value — `ops` as statements before the value an arm
+// yields.
+fn inject_before_arm_value(arm: ir::Node, ops: vector<ir::Node>) -> ir::Node {
+  if len(ops) == 0 {
+    return arm;
+  }
+  match arm {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: inject_before_arm_value(inner, ops) },
+    NdBlock { block } => {
+      bl = block[0];
+      k = len(bl.operators);
+      if k == 0 {
+        all = ops;
+        all += [arm];
+        return ir::NdInsert { items: all };
+      }
+      out: vector<ir::Node> = [for x in bl.operators[0..k - 1] { x }];
+      out += ops;
+      out += [bl.operators[k - 1]!];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: out, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        all = ops;
+        all += [arm];
+        return ir::NdInsert { items: all };
+      }
+      out: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+      out += ops;
+      out += [items[k - 1]!];
+      ir::NdInsert { items: out }
+    },
+    _ => {
+      all = ops;
+      all += [arm];
+      ir::NdInsert { items: all }
+    }
+  }
+}
+
+// port: returns.rs fn move_join_hooks_into_arms — loft#1515 shape 2: the locals whose hook moved
+// into the arms of a join-return, into `done`; the rewritten return (`expr` itself where
+// `done` stays empty).
+fn move_join_hooks_into_arms(s: scope_scan::Scopes, b: ir::Bundle, expr: ir::Node, f: ir::Function, done: vector<integer>) -> ir::Node {
+  join = materialised_join(s, expr);
+  if join == null {
+    return expr;
+  }
+  armed = match return_tail(expr) { NdBlock { block } => block[0].name == ARMED_VIEW_RETURN, _ => false };
+  arms: vector<integer> = [];
+  if !join_arm_hand_offs(s, join!, f, arms) {
+    return expr;
+  }
+  sources: vector<integer> = [];
+  for a in arms {
+    if a >= 0 {
+      scope_scan::set_add(sources, a / 2);
+    }
+  }
+  kept: vector<integer> = [for v in sources if scope_drops::drop_hook(s, b, f, v) != null { v }];
+  if len(kept) == 0 {
+    return expr;
+  }
+  new_join = if armed { join! } else { inject_per_arm(s, b, join!, f, kept) };
+  done += kept;
+  rearm_return(s, expr, new_join)
 }
 
 // port: returns.rs fn return_has_null_arm

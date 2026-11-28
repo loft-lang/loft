@@ -231,8 +231,19 @@ pub struct Scopes {
   pub entry_buf: integer,
   pub entry_w: integer,
   pub owner_witness: vector<integer>,
+  // loft#1515 — the per-path hand-off flag of each stopped variable (`__hoff_<name>`), the
+  // `(destination, source)` pairs it was minted for (`scope_handoff::pair`), and the locals
+  // that hold the CALLER's record on every path (`Function::holds_caller_record`).
   pub handed_off: vector<integer>,
   pub per_path_pairs: vector<integer>,
+  pub caller_records: vector<integer>,
+  // loft#1628 — the plain locals a witnessed local may alias (`witness_aliases`), and the arm
+  // temps a joined binding borrows (`join_holders`, loft#1623).
+  pub witness_aliases: vector<VarList>,
+  pub join_holders: vector<VarList>,
+  // The variables each enclosing loop's body refills on every pass (`loop_body_refills`), the
+  // innermost last; `v` is the loop's scope.
+  pub loop_refills: vector<VarList>,
   pub handle_views: vector<integer>,
   pub views_to_materialise: vector<integer>,
   pub drop_transferred: vector<integer>,
@@ -811,16 +822,41 @@ pub fn lift_set(s: Scopes, b: ir::Bundle, tmp: integer, value: ir::Node, f: ir::
 }
 
 // port: handoff.rs fn drop_bearing_source — the variable whose release a copy of `src` hands
-// over, -1 for none, -2 for a tuple member (`tuple_member_backing`, not transcribed).
-fn drop_bearing_source(src: ir::Node) -> integer {
+// over, -1 for none, -2 for a tuple member whose backing the image cannot name.
+pub fn drop_bearing_source(src: ir::Node, f: ir::Function) -> integer {
   match scope_fn::unspan(src) {
     NdVar { n: v } => v,
-    NdTupleGet => -2,
+    NdTupleGet { var, idx } => tuple_member_backing(var, idx, f),
     NdBlock { block } => {
       k = len(block[0]!.operators);
-      if k == 0 { -1 } else { drop_bearing_source(block[0]!.operators[k - 1]!) }
+      if k == 0 { -1 } else { drop_bearing_source(block[0]!.operators[k - 1]!, f) }
     },
-    NdInsert { items } => if len(items) == 0 { -1 } else { drop_bearing_source(items[len(items) - 1]!) },
+    NdInsert { items } => if len(items) == 0 { -1 } else { drop_bearing_source(items[len(items) - 1]!, f) },
+    _ => -1
+  }
+}
+
+// port: handoff.rs fn tuple_member_backing — -1 where Rust answers `None` without reading a
+// fact the image lacks, -2 where the answer reads `Function::tuphold_origin` or
+// `Vars::tuple_backings`.  `None` without them: a parameter's member, a member that is no heap
+// record, and a member whose type names no dep — `tuple_backings` records the deps the members
+// spelled when the union was written onto the variable, so a member with none had none to
+// record, and the dep list then holds fewer entries than the tuple has heap leaves.
+fn tuple_member_backing(base: integer, i: integer, f: ir::Function) -> integer {
+  if scope_fn::name(f, base).starts_with("_tuphold_") {
+    return -2;
+  }
+  if scope_fn::is_argument(f, base) {
+    return -1;
+  }
+  match scope_fn::base(scope_fn::tp(f, base)) {
+    TyTuple { elems } => {
+      leaf = elems[i];
+      if leaf == null || !scope_fn::is_dbref(scope_fn::base(leaf!)) || len(scope_fn::depend(leaf!)) == 0 {
+        return -1;
+      }
+      -2
+    },
     _ => -1
   }
 }
@@ -903,6 +939,7 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       lp = block[0];
       scope = enter_scope(s);
       s.loops += [scope];
+      s.loop_refills += [VarList { v: scope, items: loop_body_refills(lp) }];
       // #316 — a loop body executes repeatedly: any ownership entry the body touches is
       // unreliable afterwards.  Keep only the entries the body left unchanged.
       owned_before = copy_ints(s.owned_refs);
@@ -911,12 +948,10 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       mints_before = tmap_copy(s.tuple_call_mint);
       now_before = tmap_copy(s.tuple_member_now);
       // A loop body's hand-offs are armed BEFORE its statements are scanned
-      // (`collect_drop_transferred`): its construction hand-offs; the copy hand-offs are refused
-      // by the phase.
+      // (`collect_drop_transferred`): on the next iteration an earlier statement displaces what
+      // a LATER one handed off.
       for op in lp.operators {
-        early: vector<integer> = [];
-        scope_handoff::construction_handoffs(b, op, f, early);
-        for w in early {
+        for w in scope_handoff::collect_drop_transferred(s, b, op, f) {
           set_add(s.drop_transferred, w);
         }
       }
@@ -935,6 +970,8 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       tmap_retain_same(s.tuple_member_now, now_before);
       k = len(s.loops);
       s.loops = s.loops[0..k - 1];
+      kr = len(s.loop_refills);
+      s.loop_refills = s.loop_refills[0..kr - 1];
       exit_scope(s);
       ir::NdLoop { block: [ir::Block { name: lp.name, operators: ls, result: [ir::TyVoid], scope: scope, var_size: 0 }] }
     },
@@ -1219,29 +1256,41 @@ fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f:
   postamble: vector<ir::Node> = [];
   scope_args::scan_args(s, b, args, f, d_nr, preamble, cls, postamble);
   call = ir::NdCall { def_nr: d_nr, args: cls };
-  // `@FR-H-Drop` — a copy that frees its source hands a work-ref's record on.
-  // From here the work-ref names a freed store and holds nothing to release.  A source whose
-  // record has a drop cascade (its per-path pair, `arm_container_handoffs`) refuses.
+  // `@FR-H-Drop` — a copy that FREES its source (`0x8000`) hands the work-ref's record to the
+  // destination inside the op: from here the work-ref names a freed store and holds nothing to
+  // release.  Armed where it runs.
   if d_nr == s.ops.copy_record {
     match scope_fn::unspan(args[2] ?? ir::NdNull) {
       NdInt { n: tp } => if (tp / 32768) % 2 == 1 {
-        w = drop_bearing_source(args[0] ?? ir::NdNull);
+        w = drop_bearing_source(args[0] ?? ir::NdNull, f);
         if w == -2 {
           refuse(s, "handoff::drop_bearing_source: a tuple member copied and freed (tuple_member_backing)");
-        } else if w >= 0 && scope_fn::name(f, w).starts_with("__ref_") {
-          rec = own::heap_def_nr(scope_fn::tp(f, w));
-          if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
-            refuse(s, "handoff::drop_bearing_source: a droppable record copied and freed (arm_container_handoffs)");
-          } else {
-            set_add(s.drop_transferred, mapped(s, w));
-          }
+        } else if w >= 0 && scope_fn::name(f, w).starts_with("__ref_") && !scope_fn::has(s.per_path_pairs, scope_handoff::pair(scope_fn::NONE, w)) {
+          set_add(s.drop_transferred, mapped(s, w));
         }
       },
       _ => {}
     }
   }
-  // `arm_handoff_flags` and `regrown_flag` read `handed_off`/`per_path_pairs`, which the phase
-  // leaves empty.
+  // D-heap-14 — a copy that hands a droppable over inside a branch ARM records that it RAN on
+  // the source's per-path flag (loft#1515), right after it.
+  flags = scope_handoff::arm_handoff_flags(s, b, d_nr, args, f);
+  if len(flags) > 0 {
+    fops = preamble;
+    fops += [call];
+    fops += postamble;
+    for fl in flags {
+      fops += [scope_fn::v_set(fl, ir::NdBoolean { b: true })];
+    }
+    return ir::NdInsert { items: fops };
+  }
+  // A collection whose elements a copy moved out, GROWN again: its store holds elements it must
+  // release once more (D-heap-23).  Ahead of the call, because `OpNewRecord` answers the element
+  // it adds.
+  regrown = regrown_flag(s, d_nr, args, f);
+  if regrown >= 0 {
+    call = ir::NdInsert { items: [scope_fn::v_set(regrown, ir::NdBoolean { b: false }), call] };
+  }
   if len(preamble) == 0 && len(postamble) == 0 {
     return call;
   }
@@ -1261,6 +1310,69 @@ fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f:
     ops += postamble;
   }
   ir::NdInsert { items: ops }
+}
+
+// port: scan.rs fn regrown_flag — the per-path flag of the store behind collection `args[0]`
+// when this call GROWS it and a whole-collection copy may have moved its elements out; -1.
+fn regrown_flag(s: Scopes, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> integer {
+  if (d_nr != s.ops.append_vector && d_nr != s.ops.new_record) || len(args) == 0 {
+    return -1;
+  }
+  x = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+  if x < 0 {
+    return -1;
+  }
+  for bk in scope_fn::deps(f, x) {
+    if scope_fn::has(s.per_path_pairs, scope_handoff::pair(scope_fn::NONE, bk)) {
+      fl = get(s.handed_off, bk);
+      if fl >= 0 {
+        return fl;
+      }
+    }
+  }
+  -1
+}
+
+// port: scan.rs fn loop_body_refills — the variables a loop body sets at its top level, or in a
+// block at its top level, on every pass; none where the body can `continue`.
+fn loop_body_refills(lp: ir::Block) -> vector<integer> {
+  out: vector<integer> = [];
+  for op in lp.operators {
+    if has_continue(op) {
+      return [];
+    }
+  }
+  for op in lp.operators {
+    match scope_fn::unspan(op) {
+      NdSet { var } => set_add(out, var),
+      _ => {}
+    }
+  }
+  for op in lp.operators {
+    match scope_fn::unspan(op) {
+      NdBlock { block } => for o in block[0].operators {
+        match scope_fn::unspan(o) {
+          NdSet { var } => set_add(out, var),
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  out
+}
+
+fn has_continue(n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  if u is NdContinue {
+    return true;
+  }
+  for c in scope_fn::children(u) {
+    if has_continue(c) {
+      return true;
+    }
+  }
+  false
 }
 
 // port: insert_free.rs fn scope_free_op_var — the variable a free releases.

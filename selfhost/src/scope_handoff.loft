@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN91 — `src/scopes/handoff.rs` begun (doc/claude/plans/91-self-host/scope-pass-port.md
-// step 14): which side of a whole-value copy stops DROPPING (`copy_moves_drop_from`), and the
-// hand-off a construction makes to the binding that adopts it (`drop_handoff_node`'s
-// construction arm, armed per statement by `convert` and early by a loop).  The hand-offs a
-// COPY makes — a whole-value copy that moves a drop (`per_path_handoffs`, `local_copy_pairs`,
-// the statement's `handoff_target`), a record copied into a buffer or a container
-// (`copy_record_handoff`, `arm_container_handoffs`) — are refused by name in the phase
-// (`copy_handoff_refusals`), so `handed_off` stays empty wherever the scan runs.
+// @PLN91 — `src/scopes/handoff.rs` transcribed (doc/claude/plans/91-self-host/scope-pass-port.md
+// steps 14 and 15): which side of a copy keeps the DROP — a whole-value copy, a collection copy,
+// a copy into a container — and the per-path flags that record a hand-off made on only some
+// paths.  A pair `(destination, source)` is kept as `destination * 65536 + source`, and Rust's
+// `(u16::MAX, source)` of a copy into a container as `scope_fn::NONE * 65536 + source`.  One
+// fact is not in the image: a tuple MEMBER a copy reads (`tuple_member_backing`, which reads
+// `Function::tuphold_origin` and `Vars::tuple_backings`), refused by name where its answer is
+// read.
 
 use ir;
 use own;
@@ -18,13 +18,20 @@ use scope_scan;
 use scope_args;
 use scope_backings;
 use scope_drops;
+use scope_witness;
 use opt_names;
+use opt_lease;
+use opt_vr_leaves;
 use scope_join_rewrite;
+use scope_handles;
+
+// A `(destination, source)` pair as `per_path_pairs` holds it.
+pub fn pair(dst: integer, src: integer) -> integer {
+  dst * 65536 + src
+}
 
 // port: handoff.rs fn copy_moves_drop_from — the side of `v = src` that stops dropping (the
-// source), -1 where the copy moves nothing.  `Function::holds_caller_record` is read as false:
-// `caller_record_locals` is not transcribed, and the phase refuses wherever this answers a side,
-// so the superset costs a refusal, never a difference.
+// source), -1 where the copy moves nothing.  `@FR-H-Drop`: responsibility moves with a copy.
 pub fn copy_moves_drop_from(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, src: integer, buffer_dst: boolean) -> integer {
   if v == src
     || (!buffer_dst && scope_fn::is_argument(f, v) && !scope_drops::is_promoted_ret_buffer(s, b, f, v))
@@ -35,7 +42,9 @@ pub fn copy_moves_drop_from(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Functio
   if !copy_carries_drop(b, f, v, scope_fn::tp(f, src)) {
     return -1;
   }
-  if scope_fn::is_argument(f, src) {
+  // A copy of what the CALLER holds — a parameter, or a local holding the caller's record on
+  // every path (`Function::holds_caller_record`) — moves no release.
+  if scope_fn::is_argument(f, src) || scope_fn::has(s.caller_records, src) {
     return -1;
   }
   src
@@ -52,40 +61,427 @@ pub fn copy_carries_drop(b: ir::Bundle, f: ir::Function, v: integer, src_tp: ir:
   own::copies_as(b, d!, sd!) && opt_names::drop_cascade_nr(b, d!) != opt_names::NONE
 }
 
-// The hand-offs a COPY makes, refused by name: a whole-value copy between locals that moves a
-// drop (`per_path_handoffs`, `loop_self_stopping_copies`, `local_copy_pairs`, the statement arm
-// of `drop_handoff_node`), and an `OpCopyRecord` of a record with a cascade
-// (`copy_record_handoff`, `arm_container_handoffs`).
-pub fn copy_handoff_refusals(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function) {
+// port: handoff.rs fn per_path_handoffs — the `(destination, source)` pairs of whole-value
+// copies written inside a branch ARM.
+pub fn per_path_handoffs(code: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  per_path_walk(code, out);
+  out
+}
+
+fn per_path_walk(n: ir::Node, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f: e } => {
+      arm_copies(t, out);
+      arm_copies(e, out);
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    per_path_walk(c, out);
+  }
+}
+
+fn arm_copies(a: ir::Node, out: vector<integer>) {
+  u = scope_fn::unspan(a);
+  match u {
+    NdSet { var: v, inner } => match scope_fn::unspan(inner) {
+      NdVar { n: src } => scope_scan::set_add(out, pair(v, src)),
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    arm_copies(c, out);
+  }
+}
+
+// port: handoff.rs fn loop_self_stopping_copies — the whole-value copies written inside a LOOP
+// body that stop their DESTINATION (`per_path_stops`).
+pub fn loop_self_stopping_copies(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  loop_copies_walk(s, b, code, f, out);
+  out
+}
+
+fn loop_copies_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdLoop { block } => for op in block[0].operators {
+      self_stopping_in(s, b, op, f, out);
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    loop_copies_walk(s, b, c, f, out);
+  }
+}
+
+fn self_stopping_in(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
   u = scope_fn::unspan(n);
   match u {
     NdSet { var: v, inner } => match scope_fn::unspan(inner) {
-      NdVar { n: src } => if src < scope_fn::count(f) && v < scope_fn::count(f) && copy_moves_drop_from(s, b, f, v, src, false) >= 0 {
-        scope_scan::refuse(s, "handoff::copy_moves_drop_from: a whole-value copy that moves a drop (per_path_handoffs, mint_handoff_flag)");
+      NdVar { n: src } => if per_path_stops(s, b, f, v, src) == v {
+        scope_scan::set_add(out, pair(v, src));
       },
       _ => {}
     },
-    NdCall { def_nr, args } => if def_nr == s.ops.copy_record && len(args) >= 3 {
-      r = copy_record_handoff(s, b, args, f);
-      if r == -2 || (r >= 0 && r < scope_fn::count(f) && scope_join_rewrite::droppable(b, scope_fn::tp(f, r))) {
-        scope_scan::refuse(s, "handoff::copy_record_handoff: a droppable record copied into a buffer or container (arm_container_handoffs)");
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    self_stopping_in(s, b, c, f, out);
+  }
+}
+
+// port: handoff.rs fn per_path_stops — the side a whole-value copy written in a branch arm
+// stops on the path that runs it, -1 for none.
+pub fn per_path_stops(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, dst: integer, src: integer) -> integer {
+  copy_moves_drop_from(s, b, f, dst, src, false)
+}
+
+// port: handoff.rs fn collection_copy_handoff — the store whose elements' release a
+// whole-collection copy hands over, -1 for none.
+fn collection_copy_handoff(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> integer {
+  ends = collection_copy_ends(s, b, d_nr, args, f);
+  if ends < 0 {
+    return -1;
+  }
+  dst = ends / 65536;
+  src = ends % 65536;
+  if dst == src || scope_fn::is_argument(f, src) || scope_fn::is_compiler_generated(f, src) {
+    return -1;
+  }
+  dst_deps = scope_fn::deps(f, dst);
+  for bk in scope_fn::deps(f, src) {
+    nm = scope_fn::name(f, bk);
+    if (nm.starts_with("__vdb_") || nm.starts_with("__ref_")) && !scope_fn::has(dst_deps, bk) && bk != dst {
+      return if scope_drops::drop_hook(s, b, f, bk) != null { bk } else { -1 };
+    }
+  }
+  -1
+}
+
+// port: handoff.rs fn collection_copy_ends — the `(destination, source)` locals of a
+// whole-collection copy as a pair, -1 for none.
+fn collection_copy_ends(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> integer {
+  nm = scope_args::def_name(b, d_nr);
+  if nm == "OpAppendVector" || nm == "OpReplaceVector" {
+    if len(args) < 2 {
+      return -1;
+    }
+    src = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
+    if src < 0 {
+      return -1;
+    }
+    dst = scope_args::accessor_root_var(b, args[0]!);
+    if dst < 0 {
+      return -1;
+    }
+    return pair(dst, src);
+  }
+  if d_nr == s.ops.copy_record && len(args) >= 2 {
+    src = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+    dst = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
+    if src >= 0 && dst >= 0 && scope_fn::name(f, dst).starts_with("_elm_") && scope_fn::base(scope_fn::tp(f, dst)) is TyVector {
+      return pair(dst, src);
+    }
+  }
+  -1
+}
+
+// port: handoff.rs fn collection_copy_backings — every store a whole-collection copy may move
+// its elements out of.
+fn collection_copy_backings(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> vector<integer> {
+  first = collection_copy_handoff(s, b, d_nr, args, f);
+  if first < 0 {
+    return [];
+  }
+  out: vector<integer> = [first];
+  ends = collection_copy_ends(s, b, d_nr, args, f);
+  if ends < 0 {
+    return out;
+  }
+  dst = ends / 65536;
+  src = ends % 65536;
+  dst_deps = scope_fn::deps(f, dst);
+  for bk in scope_scan::list_of(s.vector_backings, src) {
+    if bk != dst && !scope_fn::has(dst_deps, bk) && !scope_fn::has(out, bk) && scope_drops::drop_hook(s, b, f, bk) != null {
+      out += [bk];
+    }
+  }
+  out
+}
+
+// port: handoff.rs fn collection_handoffs — every store `collection_copy_handoff` answers for a
+// copy anywhere in `code`, sorted.
+pub fn collection_handoffs(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  collection_walk(s, b, code, f, out);
+  scope_handles::sorted(out)
+}
+
+fn collection_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => for bk in collection_copy_backings(s, b, def_nr, args, f) {
+      scope_scan::set_add(out, bk);
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    collection_walk(s, b, c, f, out);
+  }
+}
+
+// port: handoff.rs fn arm_container_handoffs — the user variables a copy hands to a CONTAINER
+// inside a branch ARM, whose type owns a droppable; sorted.
+pub fn arm_container_handoffs(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  arm_container_walk(s, b, code, f, out);
+  scope_handles::sorted(out)
+}
+
+fn arm_container_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f: e } => {
+      arm_container_copies(s, b, t, f, out);
+      arm_container_copies(s, b, e, f, out);
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    arm_container_walk(s, b, c, f, out);
+  }
+}
+
+fn arm_container_copies(s: scope_scan::Scopes, b: ir::Bundle, a: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(a);
+  match u {
+    NdCall { def_nr, args } => {
+      src = -1;
+      if def_nr == s.ops.copy_record && len(args) >= 3 {
+        h = copy_record_handoff(s, b, args, f);
+        if h == -2 {
+          scope_scan::refuse(s, "handoff::tuple_member_backing: a tuple member copied into a container (tuphold_origin)");
+        } else if h >= 0 && opt_vr_leaves::owns_droppable(b, scope_fn::tp(f, h)) {
+          src = h;
+        }
+      } else {
+        src = handle_handoff(s, def_nr, args, f);
+      }
+      if src >= 0 && !scope_fn::is_compiler_generated(f, src) && !scope_fn::is_argument(f, src) {
+        scope_scan::set_add(out, src);
       }
     },
     _ => {}
   }
   for c in scope_fn::children(u) {
-    copy_handoff_refusals(s, b, c, f);
+    arm_container_copies(s, b, c, f, out);
   }
 }
 
-// port: handoff.rs fn copy_record_handoff — the variable whose drop an `OpCopyRecord(src, dst,
-// tp)` hands over: a whole-value copy into a compiler buffer moves it as `t = s` does, a copy
-// that frees its source or lands in a droppable container moves the source's; -1 for none, -2
-// for a tuple member (`tuple_member_backing`, not transcribed).
-fn copy_record_handoff(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function) -> integer {
-  src = scope_scan::drop_bearing_source(args[0]!);
+// port: handoff.rs fn handle_handoff — the generator handle an `OpSetDbRef(host, pos, g)` MOVES
+// into a field or an element (loft#1585), -1 for none.
+pub fn handle_handoff(s: scope_scan::Scopes, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> integer {
+  if d_nr != s.ops.set_dbref || len(args) < 3 {
+    return -1;
+  }
+  match scope_fn::unspan(args[2]!) {
+    NdVar { n: g } => if (scope_fn::base(scope_fn::tp(f, g)) is TyIterator) { g } else { -1 },
+    _ => -1
+  }
+}
+
+// port: handoff.rs fn caller_record_locals — the locals that hold the CALLER's record on every
+// path: each assignment that binds a store a whole-value copy off a parameter or off another
+// such local, and nothing writes through it.  A fixpoint, in the order of the destinations.
+pub fn caller_record_locals(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  copies: vector<integer> = [];
+  disqualified: vector<integer> = [];
+  caller_record_walk(b, code, copies, disqualified);
+  targets: vector<integer> = [];
+  for c in copies {
+    scope_scan::set_add(targets, c / 65536);
+  }
+  targets = scope_handles::sorted(targets);
+  marked: vector<integer> = [];
+  grew = true;
+  while grew {
+    grew = false;
+    for t in targets {
+      if scope_fn::has(marked, t) || !caller_record_candidate(b, f, t, disqualified) {
+        continue;
+      }
+      all_caller = true;
+      for c in copies {
+        if c / 65536 != t {
+          continue;
+        }
+        sv = c % 65536;
+        if !(sv < scope_fn::count(f) && !scope_fn::name(f, sv).starts_with("__") && (scope_fn::is_argument(f, sv) || scope_fn::has(marked, sv)) && copy_carries_drop(b, f, t, scope_fn::tp(f, sv))) {
+          all_caller = false;
+        }
+      }
+      if all_caller {
+        marked += [t];
+        grew = true;
+      }
+    }
+  }
+  scope_handles::sorted(marked)
+}
+
+fn caller_record_candidate(b: ir::Bundle, f: ir::Function, v: integer, disqualified: vector<integer>) -> boolean {
+  if v >= scope_fn::count(f) || scope_fn::name(f, v).starts_with("__") || scope_fn::is_argument(f, v)
+    || scope_fn::is_captured(f, v) || scope_fn::was_loop_var(f, v) || scope_fn::has(disqualified, v) {
+    return false;
+  }
+  // A local of a type that declares `OpCopy` never holds the caller's record: the copy that
+  // filled it took a lease of its own (@FR-H-Copy-Lease).
+  d = own::heap_def_nr(scope_fn::tp(f, v));
+  d == null || !opt_lease::leases_whole(b, d!)
+}
+
+fn caller_record_walk(b: ir::Bundle, n: ir::Node, copies: vector<integer>, disqualified: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => match scope_fn::unspan(inner) {
+      NdVar { n: src } => { copies += [pair(t, src)]; },
+      _ => if !scope_witness::holds_no_store(b, inner) {
+        scope_scan::set_add(disqualified, t);
+      }
+    },
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      place = -1;
+      if nm == "OpCopyRecord" {
+        place = 1;
+      } else if nm.starts_with("OpSet") || nm.starts_with("OpAppend") || nm.starts_with("OpInsert") || nm.starts_with("OpRemove") || nm.starts_with("OpClear") || nm == "OpDatabase" {
+        place = 0;
+      }
+      if place >= 0 && place < len(args) {
+        root = scope_args::accessor_root_var(b, args[place]!);
+        if root >= 0 {
+          scope_scan::set_add(disqualified, root);
+        }
+      }
+      if !nm.starts_with("Op") {
+        for a in args {
+          match scope_fn::unspan(a) {
+            NdVar { n: x } => scope_scan::set_add(disqualified, x),
+            _ => {}
+          }
+        }
+      }
+    },
+    NdCallRef { args } => for a in args {
+      match scope_fn::unspan(a) {
+        NdVar { n: x } => scope_scan::set_add(disqualified, x),
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    caller_record_walk(b, c, copies, disqualified);
+  }
+}
+
+// port: handoff.rs fn local_copy_pairs — every whole-value copy `dst = src` between two locals
+// whose destination can own a release; sorted.
+pub fn local_copy_pairs(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  local_copy_walk(b, code, f, out);
+  scope_handles::sorted(out)
+}
+
+fn local_copy_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: dst, inner } => match scope_fn::unspan(inner) {
+      NdVar { n: src } => if dst != src && dst < scope_fn::count(f) && src < scope_fn::count(f)
+        && !scope_fn::name(f, dst).starts_with("__") && !scope_fn::is_argument(f, dst)
+        && !scope_fn::is_captured(f, dst) && !scope_fn::was_loop_var(f, dst)
+        && copy_carries_drop(b, f, dst, scope_fn::tp(f, src)) {
+        scope_scan::set_add(out, pair(dst, src));
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    local_copy_walk(b, c, f, out);
+  }
+}
+
+// port: handoff.rs fn assigns_a_self_stopping_copy — is `v` assigned, anywhere in `code`, a
+// whole-value copy that stops `v` itself (a copy off a PARAMETER)?
+pub fn assigns_a_self_stopping_copy(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, v: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => if t == v {
+      match scope_fn::unspan(inner) {
+        NdVar { n: src } => if per_path_stops(s, b, f, v, src) == v {
+          return true;
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if assigns_a_self_stopping_copy(s, b, c, f, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: handoff.rs fn handoff_target — which side of a whole-value copy stops dropping: the
+// DESTINATION for a per-path copy (a branch arm's lift), else `copy_moves_drop_from`'s; -1.
+fn handoff_target(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, dst: integer, src: integer, buffer_dst: boolean, per_path: boolean) -> integer {
+  moved = copy_moves_drop_from(s, b, f, dst, src, buffer_dst);
+  if moved < 0 {
+    return -1;
+  }
+  if per_path { dst } else { moved }
+}
+
+// port: handoff.rs fn collect_drop_transferred — the vars that HANDED OFF what they hold, over
+// all of `code`.  No arm lift exists yet, so nothing here is per path.
+pub fn collect_drop_transferred(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  drop_handoff_walk(s, b, code, f, out, []);
+  out
+}
+
+// `v.walk(|n| drop_handoff_node(n, …))` — the hand-offs every node of `n` makes, into `out`;
+// `per_path` the arm lift temps.
+pub fn drop_handoff_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>, per_path: vector<integer>) {
+  u = scope_fn::unspan(n);
+  drop_handoff_node(s, b, u, f, out, per_path);
+  for c in scope_fn::children(u) {
+    drop_handoff_walk(s, b, c, f, out, per_path);
+  }
+}
+
+// port: handoff.rs fn copy_record_handoff — the variable whose RELEASE a whole-value
+// `OpCopyRecord(src, dst, tp)` hands over: -1 for none, -2 where the answer reads a tuple
+// member's backing (`tuple_member_backing`, not in the image).
+pub fn copy_record_handoff(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function) -> integer {
+  src = scope_scan::drop_bearing_source(args[0]!, f);
   dst = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
-  if src >= 0 && dst >= 0 && (scope_fn::name(f, dst).starts_with("__ref") || scope_fn::name(f, dst) == "__retbuf" || scope_drops::is_promoted_ret_buffer(s, b, f, dst)) {
+  to_buffer = dst >= 0 && (scope_fn::name(f, dst).starts_with("__ref") || scope_fn::name(f, dst) == "__retbuf" || scope_drops::is_promoted_ret_buffer(s, b, f, dst));
+  // A tuple member's backing is read only where the answer depends on it: a buffer whose
+  // record has a cascade (`copy_carries_drop`), or a copy that moves its source.
+  if src == -2 {
+    rec = own::heap_def_nr(scope_fn::tp(f, dst));
+    buffer_drops = to_buffer && rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE;
+    return if buffer_drops || copy_record_moves_source(b, args, f) { -2 } else { -1 };
+  }
+  if src >= 0 && to_buffer {
     from = src;
     deps = scope_fn::deps(f, src);
     if len(deps) == 1 && deps[0]! != src && !scope_fn::is_argument(f, src) && scope_fn::name(f, deps[0]!).starts_with("__ref_") {
@@ -99,32 +495,116 @@ fn copy_record_handoff(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::No
   if !copy_record_moves_source(b, args, f) {
     return -1;
   }
-  scope_scan::drop_bearing_source(args[0]!)
+  src
 }
 
 // port: handoff.rs fn copy_record_moves_source — the copy frees its source (`0x8000`), or lands
 // in a container whose cascade releases what it holds.
-fn copy_record_moves_source(b: ir::Bundle, args: vector<ir::Node>, f: ir::Function) -> boolean {
+pub fn copy_record_moves_source(b: ir::Bundle, args: vector<ir::Node>, f: ir::Function) -> boolean {
   bit = match scope_fn::unspan(args[2] ?? ir::NdNull) { NdInt { n } => (n / 32768) % 2 == 1, _ => false };
   bit || (len(args) > 1 && (scope_join_rewrite::copy_hands_off(b, args[1]!, f) || scope_join_rewrite::appends_to_element(b, args[1]!, f)))
 }
 
-// port: handoff.rs fn drop_handoff_node, its CONSTRUCTION arm — a construction block delivers its
-// work-ref's record to the binding that owns it, so the work-ref stops dropping; every arm's
-// construction where the value is a branch join.  Into `out`.
-pub fn construction_handoffs(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
-  u = scope_fn::unspan(n);
-  match u {
-    NdSet { var: v, inner } => if v < scope_fn::count(f) && scope_fn::proxy_says_owned(f, v) {
-      for w in scope_backings::construction_work_refs(b, inner, f) {
-        if w != v && !scope_fn::has(out, w) {
-          out += [w];
+// port: handoff.rs fn drop_handoff_node — the hand-offs ONE node makes, into `out`: a generator
+// handle placed into a container, an `OpCopyRecord` that hands its source's release over, a
+// construction delivered to the binding that owns it, a whole-value copy between locals.  A
+// copy written in a branch ARM (`per_path_pairs`) stops its side only on the path that ran it,
+// which that side's flag records, so it never enters this set.  `per_path` the arm lift temps.
+pub fn drop_handoff_node(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>, per_path: vector<integer>) {
+  match n {
+    NdCall { def_nr, args } => {
+      g = handle_handoff(s, def_nr, args, f);
+      if g >= 0 && !scope_fn::has(s.per_path_pairs, pair(scope_fn::NONE, g)) {
+        scope_scan::set_add(out, g);
+      } else if def_nr == s.ops.copy_record && len(args) >= 3 {
+        stopped = copy_record_handoff(s, b, args, f);
+        if stopped == -2 {
+          scope_scan::refuse(s, "handoff::tuple_member_backing: a tuple member copied and handed off (tuphold_origin)");
+        } else if stopped >= 0 && !scope_fn::has(s.per_path_pairs, pair(scope_fn::NONE, stopped)) {
+          scope_scan::set_add(out, stopped);
         }
+      }
+    },
+    NdSet { var: v, inner } => {
+      // A CONSTRUCTION block delivers its work-ref's record to the binding: every arm's
+      // construction where the value is a branch join (`construction_work_refs`).
+      if v < scope_fn::count(f) && scope_fn::proxy_says_owned(f, v) {
+        for w in scope_backings::construction_work_refs(b, inner, f) {
+          if w != v {
+            scope_scan::set_add(out, w);
+          }
+        }
+      }
+      // A plain WHOLE-VALUE copy between two locals moves the drop to the copy.
+      match scope_fn::unspan(inner) {
+        NdVar { n: src } => if !scope_fn::has(s.per_path_pairs, pair(v, src)) {
+          moved = handoff_target(s, b, f, v, src, false, scope_fn::has(per_path, v));
+          if moved >= 0 {
+            scope_scan::set_add(out, moved);
+          }
+        },
+        _ => {}
       }
     },
     _ => {}
   }
-  for c in scope_fn::children(u) {
-    construction_handoffs(b, c, f, out);
+}
+
+// port: handoff.rs fn arm_handoff_flags — the per-path flags a copy sets when it runs: an
+// `OpCopyRecord` written in a branch arm, a whole-collection copy of a collection the function
+// owns, a generator handle placed in an arm.
+pub fn arm_handoff_flags(s: scope_scan::Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> vector<integer> {
+  stopped: vector<integer> = [];
+  g = handle_handoff(s, d_nr, args, f);
+  if d_nr == s.ops.copy_record && len(args) >= 3 {
+    h = copy_record_handoff(s, b, args, f);
+    if h == -2 {
+      scope_scan::refuse(s, "handoff::tuple_member_backing: a tuple member copied into a container (tuphold_origin)");
+    } else if h >= 0 {
+      stopped = [h];
+    } else {
+      // A collection copied into a vector-of-vectors element (loft#1597).
+      stopped = collection_copy_backings(s, b, d_nr, args, f);
+    }
+  } else if g >= 0 {
+    stopped = [g];
+  } else {
+    stopped = collection_copy_backings(s, b, d_nr, args, f);
   }
+  out: vector<integer> = [];
+  for x in stopped {
+    if scope_fn::has(s.per_path_pairs, pair(scope_fn::NONE, x)) {
+      flag = scope_scan::get(s.handed_off, x);
+      if flag >= 0 {
+        out += [flag];
+      }
+    }
+  }
+  out
+}
+
+// port: handoff.rs fn mint_handoff_flag — `__hoff_<name>`, the per-path flag of `var`, minted
+// once.
+pub fn mint_handoff_flag(s: scope_scan::Scopes, f: ir::Function, var: integer) -> integer {
+  have = scope_scan::get(s.handed_off, var);
+  if have >= 0 {
+    return have;
+  }
+  flag = scope_fn::add_temp_var(f, "__hoff_{scope_fn::name(f, var)}", ir::TyBoolean);
+  scope_scan::set_scope_of(s, flag, 0);
+  s.var_order += [flag];
+  scope_scan::put(s.handed_off, var, flag);
+  flag
+}
+
+// Every entry's flag, sorted and NOT deduplicated, as Rust collects `handed_off.values()`: the
+// head of the body sets each false, a flag two ids share twice.
+pub fn handoff_flags(s: scope_scan::Scopes) -> vector<integer> {
+  flags: vector<integer> = [];
+  for x in s.handed_off {
+    if x >= 0 {
+      flags += [x];
+    }
+  }
+  scope_handles::sorted(flags)
 }

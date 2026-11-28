@@ -104,7 +104,7 @@ pub fn through_null_arm(b: ir::Bundle, n: ir::Node) -> ir::Node {
   }
 }
 
-fn holds_no_store(b: ir::Bundle, n: ir::Node) -> boolean {
+pub fn holds_no_store(b: ir::Bundle, n: ir::Node) -> boolean {
   match scope_fn::unspan(n) {
     NdNull => true,
     NdCall { def_nr, args } => len(args) == 0 && scope_args::def_name(b, def_nr) == "OpNullRefSentinel",

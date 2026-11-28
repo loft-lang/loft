@@ -20,6 +20,8 @@ use own;
 use scope_scan_set;
 use scope_move_elide;
 use opt_names;
+use scope_handoff;
+use scope_backings;
 
 
 // The type of the value a node answers, where the node says it: a variable, a call, a call
@@ -150,7 +152,7 @@ fn arm_bind(s: scope_scan::Scopes, b: ir::Bundle, tail: ir::Node, bound: integer
         return no_bind();
       }
       whole_into_view = (scope_fn::has(s.whole_value_hoists, x) || !scope_fn::is_compiler_generated(f, x)) && len(scope_fn::deps(f, bound)) > 0;
-      if scope_fn::has(s.multi_assigned, bound) && !whole_into_view && (s.first_set != bound || scope_fn::has(s.owner_witness, bound)) {
+      if scope_fn::has(s.multi_assigned, bound) && !whole_into_view && (s.first_set != bound || scope_scan::get(s.owner_witness, bound) >= 0) {
         return no_bind();
       }
       t = scope_fn::tp(f, x);
@@ -254,17 +256,24 @@ pub fn lift_join_arm_tails(s: scope_scan::Scopes, b: ir::Bundle, node: ir::Node,
   if keyed {
     lf.called.clear();
   }
+  // Each `__lift_N = a` is a whole-value copy the collector never saw (the lift is built after
+  // it), so the drop moves here by the same rule, PER PATH: the lift holds the structure on the
+  // path that copied and releases it, and the source stops on that path, by its flag
+  // (`@FR-H-Move`, loft#1617).  Off a parameter the copy stops itself.
   for i in 0..len(lf.copied_src) {
     src = lf.copied_src[i];
     tmp = lf.copied_tmp[i];
-    if !scope_fn::has(s.arm_lift_temps, tmp) {
-      s.arm_lift_temps += [tmp];
+    scope_scan::set_add(s.arm_lift_temps, tmp);
+    stopped = scope_handoff::copy_moves_drop_from(s, b, f, tmp, src, true);
+    if stopped < 0 {
+      continue;
     }
-    // `copy_moves_drop_from`: a record with a drop cascade copied out of a local this frame
-    // owns moves its release (`per_path_pairs`, the hand-off flag) — not transcribed.
-    rec = own::heap_def_nr(scope_fn::tp(f, tmp));
-    if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE && !scope_fn::is_argument(f, src) {
-      scope_scan::refuse(s, "arm_lift::lift_join_arm_tails: a lifted copy that moves a drop (handoff::copy_moves_drop_from)");
+    // A source that OUTLIVES the loop keeps its release: the lift is per ITERATION.
+    if stopped == src && !source_outlives_loop(s, src, f) {
+      scope_scan::set_add(s.per_path_pairs, scope_handoff::pair(tmp, src));
+      scope_handoff::mint_handoff_flag(s, f, src);
+    } else {
+      scope_scan::set_add(s.drop_transferred, tmp);
     }
   }
   if bound == scope_fn::NONE || bound < 0 || (len(lf.copied_src) == 0 && len(lf.viewed) == 0 && len(lf.called) == 0) {
@@ -276,6 +285,21 @@ pub fn lift_join_arm_tails(s: scope_scan::Scopes, b: ir::Bundle, node: ir::Node,
   }
   owned: vector<integer> = [];
   out = lift_owned_call_tails(s, b, out, home, f, owned);
+  // loft#1623 — every frame-owned temp this join's value may live in, recorded against the
+  // binding that borrows them (`join_holders`): the arm lifts, the arms the parser already
+  // owns, the minting-call arms just given a temp, the constructions' work-refs.  (The join
+  // owners `Function::add_join_owners` records are a closure record's question.)
+  holders: vector<integer> = [for t in lf.copied_tmp { t }];
+  holders += lf.called;
+  for w in owned {
+    scope_scan::set_add(holders, w);
+  }
+  for w in scope_backings::construction_work_refs(b, out, f) {
+    scope_scan::set_add(holders, w);
+  }
+  for w in holders {
+    scope_scan::list_add(s.join_holders, bound, w);
+  }
   deps: vector<integer> = [for d in scope_fn::deps(f, bound) { d }];
   for t in owned {
     deps += [t];
@@ -381,6 +405,31 @@ fn lift_arm_tails_into(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, home: 
     lf.called += [tmp];
   }
   ir::NdInsert { items: [scope_fn::v_set(tmp, n), ir::NdVar { n: tmp }] }
+}
+
+// port: arm_lift.rs fn arm_source_outlives_loop — does an arm of the value branch hand back a
+// variable declared OUTSIDE the innermost loop this statement runs in, or a parameter?
+pub fn arm_source_outlives_loop(s: scope_scan::Scopes, value: ir::Node, f: ir::Function) -> boolean {
+  for src in scope_scan_set::branch_tail_vars(value) {
+    if source_outlives_loop(s, src, f) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: arm_lift.rs fn source_outlives_loop — not a variable the loop's body refills on every
+// pass (`loop_refills`).
+fn source_outlives_loop(s: scope_scan::Scopes, src: integer, f: ir::Function) -> boolean {
+  if len(s.loops) == 0 || scope_fn::is_compiler_generated(f, src) {
+    return false;
+  }
+  home = scope_scan::get(s.var_scope, src);
+  if home >= 0 && loop_depth_at(s, home) >= len(s.loops) {
+    return false;
+  }
+  k = len(s.loop_refills);
+  !(k > 0 && scope_fn::has(s.loop_refills[k - 1].items, src))
 }
 
 // port: arm_lift.rs fn loop_depth_at
@@ -604,7 +653,7 @@ fn mark_lift_handoff(s: scope_scan::Scopes, tmp: integer, arg_idx: integer, tran
 }
 
 // port: par_writes.rs fn accessor_root_var — -1 for `None`.
-fn accessor_root_var(b: ir::Bundle, v: ir::Node) -> integer {
+pub fn accessor_root_var(b: ir::Bundle, v: ir::Node) -> integer {
   match v {
     NdVar { n } => n,
     NdSpan { inner } => accessor_root_var(b, inner),
