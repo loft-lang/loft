@@ -1341,9 +1341,10 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // an item reads the place itself (`v: [len(b.inner.v)]`): any other field place is built in
   // place.  An element place (`vs.els[i] = …`) is still built apart.
   apart = false;
-  // (Built apart from a field of a LOCAL, a comprehension field and an item indexing the place
-  // stay refused: Rust parses the literal twice there — the abandoned attempt's loop names
-  // (`x`, `_comp_1`) and the snapshot `_build_src_N` (a second-pass variable) are not carried.)
+  // (Built apart from a field of a LOCAL, a comprehension field, a formatted item and an item
+  // indexing the place stay refused: Rust parses the literal twice there — the abandoned
+  // attempt's loop names (`x`, `_comp_1`), its work texts and the snapshot `_build_src_N` (a
+  // second-pass variable) are not carried.)
   apart_hard = false;
   aroot = place_root(e, place);
   // (A shared capture's record, `OpGetDbRef(__closure, pos)`, is rooted at the closure record.)
@@ -1376,7 +1377,7 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
         view_field = vcoll && fe != null && aroot >= 0 && match e.p.nodes[fe!] { SName { name: vsn, member: vsm } => vsm == "" && el_vars::var(vars, vsn) >= 0 && el_ex_copy::store_viewers(vars, aroot).contains(el_vars::var(vars, vsn)), _ => false };
         if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field || view_field) {
           apart = true;
-          if comp_field || (aroot >= 0 && e.p.nodes[fe!] is SVecLit && el_ex_into::indexes_name(e, fe!, el_vars::name_of(vars, aroot))) {
+          if comp_field || fmt_item || (aroot >= 0 && e.p.nodes[fe!] is SVecLit && el_ex_into::indexes_name(e, fe!, el_vars::name_of(vars, aroot))) {
             apart_hard = true;
           }
           // (`snapshot_read_destination`: an item INDEXING the destination's vector —
