@@ -7,9 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-Designed, not built ([@PLN232](https://github.com/loft-lang/plans/issues/232), from loft#2659).  Every
-design question is decided (owner, 2026-11-27; § Design questions).  Phase 0 shipped on
-`tuxedo-pr2657-next` (loft#2661); phases A–D wait for the owner to schedule them.
+Active ([@PLN232](https://github.com/loft-lang/plans/issues/232), from loft#2659).  Every
+design question is decided (owner, 2026-11-27; § Design questions).  Phase 0 shipped on `main`
+(#2666, loft#2661); formal rule `(B-RefType-Return)` and `@C77` amendment recorded; implementing
+phases A–D.
 
 ## Goal
 
@@ -74,21 +75,30 @@ The refusal's wording changes (it keeps fields, elements and tuple members), and
 **The compiler — record places (`-> &Struct`).**  The type shape already exists.  A local record
 link `e = &s.enemies[0]` is a `Reference(E, deps=[s])` view plus the per-variable `amp_link`
 flag, and a call returning a part of parameter 0 is already typed `Reference(…, Deps{[0]})`
-(`(O-Move)`'s record, `control.rs` `ref_return`/`borrowed_param_deps`).  The work:
+(`(O-Move)`'s record, `control.rs` `ref_return`/`borrowed_param_deps`).  Option B keeps
+`Definition.returned` as that carrier (`Type::Reference` / `Type::Enum` / `Type::Vector` / keyed /
+`__tuple<…>`, and `Type::RefVar` for scalar/text in phase C) alongside `Definition::returned_ref:
+bool` (mirroring `Definition::returned_const`) and `ret_ref_param: u8` (`u8::MAX` when none) on
+`Type::Function` (`@FR-O-Opaque`).  For an out-of-line record type (`Data::held_out_of_line`,
+`@FR-B-OutOfLine`), the returned value is the slot-tagged `DbRef` (`OpSlotTag(OpGetField(…))`) so
+a whole write populates an absent field.  The work:
 
-- **Parse.**  `refuse_link_type` (`parser/definitions.rs`) covers every position at once.  It is
-  split so a return (`parse_type_full(…, returned = true)`) takes the `&` and the rest still
-  refuse.  Function, method and interface signatures share the `->` parse.
+- **Parse.**  `refuse_link_type` (`parser/definitions.rs`) covers every position at once.  Return
+  positions (`parse_function`, `parse_interface`, `parse_lambda`, `parse_fn_type`) consume a
+  leading `&` into `returned_ref` while generators (`@FR-G-NoRefParam`), fields, elements and
+  tuple members still refuse; `-> &(…)` routes through `ref_var_type`'s `__tuple<…>` check
+  (`@FR-T-Ref-Rep`, `@FR-T-Ref-El`).
 - **The callee.**  A `-> &T` whose returned place names no parameter (a local, a fresh value, a
-  literal) is refused at compile time: there is no place to hand back.  `(B-Ref-AnnotationOnly)`
+  literal) or places in two parameters (`Deps [0, 1]`) is refused at compile time; one rooted in a
+  value-const parameter requires `-> const &T` (`@FR-Const-Value`).  `(B-Ref-AnnotationOnly)`
   keeps `return &a` refused, so the body's tail is the plain place.
 - **The caller's bind.**  `bind_lowering::first_arm` chooses `CallCopy` today.  A `&` callee takes
-  a view arm instead: keep the deps and skip the free.  `use_analysis::view_elision_bind`
-  (`scopes/scan_set.rs` `mark_view_elided`) is that arm already, read-only, for a call borrowing
-  a value-const argument.  `e = &first(s)` admits a `-> &T` call as an addressable operand.
-- **Dependencies.**  `call_args.rs` `call_dependencies` maps callee-space deps onto the caller's
-  arguments.  It has no arm for this and passes them through verbatim, the loft#938/#1335 class:
-  **the main correctness risk**.
+  `FirstArm::Plain` when `!tp.depend().is_empty()` (keep the deps and skip the free) and keeps
+  `CallCopy` when `tp.depend().is_empty()` (`@FR-O-Proxy`, reassigned local materialised).
+  `e = &first(s)` admits a `-> &T` call as an addressable operand, and `lhs_root_var` steps
+  through the borrowed parameter index (`@FR-Cap-Own`, `@FR-Const-Value`).
+- **Dependencies.**  `call_args.rs` `call_dependencies` translates attr-space deps onto the
+  caller's arguments (`Type::Trie` joins the keyed kinds alongside `RefVar` for phase C).
 - **Reshape and disturb.**  `scopes/view_walk.rs` `is_place_link` and `scopes/places.rs`
   `value_view_places_depth` treat a call as a mint, so naming no container.  They must map a
   `-> &T` call to its argument's place, or the refusals and the materialisation never see the

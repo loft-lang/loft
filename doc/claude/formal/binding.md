@@ -53,12 +53,39 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   (B-RefType-OfVar)  a variable or parameter HAS type `&τ` for its whole lifetime; the
                      reference-ness is a property of the VARIABLE (its type), fixed at
                      the binding — never a per-expression operation.
+  (B-RefType-Return) a function, method, interface method, generic or `fn(…) -> &τ`
+                     type may declare its return `&τ`: the call IS the place its body
+                     returns, each parameter replaced by its argument — in every
+                     position a place can stand (an assignment or compound-assignment
+                     target, a field or element chain, a `&` argument, a `&` link's
+                     source, a plain bind, a value read).  Every place the body can
+                     return (across branches, `match` arms and early `return`s) lives
+                     in ONE parameter's lifetime, and names a parameter (never a local,
+                     a capture or a fresh value); returning places in two parameters is
+                     a compile-time error.  A plain bind `x = f(a)` binds as that place
+                     binds — a view for a record (B-View, materialised by B-Disturb
+                     against the union of containers f's return sites reach) and a copy
+                     for a scalar, text or owned-base vector (B-Copy) — while
+                     `x = &f(a)` links (B-Ref-Alias, refused on disturbance by
+                     B-Ref-Reshape).  A temporary argument (`f(mk())`) answers as the
+                     place over that temporary answers (`&f(mk())` is refused; reads and
+                     pass-through writes run).  For an out-of-line record type
+                     (B-OutOfLine), `f(a)` names the slot itself so a whole write
+                     populates an absent field; for a tuple `&(…)`, `f(a)` names the
+                     `__tuple<…>` record (tuples.md T-Ref-Rep, T-Ref-El).  A `&τ`
+                     return rooted in a value-const parameter requires `const` on the
+                     return (`-> const &τ`, Const-Value).  A `fn(…) -> &τ` value
+                     records which parameter the returned place lives in, and
+                     assignment requires that parameter index to match (ownership.md
+                     O-Opaque).  Generators keep `&` refused (coroutines.md
+                     G-NoRefParam).
 ```
 
 **In words.** `&integer` is a *type* — the type of a variable that is a live link to some
 integer, the same way `vector<integer>` is the type of a vector. The `&` belongs to the
-variable's type and stays there for the variable's whole life; it is never an action you
-perform on a value. There is no `&` operator.
+variable's or return's type and stays there for its whole life; it is never an action you
+perform on a value. A `-> &τ` function returns an interior place inside one of its
+parameters, and calling it stands for that place everywhere. There is no `&` operator.
 
 ### Introducing a reference (at a binding, not by evaluating an expression)
 
@@ -67,14 +94,17 @@ perform on a value. There is no `&` operator.
                      to an lvalue:  fn f(b: &integer)  ·  b = &a  (b : &(typeof a)).
                      It records "b's type is a link to a" — it does NOT evaluate `a`
                      into a fresh value.
-  (B-Ref-Lvalue)     the linked source is an lvalue (variable / field / element).
+  (B-Ref-Lvalue)     the linked source is an lvalue (variable / field / element, or a
+                     `-> &τ` call, B-RefType-Return).
   (B-Ref-AnnotationOnly)  ⚑ VITAL.  `&` occurs ONLY as a reference-type annotation — in a
-                     type (`&τ`) or at the bind site that gives a variable that type.  A
+                     type (`&τ`, including a parameter or `-> &τ` return signature) or at
+                     the bind site that gives a variable that type.  A
                      unary `&` in ANY other position is a PARSE ERROR: an operand
                      (`x + &y`, and `1 + &y` — the position does not matter), a collection
                      element (`[&a]`), a call/format argument (`f(&a)` passes a value, not
                      a `&`-prefixed expression), a condition (`if &a > 0`), a bare
-                     statement (`&a;`), a `return &a;`, a COMPOUND-assignment right-hand
+                     statement (`&a;`), a `return &a;` (even inside a `-> &τ` function,
+                     whose body writes the plain place), a COMPOUND-assignment right-hand
                      side (`b += &a` — it mutates `b`, it does not give `b` a reference
                      type, so there is no binding to annotate), an assignment TARGET
                      (`&x = 3`).  There is NO `&` operator; permitting `&` as a

@@ -258,7 +258,9 @@ and compiles. This is the only static rejection at a call site besides `F-Arity`
              one call's result does not affect another call's result, nor any of the callee's
              (now-dropped) locals.  A function that returns a whole heap value hands out an
              OWNED value (heap.md H-Alloc / the return-buffer), never a view of a local.
-             EXCEPTION: a `&T` return (binding.md) is an explicit borrow of an addressable input.
+             EXCEPTION: a `-> &T` return ([binding.md](binding.md) `B-RefType-Return`) is an
+             explicit borrow of an addressable place in one parameter's lifetime: the call
+             stands for that place rather than returning a fresh value.
              A result that BORROWS a visible argument — the `{Attr(param)}` return of (O-Move) —
              is not fresh, and (B-Copy) copies it at the bind that takes it, reassigned or
              chosen by an `if`, on both backends (O-NoDiverge); a return that borrows a
