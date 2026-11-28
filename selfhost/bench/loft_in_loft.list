@@ -3,10 +3,12 @@
 # unit for it, which runs alike.  Checked by selfhost/bench/lil_check.py; re-pinned by
 # `lil_check.py --discover --write` in the commit that moves it.
 loft-suite/rules/binding/B-Copy/1472-a-materialised-value-struct-view-keeps-its-absence.loft
+loft-suite/rules/binding/B-Copy/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft
 loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft
 loft-suite/rules/binding/B-Copy/1690-a-bind-written-into-the-arms-of-a-coalesce-is-the-same-on-both-passes.loft
 loft-suite/rules/binding/B-Copy/201-bind-copies-projection-views.loft
 loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
+loft-suite/rules/binding/B-Copy/a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft
 loft-suite/rules/binding/B-Copy/a-re-bind-of-a-whole-local-copies-in-every-spelling.loft
 loft-suite/rules/binding/B-Disturb/an-element-view-read-before-an-element-first-append-is-not-moved.loft
 loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft
@@ -47,6 +49,7 @@ loft-suite/rules/calls/F-Recv/1780-a-method-call-dispatches-on-every-argument-li
 loft-suite/rules/calls/F-Recv/a-method-and-its-nullable-twin-are-two-bodies.loft
 loft-suite/rules/calls/F-Ret/1346-a-nullable-record-from-a-call-copies-when-reassigned-or-joined.loft
 loft-suite/rules/calls/F-Ret/1368-a-return-that-may-borrow-two-sources-is-fresh.loft
+loft-suite/rules/calls/F-Ret/1506b-a-join-and-a-returned-projection-release-once.loft
 loft-suite/rules/calls/F-Ret/2188-a-branch-arm-that-may-hand-back-an-argument-is-the-binders-copy.loft
 loft-suite/rules/calls/F-Ret/2443-a-record-copied-out-of-a-kept-buffer-releases-it.loft
 loft-suite/rules/calls/F-Ret/2525-a-tail-after-an-early-return-of-a-local-delivers-its-own-value.loft
@@ -129,17 +132,27 @@ loft-suite/rules/heap/H-ClearRelease/a-reused-buffer-is-released-whatever-its-sl
 loft-suite/rules/heap/H-Drop/1515-a-join-return-releases-each-arms-source-once.loft
 loft-suite/rules/heap/H-Drop/a-drop-runs-exactly-where-its-values-free-runs.loft
 loft-suite/rules/heap/H-Drop/a-hook-runs-once-on-every-path-out-of-a-scope.loft
+loft-suite/rules/heap/H-Drop/a-return-that-hands-out-one-local-releases-the-others-once.loft
 loft-suite/rules/heap/H-Free/2526-a-text-match-arm-that-may-return-keeps-its-value.loft
 loft-suite/rules/heap/H-Handle/a-copied-file-reads-at-its-own-cursor.loft
 loft-suite/rules/heap/H-Handle/a-file-dying-anywhere-releases-its-handle.loft
 loft-suite/rules/heap/H-Handle/a-file-field-takes-an-append-as-a-file-local-does.loft
 loft-suite/rules/heap/H-Handle/a-file-moved-out-by-return-or-block-value-keeps-its-handle.loft
 loft-suite/rules/heap/H-LongRef/a-stored-reference-keeps-its-record-when-the-collection-moves.loft
+loft-suite/rules/heap/H-Move/1563-a-moved-tuple-releases-a-call-minted-member-once.loft
+loft-suite/rules/heap/H-Move/1563-a-variable-rebound-to-a-join-over-itself-releases-once.loft
+loft-suite/rules/heap/H-Move/1591-a-coalesce-chain-that-holds-its-destination-releases-once.loft
+loft-suite/rules/heap/H-Move/1592-a-join-in-a-loop-over-a-refilled-source-releases-once.loft
+loft-suite/rules/heap/H-Move/1617-a-lifted-arm-releases-the-record-the-binding-holds.loft
+loft-suite/rules/heap/H-Move/1628-a-returned-witnessed-local-hands-out-the-record-it-holds.loft
+loft-suite/rules/heap/H-Move/1645-a-tuple-rebound-or-moved-in-an-arm-releases-each-member-once.loft
+loft-suite/rules/heap/H-Move/2004-a-drop-hook-runs-once-when-a-nullable-local-is-returned.loft
 loft-suite/rules/heap/H-Move/a-file-local-moved-into-a-structure-keeps-its-handle.loft
 loft-suite/rules/heap/H-NewRec/a-recursive-enum-builds-its-vector-children-in-one-literal.loft
 loft-suite/rules/heap/H-RefVal/a-heap-read-and-write-follow-the-null-and-index-rules.loft
 loft-suite/rules/heap/H-Removed/a-reference-to-a-displaced-hash-entry-reads-null.loft
 loft-suite/rules/heap/H-Removed/a-stored-reference-to-a-removed-record-reads-null.loft
+loft-suite/rules/interfaces/G-Key/1622-a-drop-cascade-key-names-the-variants-enum.loft
 loft-suite/rules/interfaces/G-Mono/1880-a-recursive-generic-returns-a-view-its-caller-copies.loft
 loft-suite/rules/interfaces/G-Mono/2156-a-generic-vector-local-is-built-at-its-instance-element.loft
 loft-suite/rules/interfaces/G-Mono/a-generic-record-parameter-reassigns-like-its-twin.loft
@@ -207,6 +220,7 @@ loft-suite/rules/ownership/O-Buffer/164-adopt-buffer-reuse.loft
 loft-suite/rules/ownership/O-Buffer/1643-a-null-led-nullable-local-takes-the-pooled-buffer.loft
 loft-suite/rules/ownership/O-Buffer/2194-a-returned-block-bound-record-is-not-freed-by-its-sibling.loft
 loft-suite/rules/ownership/O-Buffer/a-forwarded-result-buffer-is-the-callers-until-the-frame-mints-one.loft
+loft-suite/rules/ownership/O-Buffer/a-pooled-buffer-outlives-the-reassign-of-the-local-it-fills.loft
 loft-suite/rules/ownership/O-Buffer/a-recursive-chain-frees-the-buffer-its-frame-minted.loft
 loft-suite/rules/ownership/O-Complete/1142-a-keyed-return-through-a-join-frees-the-arm-that-did-not-run.loft
 loft-suite/rules/ownership/O-Complete/157-join-witness.loft
@@ -217,6 +231,7 @@ loft-suite/rules/ownership/O-Detach/157-selfread-literal.loft
 loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft
 loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft
 loft-suite/rules/ownership/O-Latest/1128-a-conditionally-assigned-return-buffer-frees-what-it-displaces.loft
+loft-suite/rules/ownership/O-Latest/a-shared-destination-releases-the-arm-that-did-not-run.loft
 loft-suite/rules/ownership/O-Latest/a-tail-call-frees-the-store-its-buffer-var-stops-holding.loft
 loft-suite/rules/ownership/O-LazyBuffer/1647-a-moved-call-result-is-released-once.loft
 loft-suite/rules/ownership/O-LazyBuffer/a-path-that-makes-no-call-frees-only-the-null-sentinel.loft
