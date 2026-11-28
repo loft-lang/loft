@@ -2441,46 +2441,52 @@ pub fn literal_arms_into_buffer(e: el::El, vars: el_vars::Vars, x: ir::Node, rb:
 // argument is the call's hidden buffer `w` becomes `v = f(…, v)`; null where `v` is bound from a
 // call anywhere else, or by two calls.
 fn collapse_defining_call(vars: el_vars::Vars, bl: ir::Block, v: integer) -> ir::Block? {
-  at = -1;
+  // (Every statement of the body binding the local from a call is handed the buffer — `v =
+  // cmkv(1); v = cmkv(2)`, each `n_cmkv(…, v)`; a bind from a call anywhere deeper is refused.)
+  ats: vector<integer> = [];
   for o in bl.operators {
     match el_ir::unspan(o) {
       NdSet { var, inner } => if var == v && el_ir::unspan(inner) is NdCall {
-        if at >= 0 {
-          return null;
-        }
-        at = o#index;
+        ats += [o#index];
       },
       _ => {}
     }
   }
-  if at < 0 {
+  if len(ats) == 0 {
     return null;
   }
   rest = bl;
-  rest.operators[at] = ir::NdNull;
+  for ra in ats {
+    rest.operators[ra] = ir::NdNull;
+  }
   if bound_from_call(ir::NdBlock { block: [rest] }, v) {
     return null;
   }
   out = bl;
-  match el_ir::unspan(bl.operators[at]!) {
-    NdSet { var, inner } => match el_ir::unspan(inner) {
-      NdCall { def_nr, args } => {
-        if len(args) == 0 || hidden_ref_arg(vars, args) < 0 {
-          return null;
-        }
-        cw = hidden_ref_arg(vars, args);
-        a2 = args;
-        a2[len(a2) - 1] = ir::NdVar { n: v };
-        out.operators[at] = respan(bl.operators[at]!, ir::NdSet { var: var, inner: ir::NdCall { def_nr: def_nr, args: a2 } });
-        // (`suppress_collapsed_workrefs`: the call's own buffer, now unused, owns nothing — a
-        // vector one is never freed, its null-init allocating nothing.)
-        if el_vars::tp(vars, cw) is TyVector && !live_use(ir::NdBlock { block: [out] }, cw) {
-          el_vars::set_skip_free(vars, cw, "suppress_collapsed_workrefs");
-        }
+  cws: vector<integer> = [];
+  for at in ats {
+    match el_ir::unspan(bl.operators[at]!) {
+      NdSet { var, inner } => match el_ir::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if len(args) == 0 || hidden_ref_arg(vars, args) < 0 {
+            return null;
+          }
+          cws += [hidden_ref_arg(vars, args)];
+          a2 = args;
+          a2[len(a2) - 1] = ir::NdVar { n: v };
+          out.operators[at] = respan(bl.operators[at]!, ir::NdSet { var: var, inner: ir::NdCall { def_nr: def_nr, args: a2 } });
+        },
+        _ => return null
       },
       _ => return null
-    },
-    _ => return null
+    }
+  }
+  // (`suppress_collapsed_workrefs`: each call's own buffer, now unused, owns nothing — a vector
+  // one is never freed, its null-init allocating nothing.)
+  for cw in cws {
+    if el_vars::tp(vars, cw) is TyVector && !live_use(ir::NdBlock { block: [out] }, cw) {
+      el_vars::set_skip_free(vars, cw, "suppress_collapsed_workrefs");
+    }
   }
   out
 }
