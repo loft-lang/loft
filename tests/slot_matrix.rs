@@ -47,26 +47,30 @@
 static ONE_GATE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn gate(family: &str) {
+    run_gate(&["gate", "--family", family], &format!("the `{family}` slots"));
+}
+
+fn run_gate(args: &[&str], what: &str) {
     let _one = ONE_GATE_AT_A_TIME
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let out = match loft::platform::process::harness_command("python3")
         .arg(root.join("scripts/slot_matrix.py"))
-        .args(["gate", "--family", family])
+        .args(args)
         .env("LOFT", env!("CARGO_BIN_EXE_loft"))
         .current_dir(root)
         .output()
     {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("SKIP the slot matrix's `{family}` gate: python3 unavailable ({e})");
+            eprintln!("SKIP the slot matrix's gate of {what}: python3 unavailable ({e})");
             return;
         }
     };
     assert!(
         out.status.success(),
-        "the `{family}` slots of the slot matrix are off their baseline:\n{}{}",
+        "{what} of the slot matrix are off their baseline:\n{}{}",
         String::from_utf8_lossy(&out.stdout),
         String::from_utf8_lossy(&out.stderr),
     );
@@ -94,6 +98,19 @@ family_gates! {
     operator_slots_hold_their_baseline => "operator",
     control_slots_hold_their_baseline => "control",
     construct_slots_hold_their_baseline => "construct",
+}
+
+/// The sequence axis (`scripts/slot_sequence.py`): a fixed seeded sample of sequences of
+/// statements over one local, each answer computed by the generator's own model, run under
+/// the leak checks, `LOFT_STRICT_STORES` and `LOFT_POISON`; every cell interpreted, every
+/// sixth compiled.  Its baseline is `scripts/slot_sequence.baseline`.
+///
+/// @falsified-at: hand-measured — with `LOFT` naming origin/main @ ebff34f71 the sequence
+/// cells of loft#2671, #2673, #2674, #2677, #2681 and #2684 fail
+/// (`slot_matrix.py seq run --cells <their names>`); on the build with their fixes they pass.
+#[test]
+fn sequences_hold_their_baseline() {
+    run_gate(&["seq", "gate"], "the sequences");
 }
 
 #[test]
