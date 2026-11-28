@@ -3405,6 +3405,23 @@ pub fn finish_body(e: el::El, vars: el_vars::Vars, body: ir::Node) -> ir::Node {
         }
         bl.operators = ops;
       }
+      // `Parser::own_fresh_binds`, last: each owner a fresh bind takes declared null at the top.
+      // (Done here, on the block's operators: rebinding `code` from a call over it is a native
+      // double free, loft#2680's class.)
+      if !e.first_pass && has_fresh_bind_site(e, vars, ir::NdBlock { block: [bl] }) {
+        fowners: vector<integer> = [];
+        fops: vector<ir::Node> = [];
+        for fop in bl.operators {
+          fops += [fresh_bind_sites(e, vars, fop, fowners)];
+        }
+        // (Inserted at the front in reverse: the first owner's null comes first.)
+        for fwi in 0..len(fowners) {
+          fw = fowners[len(fowners) - 1 - fwi]!;
+          el_vars::mark_inline(vars, fw, "own_fresh_binds");
+          fops = [el_ir::v_set(fw, ir::NdNull)] + fops;
+        }
+        bl.operators = fops;
+      }
       ir::NdBlock { block: [bl] }
     },
     _ => code
@@ -3500,5 +3517,82 @@ fn tail_view_work_ref(e: el::El, vars: el_vars::Vars, code: ir::Node, result: ir
   tw = el_vars::work_ref(vars, el_types::without_deps(el_types::base(result)));
   if !senum && tw != el_ex_null::return_buffer(e, vars) {
     el_vars::unregister_work_ref(vars, tw);
+  }
+}
+
+// `Parser::own_fresh_binds`' rewrite (run at the end of `finish_body`): each bind of a vector
+// local that borrows a store to a call whose vector answer borrows nothing (a native's fresh
+// vector) is given an owner, a `__ref_p2_N` the call is held in (`owned_fresh_bind`), declared
+// null and inline at the frame's top — numbered after every variable the body made.  A call
+// handed a caller's hidden buffer delivers into it and is no such site.
+fn fresh_bind_sites(e: el::El, vars: el_vars::Vars, n: ir::Node, owners: vector<integer>) -> ir::Node {
+  match n {
+    NdSet { var: p, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr: d, args: cargs } => {
+          hidden = len([for a in cargs if match el_ir::unspan(a) { NdVar { n: b } => b >= 0 && b < len(vars.vars) && vars.vars[b].caller_hidden_buf, _ => false } { 1 }]) > 0;
+          pt = el_vars::tp(vars, p);
+          rt = el::def(e, d).returned[0] ?? ir::TyVoid;
+          if !hidden && !vars.vars[p].argument && el_types::base(pt) is TyVector && len(el_types::deps(pt)) > 0 && el_types::base(rt) is TyVector && len(el_types::deps(el_types::base(rt))) == 0 {
+            elm = match el_types::base(rt) { TyVector { inner: ri } => ri, _ => ir::TyVoid };
+            w = el_vars::work_ref_p2(vars, ir::TyVector { inner: elm, dep: [] });
+            owners += [w];
+            return ir::NdSet { var: p, inner: el_ir::v_block([el_ir::v_set(w, inner), ir::NdVar { n: w }], el_types::with_deps(rt, [w]), "owned_fresh_bind") };
+          }
+        },
+        _ => {}
+      }
+      ir::NdSet { var: p, inner: fresh_bind_sites(e, vars, inner, owners) }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: fresh_bind_sites(e, vars, inner, owners) },
+    NdIf { cond, t, f } => ir::NdIf { cond: fresh_bind_sites(e, vars, cond, owners), t: fresh_bind_sites(e, vars, t, owners), f: fresh_bind_sites(e, vars, f, owners) },
+    NdBlock { block } => {
+      bl = block[0];
+      bops: vector<ir::Node> = [];
+      for o in block[0].operators {
+        bops += [fresh_bind_sites(e, vars, o, owners)];
+      }
+      bl.operators = bops;
+      bl.result = [for br in block[0].result { br }];
+      ir::NdBlock { block: [bl] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      lops: vector<ir::Node> = [];
+      for o in block[0].operators {
+        lops += [fresh_bind_sites(e, vars, o, owners)];
+      }
+      bl.operators = lops;
+      bl.result = [for lr in block[0].result { lr }];
+      ir::NdLoop { block: [bl] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for it in items { fresh_bind_sites(e, vars, it, owners) }] },
+    _ => n
+  }
+}
+
+// Does the body hold a bind `own_fresh_binds` gives an owner?
+fn has_fresh_bind_site(e: el::El, vars: el_vars::Vars, n: ir::Node) -> boolean {
+  match n {
+    NdSet { var: p, inner } => {
+      match el_ir::unspan(inner) {
+        NdCall { def_nr: d, args: cargs } => {
+          hidden = len([for a in cargs if match el_ir::unspan(a) { NdVar { n: b } => b >= 0 && b < len(vars.vars) && vars.vars[b].caller_hidden_buf, _ => false } { 1 }]) > 0;
+          pt = el_vars::tp(vars, p);
+          rt = el::def(e, d).returned[0] ?? ir::TyVoid;
+          if !hidden && !vars.vars[p].argument && el_types::base(pt) is TyVector && len(el_types::deps(pt)) > 0 && el_types::base(rt) is TyVector && len(el_types::deps(el_types::base(rt))) == 0 {
+            return true;
+          }
+        },
+        _ => {}
+      }
+      has_fresh_bind_site(e, vars, inner)
+    },
+    NdSpan { inner } => has_fresh_bind_site(e, vars, inner),
+    NdIf { cond, t, f } => has_fresh_bind_site(e, vars, cond) || has_fresh_bind_site(e, vars, t) || has_fresh_bind_site(e, vars, f),
+    NdBlock { block } => { for o in block[0].operators { if has_fresh_bind_site(e, vars, o) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if has_fresh_bind_site(e, vars, o) { return true; } } false },
+    NdInsert { items } => { for it in items { if has_fresh_bind_site(e, vars, it) { return true; } } false },
+    _ => false
   }
 }
