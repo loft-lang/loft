@@ -47,7 +47,10 @@
 static ONE_GATE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn gate(family: &str) {
-    run_gate(&["gate", "--family", family], &format!("the `{family}` slots"));
+    run_gate(
+        &["gate", "--family", family],
+        &format!("the `{family}` slots"),
+    );
 }
 
 fn run_gate(args: &[&str], what: &str) {
