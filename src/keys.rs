@@ -3776,6 +3776,15 @@ pub fn lift_temp_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
 }
 
+/// `LOFT_NO_RETURNED_ADOPTER_DISARM=1` — a literal buffer whose adopter is a RETURN SOURCE of the
+/// exit, an owner assigned more than once, keeps its exit free guarded against that adopter
+/// (`Scopes::pair_literal_buffers`): the adopter's rebind and the buffer both release the store.
+#[must_use]
+pub fn returned_adopter_disarm_off() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_RETURNED_ADOPTER_DISARM"))
+}
+
 /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
 /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
 /// before `@FR-O-Buffer` was asked there.

@@ -319,6 +319,12 @@ loft#2594's move counts the binds of a local's FIRST BINDING, not of its name (`
 pairing; **`LOFT_NO_MOVE_PER_BINDING=1`** counts every bind of the name again, the store moves
 into the loop's binding, which the later bind typed as a view, and each pass's record leaks.
 Guards `loft-suite/rules/ownership/O-Buffer/2688-…`.
+An owning local assigned more than once that adopted a literal's store releases it on every
+path, so the literal's buffer takes no exit free (`@FR-H-FreeTwice`), also where the exit
+RETURNS that local — `x = id(P { … }); x = mk(…); alt(x) ?? x`, whose release is the return's
+(`Scopes::pair_literal_buffers`); **`LOFT_NO_RETURNED_ADOPTER_DISARM=1`** keeps the buffer's
+free guarded against the local, and after the rebind the two release the literal's store twice.
+Guards `loft-suite/rules/ownership/O-Buffer/a-returned-adopter-of-a-delivered-literal-…`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
 the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->
