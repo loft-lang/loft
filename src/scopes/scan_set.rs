@@ -5,8 +5,8 @@
 //! One ASSIGNMENT: `scan_set` decides what a `Set` owns, borrows, releases and witnesses.
 
 use super::backings::{
-    bind_backing_of, construction_work_ref, construction_work_refs, delivered_work_ref,
-    member_backing,
+    bind_backing_of, construction_work_ref, construction_work_refs, delivered_lift,
+    delivered_work_ref, member_backing,
 };
 use super::buffers::{coalesce_tail_calls, tail_calls};
 use super::capture_builds::adopted_work_refs;
@@ -2591,6 +2591,23 @@ impl Scopes<'_> {
                     }
                 }
             }
+        }
+        // loft#2697, `@FR-O-Move`, `@FR-O-Owner` — a renamed return buffer handed to a call as
+        // its buffer, where the call answers a LIFTED argument whole (`x = id(mk(n))`, lowered
+        // `__lift_1 = mk(n); x = id(__lift_1, x)`), binds that answer as it is: `x` names the
+        // lift's store (asked of the SCANNED value, whose argument is lifted by now).  The
+        // buffer releases what it holds — its rebind's displaced free, or the return hands it
+        // out — and the lift's exit free, keyed on `x`, released it a second time once a rebind
+        // had moved `x` on.  So the store MOVES, as a delivered literal's
+        // does: the lift is reset to null behind the bind.  A witnessed local releases through
+        // its witness, which this does not reach.  `LOFT_NO_LIFT_DELIVERED_MOVE=1` keeps the
+        // lift's free.
+        if crate::keys::lift_delivered_move()
+            && !self.owner_witness.contains_key(&v)
+            && crate::bind_lowering::is_promoted_return_buffer(data, self.d_nr, function, v)
+            && let Some(lift) = delivered_lift(&set_value, function, data, v)
+        {
+            self.moved_buffer = Some((ov, lift));
         }
         if let Some(&w) = self.owner_witness.get(&v) {
             let kind = self.witness_kind(value, v, ov, function, data);

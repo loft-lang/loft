@@ -875,6 +875,13 @@ analysis directly (the certifier sidesteps it).
   kept the buffer's free guarded against `x`, which the rebind had made distinct.  Guard
   `loft-suite/rules/ownership/O-Buffer/a-returned-adopter-of-a-delivered-literal-…`.
 
+- **A renamed buffer bound from a handed-back lift is its one owner (`O-Move`, `O-Buffer`,
+  loft#2697)** — `x = id(mk(n))` with `x` renamed onto the return buffer lowers to
+  `__lift_1 = mk(n); x = id(__lift_1, x)`, and `id` answers the lift's store, so `x` names it.
+  The store moves as a delivered literal's does: the lift is reset to null behind the bind and
+  keeps no exit free beside the buffer's release.  Guard
+  `loft-suite/rules/ownership/O-Move/2697-…`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN

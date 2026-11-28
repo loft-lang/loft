@@ -3776,6 +3776,15 @@ pub fn lift_temp_view_off() -> bool {
     *ON.get_or_init(|| env_set("LOFT_NO_LIFT_TEMP_VIEW"))
 }
 
+/// `LOFT_NO_LIFT_DELIVERED_MOVE=1` — a renamed return buffer bound from a call that hands a lifted
+/// argument back whole (`x = id(mk(n))`) leaves the lift its exit free, as before loft#2697: the
+/// buffer's rebind and the lift both release the lifted store.
+#[must_use]
+pub fn lift_delivered_move() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LIFT_DELIVERED_MOVE"))
+}
+
 /// `LOFT_NO_RETURNED_ADOPTER_DISARM=1` — a literal buffer whose adopter is a RETURN SOURCE of the
 /// exit, an owner assigned more than once, keeps its exit free guarded against that adopter
 /// (`Scopes::pair_literal_buffers`): the adopter's rebind and the buffer both release the store.

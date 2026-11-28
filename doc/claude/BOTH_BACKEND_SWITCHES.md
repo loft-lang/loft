@@ -325,6 +325,11 @@ RETURNS that local — `x = id(P { … }); x = mk(…); alt(x) ?? x`, whose rele
 (`Scopes::pair_literal_buffers`); **`LOFT_NO_RETURNED_ADOPTER_DISARM=1`** keeps the buffer's
 free guarded against the local, and after the rebind the two release the literal's store twice.
 Guards `loft-suite/rules/ownership/O-Buffer/a-returned-adopter-of-a-delivered-literal-…`.
+A renamed return buffer handed to a call as its buffer, where the call answers a LIFTED argument
+whole (`x = id(mk(n))`), takes the lift's store, which moves: the lift is reset to null behind
+the bind (`@FR-O-Move`, loft#2697); **`LOFT_NO_LIFT_DELIVERED_MOVE=1`** leaves the lift its exit
+free, and after a rebind of the buffer both release the store.  Guards
+`loft-suite/rules/ownership/O-Move/2697-…`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
 the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->
