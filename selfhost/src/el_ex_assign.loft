@@ -2732,6 +2732,13 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       NdCall { def_nr: _ } => {
         return keyed_call_copy(e, vars, v, x, kcur, kg);
       },
+      // A call through a function value: replaced into the local as a call's answer is, without
+      // the 32768 bit — the callee is not known, so neither is whose store it hands back.
+      NdCallRef { var: _ } => {
+        el_vars::drop_use(vars, v);
+        kt = el_schema::keyed_type(e, el_types::base(kcur));
+        return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
+      },
       // An `if` whose arms each answer a keyed local: whichever it answers is replaced in.
       NdIf { cond: _, t: kt_arm, f: kf_arm } => {
         // (A `?? []` discharge: the empty arm a `Vector` block minting its own keyed store.)

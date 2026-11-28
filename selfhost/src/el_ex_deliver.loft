@@ -822,6 +822,25 @@ pub fn lambda_vector_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   // (A concatenation is a fresh build too, copied in as a literal is.  A slice is not: Rust hands
   // its `iter_vec` store back as the lambda's own, `adopts_fresh`.)
   lit = match el_ir::unspan(bl.operators[-1]) { NdBlock { block } => literal_backing_store(block[0]) >= 0 || block[0].name == "Append Vector", _ => false };
+  // (A `vector<T>?` result: a fresh build is carried here, and a branch whose every arm is a
+  // literal or `null` — each literal delivered into the buffer where it is built, `null` left as
+  // the sentinel; any other tail stands.)
+  if result is TyOptional && !lit {
+    otail = el_ir::unspan(bl.operators[-1]);
+    oelem = match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid };
+    orec = element_content(e, oelem);
+    if otail is NdIf && orec >= 0 && literal_or_null_arms(e, otail) {
+      bl.operators[-1] = el_ir::respan(bl.operators[-1], deliver_arms(e, vars, otail, rb, orec));
+      bl.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(result)) }];
+      oba = attr_nr(el::def(e, e.context), "__retbuf");
+      oret = el::def(e, e.context).returned[0];
+      if oba >= 0 && !el_types::deps(oret).contains(oba) {
+        e.b.data.definitions[e.context].returned = [el_types::with_deps(oret, el_types::deps(oret) + [oba])];
+      }
+      return ir::NdBlock { block: [bl] };
+    }
+    return code;
+  }
   if match el_ir::unspan(bl.operators[-1]) { NdBlock { block: svb } => svb[0].name == "iter_vec", _ => false } {
     bl.result = [el_types::without_deps(el_types::base(result))];
     return ir::NdBlock { block: [bl] };
@@ -880,8 +899,11 @@ pub fn lambda_vector_copy(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: in
   b = ir::NdVar { n: rb };
   own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
   bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1], ir::NdInt { n: rec }]), b], own, "one_buffer_vec_copy");
-  bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), bl.operators[0]] };
-  bl.result = [el_types::without_deps(el_types::base(result))];
+  // (A `vector<T>?` result opens with no clear of its own and keeps its `?` on the body.)
+  if !(result is TyOptional) {
+    bl.operators[0] = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), bl.operators[0]] };
+    bl.result = [el_types::without_deps(el_types::base(result))];
+  }
   d = e.context;
   ba = attr_nr(el::def(e, d), "__retbuf");
   ret = el::def(e, d).returned[0];
@@ -3005,6 +3027,22 @@ fn fresh_tail_call(e: el::El, vars: el_vars::Vars, tail: ir::Node) -> boolean {
       lastbuf = match el_ir::unspan(fta[-1] ?? ir::NdNull) { NdVar { n: fln } => starts_with(el_vars::name_of(vars, fln), "__ref_") && el_types::base(el_vars::tp(vars, fln)) is TyVector, _ => false };
       el_types::base(frt) is TyVector && len(el_types::deps(el_types::base(frt))) == 0 && !lastbuf && !starts_with(el::def(e, ftd).name, "Op")
     },
+    _ => false
+  }
+}
+
+// Is every arm of a branch tail a vector literal or the `null` sentinel (through its blocks)?
+fn literal_or_null_arms(e: el::El, n: ir::Node) -> boolean {
+  match n {
+    NdIf { t, f } => literal_or_null_arms(e, t) && literal_or_null_arms(e, f),
+    NdSpan { inner } => literal_or_null_arms(e, inner),
+    NdBlock { block } => {
+      if block[0].name == "Vector" {
+        return true;
+      }
+      len(block[0].operators) == 1 && literal_or_null_arms(e, el_ir::unspan(block[0].operators[0]!))
+    },
+    NdCall { def_nr, args } => len(args) == 0 && el::def(e, def_nr).name == "OpNullRefSentinel",
     _ => false
   }
 }
