@@ -4761,6 +4761,41 @@ impl Parser {
     /// `unify_branch_to` so the parser-level dep tracking (which feeds
     /// scope analysis and `ref_return`) sees only the shared work-ref
     /// after unification.
+    /// The call a tail answers, through `Span` and `Return` wrappers, if it is one.
+    fn tail_call_of(tail: &Value) -> Option<&Value> {
+        match tail {
+            Value::Span(b) => Self::tail_call_of(&b.1),
+            Value::Return(inner) => Self::tail_call_of(inner),
+            c @ Value::Call(_, _) => Some(c),
+            _ => None,
+        }
+    }
+
+    /// Take the call [`Self::tail_call_of`] found out of `tail`, leaving `filled` — the work
+    /// ref it delivers into — in its place.
+    fn take_tail_call(tail: &mut Value, filled: u16) -> Value {
+        match tail {
+            Value::Span(b) => Self::take_tail_call(&mut b.1, filled),
+            Value::Return(inner) => Self::take_tail_call(inner, filled),
+            _ => std::mem::replace(tail, Value::Var(filled)),
+        }
+    }
+
+    /// Does a call in `body` take `buf` as an argument (the hidden buffer a work ref fills)
+    /// while another of its arguments reads `var`?  Then substituting `var` for `buf` would
+    /// hand the callee one store as its input and its output (`@FR-O-Buffer`, loft#2690).
+    fn buffer_call_reads(body: &[Value], buf: u16, var: u16) -> bool {
+        body.iter().any(|stmt| {
+            stmt.any_node(&mut |n| {
+                matches!(n, Value::Call(_, args)
+                if args.iter().any(|a| matches!(a.unspan(), Value::Var(x) if *x == buf))
+                    && args.iter().any(|a| {
+                        !matches!(a.unspan(), Value::Var(x) if *x == buf) && a.reads_var(var)
+                    }))
+            })
+        })
+    }
+
     fn substitute_work_ref(val: &mut Value, from: u16, to: u16) {
         match val {
             Value::Var(v) if *v == from => {
@@ -13818,8 +13853,13 @@ impl Parser {
                 buf_var,
                 // A1b — the site-value ref materialises (copies) its borrowed result
                 // into __retbuf rather than substituting the buffer var in place
-                // (which would re-alias the freed subject).
-                substitute: is_work_ref && !a1b_site,
+                // (which would re-alias the freed subject).  `@FR-O-Buffer` — nor where the
+                // call this ref is the buffer of also READS the buffer var as an argument
+                // (`x` renamed onto the buffer, tail `w(x)`): substituted, the callee is handed
+                // one store as its input and its output, and a callee that answers its
+                // argument clears the buffer before copying it in, so it answers `[]`
+                // (loft#2690).  Copied instead, the call fills its own buffer first.
+                substitute: is_work_ref && !a1b_site && !Self::buffer_call_reads(body, v, buf_var),
             };
         }
         // loft#2233's twin in a lambda: with no buffer to bind to, `Grow` would make the
@@ -14314,7 +14354,43 @@ impl Parser {
                                     self.materialize_vector_arms_into(&elm, tail, buf_var);
                                 }
                                 Type::Vector(elm, _) => {
-                                    self.materialize_vector_return_into(&elm, tail, buf_var);
+                                    // `@FR-O-Buffer`, loft#2690 — a tail call that fills `v`
+                                    // and READS the buffer var (`w(x)` with `x` renamed onto
+                                    // the buffer) runs before the copy's clear: cleared first,
+                                    // its argument came in empty.  The callee delivers only
+                                    // through its hidden buffer, so its answer is `v`'s store.
+                                    let fills_and_reads =
+                                        Self::tail_call_of(tail).is_some_and(|c| {
+                                            let Value::Call(d, args) = c else {
+                                                return false;
+                                            };
+                                            let def = self.data.def(*d);
+                                            let attrs = def.attributes();
+                                            args.iter().any(
+                                                |a| matches!(a.unspan(), Value::Var(x) if x == v),
+                                            ) && c.reads_var(buf_var)
+                                                && !def.returned().depend().is_empty()
+                                                && def.returned().depend().iter().all(|&a| {
+                                                    (a as usize) < attrs.len()
+                                                        && attrs[a as usize].hidden
+                                                })
+                                        });
+                                    if fills_and_reads {
+                                        let call = Self::take_tail_call(tail, *v);
+                                        self.materialize_vector_return_into(&elm, tail, buf_var);
+                                        if let Value::Block(bl) = tail {
+                                            bl.operators.insert(0, Value::Drop(Box::new(call)));
+                                        }
+                                        // The buffer var's own defining call fills the buffer,
+                                        // as the Rename and Materialize deliveries fold it
+                                        // (loft#2672): left on its own `__ref_N`, it displaced
+                                        // the caller's store.
+                                        let collapsed =
+                                            self.nrvo_collapse_defining_call(body, buf_var);
+                                        self.suppress_collapsed_workrefs(body, collapsed);
+                                    } else {
+                                        self.materialize_vector_return_into(&elm, tail, buf_var);
+                                    }
                                 }
                                 // A NULLABLE vector local at the tail — the local the rename
                                 // rung declines for `@FR-N-Shape`.  Delivered by the same
