@@ -572,6 +572,37 @@ pub fn reads_var(n: ir::Node, v: integer) -> boolean {
   false
 }
 
+// port: variables/mod.rs fn promoted_from — the argument a shadow local stands for, -1 for none.
+// The image does not carry the field: the parser names every shadow it promotes `__tp_<arg>`
+// (a text or tuple parameter) or `__bx_<arg>` (a boxed scalar a closure mutates), so the
+// argument is read off the name.
+pub fn promoted_from(f: ir::Function, v: integer) -> integer {
+  nm = name(f, v);
+  if !nm.starts_with("__tp_") && !nm.starts_with("__bx_") {
+    return -1;
+  }
+  // By the argument's own name: the name map answers the shadow once the parser remapped it.
+  arg = nm[5..];
+  for x in 0..count(f) {
+    if is_argument(f, x) && name(f, x) == arg {
+      return x;
+    }
+  }
+  -1
+}
+
+// port: variables/mod.rs fn add_join_owners — `tmp` may instead deliver the stores `owners` hold.
+pub fn add_join_owners(f: ir::Function, tmp: integer, owners: vector<integer>) {
+  if tmp < 0 || tmp >= len(f.variables) {
+    return;
+  }
+  for o in owners {
+    if o != tmp && o != NONE && !has(f.variables[tmp]!.join_owners, o) {
+      f.variables[tmp].join_owners += [o];
+    }
+  }
+}
+
 // port: variables/mod.rs fn join_owners — the other stores `v` (a `??` temp, an arm-bound vector)
 // may deliver; empty for every other local.
 pub fn join_owners(f: ir::Function, v: integer) -> vector<integer> {
