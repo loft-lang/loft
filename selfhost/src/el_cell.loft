@@ -233,7 +233,14 @@ pub fn declared_assign(e: el::El, vars: el_vars::Vars, v: integer, rhs: integer)
     return null;
   }
   // (A declaration is the local's first write: its cell is allocated here.)
-  assign_place(e, vars, "=", Place { place: ir::NdVar { n: v }, cd: cd, v: v }, rhs, first: true)
+  out = assign_place(e, vars, "=", Place { place: ir::NdVar { n: v }, cd: cd, v: v }, rhs, first: true);
+  // (A nullable NARROW integer cell's declaration mints the checked cast's `__dn4_N` — unused,
+  // its constant folded — as Rust's cell declaration does: measured, `a: u8? = 1` boxed.)
+  dvt = value_of(e, cd);
+  if dvt is TyOptional && match el_types::base(dvt) { TyInteger { spec: dsp } => el_types::narrow_width(dsp) > 0 || dsp.forced_size != 0, _ => false } {
+    el_vars::create_unique(vars, "_dn4", ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } });
+  }
+  out
 }
 
 fn assign_place(e: el::El, vars: el_vars::Vars, op: text, c: Place, rhs: integer, first: boolean = false) -> Ex? {
@@ -271,6 +278,15 @@ fn assign_place(e: el::El, vars: el_vars::Vars, op: text, c: Place, rhs: integer
     }
     val = r.code;
     x = ex(r.code, r.tp);
+    // (A narrow integer cell takes the composed value inside its declared range, its default
+    // outside — `guard_compound_range`, as an unboxed narrow local's compound does.)
+    if el_types::base(vt) is TyInteger && el_types::base(r.tp) is TyInteger {
+      gv = el_convert::guard_compound(e, r.code, vt, vt is TyOptional);
+      if !(gv == r.code) {
+        val = gv;
+        x = ex(val, vt);
+      }
+    }
   }
   // A text is set as it is (`OpSetText` copies it into the cell's own field).
   // (`null` into a nullable cell is its value type's own null: `OpConvIntFromNull()`.)
