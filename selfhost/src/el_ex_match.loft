@@ -1684,7 +1684,9 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   // (A plain struct element is matched as a struct enum's is, bound as a view of its slot; a
   // linked one — held by id — is not carried.)
   pstruct = el_ex_base::struct_ref(e, el_types::base(elm)) >= 0 && !el_ex_base::linked_record(e, elm);
-  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0 || pstruct) || narrow || (elm is TyEnum && sed < 0) {
+  // (A narrow element is read with its width's getter at its range's start, `elem_read`:
+  // `OpGetByte(OpGetVector(v, 1, i), 0, 0)`.)
+  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0 || pstruct) || (narrow && (e.first_pass && false)) || (elm is TyEnum && sed < 0) {
     el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
     return void;
   }
