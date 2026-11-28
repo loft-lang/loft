@@ -173,3 +173,155 @@ fn a_record_in_a_nest_is_kept_across_the_outermost_loop() {
     let (decl, first_loop) = decl_vs_loop(&[("LOFT_NO_LOOP_RECORD_NEST", "1")]);
     assert!(decl > first_loop, "declared inside the outer loop");
 }
+
+/// loft#2696 — an early `return S { … }` (`@FR-R-ValueRecord` `Object` leaf) after a kept loop
+/// record's mint (`@FR-R-LoopRecord`) evaluates the literal's fields while the loop record is
+/// still live, frees the loop record's store, and only then resets the local to `null`.
+#[test]
+fn an_early_value_record_return_after_a_mint_reads_and_frees_the_loop_record() {
+    let dir = std::env::temp_dir().join(format!("loft_2696_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&dir);
+    fa::create_dir_all(&dir).expect("mkdir");
+    let file = dir.join("early_return_loop_record.loft");
+    fa::write(
+        &file,
+        "\
+struct P { v: integer }
+struct Pair { a: integer, b: integer }
+struct Refill { v: integer, xs: vector<integer> }
+
+fn mk_p(n: integer) -> P { P { v: n } }
+
+fn c1(k: integer) -> P {
+  for i in 0..3 {
+    _x = P { v: i + 20 };
+    if i == k { return P { v: 32 }; }
+  }
+  P { v: 34 }
+}
+
+fn c2(k: integer) -> P {
+  for i in 0..3 {
+    x = P { v: i + 20 };
+    if i == k { return P { v: x.v + 1 }; }
+  }
+  P { v: 34 }
+}
+
+fn c3(k: integer) -> Pair {
+  for i in 0..3 {
+    x = Pair { a: i + 10, b: i + 20 };
+    if i == k { return Pair { b: x.a + 1, a: x.b + 2 }; }
+  }
+  Pair { a: 1, b: 2 }
+}
+
+fn c4(k: integer) -> P? {
+  for i in 0..3 {
+    x = P { v: i + 20 };
+    if i == k {
+      if k == 1 { return null; }
+      return P { v: x.v + 5 };
+    }
+  }
+  P { v: 99 }
+}
+
+fn c5(k: integer) -> P {
+  for i in 0..3 {
+    x = P { v: i + 20 };
+    if i == k { return mk_p(x.v + 3); }
+  }
+  P { v: 50 }
+}
+
+fn c6(ps: const vector<P>, k: integer) -> P {
+  for i in 0..3 {
+    x = P { v: i };
+    if i == k { return ps[x.v]; }
+  }
+  P { v: 60 }
+}
+
+fn c7(k: integer) -> P {
+  for i in 0..3 {
+    x = Refill { v: i + 10, xs: [1, 2, 3] };
+    if i == k { return P { v: x.v + len(x.xs) }; }
+  }
+  P { v: 70 }
+}
+
+fn c8(k: integer) -> P {
+  for o in 0..2 {
+    for i in 0..3 {
+      x = P { v: o * 10 + i };
+      y = Pair { a: i, b: o };
+      if o * 3 + i == k { return P { v: x.v + y.a + y.b + 1 }; }
+    }
+  }
+  P { v: 80 }
+}
+
+fn test_c1() { t = 0; for k in 0..4 { t += c1(k).v; } assert(t == 32 * 3 + 34, \"c1: {t}\"); }
+fn test_c2() { t = 0; for k in 0..4 { t += c2(k).v; } assert(t == 21 + 22 + 23 + 34, \"c2: {t}\"); }
+fn test_c3() {
+  a = 0; b = 0;
+  for k in 0..4 { r = c3(k); a += r.a; b += r.b; }
+  assert(a == 22 + 23 + 24 + 1 && b == 11 + 12 + 13 + 2, \"c3: {a},{b}\");
+}
+fn test_c4() {
+  t = 0; n = 0;
+  for k in 0..4 {
+    r = c4(k);
+    if r { t += r.v; } else { n += 1; }
+  }
+  assert(t == 25 + 27 + 99 && n == 1, \"c4: {t},{n}\");
+}
+fn test_c5() { t = 0; for k in 0..4 { t += c5(k).v; } assert(t == 23 + 24 + 25 + 50, \"c5: {t}\"); }
+fn test_c6() {
+  ps = [P { v: 7 }, P { v: 8 }, P { v: 9 }];
+  t = 0;
+  for k in 0..4 { t += c6(ps, k).v; }
+  assert(t == 7 + 8 + 9 + 60, \"c6: {t}\");
+}
+fn test_c7() { t = 0; for k in 0..4 { t += c7(k).v; } assert(t == 13 + 14 + 15 + 70, \"c7: {t}\"); }
+fn test_c8() { t = 0; for k in 0..7 { t += c8(k).v; } assert(t == 1 + 3 + 5 + 12 + 14 + 16 + 80, \"c8: {t}\"); }
+",
+    )
+    .expect("write test");
+    let path = file.to_str().unwrap();
+
+    let interp = loft(
+        &["--tests", "--interpret", path],
+        &[("LOFT_LEAK_CHECK", "1"), ("LOFT_STRICT_STORES", "1")],
+    );
+    assert!(
+        interp.status.success(),
+        "--tests --interpret failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&interp.stdout),
+        String::from_utf8_lossy(&interp.stderr)
+    );
+
+    for switch in [
+        None,
+        Some(("LOFT_NO_IR_VALUE_RECORD", "1")),
+        Some(("LOFT_NO_LOOP_RECORD", "1")),
+    ] {
+        let mut env = vec![
+            ("LOFT_STRICT_STORES", "1"),
+            ("LOFT_POISON", "1"),
+            ("LOFT_POISON_CLAIM", "1"),
+            ("LOFT_NATIVE_LEAK_CHECK", "1"),
+        ];
+        env.extend(switch);
+        let out = loft(&["--tests", "--native", path], &env);
+        assert!(
+            out.status.success(),
+            "--tests --native {switch:?} failed:\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    let _ = fa::remove_dir_all(&dir);
+}
