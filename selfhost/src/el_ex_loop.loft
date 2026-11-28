@@ -589,7 +589,9 @@ pub fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: 
   }
   // A tuple element is read as its record.
   // (A vector element keeps the store its inner vector borrows, `vector<integer>["__vdb_3"]`.)
-  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, TyVector { inner: _ } => elem, _ => el_types::without_deps(elem) };
+  // (Any other element reads as the vector stores it, its own borrow kept: `[for r in rs { r }]`
+  // walked again steps `ref(R)["r"]`.)
+  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => elem };
   // A reversed walk steps down, past the first element to the `i32` null (the "rev step").
   step = if rev {
     el_ir::v_block([el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 1 }, i]), el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }]), ir::NdInt { n: -2147483648 })], ir::TyInteger { spec: i32_spec() }, "rev step")
