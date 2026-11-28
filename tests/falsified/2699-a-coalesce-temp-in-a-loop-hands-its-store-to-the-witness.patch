@@ -91,7 +91,7 @@ index 5c092c28a..6ee0f1af3 100644
 -                && !function.name(v).starts_with("__")
 -                && !function.is_captured(v)
 -                && !function.was_loop_var(v)
--                && !matches!(function.tp(v), Type::RefVar(_))
+-                && !matches!(function.tp(v).base(), Type::RefVar(_))
 -                && function.tp(v).base().heap_def_nr().is_some()
 -                && !materialised_views.contains_key(&v)
 -            {

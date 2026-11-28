@@ -1775,7 +1775,10 @@ impl Parser {
             && !(context == "return from block"
                 && self.context != u32::MAX
                 && self.data.def(self.context).returned_ref
-                && matches!(self.data.def(self.context).returned(), Type::RefVar(_)))
+                && matches!(
+                    self.data.def(self.context).returned().base(),
+                    Type::RefVar(_)
+                ))
         {
             let mut code = l.pop().unwrap().clone();
             self.un_ref(&mut t, &mut code);
@@ -17344,7 +17347,9 @@ impl Parser {
                     .unwrap_or_else(|| vec![0]);
                 cands.len() == 1 && {
                     let p = cands[0];
-                    !matches!(param_types.get(p).map(Type::base), Some(Type::RefVar(_)))
+                    !param_types
+                        .get(p)
+                        .is_some_and(|pt| matches!(pt.base(), Type::RefVar(_)))
                         || list.get(p).is_some_and(|a| self.is_text_place(a))
                 }
             };

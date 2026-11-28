@@ -3162,7 +3162,7 @@ impl Type {
                     format!("fn({p})")
                 } else {
                     let r_inner = if consts.ret_ref() {
-                        if let Type::RefVar(inner) = ret.as_ref() {
+                        if let Type::RefVar(inner) = ret.base() {
                             inner.render(data, source)
                         } else {
                             ret.render(data, source)
@@ -9818,7 +9818,7 @@ impl Data {
                 let amp = if consts.ret_ref() { "&" } else { "" };
                 let c_pre = if consts.ret_const() { "const " } else { "" };
                 let r_inner = if consts.ret_ref()
-                    && let Type::RefVar(inner) = ret.as_ref()
+                    && let Type::RefVar(inner) = ret.base()
                 {
                     rec(inner)
                 } else {
@@ -9855,7 +9855,7 @@ impl Data {
                 let amp = if consts.ret_ref() { "&" } else { "" };
                 let c_pre = if consts.ret_const() { "const " } else { "" };
                 let r_inner = if consts.ret_ref()
-                    && let Type::RefVar(inner) = ret.as_ref()
+                    && let Type::RefVar(inner) = ret.base()
                 {
                     rec(inner)
                 } else {

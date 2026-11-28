@@ -4113,10 +4113,10 @@ use a separate collection or add after the loop"
             || matches!(rhs.unspan(), Value::Call(d, _)
             if (*d as usize) < self.data.definitions.len()
                 && self.data.def(*d).returned_ref
+                && self.data.def(*d).returned().is_optional()
                 && matches!(
-                    self.data.def(*d).returned(),
-                    Type::Optional(inner)
-                        if matches!(inner.as_ref(), Type::Reference(_, _) | Type::Enum(_, true, _))
+                    self.data.def(*d).returned().base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
                 ));
         let facts = self.slot_links.note(self.context, *v, self.vars.name(*v));
         if field {

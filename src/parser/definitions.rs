@@ -4757,7 +4757,7 @@ impl Parser {
             let (tp2, rr, rc, _) = self.parse_return_type(d_nr);
             ret_ref = rr;
             ret_const = rc;
-            if !matches!(tp2, Type::Void) {
+            if !matches!(tp2.base(), Type::Void) {
                 r_type = if self.return_shape_depends_on_type_var(&tp2) {
                     tp2
                 } else {
@@ -4771,9 +4771,8 @@ impl Parser {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, a)| {
-                        let b = a.base();
                         (!matches!(
-                            b,
+                            a.base(),
                             Type::Integer(..)
                                 | Type::Single
                                 | Type::Float

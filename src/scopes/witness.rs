@@ -426,7 +426,7 @@ pub(super) fn owner_witness_locals(
                 && !function.name(v).starts_with("__")
                 && !function.is_captured(v)
                 && !function.was_loop_var(v)
-                && !matches!(function.tp(v), Type::RefVar(_))
+                && !matches!(function.tp(v).base(), Type::RefVar(_))
                 && function.tp(v).base().heap_def_nr().is_some()
                 && !materialised_views.contains_key(&v)
             {

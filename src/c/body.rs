@@ -12810,7 +12810,7 @@ fn call_ref_returns_store_place_in(
     store: &[bool],
 ) -> bool {
     let tp = vars.tp(fv).base();
-    let crate::data::Type::Function(params, ret, ..) = tp else {
+    let crate::data::Type::Function(params, ret, ..) = tp.base() else {
         return false;
     };
     if !matches!(ret.base(), crate::data::Type::RefVar(_)) {

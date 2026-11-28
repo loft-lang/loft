@@ -198,7 +198,7 @@ impl Parser {
                     continue;
                 }
             }
-            if matches!(&tp, Type::RefVar(_))
+            if matches!(tp.base(), Type::RefVar(_))
                 && !self.first_pass
                 && !self
                     .data
@@ -637,7 +637,9 @@ impl Parser {
                 key,
                 Deps::frame(Self::resolve_deps(types, d.as_attr_indices())),
             ))
-        } else if let Type::Trie(to, key, d) = tp {
+        } else if !tp.is_optional()
+            && let Type::Trie(to, key, d) = tp.base().clone()
+        {
             reopt(Type::Trie(
                 to,
                 key,

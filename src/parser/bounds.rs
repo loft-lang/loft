@@ -770,7 +770,7 @@ impl Parser {
             );
             let got = self.data.def(concrete_method).returned().clone();
             let fmt_ret = |t: &Type, r: bool| {
-                let base = if r && let Type::RefVar(inner) = t {
+                let base = if r && let Type::RefVar(inner) = t.base() {
                     inner.source_name(&self.data)
                 } else {
                     t.source_name(&self.data)
