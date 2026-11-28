@@ -2674,7 +2674,9 @@ pub fn string_expression(e: el::El, vars: el_vars::Vars, parts: vector<integer>)
           el::refuse(e, "a formatted slice");
           return ex(ir::NdNull, ir::TyText { dep: [] });
         }
-        f = hole_spec(e, vars, spec, spec_end);
+        // (A value whose struct has an `operator to_text` owns its spec: read RAW, one token,
+        // instead of the width/radix grammar.)
+        f = if custom_format(e, x.tp) { raw_spec(e, spec, spec_end) } else { hole_spec(e, vars, spec, spec_end) };
         if f == null {
           return ex(ir::NdNull, ir::TyText { dep: [] });
         }
@@ -2752,7 +2754,10 @@ pub struct Fmt {
   pub plus: boolean,
   pub note: boolean,
   pub dir: integer,
-  pub float: boolean
+  pub float: boolean,
+  // @PLN99 Arc B: the raw `{x:spec}` token for a value whose own `operator to_text(self, spec)`
+  // renders it (`""` for a bare `{x}` or a built-in).
+  pub spec: text = ""
 }
 
 // `OUTPUT_DEFAULT`.
@@ -3224,6 +3229,10 @@ pub fn append_spec(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: 
             TyRefVar { inner: _ } => {
               twv = el_vars::work_text(vars);
               targs += [el_ir::v_block([el_ir::v_set(twv, ir::NdText { s: "" }), el_ir::cl(e, "OpCreateStack", [ir::NdVar { n: twv }])], ir::TyReference { n: el::def_nr(e, "reference"), dep: [twv] }, "p242_to_text_work")];
+            },
+            TyText { dep: _ } => {
+              // The user's `spec: text`: the hole's raw spec.
+              targs += [ir::NdText { s: f.spec }];
             },
             _ => {
               el::refuse(e, "a formatted record whose `to_text` takes a spec");
@@ -4611,4 +4620,28 @@ pub fn buffered_loft_call(e: el::El, n: ir::Node) -> boolean {
     },
     _ => false
   }
+}
+
+// `custom_fmt` (@PLN99 Arc B, `@FR-Op-Mark`): a struct whose `to_text` is an operator owns the
+// `{x:spec}` of its holes.
+fn custom_format(e: el::El, t: ir::TypeT) -> boolean {
+  match el_types::base(t) {
+    TyReference { n } => {
+      if el::def(e, n).def_type != el::DT_STRUCT {
+        return false;
+      }
+      tts = el::def_nr(e, "t_{len(el::def(e, n).name)}{el::def(e, n).name}_to_text");
+      tts >= 0 && el::def(e, tts).operator_form
+    },
+    _ => false
+  }
+}
+
+// The raw spec of a custom-format hole: its first token, as written.
+fn raw_spec(e: el::El, from: integer, to: integer) -> Fmt? {
+  f = plain_fmt();
+  if from < to {
+    f.spec = match e.p.src[from]! { Ident { name: sn } => sn, _ => lex::spell(e.p.src[from]!) };
+  }
+  f
 }
