@@ -217,79 +217,117 @@ pub(super) fn member_backing(function: &Function, member: &Type) -> Option<u16> 
 /// through both claimants.
 pub(super) fn delivered_work_ref(rhs: &Value, function: &Function, data: &Data) -> Option<u16> {
     construction_work_ref(rhs, function).or_else(|| {
-        let mut tail = rhs.unspan();
-        loop {
-            match tail {
-                Value::Block(bl) => tail = bl.operators.last()?.unspan(),
-                Value::Insert(ops) => tail = ops.last()?.unspan(),
-                _ => break,
-            }
-        }
-        let Value::Call(d, args) = tail else {
-            return None;
-        };
-        if *d >= data.definitions() {
-            return None;
-        }
-        let def = data.def(*d);
-        // Only a function whose body hands a PARAMETER back WHOLE delivers that argument's
-        // record.  A projection op (`OpGetField`) also names its argument in its return deps,
-        // and so does a function whose promoted local IS the hidden return buffer — and read
-        // as delivered, the first made a view of a member look like the construction and the
-        // second disarmed the caller's own buffer, which then leaked.
-        if def.def_type != DefType::Function || def.name().starts_with("Op") {
-            return None;
-        }
-        let mut body = def.code.unspan();
-        loop {
-            match body {
-                Value::Block(bl) => body = bl.operators.last()?.unspan(),
-                Value::Insert(ops) => body = ops.last()?.unspan(),
-                Value::Return(v) => body = v.unspan(),
-                _ => break,
-            }
-        }
-        let Value::Var(returned) = body else {
-            return None;
-        };
-        // loft#2674 — and EVERY return hands that parameter back.  A callee whose tail does but
-        // which leaves earlier with a record of its own (`if p.v > 3 { return P { … }; } p`)
-        // answers the construction on some runs only, so the binding cannot adopt the
-        // construction's store: read as delivered, the bind stayed the plain adopt, the run
-        // that answered the fresh record left the construction's store to nobody, and the
-        // interpreter read the other run's answer out of a released store (`0`).
-        // `LOFT_NO_DELIVERED_EVERY_RETURN=1` reads the tail alone again.
-        if crate::keys::delivered_every_return() {
-            let mut other_return = false;
-            def.code.walk(&mut |n| {
-                if let Value::Return(r) = n
-                    && !matches!(r.unspan(), Value::Var(x) if x == returned)
-                {
-                    other_return = true;
-                }
-            });
-            if other_return {
-                return None;
-            }
-        }
+        let arg = handed_back_arg(rhs, data)?;
         // The argument is the construction itself while the scan reads it — its block, whose
         // tail is the work-ref — or, once lifted, that work-ref by name.
-        def.returned.depend().iter().find_map(|&k| {
-            if k != *returned
-                || def
-                    .attributes()
-                    .get(usize::from(k))
-                    .is_none_or(|a| a.hidden)
+        if let Value::Var(w) = arg.unspan() {
+            let n = function.name(*w);
+            return (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(*w);
+        }
+        construction_work_ref(arg, function)
+    })
+}
+
+/// `@FR-O-Move` — the lifted call result `rhs` hands to `v` whole, where `v` is passed to that
+/// call as its HIDDEN return buffer (`x = id(__lift_1, x)`, `x = id(mk(n))` with `x` renamed onto
+/// the return buffer): the callee answers the lift's store on every path, so `v` names it after
+/// the bind as the lift does.  `None` for any other shape — a callee that may answer another
+/// store, a buffer that is not `v` (that bind copies or joins), an argument that is not a lift.
+pub(super) fn delivered_lift(rhs: &Value, function: &Function, data: &Data, v: u16) -> Option<u16> {
+    let Value::Call(d, args) = call_tail(rhs)? else {
+        return None;
+    };
+    if *d >= data.definitions() {
+        return None;
+    }
+    let buffer_is_v = args.iter().enumerate().any(|(i, a)| {
+        matches!(a.unspan(), Value::Var(x) if *x == v)
+            && data.def(*d).attributes().get(i).is_some_and(|at| at.hidden)
+    });
+    if !buffer_is_v {
+        return None;
+    }
+    let Value::Var(l) = handed_back_arg(rhs, data)?.unspan() else {
+        return None;
+    };
+    (*l != v && function.name(*l).starts_with("__lift_")).then_some(*l)
+}
+
+/// The tail call of a value — through the blocks and the preamble `Insert`s a lift leaves.
+fn call_tail(rhs: &Value) -> Option<&Value> {
+    let mut tail = rhs.unspan();
+    loop {
+        match tail {
+            Value::Block(bl) => tail = bl.operators.last()?.unspan(),
+            Value::Insert(ops) => tail = ops.last()?.unspan(),
+            _ => break,
+        }
+    }
+    matches!(tail, Value::Call(..)).then_some(tail)
+}
+
+/// The argument of `rhs`'s tail call that the callee hands back WHOLE on every path — `a` of
+/// `fn id(a: P) -> P { a }` — or `None`.  The one reading of "the call answers its argument's
+/// store", shared by [`delivered_work_ref`] (a construction's work-ref) and [`delivered_lift`]
+/// (a lifted call's result).
+fn handed_back_arg<'v>(rhs: &'v Value, data: &Data) -> Option<&'v Value> {
+    let Value::Call(d, args) = call_tail(rhs)? else {
+        return None;
+    };
+    if *d >= data.definitions() {
+        return None;
+    }
+    let def = data.def(*d);
+    // Only a function whose body hands a PARAMETER back WHOLE delivers that argument's
+    // record.  A projection op (`OpGetField`) also names its argument in its return deps,
+    // and so does a function whose promoted local IS the hidden return buffer — and read
+    // as delivered, the first made a view of a member look like the construction and the
+    // second disarmed the caller's own buffer, which then leaked.
+    if def.def_type != DefType::Function || def.name().starts_with("Op") {
+        return None;
+    }
+    let mut body = def.code.unspan();
+    loop {
+        match body {
+            Value::Block(bl) => body = bl.operators.last()?.unspan(),
+            Value::Insert(ops) => body = ops.last()?.unspan(),
+            Value::Return(v) => body = v.unspan(),
+            _ => break,
+        }
+    }
+    let Value::Var(returned) = body else {
+        return None;
+    };
+    // loft#2674 — and EVERY return hands that parameter back.  A callee whose tail does but
+    // which leaves earlier with a record of its own (`if p.v > 3 { return P { … }; } p`)
+    // answers the construction on some runs only, so the binding cannot adopt the
+    // construction's store: read as delivered, the bind stayed the plain adopt, the run
+    // that answered the fresh record left the construction's store to nobody, and the
+    // interpreter read the other run's answer out of a released store (`0`).
+    // `LOFT_NO_DELIVERED_EVERY_RETURN=1` reads the tail alone again.
+    if crate::keys::delivered_every_return() {
+        let mut other_return = false;
+        def.code.walk(&mut |n| {
+            if let Value::Return(r) = n
+                && !matches!(r.unspan(), Value::Var(x) if x == returned)
             {
-                return None;
+                other_return = true;
             }
-            let arg = args.get(usize::from(k))?;
-            if let Value::Var(w) = arg.unspan() {
-                let n = function.name(*w);
-                return (n.starts_with("__ref_") || n.starts_with("__rref_")).then_some(*w);
-            }
-            construction_work_ref(arg, function)
-        })
+        });
+        if other_return {
+            return None;
+        }
+    }
+    def.returned.depend().iter().find_map(|&k| {
+        if k != *returned
+            || def
+                .attributes()
+                .get(usize::from(k))
+                .is_none_or(|a| a.hidden)
+        {
+            return None;
+        }
+        args.get(usize::from(k))
     })
 }
 
