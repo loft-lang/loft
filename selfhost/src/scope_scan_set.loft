@@ -73,8 +73,18 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     }
     return scope_fn::v_set(v, scope_scan::scan(s, b, value, f));
   }
-  // `views_to_materialise` (the respelled element read), `handle_views` (the tagged handle
-  // leaves) and the owner witness of a split copy read facts the phase leaves empty.
+  // `views_to_materialise` (the respelled element read) and `handle_views` (the tagged handle
+  // leaves) read facts the phase leaves empty.
+  // A scope copy of a witnessed local is the same binding under a new id: it keeps the witness
+  // and the never-free mark.
+  if v != ov {
+    ow = scope_scan::get(s.owner_witness, ov);
+    if ow >= 0 && scope_scan::get(s.owner_witness, v) < 0 {
+      f.variables[v].skip_free = true;
+      f.variables[v].owner_witness = ow;
+      scope_scan::put(s.owner_witness, v, ow);
+    }
+  }
   copy = copy_temp_held_bind(s, b, ov, v, value, f);
   if copy != null {
     return scope_scan::scan(s, b, copy!, f);
@@ -713,8 +723,36 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   if hv >= 0 && !scope_fn::has(s.handle_views, v) {
     witness_update += [scope_fn::v_set(hv, ir::NdBoolean { b: false })];
   }
-  // The owner witness's releases and pointer (`witness_ops`) and a closure build's hand-off of a
-  // witnessed capture: the owner witness is empty.
+  // loft#1336 / @FR-O-Witness — keep the OWNER WITNESS naming exactly the store the local
+  // minted and still holds, by store identity.  A closure build's hand-off of a witnessed
+  // capture is a closure record's (refused by the phase).  loft#1628's displaced alias hooks
+  // (`witness_aliases`) run only a hook, and a witnessed type with a drop cascade is refused by
+  // the phase, so none is recorded.
+  witness_ops: vector<ir::Node> = [];
+  w = scope_scan::get(s.owner_witness, v);
+  if w >= 0 {
+    temps: vector<integer> = [];
+    kind = scope_witness::witness_set_kind(s, b, value, v, ov, f, temps);
+    guarded_release = ir::NdIf { cond: distinct(s, w, v), t: scope_witness::release_witness(s, w, scope_drops::witness_hook(s, b, f, v, w)), f: ir::NdNull };
+    if kind == scope_witness::SET_MINT || kind == scope_witness::SET_MINT_READING {
+      transfer_lift_to_witness(s, b, set_value);
+      witness_ops += [guarded_release, scope_witness::witness_points_at(s, w, v)];
+    } else if kind == scope_witness::SET_OTHER {
+      witness_ops += [guarded_release];
+    } else {
+      // The witness takes the store only where no temp of the choice holds it.
+      witness_ops += [guarded_release];
+      cond: ir::Node = ir::NdBoolean { b: true };
+      if len(temps) > 0 {
+        cond = distinct(s, v, temps[0]!);
+        for tv in temps[1..] {
+          cond = ir::NdIf { cond: cond, t: distinct(s, v, tv), f: ir::NdBoolean { b: false } };
+        }
+      }
+      not_null = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] };
+      witness_ops += [ir::NdIf { cond: ir::NdIf { cond: not_null, t: cond, f: ir::NdBoolean { b: false } }, t: scope_witness::witness_points_at(s, w, v), f: ir::NdNull }];
+    }
+  }
   // `@FR-B-View` — a local bound ONCE to a projection of a lifted call result views the lift.
   root = -1;
   if !scope_fn::has(s.multi_assigned, ov) && len(scope_fn::deps(f, v)) == 0 && scope_fn::is_dbref(scope_fn::base(t)) {
@@ -734,7 +772,7 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     displaced.pre += kept.pre;
     displaced.post += kept.post;
   }
-  if len(prefix) == 0 && len(ls) == 0 && len(witness_update) == 0 && !displaced.some && len(handoff_disarm) == 0 {
+  if len(prefix) == 0 && len(ls) == 0 && len(witness_update) == 0 && len(witness_ops) == 0 && !displaced.some && len(handoff_disarm) == 0 {
     return scope_fn::v_set(v, set_value);
   }
   all = displaced.pre;
@@ -742,9 +780,46 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   all += ls;
   all += [scope_fn::v_set(v, set_value)];
   all += handoff_disarm;
+  all += witness_ops;
   all += witness_update;
   all += displaced.post;
   ir::NdInsert { items: all }
+}
+
+// port: scan_set.rs fn transfer_lift_to_witness — a witnessed local that MINTS by reading a
+// field of a lifted call's result (`pv = mkw(i).x`): the lift's store goes to the witness, as a
+// consuming copy hands a lift's store to its op, and the call's buffer is unpaired.
+fn transfer_lift_to_witness(s: scope_scan::Scopes, b: ir::Bundle, set_value: ir::Node) {
+  projections = own::projection_ops(b);
+  root = scope_fn::unspan(set_value);
+  moved = false;
+  while true {
+    match root {
+      NdCall { def_nr, args } => if scope_fn::has(projections, def_nr) && len(args) > 0 {
+        root = scope_fn::unspan(args[0]!);
+        moved = true;
+      } else {
+        break;
+      },
+      _ => { break; }
+    }
+  }
+  tmp = match root {
+    NdVar { n } => n,
+    _ => -1
+  };
+  if tmp < 0 || !moved || !scope_fn::has(s.lift_vars, tmp) {
+    return;
+  }
+  scope_scan::set_add(s.free_transferred, tmp);
+  kept: vector<scope_scan::VarList> = [for e in s.witness_buffer if e.v != tmp { e }];
+  s.witness_buffer.clear();
+  s.witness_buffer += kept;
+  for x in s.paired_witness {
+    if x == tmp {
+      s.paired_witness[x#index] = -1;
+    }
+  }
 }
 
 // port: scan_set.rs fn unbox_work_ref — the work-ref a `tuple_unbox` block binds first, -1 for none.

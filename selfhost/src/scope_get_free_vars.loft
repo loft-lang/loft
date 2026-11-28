@@ -21,6 +21,7 @@ use scope_backings;
 use binds;
 use scope_tuple_members;
 use scope_handles;
+use scope_witness;
 
 // port: get_free_vars.rs fn get_free_vars
 pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_scope: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered) -> vector<ir::Node> {
@@ -76,6 +77,16 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
         ls += [ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: backing }] }];
         ls += [scope_fn::v_set(backing, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
       }
+    }
+    // loft#1336 / @FR-O-Witness — a witnessed local's store is released through its witness,
+    // which names it only while the local still holds it; the local itself is never-free.  A
+    // closure record's conditional adoption (loft#1464) is refused where the record is built,
+    // and `unless_moved` guards only a hook, which a witnessed type with a cascade (refused by
+    // the phase) would have.
+    w = scope_scan::get(s.owner_witness, v);
+    if w >= 0 {
+      ls += [scope_witness::release_witness(s, w, scope_drops::witness_hook(s, b, f, v, w))];
+      continue;
     }
     if scope_fn::name(f, v).contains("hash_scratch") {
       ls += [ir::NdCall { def_nr: scope_fn::def_nr(b, "OpFreeScratch"), args: [ir::NdVar { n: v }] }];
@@ -335,11 +346,6 @@ fn owns_text_copy(f: ir::Function, v: integer) -> boolean {
 fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>) {
   // `closure_keep`, `outer_collection_backing`, `outer_tuple_backings`: a closure record, a
   // vector, a tuple's members — refused where they are made.
-  // loft#1336 — a witnessed local releases through its witness: the owner witness is empty.
-  if scope_scan::get(s.owner_witness, v) >= 0 {
-    scope_scan::refuse(s, "get_free_vars: a witnessed local (release_witness)");
-    return;
-  }
   dep = scope_fn::deps(f, v);
   def = b.data.definitions[s.d_nr]!;
   // H2 step 5 — the declared return's def-space deps: attribute indices, and tagged callee-frame

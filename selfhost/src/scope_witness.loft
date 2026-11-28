@@ -4,9 +4,8 @@
 //
 // @PLN91 — `src/scopes/witness.rs` transcribed (doc/claude/plans/91-self-host/scope-pass-port.md
 // step 2): the runtime witnesses a record local's release may need, and the pre-scan analyses
-// that mint them.  `nullable_view_locals` is carried; `owner_witness_locals` (loft#1336) is
-// carried as the question of WHICH locals take a witness, and the function is refused where it
-// names one (the witness's releases are not transcribed), so the owner witness stays empty;
+// that mint them.  `nullable_view_locals` and `owner_witness_locals` (loft#1336, step 14) are
+// carried, with the witness's releases (`release_witness`, `witness_points_at`);
 // `nullable_locals_that_displace` answers none while `τ?` has a return buffer
 // (`LOFT_NO_NULLABLE_RETBUF` unset).
 
@@ -17,6 +16,7 @@ use scope_fn;
 use scope_args;
 use scope_scan;
 use scope_backings;
+use scope_handles;
 
 // port: witness.rs fn displaces_owned_through_fresh_callee
 pub fn displaces_owned_through_fresh_callee(b: ir::Bundle, value: ir::Node, v: integer, ov: integer) -> boolean {
@@ -157,23 +157,6 @@ fn view_walk(b: ir::Bundle, n: ir::Node, projections: vector<integer>, out: vect
   }
 }
 
-// (superseded by `owner_witness_locals`) `owner_witness_locals` (loft#1336) can answer a local only where one of its binds MINTS and
-// another VIEWS — two binds, or one CHOICE whose arms deliver a store a call made into a null
-// buffer (`WitnessSet::MintUnless`).  The first local that could qualify, -1 for none: the
-// phase refuses there, so the owner witness is empty wherever the scan runs.
-pub fn owner_witness_may_fire(code: ir::Node, f: ir::Function) -> integer {
-  counts: vector<integer> = [];
-  choice: vector<integer> = [];
-  witness_count(code, f, counts, choice);
-  for c in counts {
-    v = c#index;
-    if c >= 2 || (c == 1 && scope_fn::has(choice, v)) {
-      return v;
-    }
-  }
-  -1
-}
-
 fn witness_candidate(f: ir::Function, t: integer) -> boolean {
   t < scope_fn::count(f)
     && !scope_fn::name(f, t).starts_with("__")
@@ -183,64 +166,29 @@ fn witness_candidate(f: ir::Function, t: integer) -> boolean {
     && own::heap_def_nr(scope_fn::tp(f, t)) != null
 }
 
-fn witness_count(n: ir::Node, f: ir::Function, counts: vector<integer>, choice: vector<integer>) {
-  match scope_fn::unspan(n) {
-    NdSet { var: t, inner } => if witness_candidate(f, t) {
-      while len(counts) <= t {
-        counts += [0];
-      }
-      counts[t] = counts[t]! + 1;
-      if ends_in_choice(inner) {
-        choice += [t];
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    witness_count(c, f, counts, choice);
-  }
-}
-
-// A value whose tail, through blocks and inserts, is an `if`.
-fn ends_in_choice(n: ir::Node) -> boolean {
-  match scope_fn::unspan(n) {
-    NdIf => true,
-    NdBlock { block } => {
-      k = len(block[0].operators);
-      k > 0 && ends_in_choice(block[0].operators[k - 1]!)
-    },
-    NdInsert { items } => {
-      k = len(items);
-      k > 0 && ends_in_choice(items[k - 1]!)
-    },
-    _ => false
-  }
-}
-
-// port: witness.rs fn owner_witness_locals — the first local whose assignments MIX ownership
-// (one mints a store of its own, another views), -1 for none.  The capture clauses (a
-// captured local with an owner slot, `reassigned_after_build`) are a closure record's, refused
-// by the phase; a captured candidate is refused here.
-pub fn owner_witness_locals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> integer {
+// port: witness.rs fn owner_witness_locals — the locals whose assignments MIX ownership (one
+// mints a store of its own, another views), sorted.  The materialised views it excludes are
+// empty: the phase refuses a function with one.  The capture clauses (a captured local with an
+// owner slot, `reassigned_captures`, `capture_build_backings`' `reassigned_after_build`) are a
+// closure record's: a captured local that could take a witness refuses.
+pub fn owner_witness_locals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
   minted: vector<integer> = [];
   viewed: vector<integer> = [];
   ow_walk(s, b, code, f, minted, viewed);
-  for v in minted {
-    if scope_fn::has(viewed, v) {
-      return v;
+  for v in 0..scope_fn::count(f) {
+    if scope_fn::is_captured(f, v) && witness_candidate(f, v) {
+      scope_scan::refuse(s, "witness::owner_witness_locals: a captured record local (capture_builds::has_owner_slot)");
     }
   }
-  -1
+  scope_handles::sorted([for v in minted if scope_fn::has(viewed, v) { v }])
 }
 
 fn ow_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, minted: vector<integer>, viewed: vector<integer>) {
   u = scope_fn::unspan(n);
   match u {
-    NdSet { var: t, inner } => if witness_candidate(f, t) {
-      if scope_fn::is_captured(f, t) {
-        scope_scan::refuse(s, "witness::owner_witness_locals: a captured record local (capture_builds::has_owner_slot)");
-      }
-      k = witness_set_kind(s, b, inner, t, t, f);
+    NdSet { var: t, inner } => if witness_candidate(f, t) && !scope_fn::is_captured(f, t) {
+      temps: vector<integer> = [];
+      k = witness_set_kind(s, b, inner, t, t, f, temps);
       if k == SET_MINT || k == SET_MINT_READING {
         scope_scan::set_add(minted, t);
       } else if k == SET_MINT_UNLESS {
@@ -259,14 +207,74 @@ fn ow_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, m
   }
 }
 
-SET_MINT = 1;
-SET_MINT_READING = 2;
-SET_OTHER = 3;
-SET_MINT_UNLESS = 4;
+// port: witness.rs fn view_bind_bases — the named locals a PROJECTION bound into `v` is rooted
+// at (`v = b.f`, `v = b[i]`), for `@FR-O-Witness`: a witnessed local's view binds keep their
+// bases alive.  A parameter and a compiler temp are none.
+pub fn view_bind_bases(b: ir::Bundle, code: ir::Node, v: integer, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  bases_walk(b, code, v, f, own::projection_ops(b), out);
+  out
+}
 
-// port: witness.rs fn witness_set_kind — the kind of `WitnessSet` (the `MintUnless` temps are
-// not needed by the question asked here).
-pub fn witness_set_kind(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v: integer, ov: integer, f: ir::Function) -> integer {
+fn bases_walk(b: ir::Bundle, n: ir::Node, v: integer, f: ir::Function, projections: vector<integer>, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => if t == v && scope_fn::unspan(inner) is NdCall {
+      r = projection_root(inner, projections);
+      if r >= 0 && r != v && r < scope_fn::count(f) && !scope_fn::is_argument(f, r) && !scope_fn::is_compiler_generated(f, r)
+        && own::heap_def_nr(scope_fn::tp(f, r)) != null && !scope_fn::has(out, r) {
+        out += [r];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    bases_walk(b, c, v, f, projections, out);
+  }
+}
+
+// The variable a chain of projections is rooted at, -1 for none.
+fn projection_root(n: ir::Node, projections: vector<integer>) -> integer {
+  cur = scope_fn::unspan(n);
+  while true {
+    match cur {
+      NdVar { n: x } => { return x; },
+      NdCall { def_nr, args } => if scope_fn::has(projections, def_nr) && len(args) > 0 {
+        cur = scope_fn::unspan(args[0]!);
+      } else {
+        return -1;
+      },
+      _ => { return -1; }
+    }
+  }
+  -1
+}
+
+// port: witness.rs fn release_witness — release the store owner witness `w` names, its hook
+// first, and reset the witness to the sentinel, as ONE unit.
+pub fn release_witness(s: scope_scan::Scopes, w: integer, hook: ir::Node?) -> ir::Node {
+  ops: vector<ir::Node> = [];
+  if hook != null {
+    ops += [hook!];
+  }
+  ops += [ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: w }] }];
+  ops += [scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  ir::NdInsert { items: ops }
+}
+
+// port: witness.rs fn witness_points_at — `w` ALIASES the store `v` holds (`OpRefAlias`).
+pub fn witness_points_at(s: scope_scan::Scopes, w: integer, v: integer) -> ir::Node {
+  scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: v }] })
+}
+
+pub SET_MINT = 1;
+pub SET_MINT_READING = 2;
+pub SET_OTHER = 3;
+pub SET_MINT_UNLESS = 4;
+
+// port: witness.rs fn witness_set_kind — the kind of `WitnessSet`; `MintUnless`'s temps are
+// written to `temps`.
+pub fn witness_set_kind(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v: integer, ov: integer, f: ir::Function, temps: vector<integer>) -> integer {
   reads = scope_fn::reads_var(value, v) || scope_fn::reads_var(value, ov);
   if held_by_compiler_temp(b, value, f) {
     return SET_OTHER;
@@ -294,7 +302,7 @@ pub fn witness_set_kind(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v
     _ => false
   };
   if !mints {
-    if !reads && choice_delivering_temps(b, value, f) {
+    if !reads && env_variable("LOFT_NO_WITNESS_NULL_BUFFER") == null && choice_delivering_temps(b, value, f, temps) {
       return SET_MINT_UNLESS;
     }
     return SET_OTHER;
@@ -410,8 +418,8 @@ fn choice_tail(b: ir::Bundle, ops: vector<ir::Node>) -> ir::Node? {
   null
 }
 
-// port: witness.rs fn choice_delivering_temps, asked as a yes/no.
-fn choice_delivering_temps(b: ir::Bundle, value: ir::Node, f: ir::Function) -> boolean {
+// port: witness.rs fn choice_delivering_temps — `None` as false; the temps go to `out`.
+fn choice_delivering_temps(b: ir::Bundle, value: ir::Node, f: ir::Function, out: vector<integer>) -> boolean {
   choice = false;
   at = scope_fn::unspan(value);
   while true {
@@ -434,20 +442,25 @@ fn choice_delivering_temps(b: ir::Bundle, value: ir::Node, f: ir::Function) -> b
     return false;
   }
   calls: vector<integer> = [];
-  choice_walk(b, value, f, calls) && len(calls) > 0
+  temps: vector<integer> = [];
+  if choice_walk(b, value, f, calls, temps) && len(calls) > 0 {
+    out += temps;
+    return true;
+  }
+  false
 }
 
-fn choice_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<integer>) -> boolean {
+fn choice_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<integer>, out: vector<integer>) -> boolean {
   u = scope_fn::unspan(n);
   match u {
-    NdIf { t, f: e } => { return choice_walk(b, t, f, calls) && choice_walk(b, e, f, calls); },
+    NdIf { t, f: e } => { return choice_walk(b, t, f, calls, out) && choice_walk(b, e, f, calls, out); },
     NdBlock { block } => {
       t = choice_tail(b, block[0].operators);
-      return t != null && choice_walk(b, t!, f, calls);
+      return t != null && choice_walk(b, t!, f, calls, out);
     },
     NdInsert { items } => {
       t = choice_tail(b, items);
-      return t != null && choice_walk(b, t!, f, calls);
+      return t != null && choice_walk(b, t!, f, calls, out);
     },
     _ => {}
   }
@@ -455,7 +468,12 @@ fn choice_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<intege
     return true;
   }
   match u {
-    NdVar => held_by_compiler_temp(b, u, f),
+    NdVar { n: r } => if held_by_compiler_temp(b, u, f) {
+      out += [r];
+      true
+    } else {
+      false
+    },
     NdCall { def_nr, args } => {
       d = b.data.definitions[def_nr]!;
       if !binds::is_loft_defined(d) {
@@ -468,16 +486,17 @@ fn choice_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, calls: vector<intege
           through_buffer = false;
         }
       }
-      buf = false;
+      buf = -1;
       for a in args {
         match scope_fn::unspan(a) {
-          NdVar { n: w } => if w < scope_fn::count(f) && scope_fn::is_compiler_generated(f, w) && !scope_fn::is_argument(f, w) && scope_fn::name(f, w).starts_with("__ref_") {
-            buf = true;
+          NdVar { n: w } => if buf < 0 && w < scope_fn::count(f) && scope_fn::is_compiler_generated(f, w) && !scope_fn::is_argument(f, w) && scope_fn::name(f, w).starts_with("__ref_") {
+            buf = w;
           },
           _ => {}
         }
       }
-      if through_buffer && buf {
+      if through_buffer && buf >= 0 {
+        out += [buf];
         calls += [def_nr];
         return true;
       }

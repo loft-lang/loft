@@ -18,6 +18,7 @@ use binds;
 use own;
 use scope_args;
 use scope_witness;
+use scope_inline_returns;
 use scope_backings;
 use scope_buffers;
 use scope_drops;
@@ -141,13 +142,6 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   function = scope_fn::copy_function(orig_vars);
   pre_scan_refusals(s, b, orig_code, function);
   s.owned_handle_members = scope_handles::owned_handle_members(b, orig_code, function);
-  // A nullable heap local that holds a PROJECTION VIEW owns no store it must free: marked
-  // never-free (@FR-O-Override).  The displacing and witnessed locals it excludes are empty
-  // here (`nullable_locals_that_displace` answers none while `τ?` has a buffer; the owner
-  // witness is refused where it could fire), and so are the materialised views.
-  for v in scope_witness::nullable_view_locals(b, orig_code, function, own::projection_ops(b)) {
-    function.variables[v].skip_free = true;
-  }
   for v in function.variables {
     if v.argument {
       scope_scan::set_scope_of(s, v#index, 0);
@@ -176,6 +170,50 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
       s.entry_w = w;
     }
   }
+  // loft#1336 / @FR-O-Witness — the OWNER WITNESS of a local whose assignments MIX ownership,
+  // minted before the scan: the local is marked never-free (@FR-O-Override), so the witness is
+  // the one thing that releases its stores.  The witness carries a self-dep: not a borrow, and
+  // not the empty list @FR-O-Proxy reads as "owner".  `LOFT_NO_OWNER_WITNESS` mints none.
+  witness_locals = scope_witness::owner_witness_locals(s, b, orig_code, function);
+  if env_variable("LOFT_NO_OWNER_WITNESS") == null {
+    for v in witness_locals {
+      rec = own::heap_def_nr(scope_fn::tp(function, v));
+      if rec == null {
+        continue;
+      }
+      w = scope_fn::add_temp_var(function, "__own_{scope_fn::name(function, v)}", ir::TyReference { n: rec!, dep: [] });
+      function.variables[w].type_def = [ir::TyReference { n: rec!, dep: [w] }];
+      function.variables[v].skip_free = true;
+      function.variables[v].owner_witness = w;
+      scope_scan::set_scope_of(s, w, 0);
+      s.var_order += [w];
+      scope_scan::put(s.owner_witness, v, w);
+      // loft#2443, loft#2628 — every named local a view bind into `v` is rooted at JOINS its
+      // dep list, so its lifetime covers `v`'s.
+      bases = scope_witness::view_bind_bases(b, orig_code, v, function);
+      if len(bases) > 0 {
+        joined = scope_fn::deps(function, v);
+        for x in bases {
+          if !scope_fn::has(joined, x) {
+            joined += [x];
+          }
+        }
+        incoming: vector<integer> = [for d in joined if d != scope_fn::NONE { d }];
+        if len(incoming) > 0 {
+          function.variables[v].type_def = [scope_inline_returns::with_deps(scope_fn::tp(function, v), incoming)];
+        }
+      }
+    }
+  }
+  // A nullable heap local that holds a PROJECTION VIEW owns no store it must free: marked
+  // never-free (@FR-O-Override).  The displacing locals it excludes are empty here
+  // (`nullable_locals_that_displace` answers none while `τ?` has a buffer), and so are the
+  // materialised views (refused); a witnessed local keeps its witness.
+  for v in scope_witness::nullable_view_locals(b, orig_code, function, own::projection_ops(b)) {
+    if !scope_fn::has(witness_locals, v) {
+      function.variables[v].skip_free = true;
+    }
+  }
   // @PLN219 `@FR-B-Ref-Repoint` — the cell a `&` parameter is re-pointed to lives for the whole
   // function.
   slot_cells: vector<integer> = [];
@@ -186,27 +224,33 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   }
   code = scope_scan::scan(s, b, orig_code, function);
 
-  // Each insert below goes at the head of the body block, the last one inserted first.
+  // Each insert below goes at the head of the body block, the last one inserted first: in
+  // Rust's order, the ownership witness (starts FALSE: the buffer holds the CALLER's store on
+  // entry), the entry witness (what the buffer holds before any statement can rebind it), the
+  // tuple members' move flags, the slot cells, the owner witnesses.
   head: vector<ir::Node> = [];
-  for c in slot_cells {
-    head += [scope_fn::v_set(c, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
-  }
-  // The entry witness names what the buffer holds before any statement can rebind it; the
-  // ownership witness starts FALSE (the buffer holds the CALLER's store on entry).
-  if s.entry_w >= 0 {
-    head += [scope_fn::v_set(s.entry_w, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: s.entry_buf }] })];
-  }
   if s.rbuf_flag >= 0 {
-    head += [scope_fn::v_set(s.rbuf_flag, ir::NdBoolean { b: false })];
+    head = [scope_fn::v_set(s.rbuf_flag, ir::NdBoolean { b: false })];
+  }
+  if s.entry_w >= 0 {
+    head = prepend_ops([scope_fn::v_set(s.entry_w, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: s.entry_buf }] })], head);
   }
   // loft#1645 — every tuple member's move flag starts false: before the arm runs no move has
   // taken the member's release.
   if len(s.tuple_moved) > 0 {
     flags = scope_handles::sorted([for x in s.tuple_moved[0]!.vals { x }]);
-    pre_m: vector<ir::Node> = [for fl in flags { scope_fn::v_set(fl, ir::NdBoolean { b: false }) }];
-    pre_m += head;
-    head = pre_m;
+    head = prepend_ops([for fl in flags { scope_fn::v_set(fl, ir::NdBoolean { b: false }) }], head);
   }
+  head = prepend_ops([for c in slot_cells { scope_fn::v_set(c, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }) }], head);
+  // An owner witness starts at the null SENTINEL: before the local's first owning assignment
+  // there is no store of its own to release (@FR-H-FreeNull).
+  witnesses: vector<integer> = [];
+  for w in s.owner_witness {
+    if w >= 0 && !scope_fn::has(witnesses, w) {
+      witnesses += [w];
+    }
+  }
+  head = prepend_ops([for w in scope_handles::sorted(witnesses) { scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }) }], head);
   // @FR-O-Override — a temp whose store a consuming op takes over owns nothing at any later free.
   for v in s.free_transferred {
     function.variables[v].skip_free = true;
@@ -334,6 +378,13 @@ fn hoist_tails(b: ir::Bundle, v: ir::Node, f: ir::Function) -> integer {
   }
 }
 
+// `ops` followed by `rest`.
+fn prepend_ops(ops: vector<ir::Node>, rest: vector<ir::Node>) -> vector<ir::Node> {
+  out = ops;
+  out += rest;
+  out
+}
+
 // `body_block_mut`, with `ops` put in front of its operators.
 fn prepend_body(code: ir::Node, ops: vector<ir::Node>) -> ir::Node {
   match code {
@@ -420,12 +471,6 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
     if !v.argument && scope_fn::has(s.assigned, v#index) && rec != null && has_copy_hook(b, rec!) {
       scope_scan::refuse(s, "use_analysis::lease_calls: a record type with a copy hook");
     }
-  }
-  // `owner_witness_locals` (loft#1336, @FR-O-Witness): a local whose assignments mix ownership
-  // takes a witness, whose releases are not transcribed.
-  ow = scope_witness::owner_witness_locals(s, b, code, f);
-  if ow >= 0 {
-    scope_scan::refuse(s, "witness::owner_witness_locals: a record local whose assignments mix ownership");
   }
   // `view_rebind_locals` (loft#2145) — a view local handed to a `&` heap parameter.
   if amp_view_local(s, b, code, f) {
