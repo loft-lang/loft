@@ -732,7 +732,7 @@ fn call_rebound_nested(e: el::El, vars: el_vars::Vars, op: ir::Node, v: integer,
 
 // `var_bound_from_fresh_call`: `v` is set from a call of a function answering a vector that is
 // handed no work ref — the call makes the store.
-fn bound_from_fresh_call(e: el::El, vars: el_vars::Vars, op: ir::Node, v: integer) -> boolean {
+pub fn bound_from_fresh_call(e: el::El, vars: el_vars::Vars, op: ir::Node, v: integer) -> boolean {
   match el_ir::unspan(op) {
     NdSet { var, inner } => {
       if var != v {
@@ -1368,7 +1368,7 @@ fn delivered_leaf_reads(e: el::El, tail: ir::Node, var: integer) -> boolean {
 
 // `var_bound_from_fresh_call` over the syntax: `name` is set from a call of a function that
 // answers a vector without a hidden buffer of its own (the call makes the store).
-fn syn_bound_from_fresh_call(e: el::El, n: integer, name: text) -> boolean {
+pub fn syn_bound_from_fresh_call(e: el::El, n: integer, name: text) -> boolean {
   if n < 0 || e.p.nodes[n] is SLambda {
     return false;
   }
