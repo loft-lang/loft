@@ -623,6 +623,34 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
       }
       return ex(el_ir::cl(e, "OpCopyRecord", [lx.code, el_ir::unspan(p.code), ir::NdInt { n: el::def(e, lit_sed).known_type }]), ir::TyVoid);
     }
+    // (`variant_reads_place`, loft#2521: an out-of-line field reading the place it is written
+    // into declines the place — the variant built apart, its `Object` in a `__ref_p2_N`, every
+    // value read from the old record, and copied in whole.)
+    if lreads && lvd >= 0 && el::def(e, lvd).parent == lit_sed && lroot >= 0 {
+      if e.first_pass {
+        el_ex_pattern::first_pass_fields(e, vars, lvd, lfs);
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "decline_place:variant_reads_place");
+      // (The in-place attempt the decline abandons parsed every field value first: a call there
+      // took a work ref, which is left unfreed by name — `clean_work_refs` over the attempt's
+      // range, `mark_skip_free_by_name`.)
+      rmark = vars.work_ref;
+      el_ex_into::fields_at(e, vars, lroot, el_ir::unspan(p.code), lvd, lfs);
+      rw = rmark;
+      while rw < vars.work_ref {
+        rwv = el_vars::var(vars, "__ref_{rw + 1}");
+        if rwv >= 0 && !vars.vars[rwv].argument {
+          el_vars::set_skip_free(vars, rwv, "mark_skip_free_by_name");
+        }
+        rw += 1;
+      }
+      rx = el_ex_assign::expression(e, vars, rhs);
+      if el_types::is_unknown(rx.tp) {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      return ex(el_ir::cl(e, "OpCopyRecord", [rx.code, el_ir::unspan(p.code), ir::NdInt { n: el::def(e, lit_sed).known_type }]), ir::TyVoid);
+    }
     if !lreads {
       place_literal_route(e, vars, el_ir::unspan(p.code), rhs, "");
     }
