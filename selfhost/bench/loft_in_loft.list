@@ -10,6 +10,7 @@ loft-suite/rules/binding/B-Disturb/an-element-view-read-before-an-element-first-
 loft-suite/rules/binding/B-Ref-Intro/1372-a-reference-links-a-nullable-slot.loft
 loft-suite/rules/binding/B-Ref-Repoint/157-link-repoint.loft
 loft-suite/rules/binding/B-Ref-Reshape/an-element-parameter-dead-before-the-callees-removal-is-accepted.loft
+loft-suite/rules/binding/B-Ref-StoredRef/2166-a-reference-field-takes-a-link-by-assignment-as-in-a-literal.loft
 loft-suite/rules/binding/B-Ref-StoredRef/2369-a-field-read-through-a-temporarys-reference-field.loft
 loft-suite/rules/binding/B-Ref-Uniform/a-default-fallback-through-a-link-discharges-its-referent.loft
 loft-suite/rules/binding/B-Ref-Write/a-formatted-append-through-a-text-link.loft
@@ -20,6 +21,7 @@ loft-suite/rules/binding/B-Scope/1156-a-loop-body-local-read-after-the-loop-is-n
 loft-suite/rules/binding/B-Scope/1700c-a-later-bind-splits-where-pass-one-cannot-type-the-ended-binding.loft
 loft-suite/rules/binding/B-Scope/1700d-a-split-binds-literal-is-built-into-the-new-binding.loft
 loft-suite/rules/binding/B-Scope/1955b-a-rebind-reading-its-old-value-keeps-it.loft
+loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft
 loft-suite/rules/binding/B-Scope/2401-a-capture-reassigned-in-a-nested-block-is-read-after-it.loft
 loft-suite/rules/binding/B-Scope/a-sibling-loop-destructure-is-its-own-binding.loft
 loft-suite/rules/binding/B-View-Depth/a-nested-keyed-projection-is-a-view-like-its-vector-twin.loft
@@ -37,7 +39,9 @@ loft-suite/rules/calls/F-Recv/1780-a-method-call-dispatches-on-every-argument-li
 loft-suite/rules/calls/F-Recv/a-method-and-its-nullable-twin-are-two-bodies.loft
 loft-suite/rules/calls/F-Ret/1346-a-nullable-record-from-a-call-copies-when-reassigned-or-joined.loft
 loft-suite/rules/calls/F-Ret/1368-a-return-that-may-borrow-two-sources-is-fresh.loft
+loft-suite/rules/calls/F-Ret/2188-a-branch-arm-that-may-hand-back-an-argument-is-the-binders-copy.loft
 loft-suite/rules/calls/F-Ret/2443-a-record-copied-out-of-a-kept-buffer-releases-it.loft
+loft-suite/rules/calls/F-Ret/2525-a-tail-after-an-early-return-of-a-local-delivers-its-own-value.loft
 loft-suite/rules/calls/F-Ret/2585-a-parameters-element-answered-as-a-tail-is-the-callers-copy.loft
 loft-suite/rules/calls/F-Ret/2585b-a-nullable-answer-viewing-an-argument-is-the-callers-copy.loft
 loft-suite/rules/calls/F-Surface/a-pub-item-is-reached-by-either-spelling.loft
@@ -118,6 +122,7 @@ loft-suite/rules/iteration/I-RangeIncl/an-inclusive-fast-path-never-forms-the-en
 loft-suite/rules/layout/L-Align/1911-an-index-element-may-hold-a-two-byte-field.loft
 loft-suite/rules/layout/L-Align/pln110-size-struct.loft
 loft-suite/rules/layout/L-Narrow-Spare/two-aliases-one-value-apart-answer-an-overflow-alike.loft
+loft-suite/rules/layout/L-Null-Which/2572-a-join-of-a-nullable-field-with-null-reads-its-tag.loft
 loft-suite/rules/layout/L-Null-Which/2609-a-literal-written-under-a-tagged-holder-is-the-field-s-value.loft
 loft-suite/rules/layout/L-Null-Which/2618-the-child-of-an-absent-holder-reads-null.loft
 loft-suite/rules/layout/L-Null/a-nullable-collection-local-takes-its-typed-null.loft
@@ -152,6 +157,7 @@ loft-suite/rules/operational/E-Asgn-Compound/2581-a-compound-write-through-a-blo
 loft-suite/rules/operational/E-Asgn-Compound/a-record-append-to-a-computed-place-evaluates-it-once.loft
 loft-suite/rules/operational/E-Asgn/2578-a-write-through-an-element-addresses-the-live-vector.loft
 loft-suite/rules/operational/E-Asgn/2582-a-place-keeps-its-turn-before-a-lifted-right-side.loft
+loft-suite/rules/operational/E-Eq/a-discharged-local-compared-in-an-else-if-compiles-on-native.loft
 loft-suite/rules/operational/E-Eq/a-value-struct-with-methods-compares-by-its-fields.loft
 loft-suite/rules/operational/E-NullArg/pln102-null-comparison-uniform.loft
 loft-suite/rules/operational/E-Op-IntDivMod/integer-division-truncates-and-the-remainder-takes-the-dividends-sign.loft
@@ -167,16 +173,22 @@ loft-suite/rules/ownership/O-Borrow-Scalar/a-link-to-a-link-keeps-the-place-aliv
 loft-suite/rules/ownership/O-Buffer/164-a-chain-of-chains-adopts-its-callees-answer.loft
 loft-suite/rules/ownership/O-Buffer/1643-a-null-led-nullable-local-takes-the-pooled-buffer.loft
 loft-suite/rules/ownership/O-Buffer/a-forwarded-result-buffer-is-the-callers-until-the-frame-mints-one.loft
+loft-suite/rules/ownership/O-Buffer/a-recursive-chain-frees-the-buffer-its-frame-minted.loft
 loft-suite/rules/ownership/O-Complete/157-join-witness.loft
+loft-suite/rules/ownership/O-Complete/2386-a-branch-argument-releases-the-record-its-call-arm-answered.loft
+loft-suite/rules/ownership/O-Deps/2376-an-element-read-off-a-borrowing-calls-field-names-no-callee-dep.loft
 loft-suite/rules/ownership/O-Detach/157-selfread-literal.loft
 loft-suite/rules/ownership/O-Detach/2327-a-value-block-frees-after-its-tail-reads.loft
 loft-suite/rules/ownership/O-Detach/a-heap-parameter-rebound-to-itself-keeps-its-value.loft
 loft-suite/rules/ownership/O-Latest/1128-a-conditionally-assigned-return-buffer-frees-what-it-displaces.loft
+loft-suite/rules/ownership/O-Latest/a-tail-call-frees-the-store-its-buffer-var-stops-holding.loft
 loft-suite/rules/ownership/O-LazyBuffer/a-path-that-makes-no-call-frees-only-the-null-sentinel.loft
 loft-suite/rules/ownership/O-Move/2385-a-call-with-a-unit-variant-argument-answers-and-releases-its-fresh-record.loft
 loft-suite/rules/ownership/O-NoDiverge/1620-a-narrow-fields-bias-is-four-bytes-wide.loft
 loft-suite/rules/ownership/O-NoDiverge/1627-a-linked-locals-slot-is-not-handed-on.loft
+loft-suite/rules/ownership/O-NoDiverge/2452-a-returned-join-of-two-nullable-fields-is-a-whole-copy.loft
 loft-suite/rules/ownership/O-Opaque/a-record-through-a-fn-typed-parameter-is-the-callers-to-keep.loft
+loft-suite/rules/ownership/O-Oracle/1888-a-parameter-returned-beside-a-copy-is-never-adopted.loft
 loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft
 loft-suite/rules/ownership/O-Proxy/1369-a-nullable-rebind-from-an-absent-source-releases-what-it-displaces.loft
 loft-suite/rules/ownership/O-Proxy/1456-a-key-write-through-a-nullable-collections-view-materialises.loft
@@ -254,6 +266,7 @@ loft-suite/rules/rewrites/R-MaskRange/a-mask-over-a-shifted-summed-or-merged-ran
 loft-suite/rules/rewrites/R-Mint/a-minted-element-evicts-no-hoisted-scalar-and-an-alias-write-does.loft
 loft-suite/rules/rewrites/R-MoveAppend/157-move-append.loft
 loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-moved-only-at-its-last.loft
+loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
 loft-suite/rules/rewrites/R-MoveLast/a-vector-given-up-to-another-local-is-exchanged-only-where-exact.loft
 loft-suite/rules/rewrites/R-Place/a-place-in-a-store-a-parameter-names-into-is-filled-as-written.loft
 loft-suite/rules/rewrites/R-PureReuse/a-pure-call-asked-for-twice-answers-what-two-calls-answer.loft
@@ -293,6 +306,7 @@ loft-suite/rules/rewrites/R-Refresh/a-push-writes-its-length-back-for-a-reader-i
 loft-suite/rules/rewrites/R-RepeatRun/a-spelled-out-run-of-one-constant-builds-the-same-vector.loft
 loft-suite/rules/rewrites/R-RetAdopt/157-retbuf-adopt.loft
 loft-suite/rules/rewrites/R-RetAdopt/a-vector-built-in-the-return-buffer-is-the-vector-the-caller-reads.loft
+loft-suite/rules/rewrites/R-ReturnField/a-returned-field-handed-over-on-a-path-that-made-the-call.loft
 loft-suite/rules/rewrites/R-Rotate/a-rotated-loop-stores-its-variable-unless-it-shares-the-index-slot.loft
 loft-suite/rules/rewrites/R-SameRead/a-lookup-of-the-key-just-filed-is-the-record.loft
 loft-suite/rules/rewrites/R-Scalar/a-hoisted-field-is-evicted-by-every-in-place-write-that-reaches-it.loft
@@ -325,7 +339,10 @@ loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-lookup-by-several-integers-or-a-t
 loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-removal-starts-where-the-key-is-found.loft
 loft-suite/rules/rewrites/R-TypedRead/a-float-read-is-decoded-at-its-site-through-a-held-cursor.loft
 loft-suite/rules/rewrites/R-ValueLocal/a-small-record-parameter-is-a-tuple.loft
+loft-suite/rules/rewrites/R-ValueLocal/a-value-record-local-rebound-through-a-call-has-no-store-to-track.loft
+loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft
 loft-suite/rules/rewrites/R-ValueRecord/1847-a-lifted-value-record-call-with-a-built-argument-compiles.loft
+loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from-a-branch-that-holds-a-match-compiles.loft
 loft-suite/rules/rewrites/R-ValueRecord/a-small-record-returned-to-a-reader-is-a-tuple.loft
 loft-suite/rules/rewrites/R-ValueRecord/a-value-record-answers-the-buffer-form-inside-an-admitted-callee.loft
 loft-suite/rules/rewrites/R-ValueRecord/a-value-record-answers-the-same-with-its-switches-off.loft
@@ -366,6 +383,7 @@ loft-suite/rules/types/N-Reserve/152-a-store-that-does-not-fit-is-testable-where
 loft-suite/rules/types/N-Reserve/25-nullable-narrow-cast-return.loft
 loft-suite/rules/types/N-Reserve/25-nullable-narrow-return.loft
 loft-suite/rules/types/N-Reserve/a-spare-code-is-the-null-of-a-nullable-and-nothing-of-a-dense-type.loft
+loft-suite/rules/types/N-Road/1993-a-nullable-record-parameter-crosses-as-its-fields.loft
 loft-suite/rules/types/N-Shape/1493-a-branch-arm-yielding-a-locals-field-delivers-a-copy.loft
 loft-suite/rules/types/N-Shape/1948-a-par-worker-may-answer-null.loft
 loft-suite/rules/types/N-Shape/2316-a-condition-that-is-an-if-answering-a-nullable-boolean-is-tested-as-one.loft
@@ -416,7 +434,10 @@ tests/scripts/136-persist-copy-box-query.loft
 tests/scripts/136-persist-copy-morton-order.loft
 tests/scripts/14-formatting.loft
 tests/scripts/146-keyed-rekey-through-view.loft
+tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft
+tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft
 tests/scripts/157-a-loop-record-keeps-its-vectors.loft
+tests/scripts/157-a-struct-return-builds-into-the-callers-buffer.loft
 tests/scripts/157-a-vector-element-is-built-in-place.loft
 tests/scripts/157-bounded-nest.loft
 tests/scripts/157-group-push.loft
@@ -449,6 +470,8 @@ tests/scripts/191-source-dir.loft
 tests/scripts/1954-a-sibling-rebind-keeps-the-pooled-buffer.loft
 tests/scripts/20-binary.loft
 tests/scripts/2024-an-integer-power-answers-an-integer.loft
+tests/scripts/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.loft
+tests/scripts/2052-a-lifted-call-result-is-released-once-per-pass.loft
 tests/scripts/21-binary-ops.loft
 tests/scripts/2172-a-paged-lookup-decodes-a-narrow-key-as-the-store-does.loft
 tests/scripts/2173-an-image-and-its-sidecar-are-written-together.loft
@@ -498,6 +521,7 @@ tests/scripts/79-null-early-exit.loft
 tests/scripts/790-verify-field-collection.loft
 tests/scripts/802-lazy-refusal-visible.loft
 tests/scripts/81-iterator-protocol.loft
+tests/scripts/85-struct-copy-return-owned.loft
 tests/scripts/85-temp-subject-borrow-return-uaf.loft
 tests/scripts/85-tier1-local-source-matrix.loft
 tests/scripts/85-yield-resume.loft
@@ -506,6 +530,8 @@ tests/scripts/885-vector-hoist.loft
 tests/scripts/899-unbound-file-read-only-vector.loft
 tests/scripts/915-loop-variable-per-loop.loft
 tests/scripts/927-trie-spatial-linked-group.loft
+tests/scripts/974-accessor-returned-record-borrows-its-container.loft
+tests/scripts/978-branch-join-carries-both-arms-borrows.loft
 tests/scripts/981-split-ownership-return.loft
 tests/scripts/a-bound-result-appended-later-is-appended-where-it-is-made.loft
 tests/scripts/a-buffered-file-read-moves-the-cursor-it-would-have.loft
@@ -553,6 +579,7 @@ tests/scripts/a-parameters-vector-holds-its-header-where-the-buffer-is-apart.lof
 tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.loft
 tests/scripts/a-push-fill-stores-each-element-kind.loft
 tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft
+tests/scripts/a-read-only-record-copy-is-a-view.loft
 tests/scripts/a-rebind-from-a-fresh-result-exchanges-the-stores.loft
 tests/scripts/a-rebind-hands-the-displaced-store-to-the-call.loft
 tests/scripts/a-rebound-literal-local-copies-a-call-answering-an-argument.loft
@@ -573,6 +600,7 @@ tests/scripts/a-text-field-of-a-held-element-reads-through-its-address.loft
 tests/scripts/a-text-keyed-insert-writes-the-entry-its-key-names.loft
 tests/scripts/a-text-keyed-write-releases-the-key-text-it-replaces.loft
 tests/scripts/a-text-walks-loop-variable-returned-is-copied-out-and-borrowed.loft
+tests/scripts/a-transient-twin-writes-only-what-it-built.loft
 tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft
 tests/scripts/a-twin-record-address-is-its-arguments-own.loft
 tests/scripts/a-vector-delivered-into-its-own-buffer-is-not-copied.loft

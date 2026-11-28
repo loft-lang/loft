@@ -9,8 +9,6 @@ tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
 tests/scripts/2038-a-slice-first-bind-holds-its-slice-whatever-the-local-is-rebound-to.loft
 tests/scripts/2044-a-null-record-copied-into-a-fresh-field-is-its-default.loft
 tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft
-tests/scripts/2051-a-returned-local-is-handed-over-only-when-every-bind-views-its-root.loft
-tests/scripts/2052-a-lifted-call-result-is-released-once-per-pass.loft
 tests/scripts/2090-a-passing-assert-builds-no-message.loft
 tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft
 tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
@@ -78,7 +76,6 @@ tests/scripts/a-text-index-reads-the-character-holding-the-byte.loft
 tests/scripts/a-text-of-a-slice-reads-the-span-in-place.loft
 tests/scripts/a-text-operand-is-read-before-a-later-operand-writes-it.loft
 tests/scripts/a-transient-sites-text-local-keeps-a-write-after-its-bind.loft
-tests/scripts/a-transient-twin-writes-only-what-it-built.loft
 tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft
 tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft
 tests/scripts/a-wrapper-placed-in-a-one-field-buffer-survives-its-clear.loft
