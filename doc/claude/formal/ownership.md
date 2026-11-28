@@ -859,6 +859,14 @@ analysis directly (the certifier sidesteps it).
   buffer is reset to null behind the bind and keeps no exit free.  A bind the witness does not
   take keeps the buffer's free.  Guard `loft-suite/rules/ownership/O-Witness/2689-…`.
 
+- **A literal's store moves into a binding bound twice, not a name (`O-Buffer`, `B-Scope`,
+  loft#2688)** — loft#2594's move is for a local REBOUND after it adopted the literal.  A bind
+  after the local's binding ended (`for … { x = P { … }; }  x = id(p)`) is another binding, not a
+  rebind: counted as one, the loop's binding took the store, and the later bind had typed the
+  name as a view of `p`, which frees nothing.  The move counts the first binding's binds; the
+  loop's literal keeps the pairing, rebuilt in place each pass and freed once.  Guard
+  `loft-suite/rules/ownership/O-Buffer/2688-…`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN

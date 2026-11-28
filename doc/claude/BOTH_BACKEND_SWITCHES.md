@@ -313,6 +313,12 @@ its owner witness takes the delivered store, so the store moves and the literal'
 reset to null behind the bind (`@FR-O-Witness`, loft#2689);
 **`LOFT_NO_WITNESS_DELIVERED_MOVE=1`** leaves the buffer its exit free, and the buffer and the
 witness both release the literal's store.  Guards `loft-suite/rules/ownership/O-Witness/2689-…`.
+loft#2594's move counts the binds of a local's FIRST BINDING, not of its name (`@FR-O-Buffer`,
+`(B-Scope)`, loft#2688): a bind after that binding's block ended starts another binding
+(`for … { x = P { … }; }  x = id(p)`), so the loop's literal is bound once and keeps the
+pairing; **`LOFT_NO_MOVE_PER_BINDING=1`** counts every bind of the name again, the store moves
+into the loop's binding, which the later bind typed as a view, and each pass's record leaks.
+Guards `loft-suite/rules/ownership/O-Buffer/2688-…`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
 the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->

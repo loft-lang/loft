@@ -3376,6 +3376,16 @@ pub fn arm_frees_param_deps() -> bool {
     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
 }
 
+/// `LOFT_NO_MOVE_PER_BINDING=1` — loft#2594's move counts every bind of a NAME, as before
+/// loft#2688: a loop body's literal whose name is bound again after the loop (another binding)
+/// was moved into the loop's binding, which the later bind typed as a view, and each pass's
+/// record leaked.
+#[must_use]
+pub fn move_per_binding() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_MOVE_PER_BINDING"))
+}
+
 /// `LOFT_NO_WITNESS_DELIVERED_MOVE=1` — a witnessed local that adopts the store a call delivers
 /// (`x = id(P { … })`, the callee handing its literal argument back) leaves the literal's buffer
 /// its exit free, as before loft#2689: the witness took the store too, and both released it.
