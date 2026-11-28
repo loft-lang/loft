@@ -2792,6 +2792,8 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       // the 32768 bit — the callee is not known, so neither is whose store it hands back.
       NdCallRef { var: _ } => {
         el_vars::drop_use(vars, v);
+        // (The local holds its own copy: it borrows nothing of what the call answers.)
+        el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
         kt = el_schema::keyed_type(e, el_types::base(kcur));
         return ex(ir::NdInsert { items: kg + [el_ir::v_set(v, ir::NdNull), el_ir::cl(e, "OpReplaceKeyed", [x.code, ir::NdVar { n: v }, ir::NdInt { n: kt }])] }, ir::TyVoid);
       },
