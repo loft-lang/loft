@@ -363,15 +363,29 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     }
   }
   backs_return_source = false;
+  // The return sources that name `v` in their deps (`backing_sources`): when every one is the
+  // returned ARGUMENT — the local renamed onto the caller's return buffer — the returned store
+  // is told from `v`'s by identity at the exit (loft#2684).
+  only_ret_backs = true;
+  ret_backs = false;
   for src in delivered.sources {
     if src != v && scope_fn::has(scope_fn::deps(f, src), v) {
       backs_return_source = true;
+      if src == ret_var {
+        ret_backs = true;
+      } else {
+        only_ret_backs = false;
+      }
     }
   }
+  promoted_holds_v = ret_var != scope_fn::NONE && scope_fn::has(scope_fn::deps(f, ret_var), v) && !owns_text_copy(f, ret_var);
+  promoted_by_identity = env_variable("LOFT_NO_PROMOTED_RETURN_IDENTITY_FREE") == null
+    && ret_var != scope_fn::NONE && scope_fn::is_argument(f, ret_var)
+    && (promoted_holds_v || ret_backs) && only_ret_backs;
   // `link_written_closure_records` and `closure_record_leaves_frame` name closure records,
   // which the phase refuses.
-  leaves_frame = ret_borrows_v || backs_return_source
-    || (ret_var != scope_fn::NONE && scope_fn::has(scope_fn::deps(f, ret_var), v) && !owns_text_copy(f, ret_var));
+  leaves_frame = ret_borrows_v || backs_return_source && !promoted_by_identity
+    || promoted_holds_v && !promoted_by_identity;
   nm = scope_fn::name(f, v);
   // A KEYED work-ref's null init mints a store of its own: a record work-ref is not one.
   // …or a KEYED work-ref, whose null init mints a store of its own (`keyed_null_mints`).
@@ -389,6 +403,16 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     scope_scan::refuse(s, "capture_builds::capture_adoption_owns_free: a captured record local");
   }
   emit = (owns || is_work_ref) && !leaves_frame && !scope_fn::is_skip_free(f, v) && !scope_fn::has(s.free_transferred, v);
+  // The identity-decided release of a local the returned argument may hold
+  // (`promoted_by_identity` above): `OpFreeRefIfDistinct(v, ret)` frees it on the exits where
+  // the buffer holds another store; a work-ref the returned argument names keeps its
+  // suppression.  @FR-O-Buffer @FR-H-FreeAll
+  if emit && promoted_by_identity {
+    if !is_work_ref {
+      ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: ret_var }] }];
+    }
+    return;
+  }
   if !emit {
     return;
   }
