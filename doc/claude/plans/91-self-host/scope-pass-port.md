@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 720 of 1 189 programs agree; 183 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 11) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 11): 1 712 of 2 282 programs, 35 835 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 747 of 1 189 programs agree; 156 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 12) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 12): 1 834 of 2 282 programs, 36 238 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -635,6 +635,46 @@ Two loft defects met, both backends:
   `Ro { ok: [for _ in 0..n { true }] }` reports "Expect token ;" at `n`; `0 .. n`, `z..n`, or
   the struct declared first all parse.  This is step 10's `scope_const_fn` failure: the
   qualified call was not the cause.
+
+**Step 12 (2026-11-28) — tuples.**  `scope_tuple_members.loft` is `tuple_members.rs` whole (the
+owned-element and text-member frees, the claimant disarms, `tuple_call_mints` and its branch
+join, `member_mint`, `member_write`, `tuple_claimants_in`, `written_tuple_members_in`).  The
+tuple facts are `Scopes` fields (`tuple_call_mint`, `tuple_member_now`, `tuple_moved`,
+`tuple_depth`, `written_tuple_members`, `tuple_claimants`, `owned_handle_members`; a per-member
+map is a `scope_scan::TMap`), and the tuple legs are transcribed where Rust has them: `scan_set`
+(the unbox dep, the tuple transition free, the member backings and call mints, the first
+binding's depth, the member backings' turn in the sweep), `register_binding` (the member
+backings, `backings::member_backing`), `get_free_vars` (`claimants_after_their_tuples`,
+`outer_tuple_backings`, the tuple leg), `scan_if` (the per-arm reconcile, a statement `if`'s
+claimant join and disarms), the loop and `Iter` reconciles, `convert` (the member moves a
+statement arms, loft#1645's per-path flags, which the phase sets false at the body's head) and
+`scan`'s member write.  Refused by name where a drop rides the move:
+`call_minted_member_handoff` (a call-minted member of a type with a drop cascade) and a vector
+member of droppable elements; `drop_bearing_source`'s tuple member (`tuple_member_backing`,
+which reads `Function::tuphold_origin` and `Vars::tuple_backings`) and
+`lift_tuple_call_members` still refuse.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 11 | 1 712 / 2 282 | 35 835 / 40 088 | 0 | 720 |
+| + `tuple_members.rs`, the tuple legs | 1 834 / 2 282 | 36 238 / 40 088 | 0 | 747 |
+
+No definition that agreed was lost, nor a whole-path program.  The stale-callee cascade: 155
+definitions refused for nothing else, in 53 programs.
+
+Sole refusal families now (programs): the view walk's materialise legs 60, `place_result` 38,
+the owner witness 35, drop cascades 34, `arm_lift` 31, closures 15.  By first refusal: closure
+records 128, the view walk 63, drop hooks 57, the owner witness 46, `place_result` 43.
+
+Drops and closures are ONE arc.  Of the 144 programs a closure refusal stops, 122 are also
+stopped by a drop refusal: a closure record's capture cascade is a drop cascade, and its
+hand-offs are `handoff.rs`'s.  Only 15 programs are closures alone, and 40 are drops alone (68
+with other families).  Its Rust: `drops.rs` (770 lines, about half ported) and `handoff.rs`
+(1 009: the hand-offs, the per-path flags, `collect_drop_transferred`, `arm_container_handoffs`,
+`collection_handoffs`), then `capture_adoption.rs` (1 832, ported only for its decidable
+cascade parts), `capture_builds.rs` (1 505), `closure_keep.rs` (1 347) and
+`rebound_captures.rs` (799): about 7 000 lines.  The drop machinery comes first, because the
+closure records ride on it; the closures can then be taken module by module.
 
 ## Passes
 
