@@ -24,7 +24,7 @@ The list only grows: a program leaves it in the commit whose change makes it fai
 reason in the message, as every baseline here moves.  `LOFT_LIL_RUNNER=<exe>` and
 `LOFT_LIL_CGEN=<exe>` take tools built before (the builds are minutes each).
 """
-import argparse, concurrent.futures as cf, os, subprocess, sys, tempfile
+import argparse, atexit, concurrent.futures as cf, os, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -96,6 +96,10 @@ def main():
     suite = os.path.realpath(os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(ROOT), "loft-suite")))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     tmp = tempfile.mkdtemp(prefix="loft-lil-", dir=os.environ.get("TMPDIR"))
+    # Every run leaves its programs, images and built tools here; gone at exit unless
+    # LOFT_KEEP_TMP=1 asks to keep them for a look.
+    if not os.environ.get("LOFT_KEEP_TMP"):
+        atexit.register(shutil.rmtree, tmp, True)
     # The interpreter path holds the elaborator, which an optimised build compiles past a CI
     # runner's memory (`elab-gate.yml`); the C generator builds optimised, as its survey does.
     runner = os.environ.get("LOFT_LIL_RUNNER") or build(

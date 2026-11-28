@@ -14,7 +14,7 @@ alone.
 
   passes_survey.py [--part P] [--jobs N] [--show N] [FILE…]
 """
-import argparse, collections, concurrent.futures as cf, os, subprocess, sys, tempfile
+import argparse, atexit, collections, concurrent.futures as cf, os, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
@@ -107,6 +107,10 @@ def main():
         files = elab_gate.corpus(ROOT, suite)
         todo = [os.path.realpath(f) for p in (o.part or elab_gate.PARTS) for f in files[p]]
     tmp = tempfile.mkdtemp(prefix="loft-passes-", dir=os.environ.get("TMPDIR"))
+    # Every run leaves its programs, images and built tools here; gone at exit unless
+    # LOFT_KEEP_TMP=1 asks to keep them for a look.
+    if not os.environ.get("LOFT_KEEP_TMP"):
+        atexit.register(shutil.rmtree, tmp, True)
     empty = os.path.join(tmp, "empty.loft")
     with open(empty, "w", encoding="utf-8") as fh:
         fh.write("fn main() {}\n")
