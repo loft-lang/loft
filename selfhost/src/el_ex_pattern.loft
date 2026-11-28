@@ -1090,7 +1090,19 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               // (So does a struct enum's, `_mv_inner_1: ref(In)["o"]`.)
               // (A nullable vector field is stored as the vector it holds, and binds as one's view.)
               opt_vec = match ft { TyOptional { inner: ovf } => el_types::base(ovf) is TyVector, _ => false };
-              if ft is TyVector || opt_vec || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
+              // (A nullable record field `p: Pt?` is a tagged `__nullable<Pt>` slot: bound through
+              // its tag, `ref(Pt)["w"]?` — the payload where present, else the null sentinel.)
+              nwrap = if ft is TyOptional && struct_ref(e, el_types::base(ft)) >= 0 { el::def_nr(e, "__nullable<{el::def(e, struct_ref(e, el_types::base(ft))).name}>") } else { -1 };
+              // (On the second pass the field's type IS the wrapper.)
+              if nwrap < 0 && is_nullable_wrapper(e, ft) {
+                nwrap = match ft { TyEnum { n: nwn } => nwn, _ => -1 };
+              }
+              // (The wrapper is made late on the first pass: the field is admitted there, read raw.)
+              nfirst = e.first_pass && ft is TyOptional && struct_ref(e, el_types::base(ft)) >= 0;
+              if nwrap >= 0 || nfirst {
+                nsroot = el_ex_match::match_borrow_source(e, vars, subj);
+                ft = el_types::with_deps(ft, if nsroot >= 0 { [nsroot] } else { [] });
+              } else if ft is TyVector || opt_vec || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
                 // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
                 // root where the subject is read in place (`match_borrow_source`).
                 sroot = el_ex_match::match_borrow_source(e, vars, subj);
@@ -1104,6 +1116,14 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               read = field_get(e, vd, fa, subj);
               if read == null {
                 return null;
+              }
+              if nwrap >= 0 && !e.first_pass {
+                rtag = el_ex_into::read_through_tag(e, vars, ex(read!, ir::TyEnum { n: nwrap, is_ref: true, dep: el_types::deps(ft) }));
+                if rtag == null {
+                  return null;
+                }
+                read = rtag!.code;
+                ft = rtag!.tp;
               }
               mv = -1;
               if split {
