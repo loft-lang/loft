@@ -6633,11 +6633,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// the borrows it was minted with.  Any other element — a scalar, a text, an element type
     /// still unknown — keeps the variable as it is: no rule reads a slot type there.
     fn type_placeholder_element(&mut self, elm: u16, in_t: &Type) {
-        let Type::Reference(0, deps) = self.vars.tp(elm).clone() else {
+        let Type::Reference(0, deps) = self.vars.tp(elm).base().clone() else {
             return;
         };
         let typed = match in_t.base() {
-            Type::Reference(d, _) if *d != 0 && !self.data.def(*d).name.starts_with("__nullable<") => {
+            Type::Reference(d, _)
+                if *d != 0 && !self.data.def(*d).name.starts_with("__nullable<") =>
+            {
                 Type::Reference(*d, deps)
             }
             Type::Enum(e, true, _) => Type::Enum(*e, true, deps),

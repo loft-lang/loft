@@ -347,7 +347,7 @@ impl Run<'_> {
         // only a RECORD's re-mint is asked: its links are `&`-typed.
         let vars = &self.data.def(self.d_nr).variables;
         let is_link =
-            |v: u16| v < vars.count() && matches!(vars.tp(v), crate::data::Type::RefVar(_));
+            |v: u16| v < vars.count() && matches!(vars.tp(v).base(), crate::data::Type::RefVar(_));
         let record = x < vars.count()
             && matches!(
                 vars.tp(x).base(),
