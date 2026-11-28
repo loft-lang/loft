@@ -273,7 +273,8 @@ fn assign_place(e: el::El, vars: el_vars::Vars, op: text, c: Place, rhs: integer
     x = ex(r.code, r.tp);
   }
   // A text is set as it is (`OpSetText` copies it into the cell's own field).
-  conv = if (el_types::base(vt) is TyText && el_types::base(x.tp) is TyText) { val } else { el_convert::convert(e, vars, val, x.tp, vt, false) };
+  // (`null` into a nullable cell is its value type's own null: `OpConvIntFromNull()`.)
+  conv: ir::Node? = if (el_types::base(vt) is TyText && el_types::base(x.tp) is TyText) { val } else if x.tp is TyNull && vt is TyOptional { el_convert::null_of(e, el_types::without_deps(el_types::base(vt))) } else if vt is TyOptional && el_convert::plain_scalar(el_types::base(vt)) && el_types::is_equal(e, el_types::base(vt), el_types::base(x.tp)) { val } else { el_convert::convert(e, vars, val, x.tp, vt, false) };
   if conv == null {
     refuse_known(e, x.tp, "a value of another type written to a cell: {type_kind(x.tp)}");
     return ex(ir::NdNull, ir::TyVoid);
