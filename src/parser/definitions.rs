@@ -3545,9 +3545,6 @@ impl Parser {
             result = self.boxed_tuple_return(result);
         }
         let returned_fact = std::mem::take(&mut self.type_fact);
-        if !self.first_pass && self.context != u32::MAX {
-            self.body_order.push(self.context);
-        }
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
         // `@FR-O-Borrow-Final`: a variable's dependencies are the ones its FINAL pass computed — pass 2

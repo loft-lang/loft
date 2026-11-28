@@ -1090,10 +1090,6 @@ pub struct Parser {
     /// may not grow its signature; one at or above it (a generic instance, a lazy wrapper, a
     /// bound stub) first exists on pass 2, which is its only parse.  `u32::MAX` during pass 1.
     pub(crate) pass1_defs: u32,
-    /// @PLN233 phase 2 — the functions whose bodies the current parse has begun, in the order
-    /// it reached them: a caller reached before its callee read the callee's return as the parse
-    /// before left it.  Cleared by `reparse_main`.
-    pub(crate) body_order: Vec<u32>,
     /// Each pass-1 definition's return dependencies (@PLN233), snapshotted as pass 1 ends, so `after_pass2` can report a function whose return protocol pass 2 changed
     /// (`LOFT_RETURN_DRIFT=1`).  Empty unless that switch is set.
     pub(crate) pass1_returns: Vec<Vec<u16>>,
@@ -2308,7 +2304,6 @@ impl Parser {
             par_replay_body: None,
             late_text_tails: Vec::new(),
             pass1_defs: u32::MAX,
-            body_order: Vec::new(),
             pass1_returns: Vec::new(),
             late_call_joins: Vec::new(),
             tuple_param_seeds: Vec::new(),

@@ -1287,13 +1287,6 @@ impl Function {
         for v in &mut self.variables {
             v.uses = 0;
             v.target_mentions = 0;
-            // The dead-store tracking `track_write` fills during a body's final parse starts
-            // clean on every parse: pass 1 never fills it, and a repeated pass 2 (@PLN233) must
-            // not read the last write of the parse before as one of its own — every first write
-            // read as overwriting it, a false `dead-assignment` at each.
-            v.write_source = (0, 0);
-            v.uses_at_write = 0;
-            v.incoming_seed = false;
         }
         self.work_text = 0;
         self.work_ctext = 0;
