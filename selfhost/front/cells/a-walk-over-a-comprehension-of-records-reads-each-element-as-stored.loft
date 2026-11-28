@@ -1,0 +1,19 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: `cs = [for r in rs { r }]` is a `vector<ref(R)["r"]>`, and a walk over it reads
+// each element as the vector stores it, the borrow kept (`iter next: ref(R)["r"]`).  A port that
+// stripped the borrow made a silent image differ.
+// @FR-I-Next: the walk binds each element of its source in turn.
+// @FR-I-Comp: `[for x in src { x }]` holds each element, in order.
+// Prints: 3
+
+struct R { n: integer }
+
+fn main() {
+  rs = [R { n: 1 }, R { n: 2 }];
+  cs = [for r in rs { r }];
+  s = 0;
+  for c in cs { s += c.n; }
+  println("{s}");
+}
