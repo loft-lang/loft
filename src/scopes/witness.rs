@@ -305,6 +305,10 @@ pub(super) fn nullable_locals_that_displace(
 /// variable (bound by `Iter`, not by a `Set`), and the compiler's own temporaries.  A captured
 /// local WITH an owner slot is witnessed when its assignments mix ownership or it is assigned
 /// more than once, and the build hands the witness to that slot (loft#2131, loft#2132).
+#[expect(
+    clippy::too_many_lines,
+    reason = "owner-witness candidate walk plus capture and loop-coalesce sources"
+)]
 pub(super) fn owner_witness_locals(
     code: &Value,
     function: &Function,
