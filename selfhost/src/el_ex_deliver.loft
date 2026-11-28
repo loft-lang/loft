@@ -29,6 +29,7 @@ use el_ex_link;
 use el_ex_vector;
 use el_expressions;
 use el_ex_copy;
+use el_retpromo;
 
 // A `vector<T>?` local's type.
 fn nullable_vector(t: ir::TypeT) -> boolean {
@@ -658,7 +659,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
           // store would die with the frame: `Bind`, the copy.  Mints are walked through.)
           // (So is one a call result is appended to inside a loop or an `if` arm,
           // `var_call_rebound_nested`.)
-          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n)) || el_ex_copy::views_a_local(vars, n) || el_ex_copy::views_an_argument(vars, n) || (el_vars::tp(vars, n) is TyVector && el_ex_copy::appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false))) {
+          // (…and one bound from a call answering a fresh vector with no buffer to take — a
+          // native `arguments()`, `j.keys()` — `var_bound_from_fresh_call`.)
+          fresh_call = el_vars::tp(vars, n) is TyVector && (el_retpromo::syn_bound_from_fresh_call(e, vars.body, el_vars::name_of(vars, n)) || el_retpromo::bound_from_fresh_call(e, vars, code, n));
+          if !vars.vars[n].argument && (bound_to_branch(code, n) || branch_bound_syntax(e, vars.body, el_vars::name_of(vars, n)) || el_ex_copy::views_a_local(vars, n) || el_ex_copy::views_an_argument(vars, n) || fresh_call || (el_vars::tp(vars, n) is TyVector && el_ex_copy::appends_call_in_loop(e, vars.body, el_vars::name_of(vars, n), false))) {
             // `Bind`: the local is copied into the buffer at the tail, which the result borrows.
             el_trace::retpromo(e, vars, n, "Bind");
             if !el_types::deps(ret).contains(ba) {
