@@ -35,8 +35,10 @@ loft-suite/rules/calls/F-Block/1382-a-statement-if-discards-either-arms-value.lo
 loft-suite/rules/calls/F-Block/2456-a-statement-match-whose-arm-assigns-its-vector-capture-is-a-statement.loft
 loft-suite/rules/calls/F-Block/a-match-at-a-tail-answers-its-arm-not-a-temporarys-free.loft
 loft-suite/rules/calls/F-Block/f_block_place_lib.loft
+loft-suite/rules/calls/F-ParamScalar/a-compound-write-to-a-tuple-parameters-member-is-the-callees-copy.loft
 loft-suite/rules/calls/F-ParamScalar/a-generic-scalar-parameter-reassigns-like-its-twin.loft
 loft-suite/rules/calls/F-ParamScalar/a-scalar-parameter-is-a-copy-at-every-call-form.loft
+loft-suite/rules/calls/F-Rec/a-method-on-an-integer-literal-is-a-call.loft
 loft-suite/rules/calls/F-Rec/a-recursion-over-an-index-arena-runs-two-thousand-deep.loft
 loft-suite/rules/calls/F-Recv/1780-a-method-call-dispatches-on-every-argument-like-the-call.loft
 loft-suite/rules/calls/F-Recv/a-method-and-its-nullable-twin-are-two-bodies.loft
@@ -65,6 +67,7 @@ loft-suite/rules/collections/Col-Len/1915-an-index-answers-len-in-both-spellings
 loft-suite/rules/collections/Col-RemoveDense/a-narrow-vector-element-slides-by-its-declared-width.loft
 loft-suite/rules/collections/Col-RemoveDense/a-removal-through-a-reference-parameter-shifts-by-the-element.loft
 loft-suite/rules/collections/Col-Trie/2241-a-key-ending-in-nul-bytes-is-its-own-key.loft
+loft-suite/rules/collections/Slice-Value/1164-a-parenthesised-slice-keeps-its-arithmetic-bound.loft
 loft-suite/rules/collections/Slice-Value/a-character-cursor-lexer-slices-its-tokens-from-the-source.loft
 loft-suite/rules/collections/Slice-Value/a-slice-as-a-block-tail-is-a-fresh-vector.loft
 loft-suite/rules/collections/Slice-Value/a-slice-as-a-literal-element-is-a-fresh-vector.loft
@@ -75,6 +78,7 @@ loft-suite/rules/coroutines/G-Call/928-generator-duplicate-local-name.loft
 loft-suite/rules/coroutines/G-Delegate/a-delegation-beside-a-loop-compiles.loft
 loft-suite/rules/coroutines/G-Next/a-delegations-prefix-runs-once-per-activation.loft
 loft-suite/rules/coroutines/G-Yield/a-generator-parameter-keeps-its-writes-across-a-yield.loft
+loft-suite/rules/coroutines/G-Yield/a-generator-yields-a-tuple-that-is-not-a-literal.loft
 loft-suite/rules/dispatch/D-Rank/a-bounded-template-takes-the-call-its-bound-admits.loft
 loft-suite/rules/dispatch/D-Rank/a-generic-member-ranks-below-every-non-converting-match.loft
 loft-suite/rules/dispatch/D-Rank/a-nullability-step-on-a-widening-is-no-conversion.loft
@@ -83,6 +87,7 @@ loft-suite/rules/dispatch/Disp-Applicable/a-nullable-argument-reaches-its-nullab
 loft-suite/rules/dispatch/Disp-Applicable/a-set-member-takes-every-argument-its-lone-twin-takes.loft
 loft-suite/rules/dispatch/Disp-Closed/a-static-call-is-typed-by-the-member-it-selects.loft
 loft-suite/rules/dispatch/Disp-Dynamic/a-null-reaches-the-static-selection.loft
+loft-suite/rules/dispatch/Disp-Dynamic/an-enum-argument-of-any-spelling-is-dispatched-on-its-variant.loft
 loft-suite/rules/dispatch/Disp-Dynamic/each-runtime-variant-tuple-reaches-what-select-picks-for-it.loft
 loft-suite/rules/dispatch/Disp-Exhaustive/a-covered-call-is-covered-for-every-variant-and-every-omitted-default.loft
 loft-suite/rules/dispatch/Disp-Hint/a-lone-definition-and-a-receiver-split-set-keep-their-hint.loft
@@ -94,6 +99,7 @@ loft-suite/rules/dispatch/Disp-Key/a-qualified-call-answers-the-same-whatever-th
 loft-suite/rules/dispatch/Disp-Key/a-qualified-call-reaches-only-the-librarys-own-definitions.loft
 loft-suite/rules/dispatch/Disp-Key/one-consumer-member-of-another-spelling-joins-a-library-set.loft
 loft-suite/rules/dispatch/Disp-Key/three-consumer-members-of-other-spellings-join-a-library-set.loft
+loft-suite/rules/dispatch/Disp-Match-Equiv/a-set-with-a-resolving-member-and-its-match-agree-on-every-tuple.loft
 loft-suite/rules/dispatch/Disp-Return/a-runtime-decided-call-needs-its-members-to-agree.loft
 loft-suite/rules/dispatch/Disp-Select/the-unique-most-specific-member-is-chosen-in-any-declaration-order.loft
 loft-suite/rules/dispatch/Disp-Specific/a-present-value-widens-into-a-nullable-member-before-a-conversion.loft
@@ -102,6 +108,7 @@ loft-suite/rules/dispatch/Disp-Specific/a-variant-widens-into-its-enum-before-th
 loft-suite/rules/dispatch/Disp-Specific/an-integer-widens-only-into-a-range-that-holds-all-of-it.loft
 loft-suite/rules/dispatch/Disp-Specific/each-rank-beats-the-next-at-one-position.loft
 loft-suite/rules/formatting/F-Interp/2262-a-view-of-a-call-result-in-a-hole-compiles.loft
+loft-suite/rules/formatting/F-Interp/a-format-hole-may-open-with-whitespace.loft
 loft-suite/rules/formatting/F-Render-Child/2430-a-chain-of-any-length-takes-no-stack-per-link.loft
 loft-suite/rules/formatting/F-Spec/a-format-pad-reaches-the-float-renderers.loft
 loft-suite/rules/formatting/F-Spec/a-format-spec-is-honoured-not-dropped.loft
@@ -126,6 +133,7 @@ loft-suite/rules/interfaces/G-Mono/1880-a-recursive-generic-returns-a-view-its-c
 loft-suite/rules/interfaces/G-Mono/2156-a-generic-vector-local-is-built-at-its-instance-element.loft
 loft-suite/rules/interfaces/G-Mono/a-generic-record-parameter-reassigns-like-its-twin.loft
 loft-suite/rules/iteration/I-For/2573-a-for-evaluates-its-sorted-or-index-source-once.loft
+loft-suite/rules/iteration/I-For/a-filtered-destructure-reads-the-current-element.loft
 loft-suite/rules/iteration/I-Range/157-next-counter.loft
 loft-suite/rules/iteration/I-RangeFrom/1813-an-open-range-counts-until-the-body-breaks-out.loft
 loft-suite/rules/iteration/I-RangeIncl/an-inclusive-fast-path-never-forms-the-end-plus-one.loft
@@ -206,6 +214,8 @@ loft-suite/rules/ownership/O-NoDiverge/1627-a-linked-locals-slot-is-not-handed-o
 loft-suite/rules/ownership/O-NoDiverge/2452-a-returned-join-of-two-nullable-fields-is-a-whole-copy.loft
 loft-suite/rules/ownership/O-Opaque/a-record-through-a-fn-typed-parameter-is-the-callers-to-keep.loft
 loft-suite/rules/ownership/O-Oracle/1888-a-parameter-returned-beside-a-copy-is-never-adopted.loft
+loft-suite/rules/ownership/O-Oracle/2471-a-tuple-argument-is-witnessed-by-its-heap-member.loft
+loft-suite/rules/ownership/O-Oracle/2472-a-tuple-argument-with-several-heap-members-is-witnessed-by-each.loft
 loft-suite/rules/ownership/O-Override/164-consumed-keyed-lift-rebind.loft
 loft-suite/rules/ownership/O-Owner/2258-a-keyed-collection-from-a-fn-ref-has-one-owner-per-pass.loft
 loft-suite/rules/ownership/O-Owner/a-slice-of-a-fresh-native-result-frees-it.loft
@@ -224,6 +234,7 @@ loft-suite/rules/rewrites/R-Alias/a-versioned-loop-sees-its-adopted-buffer.loft
 loft-suite/rules/rewrites/R-AppendTwin/a-work-buffer-is-the-append-twins-destination.loft
 loft-suite/rules/rewrites/R-Base/157-vector-base.loft
 loft-suite/rules/rewrites/R-Base/158-text-base.loft
+loft-suite/rules/rewrites/R-Base/a-boolean-field-of-an-element-is-read-through-the-held-base.loft
 loft-suite/rules/rewrites/R-Base/a-byte-element-read-through-the-held-base-answers-the-template.loft
 loft-suite/rules/rewrites/R-Base/a-byte-read-through-a-held-header-takes-its-base-at-the-read.loft
 loft-suite/rules/rewrites/R-Base/a-character-element-is-read-through-the-held-base.loft
@@ -235,6 +246,7 @@ loft-suite/rules/rewrites/R-CallLine/1753-a-stack-frame-line-is-the-call-that-en
 loft-suite/rules/rewrites/R-Callee/a-discharge-buffers-text-set-keeps-the-callers-headers.loft
 loft-suite/rules/rewrites/R-Compact/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft
 loft-suite/rules/rewrites/R-CompleteWrite/157-complete-write.loft
+loft-suite/rules/rewrites/R-CompleteWrite/a-record-built-into-a-callers-slot-needs-no-prefill.loft
 loft-suite/rules/rewrites/R-CompleteWrite/a-reused-record-is-written-whole-by-every-literal.loft
 loft-suite/rules/rewrites/R-CompleteWrite/a-struct-enum-field-is-covered-only-by-a-write-as-wide-as-it.loft
 loft-suite/rules/rewrites/R-Const/a-literal-bodied-function-is-a-constant.loft
@@ -271,6 +283,7 @@ loft-suite/rules/rewrites/R-InPlaceLiteral/a-keyed-literal-is-written-into-its-s
 loft-suite/rules/rewrites/R-InPlaceLiteral/a-literal-assigned-to-a-reference-field-repoints-it.loft
 loft-suite/rules/rewrites/R-InRange/a-record-read-at-a-proven-index-answers-the-element-and-the-rest-keep-their-fallback.loft
 loft-suite/rules/rewrites/R-InRange/an-element-at-a-range-counter-is-read-in-range.loft
+loft-suite/rules/rewrites/R-InlineLeaf/a-leaf-called-with-calls-assignments-and-limits-answers-what-the-call-answers.loft
 loft-suite/rules/rewrites/R-Inputs/157-callee-inputs.loft
 loft-suite/rules/rewrites/R-Inputs/157-vector-param-inputs.loft
 loft-suite/rules/rewrites/R-Inputs/a-twin-takes-the-header-its-caller-holds-for-an-indexed-or-viewed-path.loft
@@ -306,9 +319,11 @@ loft-suite/rules/rewrites/R-PushFill/a-loop-pushing-characters-holds-its-text-in
 loft-suite/rules/rewrites/R-PushFill/a-push-window-opens-only-where-no-reader-needs-the-length-written-back.loft
 loft-suite/rules/rewrites/R-PushFill/a-repeated-literal-is-one-fill-of-its-copies.loft
 loft-suite/rules/rewrites/R-PushFill/a-vector-pushed-from-a-branch-or-an-inner-loop-pushes-through-one-window.loft
+loft-suite/rules/rewrites/R-PushFill/vectors-built-side-by-side-each-push-through-a-window.loft
 loft-suite/rules/rewrites/R-PushRec/157-record-push.loft
 loft-suite/rules/rewrites/R-PushRec/a-record-append-across-a-writing-call-keeps-every-element-it-minted.loft
 loft-suite/rules/rewrites/R-PushRec/a-record-append-takes-its-growth-before-its-field-writes.loft
+loft-suite/rules/rewrites/R-Range/a-call-that-moves-its-arguments-by-a-literal-steps-them.loft
 loft-suite/rules/rewrites/R-Range/a-counted-loops-step-is-plain-whatever-its-end.loft
 loft-suite/rules/rewrites/R-Range/a-counter-stepped-down-once-a-trip-indexes-without-the-wrap.loft
 loft-suite/rules/rewrites/R-Range/a-while-counter-steps-plain-below-its-bound.loft
@@ -346,6 +361,7 @@ loft-suite/rules/rewrites/R-ScaleFold/a-power-of-two-scale-answers-what-the-two-
 loft-suite/rules/rewrites/R-SelfReplace/a-vector-built-in-its-return-buffer-is-delivered-whole.loft
 loft-suite/rules/rewrites/R-SingleUse/a-value-read-once-after-its-store-is-read-in-place.loft
 loft-suite/rules/rewrites/R-SliceArg/a-slice-argument-shares-no-carrier-with-the-slice-in-use-beside-it.loft
+loft-suite/rules/rewrites/R-SliceBorrow/192-slice-borrow.loft
 loft-suite/rules/rewrites/R-SliceBorrow/a-slice-of-a-borrowed-text-is-read-where-it-lies.loft
 loft-suite/rules/rewrites/R-SliceBorrow/a-slice-that-escapes-or-outlives-its-source-keeps-the-bytes-it-was-cut-from.loft
 loft-suite/rules/rewrites/R-SpecChain/a-checked-integer-chain-runs-plain-and-falls-back-on-any-null.loft
@@ -391,6 +407,8 @@ loft-suite/rules/rewrites/R-WorkBuffer/a-work-buffer-rebound-by-value-stays-the-
 loft-suite/rules/rewrites/R-WorkerLean/a-par-worker-runs-on-the-lean-loop.loft
 loft-suite/rules/rewrites/R-Wrapper/a-stdlib-one-op-wrapper-answers-what-its-op-answers.loft
 loft-suite/rules/rewrites/R-ZeroCount/a-zero-count-test-reads-the-byte-count-in-a-loop-over-a-computed-text.loft
+loft-suite/rules/tuples/T-Proj/1698b-a-stored-tuples-text-and-scalar-members-are-written-in-place.loft
+loft-suite/rules/tuples/T-Record/a-text-member-write-copies-its-source.loft
 loft-suite/rules/types/C-Never/2388-a-local-bound-to-a-value-that-never-arrives-ends-the-block.loft
 loft-suite/rules/types/C-Never/a-bare-break-or-return-before-a-comma-carries-no-value.loft
 loft-suite/rules/types/C-Never/a-diverging-arm-beside-a-text-or-boolean-arm-compiles-natively.loft
@@ -413,6 +431,7 @@ loft-suite/rules/types/N-Default/a-default-of-a-method-chain-is-a-collection-of-
 loft-suite/rules/types/N-Domain/1450e-the-last-element-idiom-is-a-trusted-index.loft
 loft-suite/rules/types/N-Domain/1450f-a-bounds-guard-is-read-in-both-its-spellings.loft
 loft-suite/rules/types/N-Domain/1450g-the-divisor-guard-is-read-in-every-spelling.loft
+loft-suite/rules/types/N-Domain/1478-a-text-tuple-member-fits-its-owned-slot.loft
 loft-suite/rules/types/N-Guard/an-and-of-tests-proves-each-where-it-holds.loft
 loft-suite/rules/types/N-Intro/a-null-single-is-null-on-every-backend.loft
 loft-suite/rules/types/N-Opt/1471-a-value-struct-is-nullable-through-its-tag.loft
@@ -495,6 +514,7 @@ tests/scripts/158-rotate.loft
 tests/scripts/158-scalar-file-read.loft
 tests/scripts/158-split-table.loft
 tests/scripts/158-text-borrow-store.loft
+tests/scripts/158-text-borrow.loft
 tests/scripts/159-table-handle.loft
 tests/scripts/160-long-fill.loft
 tests/scripts/162-plan53-remove-vector-oob.loft
@@ -535,6 +555,7 @@ tests/scripts/22d-par-narrow.loft
 tests/scripts/23-field-overlap-structs.loft
 tests/scripts/2499-a-match-with-a-leaving-arm-last-in-an-if-branch-runs.loft
 tests/scripts/25-index-elision-borrower.loft
+tests/scripts/25-nullable-character.loft
 tests/scripts/25-nullable-narrow-field-vector.loft
 tests/scripts/2561-a-record-copied-out-of-a-view-is-absent-where-its-source-is.loft
 tests/scripts/296-file-error-paths.loft
@@ -596,6 +617,7 @@ tests/scripts/a-call-text-is-borrowed-from-its-work-buffer.loft
 tests/scripts/a-checked-element-read-answers-from-one-header-read.loft
 tests/scripts/a-compound-keyed-insert-writes-the-entry-its-key-names.loft
 tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
+tests/scripts/a-computed-range-start-steps-one-counter.loft
 tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft
 tests/scripts/a-counted-loop-pushing-one-value-is-one-fill.loft
 tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft
@@ -618,6 +640,7 @@ tests/scripts/a-join-arms-order-does-not-change-the-callers-lowering.loft
 tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 tests/scripts/a-keyed-entry-agrees-across-key-widths-and-removals.loft
 tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft
+tests/scripts/a-leaf-call-inlined-answers-what-the-call-answers.loft
 tests/scripts/a-leaf-reads-and-writes-float-and-boolean-elements-at-its-proven-index.loft
 tests/scripts/a-leaf-that-calls-an-index-helper-takes-its-tests-once-per-loop.loft
 tests/scripts/a-literal-append-claims-its-vector-once.loft
@@ -659,6 +682,7 @@ tests/scripts/a-short-counted-loop-is-written-once-per-trip.loft
 tests/scripts/a-slice-bound-before-its-local-is-emptied-holds-the-slice.loft
 tests/scripts/a-stdlib-one-op-wrapper-is-its-op.loft
 tests/scripts/a-store-holds-every-hash-layout-side-by-side.loft
+tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
 tests/scripts/a-text-block-whose-tail-is-its-own-local-releases-it.loft
 tests/scripts/a-text-discharge-of-a-local-borrows-where-nothing-writes.loft
 tests/scripts/a-text-discharge-reads-straight-into-its-local.loft
@@ -680,12 +704,14 @@ tests/scripts/a-walk-borrows-its-word-in-the-versioned-copy.loft
 tests/scripts/a-walk-of-a-built-vector-streams-its-elements.loft
 tests/scripts/a-walk-the-body-cannot-resize-is-a-counted-loop.loft
 tests/scripts/a-width32-file-keeps-its-arithmetic-in-32-bits.loft
+tests/scripts/a-window-walk-guards-its-bounds-once-and-calls-plain-helpers.loft
 tests/scripts/a-wrapper-placed-in-a-one-field-buffer-survives-its-clear.loft
 tests/scripts/a-zero-length-test-counts-no-characters.loft
 tests/scripts/an-append-loop-keeps-one-window.loft
 tests/scripts/an-append-twin-writes-through-its-callers-window.loft
 tests/scripts/an-appended-call-result-arrives-from-every-exit.loft
 tests/scripts/an-appending-leaf-is-inlined-into-its-callers-loop.loft
+tests/scripts/an-arrived-absence-keeps-a-tuples-text-frees.loft
 tests/scripts/an-element-is-built-in-place-by-its-call-and-in-either-arm.loft
 tests/scripts/elem-first-a-paired-temp-lives-in-its-elements-store.loft
 tests/scripts/generic-typevar-name-usable.loft
@@ -722,4 +748,5 @@ tests/scripts/store_persist_smoke.loft
 tests/scripts/store_persist_sorted.loft
 tests/scripts/store_rebuild_b1.loft
 tests/scripts/tail-capture-lifted-arg.loft
+tests/scripts/the-variable-limit-arrives-before-the-frame-cap.loft
 tests/scripts/two-vectors-pushed-in-lockstep-share-a-length-local.loft

@@ -60,7 +60,6 @@ tests/scripts/a-run-of-pushes-reserves-its-room-once.loft
 tests/scripts/a-run-of-pushes-through-a-loops-header-tests-its-room-once.loft
 tests/scripts/a-slice-appended-to-a-place-is-sliced-into-it.loft
 tests/scripts/a-slice-handed-to-a-const-parameter-needs-no-store-of-its-own.loft
-tests/scripts/a-tail-recursive-small-record-function-is-a-loop.loft
 tests/scripts/a-text-call-result-is-read-from-its-work-buffer.loft
 tests/scripts/a-text-choice-between-slices-is-a-view.loft
 tests/scripts/a-text-index-reads-the-character-holding-the-byte.loft
