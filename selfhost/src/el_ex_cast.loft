@@ -265,6 +265,11 @@ fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT, ae: intege
     if sn != "" && vn != "" && el_ir::unspan(x.code) is NdVar {
       return ex_some(spelled_variant_cast(e, vars, sn, vn, tn));
     }
+    // (Of a field or an element it is `(x as V?)?`: the checked cast, the variant's default
+    // record on a miss.)
+    if vn != "" && match el_ir::unspan(x.code) { NdCall { def_nr: sxd } => el::def(e, sxd).name == "OpGetField" || el::def(e, sxd).name == "OpGetVector", _ => false } {
+      return ex_some(defaulted_variant_cast(e, vars, ae, tn));
+    }
     if !e.first_pass {
       el::refuse(e, "a variant cast no `is` test proves");
     }
@@ -343,6 +348,21 @@ fn spelled_variant_cast(e: el::El, vars: el_vars::Vars, sn: text, vn: text, tn: 
   e.p.nodes += [SBlock { at: at, stmts: [len(e.p.nodes) - 1], end: at }];
   miss = len(e.p.nodes) - 1;
   e.p.nodes += [SIf { at: at, cond: cond, then: hit, other: miss }];
+  el_ex_assign::expression(e, vars, len(e.p.nodes) - 1)
+}
+
+// `(<subject> as V?)?`, as syntax: the checked cast with the `?` default fallback.
+fn defaulted_variant_cast(e: el::El, vars: el_vars::Vars, ae: integer, tn: integer) -> Ex {
+  at = match e.p.nodes[tn] { STy { at: ta } => ta, _ => 0 };
+  qt = match e.p.nodes[tn] {
+    STy { at: q0, name: q1, member: q2, args: q3, elem_null: q4, keys: q5, deps: q6, limit: q7, not_null: q8, assoc: q9 } => STy { at: q0, name: q1, member: q2, args: q3, elem_null: q4, keys: q5, deps: q6, limit: q7, not_null: q8, assoc: q9, nullable: true },
+    _ => e.p.nodes[tn]
+  };
+  e.p.nodes += [qt];
+  tq = len(e.p.nodes) - 1;
+  e.p.nodes += [SAs { at: at, e: ae, tp: tq, checked: false }];
+  e.p.nodes += [SParen { at: at, e: len(e.p.nodes) - 1 }];
+  e.p.nodes += [SPostfix { at: at, op: "?", e: len(e.p.nodes) - 1 }];
   el_ex_assign::expression(e, vars, len(e.p.nodes) - 1)
 }
 
