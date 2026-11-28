@@ -10482,8 +10482,12 @@ fn main() {
     // @PLN91 S0.2 — the image the cache above saves, taken at the same point and under the
     // same openness, written to the path the caller named; the program is not run.  The C
     // writer's image (`--native-c`) is taken after the bytecode compile instead, below.
+    // The C writer is NAMED by a flag (`--native-c`, or `--native` under `LOFT_NATIVE_BACKEND=c`):
+    // the environment default alone leaves a plain `--emit-image` the cache's image, which
+    // the program-cache tests hold it to.
+    let c_writer_image = native_c_named && native_requested;
     if let Some(out) = &emit_image
-        && !native_c_named
+        && !c_writer_image
     {
         emit_program_image(&mut p.data, &mut p.database, ships_live_tier, false, out);
     }
@@ -10549,7 +10553,7 @@ fn main() {
     // writer reads the program: after the bytecode compile, which registers types the unit's
     // tables list (a narrow element's row, a bare `vector`).  Taken before it, the image lacked
     // them and the loft writer's type table was short of the Rust one's.
-    if native_c_named && let Some(out) = &emit_image {
+    if c_writer_image && let Some(out) = &emit_image {
         emit_program_image(&mut p.data, &mut state.database, ships_live_tier, true, out);
     }
     // @PLN119 arc A — a platform without the placement transport runs a placed
