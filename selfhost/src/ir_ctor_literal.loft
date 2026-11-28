@@ -844,12 +844,13 @@ fn rewrite_gated(b: ir::Bundle, caller: integer, body_in: ir::Node, ctors: vecto
   // whose code each attempt replaces (`body_in` is a view into it).
   orig: vector<ir::Node> = [body_in];
   ok_sites = ok_in;
-  for _ in 0..1000 {
+  // The empty set ends the rounds in the loop's condition, not by a `return` at the head of its
+  // body: `lost` below is a loop record (`@FR-R-LoopRecord`), and a return before its mint leaks
+  // the record the previous round kept, on both backends (the scope-pass port's step 13 notes).
+  rounds = 0;
+  while rounds < 1000 && len(ok_sites.v) > 0 {
+    rounds += 1;
     body = orig[0]!;
-    if len(ok_sites.v) == 0 {
-      b.data.definitions[caller].code = [body];
-      return [];
-    }
     w = Walk { ctors: ctors, whole: body, ok: ok_sites, done: [] };
     code = rewrite_in(b, w, body, false);
     for x in w.done {
@@ -883,6 +884,9 @@ fn rewrite_gated(b: ir::Bundle, caller: integer, body_in: ir::Node, ctors: vecto
       i += 2;
     }
     ok_sites = nk;
+  }
+  if len(ok_sites.v) == 0 {
+    b.data.definitions[caller].code = [orig[0]!];
   }
   []
 }
