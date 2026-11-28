@@ -714,6 +714,8 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t77, "ref_home", t4);
     let vec_viewed = db.vector(t0);
     db.field(t77, "viewed", vec_viewed);
+    let vec_join_owners = db.vector(t0);
+    db.field(t77, "join_owners", vec_join_owners);
     db.field(t77, "owner_witness", 0);
     db.field(t77, "rebind_orig", 0);
     db.field(t77, "scope", 0);

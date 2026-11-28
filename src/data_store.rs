@@ -266,12 +266,15 @@ pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
 /// the fifteen codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 72; // @PLN91 — +8 for was_loop_var
+pub(crate) const VARIABLE_STRIDE: u32 = 80; // @PLN91 — +8 for was_loop_var, +8 for join_owners
 pub(crate) const VAR_NAME: u32 = 40;
 pub(crate) const VAR_TYPE_DEF: u32 = 44; // vector<TypeT> (box-of-one)
 /// @PLN91 `Variable::viewed` — the deps each earlier bind ended with; the scope pass reads it.
 /// The flags after it move up by four; the stride stays 72.
 pub(crate) const VAR_VIEWED: u32 = 48; // vector<integer>
+/// @PLN91 `Function::join_owners` — the other stores a `??` temp or an arm-bound vector may
+/// deliver; the scope pass's capture analysis reads it.  The flags after it move up by four.
+pub(crate) const VAR_JOIN_OWNERS: u32 = 52; // vector<integer>
 pub(crate) const VAR_STACK_POS: u32 = 0;
 pub(crate) const VAR_USES: u32 = 8;
 pub(crate) const VAR_OWNER_WITNESS: u32 = 16;
@@ -279,39 +282,39 @@ pub(crate) const VAR_OWNER_WITNESS: u32 = 16;
 pub(crate) const VAR_REBIND_ORIG: u32 = 24;
 /// The scope that declares it; the yield emitter reads it (loft#1858).
 pub(crate) const VAR_SCOPE: u32 = 32;
-pub(crate) const VAR_ARGUMENT: u32 = 52;
-pub(crate) const VAR_STACK_ALLOCATED: u32 = 53;
-pub(crate) const VAR_SKIP_FREE: u32 = 54;
-pub(crate) const VAR_CAPTURED: u32 = 55;
-pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 56;
+pub(crate) const VAR_ARGUMENT: u32 = 56;
+pub(crate) const VAR_STACK_ALLOCATED: u32 = 57;
+pub(crate) const VAR_SKIP_FREE: u32 = 58;
+pub(crate) const VAR_CAPTURED: u32 = 59;
+pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 60;
 /// @PLN157 § V-g — the elided-copy mark; a fact the EMITTERS read, so it is stored.
-pub(crate) const VAR_VIEW_ELIDED: u32 = 57;
+pub(crate) const VAR_VIEW_ELIDED: u32 = 61;
 /// `@FR-O-LazyBuffer` — the buffer's store is minted at its first use; the emitters read it.
-pub(crate) const VAR_LAZY_BUFFER: u32 = 58;
+pub(crate) const VAR_LAZY_BUFFER: u32 = 62;
 /// `@FR-O-Move` — the one bind after an `if`'s pre-init is a first bind; the emitters read it.
-pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 59;
+pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 63;
 /// @PLN167 decision 1 — a `&` names this narrow local, which holds its field encoding.
-pub(crate) const VAR_LINKED_NARROW: u32 = 60;
+pub(crate) const VAR_LINKED_NARROW: u32 = 64;
 /// @PLN167 decision 2 — a `&text` link to a text field or element (the store kind).
-pub(crate) const VAR_STORE_TEXT_LINK: u32 = 61;
+pub(crate) const VAR_STORE_TEXT_LINK: u32 = 65;
 /// loft#1834 — a user identifier names it; `is_compiler_generated` reads it.
-pub(crate) const VAR_USER_NAMED: u32 = 62;
+pub(crate) const VAR_USER_NAMED: u32 = 66;
 /// loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it.
-pub(crate) const VAR_USER_APPENDED: u32 = 63;
+pub(crate) const VAR_USER_APPENDED: u32 = 67;
 /// loft#1840 — a whole-value bind copied a place into it; the `lost-write` lint reads it.
-pub(crate) const VAR_COPY_BOUND: u32 = 64;
+pub(crate) const VAR_COPY_BOUND: u32 = 68;
 /// loft#1522 — a construction work-ref still names its store; the displacement free reads it.
-pub(crate) const VAR_BUFFER_WITNESSED: u32 = 65;
+pub(crate) const VAR_BUFFER_WITNESSED: u32 = 69;
 /// loft#2034 — `const` before the type; the literal hoist's alias gate reads it.
-pub(crate) const VAR_VALUE_CONST: u32 = 66;
+pub(crate) const VAR_VALUE_CONST: u32 = 70;
 /// @PLN91 `Function::is_arm_consumed`, per variable.
-pub(crate) const VAR_ARM_CONSUMED: u32 = 67;
+pub(crate) const VAR_ARM_CONSUMED: u32 = 71;
 /// @PLN91 `Function::was_loop_var`, per variable: the scope pass reads it.
-pub(crate) const VAR_WAS_LOOP_VAR: u32 = 68;
+pub(crate) const VAR_WAS_LOOP_VAR: u32 = 72;
 /// @PLN91 `Function::is_place_buffer` and `Function::is_ref_home` (`@FR-H-RefHome`), per
 /// variable: the scope pass reads both.
-pub(crate) const VAR_PLACE_BUFFER: u32 = 69;
-pub(crate) const VAR_REF_HOME: u32 = 70;
+pub(crate) const VAR_PLACE_BUFFER: u32 = 73;
+pub(crate) const VAR_REF_HOME: u32 = 74;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -1746,6 +1749,7 @@ mod tests {
         assert_eq!(pos(ids.variable, "place_buffer"), VAR_PLACE_BUFFER);
         assert_eq!(pos(ids.variable, "ref_home"), VAR_REF_HOME);
         assert_eq!(pos(ids.variable, "viewed"), VAR_VIEWED);
+        assert_eq!(pos(ids.variable, "join_owners"), VAR_JOIN_OWNERS);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);

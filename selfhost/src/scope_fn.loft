@@ -500,6 +500,7 @@ fn copy_var(v: ir::Variable) -> ir::Variable {
   n.place_buffer = v.place_buffer;
   n.ref_home = v.ref_home;
   n.viewed = [for d in v.viewed { d }];
+  n.join_owners = [for d in v.join_owners { d }];
   n
 }
 
@@ -569,6 +570,15 @@ pub fn reads_var(n: ir::Node, v: integer) -> boolean {
     }
   }
   false
+}
+
+// port: variables/mod.rs fn join_owners — the other stores `v` (a `??` temp, an arm-bound vector)
+// may deliver; empty for every other local.
+pub fn join_owners(f: ir::Function, v: integer) -> vector<integer> {
+  if v < 0 || v >= len(f.variables) {
+    return [];
+  }
+  f.variables[v]!.join_owners
 }
 
 // `vec.contains(x)` over variable numbers.
