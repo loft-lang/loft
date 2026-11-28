@@ -1,0 +1,74 @@
+# The statement shapes of the slot matrix's SEQUENCE axis (scripts/slot_sequence.py,
+# doc/claude/SLOT_MATRIX.md § The sequence axis).  A cell is a function of a few statements
+# over one local `x` (and `y`, bound from `x`), ending in a tail; the generator draws them
+# from the rows below and computes what the cell answers from the MODEL column.
+# Columns, tab-separated: class, id, types (`*` or the type letters it is made for: p r e l),
+# loft, model.
+#   class  src   a value of the local's type, the `<SRC>` of a bind
+#          isrc  a value made in a loop pass, from `i`: the `<ISRC>` of a loop
+#          ret   what an early `return` hands back: the `<RET>` of a statement
+#          stmt  a statement
+#          end   the cell's tail; one with `<PJ>` is also made as a projection of the type
+# The loft names are those of scripts/syntax_sequence_prelude.loft; `<t>` is the type's letter.
+# Holes numbered by the generator, the same in the loft and the model, left to right:
+#   <LIT> an even record literal (a callee hands it back), <LITO> an odd one (a callee
+#   replaces it), <N> an even number, <K> a branch's value of `k`; <ILIT> a literal numbered
+#   i + 20; <PJ> the projection (empty when there is none), <RLIT> a literal of what the cell
+#   returns.
+# The model: p x y name the parameter and the locals; (mk n) a fresh record; (id e) e;
+# (w e) a fresh record numbered e + 100 when e is odd, else e; (alt e) the same, or null;
+# (?? a b); (if K a b) a when k == K; (pj e) the projection of e; (ilit) the loop's record;
+# (set x e), (field e), (elem e), (bump x), (drop e…), (ret K e), (loop mint|pre|post src [e]).
+src	p	*	p	p
+src	lit	*	<LIT>	<LIT>
+src	mk	*	mk_<t>(<N>)	(mk <N>)
+src	id.lit	*	id_<t>(<LIT>)	(id <LIT>)
+src	id.p	*	id_<t>(p)	(id p)
+src	w.p	*	w_<t>(p)	(w p)
+src	w.x	*	w_<t>(x)	(w x)
+src	w.lit	*	w_<t>(<LIT>)	(w <LIT>)
+src	w.lito	*	w_<t>(<LITO>)	(w <LITO>)
+src	wt.p	*	wt_<t>(p)	(w p)
+src	wt.lit	*	wt_<t>(<LIT>)	(w <LIT>)
+src	lw.p	*	lw_<t>(p)	(w p)
+src	lw.x	*	lw_<t>(x)	(w x)
+src	co.x	*	alt_<t>(x) ?? x	(?? (alt x) x)
+src	co.p	*	alt_<t>(p) ?? p	(?? (alt p) p)
+src	co.lit	*	alt_<t>(p) ?? <LIT>	(?? (alt p) <LIT>)
+src	jn.lit.p	*	if k == <K> { <LIT> } else { p }	(if <K> <LIT> p)
+src	jn.mk.p	*	if k == <K> { mk_<t>(<N>) } else { p }	(if <K> (mk <N>) p)
+src	jn.w.p	*	if k == <K> { w_<t>(p) } else { p }	(if <K> (w p) p)
+src	jn.mk.x	*	if k == <K> { mk_<t>(<N>) } else { x }	(if <K> (mk <N>) x)
+src	jn.p.x	*	if k == <K> { p } else { x }	(if <K> p x)
+isrc	lit	*	<ILIT>	(ilit)
+isrc	mk	*	mk_<t>(i + 20)	(ilit)
+isrc	w	*	w_<t>(<ILIT>)	(w (ilit))
+ret	x	*	x<PJ>	(pj x)
+ret	p	*	p<PJ>	(pj p)
+ret	y	*	y<PJ>	(pj y)
+ret	lit	*	<RLIT>	<RLIT>
+stmt	bind	*	x = <SRC>;	(set x <SRC>)
+stmt	y.w	*	y = w_<t>(x);	(set y (w x))
+stmt	y.lw	*	y = lw_<t>(x);	(set y (w x))
+stmt	field	*	h.f = x;	(field x)
+stmt	elem	*	h.vs += [x];	(elem x)
+stmt	bump	pr	x.v += 1;	(bump x)
+stmt	bump	l	x[0] += 1;	(bump x)
+stmt	drop.w	*	w_<t>(<LITO>);	(drop <LITO>)
+stmt	drop.wa	*	w_<t>(<LIT>);	(drop <LIT>)
+stmt	drop.pk	*	pk_<t>(x, [1, 2]);	(drop x)
+stmt	drop.pk1	*	pk_<t>(x, [1]);	(drop x)
+stmt	ret	*	if k == <K> { return <RET>; }	(ret <K> <RET>)
+stmt	loop	*	for i in 0..3 { x = <ISRC>; }	(loop mint <ISRC>)
+stmt	loop.pre	*	for i in 0..3 { if i == k { return <RET>; } x = <ISRC>; }	(loop pre <ISRC> <RET>)
+stmt	loop.post	*	for i in 0..3 { x = <ISRC>; if i == k { return <RET>; } }	(loop post <ISRC> <RET>)
+end	x	*	x<PJ>	(pj x)
+end	y	*	y<PJ>	(pj y)
+end	p	*	p<PJ>	(pj p)
+end	lit	*	<LIT>	<LIT>
+end	mk	*	mk_<t>(<N>)	(mk <N>)
+end	w.x	*	w_<t>(x)	(w x)
+end	co.x	*	alt_<t>(x) ?? x	(?? (alt x) x)
+end	co.p	*	alt_<t>(p) ?? p	(?? (alt p) p)
+end	jn	*	if k == <K> { x<PJ> } else { p<PJ> }	(if <K> (pj x) (pj p))
+end	ret	*	return x<PJ>;	(pj x)
