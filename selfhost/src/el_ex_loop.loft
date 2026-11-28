@@ -441,15 +441,26 @@ pub fn generator_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
 // destructured or filtered walk, and an element whose null is no plain integer's are refused by
 // name.
 pub fn user_next_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, nd: integer) -> Ex {
-  it_t = el_types::base(x.tp);
+  // (A literal source's own store is no borrow of the holder: `___iter_obj_1: ref(ObCnt)`.)
+  it_t = el_types::without_deps(el_types::base(x.tp));
   match el_ir::unspan(x.code) {
     NdVar { n } => { it_t = el_types::with_deps(it_t, [n]); },
     _ => {}
   }
-  io = el_vars::create_unique(vars, "__iter_obj", it_t);
-  el_vars::set_defined(vars, io);
   nrt = el::def(e, nd).returned[0] ?? ir::TyVoid;
   step = el_types::without_deps(match nrt { TyOptional { inner } => inner, _ => nrt });
+  // (Rust's first pass walks the source as a positional loop — the counter `x#index`, no
+  // `___iter_obj_N` — its element unknown where the source is a record literal.)
+  if e.first_pass {
+    _ = el_ex_pattern::loop_index(e, vars, h.id);
+    if el_ir::unspan(x.code) is NdNull || match el_ir::unspan(x.code) { NdBlock { block: ub } => ub[0].name == "Object", _ => false } {
+      step = ir::TyUnknown { n: 0 };
+    }
+  }
+  io = if e.first_pass { -1 } else { el_vars::create_unique(vars, "__iter_obj", it_t) };
+  if io >= 0 {
+    el_vars::set_defined(vars, io);
+  }
   if len(h.binds) > 1 || h.filter != null || len(el::def(e, nd).attributes) != 1 {
     el::refuse(e, "a `for` over a user `next` that destructures, filters or takes a buffer");
     return ex(ir::NdNull, ir::TyVoid);
@@ -578,7 +589,9 @@ pub fn vector_step(e: el::El, vec: integer, idx: integer, elem: ir::TypeT, rev: 
   }
   // A tuple element is read as its record.
   // (A vector element keeps the store its inner vector borrows, `vector<integer>["__vdb_3"]`.)
-  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, TyVector { inner: _ } => elem, _ => el_types::without_deps(elem) };
+  // (Any other element reads as the vector stores it, its own borrow kept: `[for r in rs { r }]`
+  // walked again steps `ref(R)["r"]`.)
+  st = match elem { TyTuple { elems } => ir::TyReference { n: el_types::tuple_def_of(e, elems), dep: [] }, _ => elem };
   // A reversed walk steps down, past the first element to the `i32` null (the "rev step").
   step = if rev {
     el_ir::v_block([el_ir::v_if(el_ir::cl(e, "OpLeInt", [ir::NdInt { n: 1 }, i]), el_ir::cl(e, "OpMinInt", [i, ir::NdInt { n: 1 }]), ir::NdInt { n: -2147483648 })], ir::TyInteger { spec: i32_spec() }, "rev step")
@@ -1324,7 +1337,8 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   vec = -1;
   elem = ir::TyInteger { spec: i32_spec() };
   if ranged {
-    rw = el_ex_pattern::range_walk(e, vars, id, source);
+    // (A `_` walk's counter is a unique `_index_N`, as the vector walk's is.)
+    rw = el_ex_pattern::range_walk(e, vars, if src_id == "_" { "_" } else { id }, source);
     if rw == null {
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -1415,7 +1429,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // (A `_` binds its own fresh `___N` in a comprehension as in a loop, a fill included: the
   // number is taken although the fill names no walk.)
-  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced || keyed || texted { elem } else { el_types::with_deps(elem, [vec]) });
+  // (P189b, `for_type`: a tuple element of a walked vector is a reference to its `__tuple<…>`
+  // record, borrowing the hold, as a statement walk's is.)
+  ctd = if !(ranged || sliced || keyed || texted) && elem is TyTuple { el_types::tuple_def_of(e, match elem { TyTuple { elems: ctes } => ctes, _ => [] }) } else { -1 };
+  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ctd >= 0 { ir::TyReference { n: ctd, dep: [vec] } } else if ranged || sliced || keyed || texted { elem } else { el_types::with_deps(elem, [vec]) });
   ttv = -1;
   tres = -1;
   if texted {
@@ -1485,7 +1502,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   push = el_ex_pattern::push_op(in_t);
   // A text or a plain record element is made through the vector (`OpNewRecord`), written, and
   // finished — each pass of the walk its own element.
-  made_d = match in_t { TyReference { n: mdn, dep: _ } => if el::def(e, mdn).def_type == el::DT_STRUCT && !el::def(e, mdn).name.starts_with("__") { mdn } else { -1 }, _ => -1 };
+  // (A tuple element walked whole, `[for x in vi { x }]`, is its `__tuple<…>` record: copied as
+  // a record is, inside a `tuple_elem_set` block.)
+  made_d = match in_t { TyReference { n: mdn, dep: _ } => if el::def(e, mdn).def_type == el::DT_STRUCT && (!el::def(e, mdn).name.starts_with("__") || el::def(e, mdn).name.starts_with("__tuple<")) { mdn } else { -1 }, _ => -1 };
   // (So is a vector element: its handle zeroed, the body's vector copied in, `OpCopyRecord`.)
   made_vec = in_t is TyVector && el_types::elem_name(e, in_t) != "" && !(b.tp is TyOptional);
   made = (in_t is TyText || made_d >= 0 || made_vec) && !(b.tp is TyOptional);
@@ -1601,7 +1620,8 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       el_ir::cl(e, "OpSetText", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdVar { n: comp }])
     } else {
       mk = el::def(e, made_d).known_type;
-      el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdInt { n: mk }]), ir::NdInt { n: mk + 16384 }])
+      mcp = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdInt { n: mk }]), ir::NdInt { n: mk + 16384 }]);
+      if el::def(e, made_d).name.starts_with("__tuple<") { el_ir::v_block([mcp], ir::TyVoid, "tuple_elem_set") } else { mcp }
     };
     // (A record body answers its record: the body's block is typed without the work ref.)
     body_code = b.code;
@@ -1684,6 +1704,13 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       },
       _ => { value = el_ir::unspan(b.code); }
     }
+    // (`const_eval`'s value is what is pushed: `-5` and `3 * 4` fill as `-5i32` and `12i32`.)
+    if !(value is NdInt) && !(value is NdLong) && !(value is NdFloat) && !(value is NdSingle) && !(value is NdBoolean) && !(value is NdText) && !(value is NdNull) {
+      cv = el_convert::const_int(e, value);
+      if cv != null {
+        value = ir::NdInt { n: cv! };
+      }
+    }
     count = el_ex_assign::expression(e, vars, fill_count);
     // (A field's fill makes no room first.)
     if v >= 0 {
@@ -1735,8 +1762,22 @@ pub fn constant_body(e: el::El, code: ir::Node) -> boolean {
     NdBoolean { b: _ } => true,
     NdText { s: _ } => true,
     NdNull => true,
-    _ => el_convert::const_int(e, el_ir::unspan(ops[0])) != null
+    // (`const_eval` folds integer arithmetic over `Int`s: an operator over a long literal —
+    // `-1099511627776`, `OpMinSingleInt(<long>)` — is no constant to it, and the walk runs.)
+    _ => !holds_long(el_ir::unspan(ops[0])) && el_convert::const_int(e, el_ir::unspan(ops[0])) != null
   }
+}
+
+fn holds_long(n: ir::Node) -> boolean {
+  if el_ir::unspan(n) is NdLong {
+    return true;
+  }
+  for ch in el_ir::children(n) {
+    if holds_long(ch) {
+      return true;
+    }
+  }
+  false
 }
 
 // `iter_text`'s step: the character at the byte position, the position moved past it (one byte
@@ -2276,7 +2317,9 @@ fn vector_call_source(e: el::El, n: integer) -> boolean {
     SCall { f: cf } => {
       cn = match e.p.nodes[cf ?? 0] { SName { name: fnm, member: fm } => if fm == "" && cf != null { fnm } else { "" }, _ => "" };
       d = if cn == "" { -1 } else { el::def_nr(e, "n_{cn}") };
-      d >= 0 && el::def(e, d).def_type == el::DT_FUNCTION && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyVector
+      // (An ordered keyed answer too — `sorted`, `index` — held and walked as a keyed local is.)
+      rb = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
+      d >= 0 && el::def(e, d).def_type == el::DT_FUNCTION && (rb is TyVector || rb is TySorted || rb is TyIndex)
     },
     _ => false
   }
@@ -2329,6 +2372,7 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   extra: vector<ir::Node> = [];
   scratch = -1;
   el_d = -1;
+  call_hold: ir::Node = ir::NdNull;
   if call_src {
     // (`hold_loop_source`: `{id}#index`, the call — its own work refs — then `_vector_N`
     // holding its answer, which the walk reads.)
@@ -2336,20 +2380,34 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     el_vars::set_defined(vars, idx);
     el_ex_base::start_loop(e, vars);
     cx = el_ex_assign::expression(e, vars, source);
-    if !(el_types::base(cx.tp) is TyVector) {
+    if el_types::base(cx.tp) is TyVector {
+      sv = el_vars::create_unique(vars, "vector", el_types::base(cx.tp));
+      if !e.first_pass {
+        el_vars::set_var_type(vars, sv, cx.tp);
+      }
+      el_vars::set_defined(vars, sv);
+      st = el_types::base(cx.tp);
+      lt = match st { TyVector { inner } => el_types::with_deps(el_types::without_deps(inner), [sv]), _ => ir::TyVoid };
+      init = [ir::NdInsert { items: [el_ir::v_set(sv, cx.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] }];
+    } else if el_types::base(cx.tp) is TySorted || el_types::base(cx.tp) is TyIndex {
+      // (An ordered keyed answer is held in `_vector_N` and walked as a keyed local is.  A hash's
+      // is not carried: Rust sorts the call straight into its scratch copy, `__lift_N` after.)
+      sv = el_vars::create_unique(vars, "vector", el_types::base(cx.tp));
+      if !e.first_pass {
+        el_vars::set_var_type(vars, sv, cx.tp);
+      }
+      el_vars::set_defined(vars, sv);
+      st = el_types::base(cx.tp);
+      keyed = true;
+      el_d = el_types::keyed_elem(st);
+      lt = ir::TyReference { n: el_d, dep: [sv] };
+      call_hold = el_ir::v_set(sv, cx.code);
+    } else {
       if !e.first_pass {
         el::refuse(e, "a `for` in a format hole over a call answering this type: {type_kind(cx.tp)}");
       }
       return null;
     }
-    sv = el_vars::create_unique(vars, "vector", el_types::base(cx.tp));
-    if !e.first_pass {
-      el_vars::set_var_type(vars, sv, cx.tp);
-    }
-    el_vars::set_defined(vars, sv);
-    st = el_types::base(cx.tp);
-    lt = match st { TyVector { inner } => el_types::with_deps(el_types::without_deps(inner), [sv]), _ => ir::TyVoid };
-    init = [ir::NdInsert { items: [el_ir::v_set(sv, cx.code), el_ir::v_set(idx, ir::NdInt { n: -1 })] }];
   } else if keyed {
     // (`iter_for` over `keyed_snapshot`: `{id}#index`, then a hash's sorted scratch copy of
     // its records, `_hash_scratch_N`; `{id}#iter_state` on the second pass, after the rest.)
@@ -2398,7 +2456,16 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     init = [el_ir::v_set(idx, ir::NdInt { n: -1 })];
   }
   val = el_vars::create_unique(vars, "val", ir::TyUnknown { n: 0 });
-  lv = loop_var(vars, src_id, id, lt);
+  // (`iter_for` names a `_` loop variable as written — `create_loop_var("_")` — where a
+  // statement loop's is a unique one.)
+  lv = -1;
+  if id == "_" {
+    lv = el_vars::loop_variable(vars, id, lt);
+    el_vars::set_defined(vars, lv);
+    vars.loop_vars += [lv];
+  } else {
+    lv = loop_var(vars, src_id, id, lt);
+  }
   tv = -1;
   res = -1;
   if walks_text {
@@ -2412,7 +2479,9 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   b = el_ex_assign::parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
   el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
-  vt = el_types::without_deps(b.tp);
+  // (`change_var_type(append_value, format_type)`: the value takes the body's type as it is, a
+  // view of what it borrows included — `{for s in v {s}}`'s `text["s"]`.)
+  vt = b.tp;
   el_vars::set_var_type(vars, val, vt);
   cnt = el_vars::var(vars, "{id}#count");
   if cnt < 0 {
@@ -2441,6 +2510,10 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
     kstart = el_ir::cl(e, "OpIterate", [ksrc, ir::NdInt { n: on }, ir::NdInt { n: arg }, ir::NdKeys { keys: el_schema::key_descriptors(e, known) }, ir::NdInt { n: 0 }, ir::NdInt { n: 0 }]);
     walk = ir::NdInsert { items: [el_ir::v_set(state, kstart), el_ir::v_set(idx, ir::NdInt { n: -1 })] };
     init = if scratch >= 0 { [ir::NdInsert { items: [el_ir::v_set(scratch, el_ir::cl(e, if unordered { "n_hash_unsorted" } else { "n_hash_sorted" }, [ir::NdVar { n: sv }, ir::NdInt { n: known }])), walk] }] } else { [walk] };
+    // (A call's answer is held first, `_vector_N = <call>`, ahead of the walk over it.)
+    if !(call_hold is NdNull) {
+      init = [ir::NdInsert { items: [call_hold] + init }];
+    }
     knext = el_ir::v_block([el_ir::v_set(idx, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: idx }, ir::NdInt { n: 1 }])), el_ir::cl(e, "OpStep", [ir::NdVar { n: state }, ksrc, ir::NdInt { n: on }, ir::NdInt { n: arg }])], lt, "sorted iter next");
     kbrk = el_ir::v_block([ir::NdBreak { n: 0 }], ir::TyVoid, "break");
     head = [el_ir::v_set(lv, knext), el_ir::v_if(el_ir::cl(e, "OpEqRef", [ir::NdVar { n: lv }, el_ir::cl(e, "OpNullRefSentinel", [])]), kbrk, ir::NdNull)];
@@ -2468,7 +2541,9 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   if fc != null {
     head += [fc!];
   }
-  app = if stack { "OpAppendStackText" } else { "OpAppendText" };
+  // (`format_iterator` spells the brackets and the separator `OpAppendText` whatever the
+  // accumulator is — a `&text` one too; only the element's rendering follows it.)
+  app = "OpAppendText";
   it = el_ir::v_block(head + [b.code], vt, "Iter For");
   steps: vector<ir::Node> = [el_ir::v_set(val, it), el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "," }]), ir::NdNull), el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))];
   el_ex_call::append_spec(e, vars, steps, w, ir::NdVar { n: val }, vt, stack, f);

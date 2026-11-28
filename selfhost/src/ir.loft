@@ -225,6 +225,17 @@ struct Variable {
   // @PLN91 — a local the arm that consumed it moved out (`Function::is_arm_consumed`): read by
   // the scope pass, so the loft port reads it from the image
   arm_consumed: boolean,
+  // @PLN91 — it served as a loop's variable (`Function::was_loop_var`): read by the scope pass,
+  // so the loft port reads it from the image
+  was_loop_var: boolean,
+  // @PLN91 — a buffer a placed call result is claimed in (`Function::is_place_buffer`) and a
+  // store a stored reference names (`Function::is_ref_home`, `@FR-H-RefHome`): read by the
+  // scope pass, so the loft port reads them from the image
+  place_buffer: boolean,
+  ref_home: boolean,
+  // @PLN91 — the deps each earlier bind of it ended with (`Variable::viewed`, the parse's
+  // record of what a rebind on one path leaves live on another): read by the scope pass
+  viewed: vector<integer>,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
@@ -298,6 +309,11 @@ struct Definition {
   no_prefill: text, // @FR-R-CompleteWrite the mints whose literal writes every field; "" = none
   width32: boolean, // @PLN204 the body is under the 32-bit regime (`Data::body_width32`)
   value_struct: boolean, // @PLN91 a `value struct` (`Data::is_value_struct`), read by the scope pass
+  // @PLN91 `Function::ref_evacuations` (`@FR-H-RefHome`), four integers each — holder, field,
+  // owner, type — read by the scope pass's `insert_evacuations`
+  ref_evacuations: vector<integer>,
+  // @PLN91 the constant twin `__const_<name>` is linked (`Definition::literal_const`, @FR-R-Const)
+  const_linked: boolean,
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can

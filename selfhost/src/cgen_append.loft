@@ -219,12 +219,12 @@ pub fn window_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
     t = cgen_fn::arg(x, w, ops, 0, ind);
     lo = cgen_fn::arg(x, w, ops, 1, ind);
     hi = cgen_fn::arg(x, w, ops, 2, ind);
-    return E { code: "loft_win_text(&(*loft_apw), {pv}, {as_view(w, t)}, {as_int(w, lo)}, {as_int(w, hi)})", kind: K_VOID };
+    return E { code: "loft_win_text(cx, &(*loft_apw), {pv}, {as_view(w, t)}, {as_int(w, lo)}, {as_int(w, hi)})", kind: K_VOID };
   }
   if name == "OpAppendVector" && len(args) == 3 {
     done = true;
     e = cgen_fn::expr(x, w, args[1]!, ind);
-    return E { code: "loft_win_vec(&(*loft_apw), {pv}, {as_ref(w, e)}, {w.apw})", kind: K_VOID };
+    return E { code: "loft_win_vec(cx, &(*loft_apw), {pv}, {as_ref(w, e)}, {w.apw})", kind: K_VOID };
   }
   // The self-replace a buffer's own view delivers: nothing changes.
   if name == "OpReplaceVector" && len(args) == 3 {
@@ -240,7 +240,7 @@ pub fn window_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, 
     src = cgen_fn::arg(x, w, ops, 0, ind);
     lo = cgen_fn::arg(x, w, ops, 1, ind);
     hi = cgen_fn::arg(x, w, ops, 2, ind);
-    return E { code: "loft_win_slice(&(*loft_apw), {pv}, {as_ref(w, src)}, {as_int(w, lo)}, {as_int(w, hi)}, {w.apw})", kind: K_VOID };
+    return E { code: "loft_win_slice(cx, &(*loft_apw), {pv}, {as_ref(w, src)}, {as_int(w, lo)}, {as_int(w, hi)}, {w.apw})", kind: K_VOID };
   }
   none()
 }
@@ -314,7 +314,7 @@ pub fn open_loop_windows(x: Cx, w: W, lp: ir::Block, ind: integer) -> integer {
     }
     win = "loft_aw{len(w.decls)}";
     w.decls += ["loft_win {win};"];
-    line(w, ind, "{win} = loft_win_of({w.names[dv]!}, {size});");
+    line(w, ind, "{win} = loft_win_of(cx, {w.names[dv]!}, {size});");
     w.ap_loop_windows += [LoopWindow { var: dv, name: win }];
     opened += 1;
   }
@@ -352,7 +352,7 @@ fn outside_sites(b: ir::Bundle, v: ir::Node, reach: vector<boolean>, sites: vect
 pub fn close_loop_windows(w: W, n: integer, ind: integer) {
   for _ in 0..n {
     last = w.ap_loop_windows[len(w.ap_loop_windows) - 1]!;
-    line(w, ind, "loft_win_sync({last.name});");
+    line(w, ind, "loft_win_sync(cx, {last.name});");
     w.ap_loop_windows = w.ap_loop_windows[0..len(w.ap_loop_windows) - 1];
   }
 }

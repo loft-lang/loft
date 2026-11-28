@@ -449,10 +449,20 @@ signature() { # <binary> <tree> <guard-path> <extra-args…> ; "exit|asserts|lea
       [ -n "$ann" ] && extra=($ann)
       ;;
   esac
+  # The guard's own `// @ARMED: LOFT_X=v …` line, as the suite runner and the receipts job arm
+  # it (GUARDS.md § The patch receipt): a guard whose defect only that switch makes visible
+  # (`LOFT_DENY_WARNINGS=1` for a false gating warning) scored INERT here otherwise.
+  local armed=()
+  local armed_line
+  armed_line=$(grep -m1 '^// @ARMED:' "$file" | sed 's|^// @ARMED:||')
+  for kv in $armed_line; do
+    case "$kv" in LOFT_*=*) armed+=("$kv") ;; esac
+  done
   out=$(cd "$tree" && bound -k 5 "$((lim + 20))" env LOFT_NATIVE_LEAK_CHECK=1 LOFT_TIMEOUT="$lim" \
         ${LOFT_POISON:+LOFT_POISON="$LOFT_POISON"} \
         ${LOFT_STRICT_STORES:+LOFT_STRICT_STORES="$LOFT_STRICT_STORES"} \
         ${LOFT_LEAK_CHECK:+LOFT_LEAK_CHECK="$LOFT_LEAK_CHECK"} \
+        ${armed[@]+"${armed[@]}"} \
         "$bin" "$@" ${extra[@]+"${extra[@]}"} "$file" 2>&1); rc=$?
   local asserts leak panic refusals
   asserts=$(echo "$out" | grep -c "assertion failed")

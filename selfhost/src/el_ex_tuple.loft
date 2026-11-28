@@ -603,12 +603,16 @@ pub fn tuple_get(e: el::El, vars: el_vars::Vars, te: integer?, index: integer) -
     NdCall { def_nr: bcd } => {
       match xlt {
         TyReference { n: bcn } => {
-          if !starts_with(el::def(e, bcd).name, "Op") && starts_with(el::def(e, bcn).name, "__tuple<") && index >= 0 && index < len(el::def(e, bcn).attributes) {
+          // (…and so is an ELEMENT of a vector of `__tuple<…>` records, `ci[1].1`: its member
+          // read where it lies, a text one a view of the vector's local.)
+          belem = el::def(e, bcd).name == "OpGetVector";
+          if (!starts_with(el::def(e, bcd).name, "Op") || belem) && starts_with(el::def(e, bcn).name, "__tuple<") && index >= 0 && index < len(el::def(e, bcn).attributes) {
             bmt = el::def(e, bcn).attributes[index]!.typedef[0] ?? ir::TyVoid;
             if bmt is TyText || el_convert::plain_scalar(bmt) {
               bgot = field_get(e, bcn, index, x.code);
               if bgot != null {
-                return ex(bgot!, if bmt is TyText { ir::TyText { dep: [] } } else { bmt });
+                broot = if belem { place_root(e, x.code) } else { -1 };
+                return ex(bgot!, if bmt is TyText { ir::TyText { dep: if broot >= 0 { [broot] } else { [] } } } else { bmt });
               }
             }
           }

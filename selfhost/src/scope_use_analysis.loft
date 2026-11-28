@@ -1,0 +1,528 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the part of `src/use_analysis.rs` the move elisions read: `collect_uses` (the
+// `Uses` facts of one body), `caller_stores_stable`, and the two plan lists `analyze_fn`
+// answers — `elision_plans` (the borrow-verdict vector copies `elide_borrows` inlines) and
+// `move_plans` (the dead-after construction and record copies `move_elide` moves).  The
+// diagnostic rows and the survival split (`LOFT_COPY_SURVIVAL`, `--report-copies`,
+// `LOFT_WARN_COPIES`) are not carried: off, `track_pos` is false, so a copy in a loop never
+// counts as `loop_survives`.  `LOFT_LINK_WIDEN` is refused by `check` where it is set.
+
+use ir;
+use scope_fn;
+use opt_length;
+use scope_value_struct;
+
+pub struct Ops {
+  get_field: integer,
+  op_append: integer,
+  op_database: integer,
+  op_copy_record: integer,
+  null_ops: vector<integer>,
+  frees: vector<integer>,
+  drops: vector<integer>,
+  projections: vector<integer>,
+  value_readers: vector<integer>
+}
+
+pub fn ops_of(b: ir::Bundle) -> Ops {
+  drops: vector<integer> = [];
+  for d in b.data.definitions {
+    if d.def_type == 1 && (d.name.ends_with("_OpDrop") || d.name.ends_with("_OpDropAll") || d.name.ends_with("_OpDropAllExcept")) {
+      drops += [d#index];
+    }
+  }
+  Ops {
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    op_append: scope_fn::def_nr(b, "OpAppendVector"),
+    op_database: scope_fn::def_nr(b, "OpDatabase"),
+    op_copy_record: scope_fn::def_nr(b, "OpCopyRecord"),
+    null_ops: [scope_fn::def_nr(b, "OpNullRefSentinel"), scope_fn::def_nr(b, "OpConvRefFromNull")],
+    frees: nrs(b, ["OpFreeRef", "OpFreeRefTag", "OpFreeRecordIn", "OpFreeRefIfDistinct", "OpFreeRefOrHandUp", "OpFreeText"]),
+    drops: drops,
+    projections: nrs(b, ["OpGetVector", "OpGetVectorNullable", "OpGetField", "OpVectorRef", "OpVectorRefNullable", "OpGetRecord", "OpGetDbRef"]),
+    value_readers: nrs(b, ["OpGetInt", "OpGetByte", "OpGetEnum", "OpGetSingle", "OpGetCharacter", "OpLengthVector", "t_6vector_len"])
+  }
+}
+
+fn nrs(b: ir::Bundle, names: vector<text>) -> vector<integer> {
+  out: vector<integer> = [];
+  for n in names {
+    d = scope_fn::def_nr(b, n);
+    if d >= 0 {
+      out += [d];
+    }
+  }
+  out
+}
+
+// One construction or record copy: the destination's base, the source's base (-1 for none),
+// the copy-site-end position, and whether the source is a projection.
+pub struct CopySite {
+  dest: integer,
+  src: integer,
+  end: integer,
+  projection: boolean
+}
+
+// port: use_analysis.rs struct Uses — the facts the plans read, per variable number.
+pub struct Uses {
+  pos: integer,
+  loop_depth: integer,
+  in_yield: boolean,
+  last_use_pos: vector<integer>,
+  other_max_pos: vector<integer>,
+  copyfill_pos: vector<integer>,
+  copyfill_in_loop: vector<boolean>,
+  ineligible: vector<boolean>,
+  def_count: vector<integer>,
+  def_valued: vector<boolean>,
+  database_vars: vector<boolean>,
+  def_vdb: vector<integer>,
+  // `append_src` / `append_expr`: per variable, its appends' source bases and expressions.
+  appended: vector<boolean>,
+  append_src: vector<vector<integer>>,
+  append_expr: vector<vector<ir::Node>>,
+  construct_copy: vector<CopySite>,
+  record_copy: vector<CopySite>
+}
+
+fn grow(u: Uses, v: integer) {
+  while len(u.last_use_pos) <= v {
+    u.last_use_pos += [-1];
+    u.other_max_pos += [-1];
+    u.copyfill_pos += [-1];
+    u.copyfill_in_loop += [false];
+    u.ineligible += [false];
+    u.def_count += [0];
+    u.def_valued += [false];
+    u.database_vars += [false];
+    u.def_vdb += [-1];
+    u.appended += [false];
+    u.append_src += [[]];
+    u.append_expr += [[]];
+  }
+}
+
+// port: use_analysis.rs fn base_var — the base variable of `src` / `src.f`, -1 for none.
+pub fn base_var(n: ir::Node, gf: integer) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: s } => s,
+    NdCall { def_nr, args } => if def_nr == gf && len(args) > 0 {
+      match scope_fn::unspan(args[0]!) { NdVar { n: s } => s, _ => -1 }
+    } else {
+      -1
+    },
+    _ => -1
+  }
+}
+
+fn var_of(n: ir::Node) -> integer {
+  match scope_fn::unspan(n) { NdVar { n: x } => x, _ => -1 }
+}
+
+// port: use_analysis.rs fn collect_uses
+pub fn collect_uses(b: ir::Bundle, o: Ops, code: ir::Node, nvars: integer) -> Uses {
+  u = Uses { pos: 0, loop_depth: 0, in_yield: false, last_use_pos: [], other_max_pos: [], copyfill_pos: [], copyfill_in_loop: [], ineligible: [], def_count: [], def_valued: [], database_vars: [], def_vdb: [], appended: [], append_src: [], append_expr: [], construct_copy: [], record_copy: [] };
+  grow(u, nvars);
+  visit(o, u, code, true);
+  // `def_vdb` holds only a buffer the body `OpDatabase`s.
+  for v in 0..len(u.def_vdb) {
+    x = u.def_vdb[v];
+    if x >= 0 && !(u.database_vars[x] ?? false) {
+      u.def_vdb[v] = -1;
+    }
+  }
+  u
+}
+
+// port: use_analysis.rs fn Uses::is_hook_release
+fn is_hook_release(o: Ops, v: ir::Node) -> boolean {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr } => scope_fn::has(o.drops, def_nr),
+    NdIf { t, f } => {
+      if scope_fn::unspan(t) is NdNull {
+        return is_hook_release(o, f);
+      }
+      if scope_fn::unspan(f) is NdNull {
+        return is_hook_release(o, t);
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: use_analysis.rs fn Uses::visit — `other` is `ctx == Ctx::Other`.
+fn visit(o: Ops, u: Uses, node: ir::Node, other: boolean) {
+  pos = u.pos;
+  u.pos += 1;
+  n = scope_fn::unspan(node);
+  match n {
+    NdVar { n: v } => {
+      grow(u, v);
+      if u.last_use_pos[v] < pos {
+        u.last_use_pos[v] = pos;
+      }
+      if other {
+        u.ineligible[v] = true;
+        if u.other_max_pos[v] < pos {
+          u.other_max_pos[v] = pos;
+        }
+      }
+      return;
+    },
+    NdYield { inner } => {
+      outer = u.in_yield;
+      u.in_yield = true;
+      visit(o, u, inner, true);
+      u.in_yield = outer;
+      return;
+    },
+    NdLoop { block } => {
+      u.loop_depth += 1;
+      for op in block[0]!.operators {
+        visit(o, u, op, true);
+      }
+      u.loop_depth -= 1;
+      return;
+    },
+    NdDrop => return,
+    NdIf => if is_hook_release(o, n) { return; },
+    NdSet { var: v, inner: rhs } => {
+      grow(u, v);
+      r = scope_fn::unspan(rhs);
+      null_rhs = match r {
+        NdNull => true,
+        NdCall { def_nr, args } => len(args) == 0 && scope_fn::has(o.null_ops, def_nr),
+        _ => false
+      };
+      u.def_count[v] = u.def_count[v] + 1;
+      if !null_rhs {
+        u.def_valued[v] = true;
+      }
+      match r {
+        NdCall { def_nr, args } => if def_nr == o.get_field && len(args) > 0 {
+          x = var_of(args[0]!);
+          if x >= 0 && scope_fn::unspan(args[0]!) is NdVar {
+            u.def_vdb[v] = x;
+          }
+        },
+        _ => {}
+      }
+      visit(o, u, rhs, false);
+      return;
+    },
+    NdCall { def_nr: d, args } => {
+      if scope_fn::has(o.frees, d) || scope_fn::has(o.drops, d) {
+        return;
+      }
+      if d == o.op_append {
+        t = if len(args) > 0 { var_of(args[0]!) } else { -1 };
+        if t >= 0 {
+          grow(u, t);
+          u.copyfill_pos[t] = pos;
+          if u.loop_depth > 0 {
+            u.copyfill_in_loop[t] = true;
+          }
+          src = if len(args) > 1 { base_var(args[1]!, o.get_field) } else { -1 };
+          u.appended[t] = true;
+          u.append_src[t] += [src];
+          if len(args) > 1 {
+            u.append_expr[t] += [scope_fn::unspan(args[1]!)];
+          }
+          for i in 1..len(args) {
+            visit(o, u, args[i]!, false);
+          }
+        } else {
+          // Append into a field / non-var target — a real mutation; a field target records
+          // the construction copy.
+          cc = len(args) > 0 && match scope_fn::unspan(args[0]!) { NdCall { def_nr: d0 } => d0 == o.get_field, _ => false };
+          for a in args {
+            visit(o, u, a, true);
+          }
+          if cc {
+            rec = base_var(args[0]!, o.get_field);
+            src = if len(args) > 1 { base_var(args[1]!, o.get_field) } else { -1 };
+            projection = len(args) > 1 && !(scope_fn::unspan(args[1]!) is NdVar);
+            u.construct_copy += [CopySite { dest: rec, src: src, end: u.pos, projection: projection }];
+          }
+        }
+        return;
+      }
+      if scope_fn::has(o.projections, d) {
+        for i in 0..len(args) {
+          visit(o, u, args[i]!, if i == 0 { other } else { false });
+        }
+        return;
+      }
+      if d == o.op_copy_record {
+        src = if len(args) > 0 { base_var(args[0]!, o.get_field) } else { -1 };
+        projection = len(args) > 0 && !(scope_fn::unspan(args[0]!) is NdVar);
+        dest = if len(args) > 1 { base_var(args[1]!, o.get_field) } else { -1 };
+        record = !(dest >= 0 && dest == src);
+        c = !scope_fn::has(o.value_readers, d);
+        for a in args {
+          visit(o, u, a, c);
+        }
+        if record && !u.in_yield {
+          u.record_copy += [CopySite { dest: dest, src: src, end: u.pos, projection: projection }];
+        }
+        return;
+      }
+      if d == o.op_database && len(args) > 0 {
+        x = var_of(args[0]!);
+        if x >= 0 {
+          grow(u, x);
+          u.database_vars[x] = true;
+        }
+      }
+      c = !scope_fn::has(o.value_readers, d);
+      for a in args {
+        visit(o, u, a, c);
+      }
+      return;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    visit(o, u, c, true);
+  }
+}
+
+// port: parser/mod.rs fn find_written_vars, as a set of variable numbers.
+pub fn written_vars(b: ir::Bundle, d: ir::Definition, code: ir::Node, nvars: integer) -> vector<boolean> {
+  written: vector<boolean> = [for _ in 0..nvars + 1 { false }];
+  opt_length::written_vars(b, d, code, written, opt_length::new_cache(b));
+  written
+}
+
+fn is_scalar(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyInteger => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+fn opaque(n: ir::Node) -> boolean {
+  if n is NdCallRef || n is NdFnRef || n is NdFnRefDnr || n is NdYield || n is NdParallel {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if opaque(c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn handed_vars(b: ir::Bundle, n: ir::Node, out: vector<boolean>) {
+  match n {
+    NdCall { def_nr, args } => if !b.data.definitions[def_nr]!.name.starts_with("Op") {
+      for a in args {
+        x = var_of(a);
+        if x >= 0 && x < len(out) {
+          out[x] = true;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    handed_vars(b, c, out);
+  }
+}
+
+// port: use_analysis.rs fn caller_stores_stable
+fn caller_stores_stable(b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function, written: vector<boolean>) -> boolean {
+  if opaque(code) {
+    return false;
+  }
+  n = scope_fn::count(f);
+  handed: vector<boolean> = [for _ in 0..n { false }];
+  handed_vars(b, code, handed);
+  hidden: vector<integer> = [];
+  for a in b.data.definitions[d_nr]!.attributes {
+    if a.hidden {
+      for x in f.names {
+        if x.name == a.name {
+          hidden += [x.nr];
+        }
+      }
+    }
+  }
+  fw: vector<integer> = [];
+  scope_value_struct::find_field_written_vars(b, code, fw);
+  for v in 0..n {
+    if scope_fn::is_argument(f, v) {
+      if !scope_fn::name(f, v).starts_with("__") && !scope_fn::has(hidden, v) && !is_scalar(scope_fn::tp(f, v)) && (written[v] ?? false) {
+        return false;
+      }
+    } else if (scope_fn::has(fw, v) || (handed[v] ?? false)) && reaches_argument(f, v, hidden) {
+      return false;
+    }
+  }
+  true
+}
+
+fn reaches_argument(f: ir::Function, v: integer, hidden: vector<integer>) -> boolean {
+  seen: vector<integer> = [];
+  todo: vector<integer> = [for x in scope_fn::deps(f, v) { x }];
+  while len(todo) > 0 {
+    d = todo[len(todo) - 1];
+    todo.remove(len(todo) - 1);
+    if scope_fn::has(seen, d) || d >= scope_fn::count(f) {
+      continue;
+    }
+    seen += [d];
+    if scope_fn::is_argument(f, d) && !scope_fn::name(f, d).starts_with("__") && !scope_fn::has(hidden, d) {
+      return true;
+    }
+    for x in scope_fn::deps(f, d) {
+      todo += [x];
+    }
+  }
+  false
+}
+
+// port: use_analysis.rs struct ElidePlan
+pub struct ElidePlan {
+  var: integer,
+  vdb: integer,
+  source: ir::Node,
+  source_base: integer,
+  borrowers: vector<integer>
+}
+
+// port: use_analysis.rs fn env_tier
+fn env_tier() -> integer {
+  if env_variable("LOFT_ELIDE_T1") != null { 1 } else { 0 }
+}
+
+// port: use_analysis.rs fn elision_plans (`analyze_fn(…).1`) on the body `code` of `d_nr`.
+pub fn elision_plans(b: ir::Bundle, o: Ops, d_nr: integer, code: ir::Node, f: ir::Function) -> vector<ElidePlan> {
+  plans: vector<ElidePlan> = [];
+  n = scope_fn::count(f);
+  u = collect_uses(b, o, code, n);
+  written = written_vars(b, b.data.definitions[d_nr]!, code, n);
+  caller_stable = caller_stores_stable(b, d_nr, code, f, written);
+  tier = env_tier();
+  for v in 0..len(u.appended) {
+    if !u.appended[v] {
+      continue;
+    }
+    appends = u.append_src[v];
+    vdb = u.def_vdb[v];
+    fresh_buffer = vdb >= 0 && (u.database_vars[vdb] ?? false);
+    if !fresh_buffer || len(appends) != 1 {
+      continue;
+    }
+    src = appends[0];
+    single_def = u.def_count[v] == 1;
+    v_readonly = !u.ineligible[v];
+    v_is_local = !scope_fn::is_argument(f, v);
+    src_is_param = src >= 0 && scope_fn::is_argument(f, src);
+    src_unmutated = caller_stable && src >= 0 && !(written[src] ?? false);
+    src_local_stable = tier >= 1 && src >= 0 && !scope_fn::is_argument(f, src) && !u.copyfill_in_loop[v] && u.copyfill_pos[v] >= 0 && max0(u.other_max_pos[src] ?? -1) < u.copyfill_pos[v];
+    borrow = (single_def && v_is_local && v_readonly && src_is_param && src_unmutated) || (single_def && v_is_local && v_readonly && src_local_stable);
+    if !borrow || len(u.append_expr[v]) != 1 {
+      continue;
+    }
+    expr = u.append_expr[v][0]!;
+    source_base = base_var(expr, o.get_field);
+    if source_base < 0 {
+      continue;
+    }
+    borrowers: vector<integer> = [];
+    for e in 0..n {
+      if e != v && scope_fn::has(scope_fn::depend(scope_fn::base(scope_fn::tp(f, e))), v) {
+        borrowers += [e];
+      }
+    }
+    reach: vector<integer> = [for x in borrowers { x }];
+    i = 0;
+    while i < len(reach) {
+      bw = reach[i];
+      for e in 0..n {
+        if e != v && !scope_fn::has(reach, e) && scope_fn::has(scope_fn::depend(scope_fn::base(scope_fn::tp(f, e))), bw) {
+          reach += [e];
+        }
+      }
+      i += 1;
+    }
+    all_ok = true;
+    for e in reach {
+      if u.ineligible[e] ?? false {
+        all_ok = false;
+      }
+    }
+    if all_ok {
+      plans += [ElidePlan { var: v, vdb: vdb, source: expr, source_base: source_base, borrowers: borrowers }];
+    }
+  }
+  plans
+}
+
+fn max0(x: integer) -> integer {
+  if x < 0 { 0 } else { x }
+}
+
+// port: use_analysis.rs struct MovePlan — `construct` for `MoveKind::Construct`.
+pub struct MovePlan {
+  source: integer,
+  construct: boolean
+}
+
+// port: use_analysis.rs fn move_elidable_source — -1 for none.
+fn move_elidable_source(u: Uses, f: ir::Function, src: integer, end: integer) -> integer {
+  if src < 0 || scope_fn::is_argument(f, src) {
+    return -1;
+  }
+  grow(u, src);
+  if u.last_use_pos[src] > end {
+    return -1;
+  }
+  if u.database_vars[src] && u.def_valued[src] {
+    return -1;
+  }
+  vdb = u.def_vdb[src];
+  if vdb >= 0 {
+    return if scope_fn::is_compiler_generated(f, vdb) { src } else { -1 };
+  }
+  if u.database_vars[src] { src } else { -1 }
+}
+
+// port: use_analysis.rs fn move_plans (`analyze_fn(…).2`).
+pub fn move_plans(b: ir::Bundle, o: Ops, code: ir::Node, f: ir::Function) -> vector<MovePlan> {
+  out: vector<MovePlan> = [];
+  if env_variable("LOFT_NO_MOVE_ELIDE") != null {
+    return out;
+  }
+  u = collect_uses(b, o, code, scope_fn::count(f));
+  for c in u.construct_copy {
+    if c.projection {
+      continue;
+    }
+    s = move_elidable_source(u, f, c.src, c.end);
+    if s >= 0 {
+      out += [MovePlan { source: s, construct: true }];
+    }
+  }
+  for c in u.record_copy {
+    if c.projection {
+      continue;
+    }
+    s = move_elidable_source(u, f, c.src, c.end);
+    if s >= 0 {
+      out += [MovePlan { source: s, construct: false }];
+    }
+  }
+  out
+}

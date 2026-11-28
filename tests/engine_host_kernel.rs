@@ -3012,7 +3012,7 @@ fn a_message_that_trickles_in_holds_the_kernel_no_longer_than_its_budget() {
         eprintln!("skipping: loft not built");
         return;
     }
-    for (base, interpret) in [(18160, true), (18161, false)] {
+    for (base, interpret) in [(18190, true), (18191, false)] {
         let leg = if interpret { "interpreter" } else { "C" };
         let port = common::bind_port(base);
         let (_guard, prog) = echo_kernel(port, interpret);
@@ -3099,7 +3099,7 @@ fn an_unmasked_client_frame_closes_the_connection() {
         eprintln!("skipping: loft not built");
         return;
     }
-    for (base, interpret) in [(18162, true), (18163, false)] {
+    for (base, interpret) in [(18192, true), (18193, false)] {
         let leg = if interpret { "interpreter" } else { "C" };
         let port = common::bind_port(base);
         let (_guard, prog) = echo_kernel(port, interpret);

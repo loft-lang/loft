@@ -384,6 +384,26 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
           // in a view of its own first, the copy made from it.
           if el::def(e, def_nr).name == "OpCopyRecord" && len(args) == 3 && place_root(e, el_ir::unspan(args[1])) == v {
             cvw = match el_ir::unspan(args[0]) { NdVar { n: cvn } => cvn, _ => -1 };
+            // (`b: o.b`, a struct PROJECTION of a viewer — a heap parameter the caller may have
+            // handed this destination's store — is staged as a view, `__ref_N: ref(Inner)["o"]`,
+            // which owns nothing: `parse_object_field`'s skip_free, loft#1683.)
+            prj_root = if cvw < 0 { place_root(e, el_ir::unspan(args[0])) } else { -1 };
+            prj_kt = match el_ir::unspan(args[2]) { NdInt { n: pkn } => pkn, _ => -1 };
+            prj_def = -1;
+            if prj_root >= 0 && prj_root != v && viewers.contains(prj_root) && prj_kt >= 0 && match el_ir::unspan(args[0]) { NdCall { def_nr: pgd } => el::def(e, pgd).name == "OpGetField", _ => false } {
+              for pdd in e.b.data.definitions {
+                if prj_def < 0 && pdd.known_type == prj_kt && pdd.def_type == el::DT_STRUCT {
+                  prj_def = pdd#index;
+                }
+              }
+            }
+            if prj_def >= 0 {
+              ptmp = el_vars::work_ref(vars, ir::TyReference { n: prj_def, dep: [prj_root] });
+              el_vars::set_var_type(vars, ptmp, ir::TyReference { n: prj_def, dep: [prj_root] });
+              el_vars::set_skip_free(vars, ptmp, "parse_object_field");
+              staged += [el_ir::v_set(ptmp, args[0]!)];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: ptmp }, args[1]!, args[2]!] };
+            }
             if cvw >= 0 && cvw != v && viewers.contains(cvw) {
               cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
               // (No `skip_free`: `parse_object_field` marks a staged VIEW only where the staged
@@ -876,6 +896,15 @@ fn vector_of(e: el::El, t: ir::TypeT, elem: integer) -> boolean {
 pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
+  // (A field's value written as a qualified variant literal, `code: Node::NdInt { n: 4 }`, is the
+  // plain variant's literal — the lexer resolves the qualifier for Rust — so it is built in its
+  // field as the unqualified spelling is.)
+  for qfi in fields {
+    match e.p.nodes[qfi] {
+      SFieldInit { e: qfe } => { if qfe != null { el_ex_place::unqualify_literal(e, qfe!); } },
+      _ => {}
+    }
+  }
   // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
@@ -1598,7 +1627,7 @@ pub fn nullable_slot_write(e: el::El, vars: el_vars::Vars, syn: integer, slot_re
 pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   syn = match x.tp { TyEnum { n, is_ref } => if is_ref && is_nullable_wrapper(e, x.tp) { n } else { -1 }, _ => -1 };
   if syn < 0 {
-    return x;
+    return ex(enum_slot_read(e, x.code, x.tp, vars), x.tp);
   }
   some_d = el::variant_of(e, syn, "Some");
   sd = nullable_payload(e, syn);
@@ -1617,6 +1646,33 @@ pub fn read_through_tag(e: el::El, vars: el_vars::Vars, x: Ex) -> Ex? {
   el_vars::set_skip_free(vars, named, "emit_nullable_slot_read");
   el_vars::mark_inline(vars, named, "emit_nullable_slot_read");
   ex(el_ir::v_block([el_ir::v_set(named, x.code), nullable_pick(e, ir::NdVar { n: named }, pp, s_kt)], rt, "nullable_slot_read"), rt)
+}
+
+// `read_through_enum_slot` (`@FR-L-Null-Which`, loft#1529): a struct enum's `E?` FIELD read
+// leaving its slot for a position that is no slot (a field read's base, a local) is the pointer —
+// the null sentinel where the slot's first word is zero: `if OpGetInt4(r, pos) == 0 nullref else
+// OpGetField(r, pos, E)`.  On the second pass, for a slot off a place a test may read twice.
+pub fn enum_slot_read(e: el::El, code: ir::Node, tp: ir::TypeT, vars: el_vars::Vars? = null) -> ir::Node {
+  if e.first_pass || !(tp is TyOptional) || el_types::struct_enum_def(el_types::base(tp)) < 0 || is_nullable_wrapper(e, tp) {
+    return code;
+  }
+  match el_ir::unspan(code) {
+    // (A variable viewing a `vector<E?>` element slot — a `for e in v` loop variable — is a
+    // sub-reference into the slot: absent where its handle is null or its tag is zero.)
+    NdVar { n: sv } => {
+      if vars != null && el_ex_null::views_nullable_element_slot(vars!, tp) {
+        absent = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [code]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [code, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
+        return el_ir::v_if(absent, el_ir::cl(e, "OpNullRefSentinel", []), code);
+      }
+    },
+    NdCall { def_nr: gd, args: ga } => {
+      if el::def(e, gd).name == "OpGetField" && len(ga) == 3 && place_root(e, el_ir::unspan(ga[0]!)) >= 0 {
+        return el_ir::v_if(el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [ga[0]!, ga[1]!]), ir::NdInt { n: 0 }]), el_ir::cl(e, "OpNullRefSentinel", []), code);
+      }
+    },
+    _ => {}
+  }
+  code
 }
 
 // `nullable_pick`: the payload of slot `slot` where its discriminant says present, else the
@@ -1971,6 +2027,11 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
   if is_nullable_wrapper(e, ft) {
     return [];
   }
+  // (…and an omitted struct-enum `E?` field is its four-byte child slot holding no record:
+  // `OpSetInt4(r, pos, 0)`.)
+  if ft is TyOptional && match el_types::base(ft) { TyEnum { is_ref } => is_ref, _ => false } && base == 0 {
+    return [el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }])];
+  }
   if el_types::is_collection(ft) {
     z = el_ir::cl(e, "OpSetInt4", [r, ir::NdInt { n: pos }, ir::NdInt { n: 0 }]);
     return [z, z];
@@ -2048,7 +2109,14 @@ pub fn field_default(e: el::El, vars: el_vars::Vars, d: integer, a: integer, r: 
     }
   }
   // (`replace_record_ref`: a stored default reading `$` reads the record built here.)
-  val = if !((at.value[0] ?? ir::NdNull) is NdNull) { el_ir::replace_var(at.value[0]!, 0, r) } else { el_ex_object::to_default(e, ft) };
+  // Assigned per arm rather than as an `if` value: a call that may answer either of two
+  // parameters, as an `if`-expression arm, leaked its record on both backends (loft#2660).
+  val = ir::NdNull;
+  if !((at.value[0] ?? ir::NdNull) is NdNull) {
+    val = el_ir::replace_var(at.value[0]!, 0, r);
+  } else {
+    val = el_ex_object::to_default(e, ft);
+  }
   if base == 0 {
     return [el_ex_object::set_field(e, d, a, r, val)];
   }

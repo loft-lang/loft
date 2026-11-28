@@ -115,6 +115,59 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   at another position and `main_vector<E>` left untyped (`al_2` in the session's `p/`).
 - The N-Join deviation mirrored in `el_ex_match.loft` (`null_arm && !enum_subject && sd < 0`):
   drop the clause once Rust is fixed.
+- `t += 8` through a `t: &text?` link (1827's `add_q`): Rust wraps the append in one more
+  destination test, `if OpConvBoolFromText(t) { <the append> } else null`, whose source was not
+  found; widening the port's `stack` to `&text?` alone gives a silent differ, so it stays refused.
+- `"{for _ in 0..2 {1}}"` at a text function's TAIL: Rust appends `[`/`,`/`]` with
+  `OpAppendText` into a work text, the port with `OpAppendStackText` (probe `us2`); bound to a
+  local both agree.
+- A record-answering function whose tail is `t as Mix` (a text cast, probe `ca2`) and the
+  record-return family in general (`a function returning a record from something other than a
+  literal`, `a return of a record that is not a literal`): R-HostStore's recursive struct-enum
+  with early variant returns is the deep case.
+- `fn ret_vec(h: H4) -> vector<integer> { h.v }` with `struct H4` declared BELOW it (probe
+  `rv6`): Rust types the body block `vector<integer>`, with `H4` above `vector<integer>["h"]` —
+  a declaration-order dependence reported to the tester as a Rust deviation candidate, not
+  mirrored.  It holds back `t.0 = null` on a nullable vector tuple member
+  (`t.0 = OpNullRefSentinel()`, probe `tn4`), which would expose it in 153-p4.
+- A generic instance at TEXT whose tail is an `if`/`match` of text arms (`pick<T>(a, b, c) ->
+  T { if c { a } else { b } }` at `text`, probe `gt1`): the port has `promote_monomorph_text_return`'s
+  accumulator leg, but `text_instance_carried` refuses first.  Lifting that guard (an
+  `if_tail_yields_text` exemption) agrees on the probes and admits F26, yet turns four programs
+  refused → differ: a caller of the grown instance is not handed its hidden buffer
+  (`patch_tret_call`, G-Gen-Scope/a-type-variable-is-a-name-only…), and three older vector-instance
+  gaps (`___ret_copy_N` per returned parameter, G-Gen/an-unbounded-variable…; result block deps,
+  R-TailSelf ×2).  Held back until those are ported.
+- A width on a character, vector, record or enum hole (`{c:5}`): Rust renders into a pass-2-only
+  scratch work text and pads it (`OpFormatText(w, scratch, width, dir, pad)`).  Ported and agreeing
+  on probes (pd1/pd2), but held: it admits nothing yet — 30-formatting then meets a Rust defect
+  (inside a format hole the element temp of `[jp]` is typed `ref(boolean)`, as a bind
+  `ref(Point)`; probe eb1, reported), and G-Mono/a-spec-part-… needs the template to defer the
+  choice for a type variable (the instance binds `float` and pads directly).
+- A destructure reusing an earlier loop variable's name (`for a in [7, 8] {…}; for (a, b) in
+  [("p", 3)] {…}`, B-Scope/a-loop-name-a-destructure-reuses-compiles, probe dr4): exempting loop
+  variables from `destructure_members`' refusal names the member `a#1` right, but its type then
+  borrows a LATER loop's vector (`text["_vector_3"]` where Rust's is plain `text`) — the type is
+  not set by `set_type` on pass 2, so it is the pass-1 variable's; advancing `loop_binding` for
+  the pass-1 members did not cure it.  Held.
+- A range over a NULLABLE narrow start (`for i in n..5`, `n: u8?`): Rust counts in `u8?`
+  (`_range_start_N`, `_next_N`, `i#index`) and the loop variable is the dense `u8` (probe u84,
+  agrees with the change: narrow_spec from the start's base, the counters given the `?` back).
+  Held: I-RangeNull/a-null-range-bound-… then meets `fn opt8(n) -> u8? { if n > 0 { n as u8? }
+  else { null } }` (probe dn1), where Rust types the `null` arm `integer?`, joins to `integer?` and
+  narrows the whole `if` with an outer `dn4cast(OpRangeDefault(if …))`; the port types the arm
+  `u8?` and casts nothing.
+- A struct pattern binding a VECTOR field (`B { v, n }`): Rust binds a view of the subject's
+  field, `v#1: vector<integer>["b"]`, `skip_free` (`mark_field_capture_view`).  Ported and agreeing
+  on probes sv1/sv2, held: B-Disturb/a-view-is-copied-only-where-it-is-live-across-a-disturbance
+  then meets the eb1 Rust defect, which is wider than format holes — `for x in [Node {…}, …]`'s
+  element temp is `ref(boolean)` too (a vector literal not bound to a local).
+- A tail call through a function value with a `τ?` record result (`f: fn(integer) -> Pt?`,
+  probe fr7) or a struct-enum result through a LOCAL fn value (`g = mks; g(n)`, fr9): both
+  differ (older than the fn-value tail roads, unchanged by them) — the copy into the buffer
+  (`materialize_whole_tail`) is not Rust's shape; read `ref_return`'s classify for each.
+- A write through an `is` capture of a heap payload: Rust routes it back to the field
+  (`mv_field_origin`, loft#1160); the port binds the view only.
 
 ## Tools
 

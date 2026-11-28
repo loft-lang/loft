@@ -11,7 +11,8 @@
 // The closed image, when given, hands over the one fact the host sets between the scope pass and
 // `close_program`: `Definition::native`, the bridge symbol of a library function a native
 // library build exports (`native_adopt::mark_exports`).  The passes read it (a native function
-// keeps its signature) and the scoped image is taken before it is set.
+// keeps its signature) and the scoped image is taken before it is set.  It is also what the
+// `fact:` rows compare the stored facts the report does not print against.
 use load;
 use report;
 use el;
@@ -31,6 +32,14 @@ fn main() {
   }
   for r in ir_passes::close_program(b!) {
     println("unscoped: {r}");
+  }
+  // Facts the report does not print, each against the closed image: a definition's stored
+  // `no_prefill` (`@FR-R-CompleteWrite`), and a closure record's capture field layout
+  // (`sync_capture_ownership`).  A definition that differs is named on a `fact:` row.
+  if post != null {
+    for r in ir_passes::fact_rows(b!, post!, el::std_count(std!)) {
+      println("fact: {r}");
+    }
   }
   print(report::defs_report(b!, el::std_count(std!)));
 }

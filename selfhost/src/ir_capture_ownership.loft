@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `typedef::sync_capture_ownership` transcribed, the first step of `close_program`: a
+// closure record's capture field the scope pass typed as a borrowed share (`Deps` of exactly
+// `[u16::MAX, u16::MAX]`, `Deps::is_borrowed_share`) is laid out as the BORROWED `DbRef` shape
+// (`Stores::borrow_dbref_field`), so the record's release skips the store it only views.
+
+use ir;
+
+const NO_TYPE = 65535;
+
+// `Stores::dbref_shapes().1`: the borrowed `dbref_borrow` row, the pair registered together
+// (owned first) when the schema has neither.
+fn dbref_borrow(b: ir::Bundle) -> integer {
+  owned = -1;
+  borrow = -1;
+  for t in b.types {
+    if t.name == "dbref" {
+      owned = t#index;
+    } else if t.name == "dbref_borrow" {
+      borrow = t#index;
+    }
+  }
+  if owned >= 0 && borrow >= 0 {
+    return borrow;
+  }
+  for nm in ["dbref", "dbref_borrow"] {
+    have = false;
+    for t in b.types {
+      if t.name == nm {
+        have = true;
+      }
+    }
+    if !have {
+      b.types += [ir::DbType { name: nm, parts: [ir::PtDbRef], keys: [], complex: false, linked: false, size: 12, align: 4, field_groups: [] }];
+    }
+  }
+  for t in b.types {
+    if t.name == "dbref_borrow" {
+      return t#index;
+    }
+  }
+  -1
+}
+
+// `Deps::is_borrowed_share`
+fn borrowed_share(dep: vector<integer>) -> boolean {
+  len(dep) == 2 && dep[0] == NO_TYPE && dep[1] == NO_TYPE
+}
+
+// `Stores::borrow_dbref_field`: the borrowed shape registered first, then only a
+// `Parts::Struct` field retyped.
+fn borrow_field(b: ir::Bundle, tp: integer, name: text) {
+  borrow = dbref_borrow(b);
+  fields: vector<ir::DbField> = [];
+  match b.types[tp].parts[0] {
+    PtStruct { fields: fs } => { fields = fs; },
+    _ => return
+  }
+  for f in fields {
+    if f.name == name {
+      fields[f#index].content = borrow;
+      b.types[tp].parts = [ir::PtStruct { fields: fields }];
+      return;
+    }
+  }
+}
+
+// port: typedef.rs fn sync_capture_ownership.
+pub fn rewrite_program(b: ir::Bundle) {
+  for d in b.data.definitions {
+    if !d.name.starts_with("__closure_") {
+      continue;
+    }
+    known = d.known_type;
+    if known == NO_TYPE || known < 0 || known >= len(b.types) {
+      continue;
+    }
+    for a in d.attributes {
+      match a.typedef[0] ?? ir::TyVoid {
+        TyReference { dep } => if borrowed_share(dep) { borrow_field(b, known, a.name); },
+        _ => {}
+      }
+    }
+  }
+}

@@ -12,6 +12,7 @@ rules/binding/B-Ref-Reshape/a-link-and-a-plain-parameter-refuse-a-disturbance-a-
 rules/binding/B-Ref-Reshape/a-link-into-a-container-named-through-a-field-or-element-is-refused-across-its-disturbance.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
 rules/binding/B-Ref-Reshape/a-link-into-what-an-overwrite-releases-is-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
 rules/calls/F-ParamTuple/a-by-value-tuple-parameter-is-the-callees-own-value.loft	LOFT_NO_TUPLE_PARAM_COPY	STATIC
+rules/calls/F-Ret/2673-a-coalesce-tail-answers-the-record-its-call-answered.loft	LOFT_NO_SELF_COPY_GUARD	STATIC
 rules/calls/F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-as-its-dense-twin-does.loft	LOFT_NO_OWNER_WITNESS	MISS
 rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft	LOFT_NO_LAZY_BUFFER	CLEAN
 rules/closures/L-CapRebind/a-rebind-of-a-captured-local-leaves-the-record-the-store-its-build-named.loft	LOFT_NO_OWNER_WITNESS	STATIC

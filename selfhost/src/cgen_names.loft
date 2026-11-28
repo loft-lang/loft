@@ -39,25 +39,27 @@ pub struct Twin {
   pub ds: boolean,
   pub vf: boolean,
   pub rg: boolean,
+  // `@FR-R-DecodeView`: a function of a decode region written over the twin layout (`__dv`).
+  pub dv: boolean,
 }
 
 // The plain function `d`: no twin.
 pub fn plain(d: integer) -> Twin {
-  Twin { d: d, places: 0, nn: 0, inv: false, nk: false, apr: false, apv: false, kh: false, ap: false, ds: false, vf: false, rg: false }
+  Twin { d: d, places: 0, nn: 0, inv: false, nk: false, apr: false, apv: false, kh: false, ap: false, ds: false, vf: false, rg: false, dv: false }
 }
 
 // A twin record of its own, equal to `t`.
 pub fn copy_twin(t: Twin) -> Twin {
-  Twin { d: t.d, places: t.places, nn: t.nn, inv: t.inv, nk: t.nk, apr: t.apr, apv: t.apv, kh: t.kh, ap: t.ap, ds: t.ds, vf: t.vf, rg: t.rg }
+  Twin { d: t.d, places: t.places, nn: t.nn, inv: t.inv, nk: t.nk, apr: t.apr, apv: t.apv, kh: t.kh, ap: t.ap, ds: t.ds, vf: t.vf, rg: t.rg, dv: t.dv }
 }
 
 // Is twin `t` the function itself (`mask == 0`)?
 pub fn is_plain(t: Twin) -> boolean {
-  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.rg
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.rg && !t.dv
 }
 
 pub fn same_twin(a: Twin, b: Twin) -> boolean {
-  a.d == b.d && a.places == b.places && a.nn == b.nn && a.inv == b.inv && a.nk == b.nk && a.apr == b.apr && a.apv == b.apv && a.kh == b.kh && a.ap == b.ap && a.ds == b.ds && a.vf == b.vf && a.rg == b.rg
+  a.d == b.d && a.places == b.places && a.nn == b.nn && a.inv == b.inv && a.nk == b.nk && a.apr == b.apr && a.apv == b.apv && a.kh == b.kh && a.ap == b.ap && a.ds == b.ds && a.vf == b.vf && a.rg == b.rg && a.dv == b.dv
 }
 
 // Is `d` an operator, which a call site writes rather than a function it calls?
@@ -123,9 +125,10 @@ pub fn c_name(b: ir::Bundle, dups: vector<boolean>, d: integer) -> text {
   if !(dups[d] ?? false) || runtime_provided {
     return rust_fn_ident(def.name);
   }
-  // FNV-1a over the defining file's path.
+  // FNV-1a over the defining file's NAME (`source_name::name`): the same in every checkout
+  // and run.
   h = 2166136261;
-  file = def.position.file;
+  file = name_from(def.position.file, program_dir(main_file(b)), std_dir(b));
   for i in 0..file.size() {
     h = h ^ file.byte_at(i);
     h = (h * 16777619) & 4294967295;
@@ -136,6 +139,7 @@ pub fn c_name(b: ir::Bundle, dups: vector<boolean>, d: integer) -> text {
 // The C name of twin `t` (`twin_name`).
 pub fn twin_name(b: ir::Bundle, dups: vector<boolean>, t: Twin) -> text {
   out = c_name(b, dups, t.d);
+  if t.dv { out += "__dv"; }
   if t.places != 0 {
     out += "_pl{t.places}";
   }
@@ -193,3 +197,180 @@ fn source_name_of_key(name: text) -> text {
   }
   key
 }
+
+// `Data::def_nr("n_main")` (`get_or_std`): the program's own `main` — the definition of that
+// name in the program's source — before one of the same name elsewhere (a library's).
+pub fn main_index(b: ir::Bundle) -> integer {
+  found = -1;
+  for d in b.data.definitions {
+    if d.name == "n_main" && (found < 0 || d.source == b.data.source) {
+      if found < 0 || b.data.definitions[found]!.source != b.data.source {
+        found = d#index;
+      }
+    }
+  }
+  found
+}
+
+// The directory of path `p` (`Path::parent`), "" for a bare name.
+pub fn parent_of(p: text) -> text {
+  at = -1;
+  for c in p {
+    if c == '/' {
+      at = c#index;
+    }
+  }
+  if at < 0 { "" } else if at == 0 { "/" } else { p[0..at] }
+}
+
+// The file `main` was read from (`Data::source_roots`' `file_of(def_nr("n_main"))`).
+pub fn main_file(b: ir::Bundle) -> text {
+  m = main_index(b);
+  if m < 0 { "" } else { b.data.definitions[m]!.position.file }
+}
+
+// The directory the standard library was read from: that of the first standard-library
+// definition with a file (`STD_SOURCE`, source 0).
+pub fn std_dir(b: ir::Bundle) -> text {
+  for d in b.data.definitions {
+    if d.source == 0 && d.position.file != "" {
+      return parent_of(d.position.file);
+    }
+  }
+  ""
+}
+
+// `source_name::program_dir`: the program's project root — the nearest directory at or above
+// its `main`'s that holds a `loft.toml` (`resolution_scope::project_root`) — else `main`'s own
+// directory.  The Rust side starts from the canonical directory; a path is taken here as the
+// definitions spell it, which agrees wherever no part of it is a symbolic link.
+pub fn program_dir(main_file: text) -> text {
+  if main_file == "" {
+    return "";
+  }
+  start = if is_dir(main_file) { main_file } else { parent_of(main_file) };
+  if start == "" {
+    start = directory();
+  }
+  cur = start;
+  for _ in 0..4096 {
+    if exists("{cur}/loft.toml") {
+      return cur;
+    }
+    up = parent_of(cur);
+    if up == "" || up == cur {
+      break;
+    }
+    cur = up;
+  }
+  parent_of(main_file)
+}
+
+// `file` below directory `dir`: the rest after `dir/`, null when it is not below it.
+fn beneath(file: text, dir: text) -> text? {
+  d = dir;
+  while d.ends_with("/") {
+    d = d[0..d.size() - 1];
+  }
+  if d == "" || !file.starts_with("{d}/") {
+    return null;
+  }
+  file[d.size() + 1..file.size()]
+}
+
+// `source_name` against the roots `main_dir` and `std_dir`.
+pub fn name_from(file: text, main_dir: text, std_dir: text) -> text {
+  if !file.starts_with("/") {
+    return file;
+  }
+  std_rest = beneath(file, std_dir);
+  if std_rest != null {
+    return "default/{std_rest}";
+  }
+  main_rest = beneath(file, main_dir);
+  if main_rest != null {
+    return main_rest;
+  }
+  cur = parent_of(file);
+  while cur != "" && cur != "/" {
+    if exists("{cur}/loft.toml") {
+      holder = parent_of(cur);
+      rest = beneath(file, holder);
+      if rest != null {
+        return rest;
+      }
+      break;
+    }
+    cur = parent_of(cur);
+  }
+  at = -1;
+  for c in file {
+    if c == '/' {
+      at = c#index;
+    }
+  }
+  file[at + 1..file.size()]
+}
+
+// `name` as a C identifier, injectively (`c::c_ident`): a letter or digit stays, `_` is `__`,
+// and any other character is `_` and its code in hex — two digits, or `u` and six — so two names
+// never meet in one identifier (`vector<P>` is `vector_3cP_3e`, `two::P` is `two_3a_3aP`).
+pub fn c_ident(name: text) -> text {
+  out = "";
+  for ch in name {
+    c = ch as integer;
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) {
+      out += "{ch}";
+    } else if c == 95 {
+      out += "__";
+    } else if c < 256 {
+      out += "_{c:02x}";
+    } else {
+      out += "_u{c:06x}";
+    }
+  }
+  out
+}
+
+// The part of a C name that stands for each type (`Cx::type_ident`: `loft_keys_<ident>`,
+// `loft_fields_<ident>`, `loft_dflt_<ident>`, `lt_<ident>`): the type's own name made an
+// identifier, never its number, which moves whenever a type is added before it.  Two types that
+// share a name keep their number beside it, so no two C names collide.
+pub fn type_idents(b: ir::Bundle) -> vector<text> {
+  names: vector<text> = [for t in b.types { c_ident(t.name) }];
+  out: vector<text> = [];
+  for n in names {
+    shared = 0;
+    for m in names {
+      if m == n {
+        shared += 1;
+      }
+    }
+    out += [if shared > 1 { "{n}_{n#index}" } else { n }];
+  }
+  out
+}
+
+// The part of a C name that stands for each constant (`Cx::const_ident`: `loft_const_<ident>`,
+// `loft_cwords_<ident>`), by definition number: the constant's own name made an identifier,
+// never its number, which moves whenever a definition is added before it.  Two constants that
+// share a name keep their number beside it.  "" for a definition that is no constant.
+pub fn const_idents(b: ir::Bundle) -> vector<text> {
+  names: vector<text> = [for d in b.data.definitions { if d.def_type == 8 { c_ident(d.name) } else { "" } }];
+  out: vector<text> = [];
+  for n in names {
+    if n == "" {
+      out += [""];
+      continue;
+    }
+    shared = 0;
+    for m in names {
+      if m == n {
+        shared += 1;
+      }
+    }
+    out += [if shared > 1 { "{n}_{n#index}" } else { n }];
+  }
+  out
+}
+

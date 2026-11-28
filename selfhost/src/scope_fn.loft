@@ -55,6 +55,149 @@ pub fn is_captured(f: ir::Function, v: integer) -> boolean {
   if x == null { false } else { x.captured }
 }
 
+// port: variables/mod.rs fn was_loop_var — has `v` served as a loop's variable?
+pub fn was_loop_var(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.was_loop_var }
+}
+
+// port: variables/mod.rs fn is_ref_home — `@FR-H-RefHome`, a store a stored reference names.
+pub fn is_ref_home(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.ref_home }
+}
+
+// port: variables/mod.rs fn has_ref_home
+pub fn has_ref_home(f: ir::Function) -> boolean {
+  for x in f.variables {
+    if x.ref_home {
+      return true;
+    }
+  }
+  false
+}
+
+// port: variables/mod.rs fn is_place_buffer — a buffer a placed call result is claimed in.
+pub fn is_place_buffer(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.place_buffer }
+}
+
+// port: variables/mod.rs fn viewers_of — the variables that may share `root`'s store: through
+// the deps they carry now and, where `earlier_binds`, every earlier bind's (`Variable::viewed`);
+// where one of those stores is a caller's, every heap parameter and the locals viewing one.
+// `store_viewers` asks it with the earlier binds, `store_viewers_now` without.
+pub fn viewers_of(f: ir::Function, root: integer, earlier_binds: boolean) -> vector<integer> {
+  roots = viewer_closure(f, root, earlier_binds);
+  roots += [root];
+  from_caller = false;
+  for r in roots {
+    if is_argument(f, r) {
+      from_caller = true;
+    }
+  }
+  foreign: vector<integer> = [];
+  if from_caller {
+    for w in 0..count(f) {
+      if w != root && is_argument(f, w) && has_heap_dep(tp(f, w)) {
+        foreign += [w];
+      }
+    }
+  }
+  out: vector<integer> = [];
+  for w in 0..count(f) {
+    if w == root {
+      continue;
+    }
+    hit = has(foreign, w);
+    if !hit {
+      for d in viewer_closure(f, w, earlier_binds) {
+        if has(roots, d) || has(foreign, d) {
+          hit = true;
+        }
+      }
+    }
+    if hit {
+      out += [w];
+    }
+  }
+  out
+}
+
+pub fn viewer_closure(f: ir::Function, start: integer, earlier_binds: boolean) -> vector<integer> {
+  seen: vector<integer> = [];
+  stack: vector<integer> = [start];
+  while len(stack) > 0 {
+    v = stack[len(stack) - 1]!;
+    stack.remove(len(stack) - 1);
+    ds = deps(f, v);
+    if earlier_binds {
+      x = f.variables[v];
+      if x != null {
+        ds += x!.viewed;
+      }
+    }
+    for d in ds {
+      if d < count(f) && !has(seen, d) {
+        seen += [d];
+        stack += [d];
+      }
+    }
+  }
+  seen
+}
+
+// port: data.rs fn heap_dep `.is_some()` — a heap type, read through `base()`.
+pub fn has_heap_dep(t: ir::TypeT) -> boolean {
+  match base(t) {
+    TyReference => true,
+    TyVector => true,
+    TyEnum { is_ref } => is_ref,
+    TySorted => true,
+    TyHash => true,
+    TyIndex => true,
+    TyRadix => true,
+    TyTrie => true,
+    _ => false
+  }
+}
+
+// port: variables/mod.rs fn var — the variable `nm` names in the names map, -1 for none.
+pub fn var(f: ir::Function, nm: text) -> integer {
+  for n in f.names {
+    if n.name == nm {
+      return n.nr;
+    }
+  }
+  -1
+}
+
+// port: data.rs fn reads_var — does `n` name `v` anywhere (`names_var_here`: a read, a `Set`
+// target, a tuple access, a call through it, an iterator, a fn-ref's work variable)?
+pub fn names_var(n: ir::Node, v: integer) -> boolean {
+  u = unspan(n);
+  hit = match u {
+    NdVar { n: x } => x == v,
+    NdSet { var: x } => x == v,
+    NdTupleGet { var: x } => x == v,
+    NdTuplePut { var: x } => x == v,
+    NdFnRefDnr { n: x } => x == v,
+    NdCallRef { var: x } => x == v,
+    NdIter { var: x } => x == v,
+    NdFnRef { var: x } => x == v,
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for c in children(u) {
+    if names_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
 // port: variables/mod.rs fn is_compiler_generated
 pub fn is_compiler_generated(f: ir::Function, v: integer) -> boolean {
   x = f.variables[v];
@@ -352,6 +495,11 @@ fn copy_var(v: ir::Variable) -> ir::Variable {
   n.owner_witness = v.owner_witness;
   n.rebind_orig = v.rebind_orig;
   n.scope = v.scope;
+  n.arm_consumed = v.arm_consumed;
+  n.was_loop_var = v.was_loop_var;
+  n.place_buffer = v.place_buffer;
+  n.ref_home = v.ref_home;
+  n.viewed = [for d in v.viewed { d }];
   n
 }
 

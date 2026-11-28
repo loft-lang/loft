@@ -113,7 +113,7 @@ pub fn param_writes(b: ir::Bundle, d: integer, c: Cache) -> vector<boolean> {
 }
 
 // `parser::find_written_vars`
-fn written_vars(b: ir::Bundle, d: ir::Definition, code: ir::Node, written: vector<boolean>, c: Cache) {
+pub fn written_vars(b: ir::Bundle, d: ir::Definition, code: ir::Node, written: vector<boolean>, c: Cache) {
   match code {
     NdSet { var, inner } => {
       if var >= 0 && var < len(written) {

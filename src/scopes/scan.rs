@@ -310,6 +310,14 @@ impl Scopes<'_> {
                 let first = !self
                     .var_scope
                     .contains_key(self.var_mapping.get(ov).unwrap_or(ov));
+                // loft#2674 — …except where the call DELIVERS the construction it was handed
+                // (`delivered_work_ref`, loft#1575's `s = me(Bx { … })`): the binding adopts that
+                // store at a rebind, and the construction's buffer is paired with the binding as
+                // its adopter.  Hoisted, the first bind copied the answer instead, the pairing
+                // still took the buffer's free, and the construction leaked once per first bind.
+                // `LOFT_NO_DELIVERED_FIRST_ADOPT=1` hoists it again.
+                let delivered = crate::keys::delivered_first_adopt()
+                    && super::backings::delivered_work_ref(value, function, data).is_some();
                 let set = self.scan_set(*ov, value, function, data);
                 // A FIRST bind of a call whose arguments were hoisted (`{ INSERT <literals>; f(…) }`, `scan_args`)
                 // is bound as the call itself, its preamble run first: the bind arm reads the
@@ -323,6 +331,7 @@ impl Scopes<'_> {
                 let set = match set {
                     Value::Set(v, val)
                         if first
+                            && !delivered
                             && !crate::env_once!(
                                 std::env::var_os("LOFT_NO_SET_PREAMBLE_HOIST").is_some()
                             )
@@ -886,6 +895,30 @@ impl Scopes<'_> {
             }
             Value::Drop(inner) => {
                 let scanned = self.scan(inner, function, data);
+                // loft#2677 — the scanned value may carry its source position: a `Span` around
+                // the `Insert` a lifted argument made (`visit(t, []);`, the vector literal hoisted)
+                // hid the shape below, so the discarded call's owned result was never lifted
+                // and nothing freed it, one record per evaluation.  The position stays on the
+                // final value, as `scan_set`'s flatten keeps it (loft#1884).
+                // `LOFT_NO_DROP_SPAN_PEEL=1` leaves the span in place.
+                let scanned = match scanned {
+                    Value::Span(b)
+                        if matches!(&b.1, Value::Insert(ops) if !ops.is_empty())
+                            && !crate::env_once!(
+                                std::env::var_os("LOFT_NO_DROP_SPAN_PEEL").is_some()
+                            ) =>
+                    {
+                        let (pos, inner) = *b;
+                        let Value::Insert(mut ops) = inner else {
+                            unreachable!("matched as an Insert above")
+                        };
+                        if let Some(last) = ops.pop() {
+                            ops.push(Value::Span(Box::new((pos, last))));
+                        }
+                        Value::Insert(ops)
+                    }
+                    other => other,
+                };
                 // #490 — a discarded statement result that owns a fresh store
                 // (`json_parse(x);`, `mk();`) lowers to a plain stack-pop
                 // (`FreeStack` on the interpreter, a dropped Rust return value

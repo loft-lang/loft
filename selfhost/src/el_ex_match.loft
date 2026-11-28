@@ -530,6 +530,20 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         vars.proven += cap_proof;
         b = el_ex_pattern::arm_body(e, vars, body, expected);
         forget_facts(vars, facts);
+        // (An arm read against its siblings' struct enum answers in the enum — `block_result`
+        // converts a variant tail to the expectation: `Mul { … }` after a `Num` and an `Add` arm
+        // is typed `Expr`, the arm's block too.)
+        enum_arm = false;
+        match expected {
+          TyEnum { n: xen, is_ref: xref } => {
+            if xref && !(b.tp is TyOptional) && el_ex_deliver::variant_parent(e, b.tp) == xen {
+              enum_arm = true;
+              ent = el_types::with_deps(el_types::without_deps(expected), el_types::deps(b.tp));
+              b = ex(match b.code { NdBlock { block: ebk } => if ebk[0].name == "Object" || ebk[0].name == "EnumUnitLit" { b.code } else { el_ex_null::block_typed(b.code, ent) }, _ => b.code }, ent);
+            }
+          },
+          _ => {}
+        }
         if el_types::base(b.tp) is TyVoid {
           void_arm = true;
         }
@@ -559,12 +573,15 @@ fn match_expr_inner(e: el::El, vars: el_vars::Vars, subject: integer, arms: vect
         }
         if len(binds) > 0 && (guard == null || binding_arm) && !(fcond != null && guard == null) {
           // The body block is typed without the store its own literal mints, as the arm is.
-          if !e.first_pass && el_types::base(b.tp) is TyReference && !(b.tp is TyOptional) {
+          if !e.first_pass && (el_types::base(b.tp) is TyReference || enum_arm) && !(b.tp is TyOptional) {
             b.code = match b.code { NdBlock { block } => if block[0].name == "Object" { b.code } else { el_ex_null::arm_typed(b.code, outside_deps(e, b.code, el_types::deps(b.tp))) }, _ => b.code };
           }
           // (An arm answering a vector literal is typed by the literal's own block, the store it
           // mints — not the match's expected type, which may name a renamed buffer.)
           atp = arm_own_tp(e, b);
+          if enum_arm {
+            atp = el_types::with_deps(el_types::without_deps(b.tp), outside_deps(e, b.code, el_types::deps(b.tp)));
+          }
           b.code = el_ir::v_block(binds + [b.code], atp, if binding_arm { "binding_arm" } else { "match_arm" });
         }
         // Pass 1 counts a written `null` only: an arm's code may be unbuilt there
@@ -889,114 +906,46 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
   for an in arms {
     match e.p.nodes[an] {
       SArm { pats, guard, body } => {
-        if len(pats) != 1 {
-          el::refuse(e, "a tuple match arm with alternatives");
+        tp0 = tuple_pattern(e, vars, pats[0]!, elems, tmp);
+        if tp0 == null {
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
-        cond: ir::Node? = null;
-        tnames: vector<el_vars::VarName> = [];
-        tbinds: vector<ir::Node> = [];
-        match e.p.nodes[pats[0]!] {
-          PWild => {},
-          PTuple { elems: pes } => {
-            if len(pes) != len(elems) {
-              el::refuse(e, "a tuple pattern of another length");
-              return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-            }
-            for pe in pes {
-              if e.p.nodes[pe] is PWild {
-                continue;
-              }
-              et = elems[pe#index]!;
-              tget = ir::NdTupleGet { var: tmp, idx: pe#index };
-              // `name: <pattern>` on a scalar or text member: the name bound first (Rust's
-              // `peek_named_arg` binding), then the pattern read at the member as written alone.
-              tpe = pe;
-              match e.p.nodes[pe] {
-                PCap { name: tcn, pat: tcp } => {
-                  if tcp != null && (struct_enum_of(e, et) >= 0 || el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
-                    tcv = pattern_bind(vars, tcn, et, tnames);
-                    tbinds += [el_ir::v_set(tcv, tget)];
-                    tpe = tcp!;
-                  }
-                },
-                _ => {}
-              }
-              if e.p.nodes[tpe] is PWild {
-                continue;
-              }
-              match e.p.nodes[tpe] {
-                PLit { e: tle } => {
-                  if tle == null || struct_enum_of(e, et) >= 0 {
-                    el::refuse(e, "a tuple pattern literal on a member of this type: {type_kind(et)}");
-                    return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-                  }
-                  // (`-` then a number is that number negated, a literal — not the expression
-                  // `-127` reads as elsewhere.)
-                  tlx = el_ex_assign::expression(e, vars, tle!);
-                  match e.p.nodes[tle!] {
-                    SUnary { op: tno, e: tne } => {
-                      if tno == "-" && tne != null && (e.p.nodes[tne!] is SInt || e.p.nodes[tne!] is SLong || e.p.nodes[tne!] is SFloat) {
-                        tin = el_ex_assign::expression(e, vars, tne!);
-                        tneg = match el_ir::unspan(tin.code) { NdInt { n: tnv } => ir::NdInt { n: -tnv }, NdLong { n: tnv } => ir::NdLong { n: -(tnv ?? 0) }, NdFloat { f: tnv } => ir::NdFloat { f: -tnv }, _ => ir::NdNull };
-                        if !(tneg is NdNull) {
-                          tlx = ex(tneg, tin.tp);
-                        }
-                      }
-                    },
-                    _ => {}
-                  }
-                  tle_c = el_ex_null::builtin_op(e, vars, "==", ex(tget, et), tlx);
-                  cond = if cond == null { tle_c.code } else { el_ir::v_if(cond!, tle_c.code, ir::NdBoolean { b: false }) };
-                  continue;
-                },
-                _ => {}
-              }
-              tbn = el_ex_pattern::rename_of(e, tpe);
-              if tbn != "" && struct_enum_of(e, et) < 0 {
-                if !el_ex_call::scalar(el_types::base(et)) && !(el_types::base(et) is TyText) {
-                  el::refuse(e, "a tuple pattern binding of a member of this type: {type_kind(et)}");
-                  return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-                }
-                tbv = pattern_bind(vars, tbn, et, tnames);
-                tbinds += [el_ir::v_set(tbv, tget)];
-                continue;
-              }
-              // A plain struct member's `S { … }` (`parse_field_sub_pattern` over the member): its
-              // bare fields bound, its sub-patterns `field_sub` tests (`struct_alternative`).
-              tpd = struct_ref(e, el_types::base(et));
-              if tpd >= 0 && struct_enum_of(e, et) < 0 && e.p.nodes[tpe] is PName {
-                tsa = el_ex_pattern::struct_alternative(e, vars, ex(tget, et), tpd, tpe, []);
-                if tsa == null {
-                  return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-                }
-                tbinds += tsa!.binds;
-                tnames += tsa!.names;
-                for tsc in tsa!.conds {
-                  cond = if cond == null { tsc } else { el_ir::v_if(cond!, tsc, ir::NdBoolean { b: false }) };
-                }
-                continue;
-              }
-              sd = struct_enum_of(e, et);
-              if sd < 0 {
-                el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
-                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-              }
-              mc = member_cond(e, vars, tpe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
-              if mc.refused {
-                return ex(ir::NdNull, ir::TyUnknown { n: 0 });
-              }
-              if mc.cond != null {
-                cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
-              }
-              tbinds += mc.binds;
-              tnames += mc.aliases;
-            }
-          },
-          _ => {
-            el::refuse(e, "a tuple match arm of this pattern: {syn_kind(e, pats[0]!)}");
+        cond: ir::Node? = tp0!.cond;
+        tnames: vector<el_vars::VarName> = tp0!.names;
+        tbinds: vector<ir::Node> = tp0!.binds;
+        // `parse_tuple_alternatives`: each further pattern binds fresh variables, copied into the
+        // first's (`x#1 = x#2`), the names then naming the first's again for the body.
+        alts: vector<TPat> = [];
+        for ap in pats {
+          if ap#index == 0 {
+            continue;
+          }
+          tpa = tuple_pattern(e, vars, ap, elems, tmp);
+          if tpa == null {
             return ex(ir::NdNull, ir::TyUnknown { n: 0 });
           }
+          ab = tpa!.binds;
+          for avn in tpa!.names {
+            if avn.nr >= 0 {
+              ab += [el_ir::v_set(avn.nr, ir::NdVar { n: el_vars::var(vars, avn.name) })];
+            }
+          }
+          for an2 in rev(tpa!.names) {
+            el_vars::restore_name(vars, an2.name, an2.nr);
+          }
+          // (Alternatives over record or variant members, or binding other names than the
+          // first — Rust's shared field views and the absent name's null — are not carried.)
+          same = tp0!.plain && tpa!.plain && len(tpa!.names) == len(tp0!.names);
+          for avc in tpa!.names {
+            if len([for fn0 in tp0!.names if fn0.name == avc.name { 1 }]) == 0 {
+              same = false;
+            }
+          }
+          if !same {
+            el::refuse(e, "a tuple match alternative over a record member, or binding other names than the first");
+            return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+          }
+          alts += [TPat { cond: tpa!.cond, binds: ab, names: [], plain: true }];
         }
         // `tuple-arm ::= tuple-pattern [ guard ] '=>' expression`: the guard read after the
         // pattern, its bindings in scope; the bindings then stay apart from the body, for the
@@ -1015,15 +964,23 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
         for tal in rev(tnames) {
           el_vars::restore_name(vars, tal.name, tal.nr);
         }
-        if len(tbinds) > 0 && tg == null {
-          b.code = el_ir::v_block(tbinds + [b.code], b.tp, "tuple_binding");
-        }
+        first_code = if len(tbinds) > 0 && tg == null { el_ir::v_block(tbinds + [b.code], b.tp, "tuple_binding") } else { b.code };
         if arm_settles(result, b.tp) {
           result = b.tp;
         }
         result = join_fn_arm(result, b);
         result = join_int_arm(e, vars, result, b);
-        out += [TArm { cond: cond, guard: tg, binds: if tg == null { [] } else { tbinds }, code: b.code }];
+        out += [TArm { cond: cond, guard: tg, binds: if tg == null { [] } else { tbinds }, code: first_code }];
+        // (Each alternative runs the same body under its own bindings.)
+        // (…and the same guard: its bindings, which fill the first pattern's variables, run
+        // ahead of it.)
+        for ta in alts {
+          if tg != null {
+            out += [TArm { cond: ta.cond, guard: tg, binds: ta.binds, code: b.code }];
+          } else {
+            out += [TArm { cond: ta.cond, guard: null, binds: [], code: if len(ta.binds) > 0 { el_ir::v_block(ta.binds + [b.code], b.tp, "tuple_binding") } else { b.code } }];
+          }
+        }
         // (An arm that only binds matches everything, but is no wildcard: the arms after it
         // are still read, as Rust's loop reads them; nor is a guarded one.)
         if cond == null && len(tbinds) == 0 && tg == null {
@@ -1070,6 +1027,129 @@ pub fn tuple_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>,
     }
   }
   ex(el_ir::v_block([el_ir::v_set(tmp, x.code), chain], result, "tuple_match"), result)
+}
+
+// One tuple pattern of an arm (`parse_tuple_pattern_elements`): its member tests and-ed, its
+// bindings, and the names they took (for the arm's end); null where it is refused.
+pub struct TPat {
+  pub cond: ir::Node?,
+  pub binds: vector<ir::Node>,
+  pub names: vector<el_vars::VarName>,
+  // (Only literals, `_` and plain bindings: no member's record or variant pattern, whose field
+  // views alternatives share rather than copy.)
+  pub plain: boolean
+}
+
+fn tuple_pattern(e: el::El, vars: el_vars::Vars, pn: integer, elems: vector<ir::TypeT>, tmp: integer) -> TPat? {
+  cond: ir::Node? = null;
+  tnames: vector<el_vars::VarName> = [];
+  tbinds: vector<ir::Node> = [];
+  plain = true;
+  match e.p.nodes[pn] {
+          PWild => {},
+          PTuple { elems: pes } => {
+            if len(pes) != len(elems) {
+              el::refuse(e, "a tuple pattern of another length");
+              return null;
+            }
+            for pe in pes {
+              if e.p.nodes[pe] is PWild {
+                continue;
+              }
+              et = elems[pe#index]!;
+              tget = ir::NdTupleGet { var: tmp, idx: pe#index };
+              // `name: <pattern>` on a scalar or text member: the name bound first (Rust's
+              // `peek_named_arg` binding), then the pattern read at the member as written alone.
+              tpe = pe;
+              match e.p.nodes[pe] {
+                PCap { name: tcn, pat: tcp } => {
+                  if tcp != null && (struct_enum_of(e, et) >= 0 || el_ex_call::scalar(el_types::base(et)) || el_types::base(et) is TyText || struct_ref(e, el_types::base(et)) >= 0) {
+                    tcv = pattern_bind(vars, tcn, et, tnames);
+                    tbinds += [el_ir::v_set(tcv, tget)];
+                    tpe = tcp!;
+                  }
+                },
+                _ => {}
+              }
+              if e.p.nodes[tpe] is PWild {
+                continue;
+              }
+              match e.p.nodes[tpe] {
+                PLit { e: tle } => {
+                  if tle == null || struct_enum_of(e, et) >= 0 {
+                    el::refuse(e, "a tuple pattern literal on a member of this type: {type_kind(et)}");
+                    return null;
+                  }
+                  // (`-` then a number is that number negated, a literal — not the expression
+                  // `-127` reads as elsewhere.)
+                  tlx = el_ex_assign::expression(e, vars, tle!);
+                  match e.p.nodes[tle!] {
+                    SUnary { op: tno, e: tne } => {
+                      if tno == "-" && tne != null && (e.p.nodes[tne!] is SInt || e.p.nodes[tne!] is SLong || e.p.nodes[tne!] is SFloat) {
+                        tin = el_ex_assign::expression(e, vars, tne!);
+                        tneg = match el_ir::unspan(tin.code) { NdInt { n: tnv } => ir::NdInt { n: -tnv }, NdLong { n: tnv } => ir::NdLong { n: -(tnv ?? 0) }, NdFloat { f: tnv } => ir::NdFloat { f: -tnv }, _ => ir::NdNull };
+                        if !(tneg is NdNull) {
+                          tlx = ex(tneg, tin.tp);
+                        }
+                      }
+                    },
+                    _ => {}
+                  }
+                  tle_c = el_ex_null::builtin_op(e, vars, "==", ex(tget, et), tlx);
+                  cond = if cond == null { tle_c.code } else { el_ir::v_if(cond!, tle_c.code, ir::NdBoolean { b: false }) };
+                  continue;
+                },
+                _ => {}
+              }
+              tbn = el_ex_pattern::rename_of(e, tpe);
+              if tbn != "" && struct_enum_of(e, et) < 0 {
+                if !el_ex_call::scalar(el_types::base(et)) && !(el_types::base(et) is TyText) {
+                  el::refuse(e, "a tuple pattern binding of a member of this type: {type_kind(et)}");
+                  return null;
+                }
+                tbv = pattern_bind(vars, tbn, et, tnames);
+                tbinds += [el_ir::v_set(tbv, tget)];
+                continue;
+              }
+              // A plain struct member's `S { … }` (`parse_field_sub_pattern` over the member): its
+              // bare fields bound, its sub-patterns `field_sub` tests (`struct_alternative`).
+              tpd = struct_ref(e, el_types::base(et));
+              if tpd >= 0 && struct_enum_of(e, et) < 0 && e.p.nodes[tpe] is PName {
+                plain = false;
+                tsa = el_ex_pattern::struct_alternative(e, vars, ex(tget, et), tpd, tpe, []);
+                if tsa == null {
+                  return null;
+                }
+                tbinds += tsa!.binds;
+                tnames += tsa!.names;
+                for tsc in tsa!.conds {
+                  cond = if cond == null { tsc } else { el_ir::v_if(cond!, tsc, ir::NdBoolean { b: false }) };
+                }
+                continue;
+              }
+              sd = struct_enum_of(e, et);
+              if sd < 0 {
+                el::refuse(e, "a tuple pattern member on a member of this type: {type_kind(et)}");
+                return null;
+              }
+              plain = false;
+              mc = member_cond(e, vars, tpe, sd, ir::NdTupleGet { var: tmp, idx: pe#index });
+              if mc.refused {
+                return null;
+              }
+              if mc.cond != null {
+                cond = if cond == null { mc.cond } else { el_ir::v_if(cond!, mc.cond!, ir::NdBoolean { b: false }) };
+              }
+              tbinds += mc.binds;
+              tnames += mc.aliases;
+            }
+          },
+          _ => {
+            el::refuse(e, "a tuple match arm of this pattern: {syn_kind(e, pn)}");
+            return null;
+          }
+        }
+  TPat { cond: cond, binds: tbinds, names: tnames, plain: plain }
 }
 
 pub struct MemberCond {
@@ -1604,7 +1684,9 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
   // (A plain struct element is matched as a struct enum's is, bound as a view of its slot; a
   // linked one — held by id — is not carried.)
   pstruct = el_ex_base::struct_ref(e, el_types::base(elm)) >= 0 && !el_ex_base::linked_record(e, elm);
-  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0 || pstruct) || narrow || (elm is TyEnum && sed < 0) {
+  // (A narrow element is read with its width's getter at its range's start, `elem_read`:
+  // `OpGetByte(OpGetVector(v, 1, i), 0, 0)`.)
+  if !(el_convert::plain_scalar(elm) || elm is TyText || sed >= 0 || pstruct) || (narrow && (e.first_pass && false)) || (elm is TyEnum && sed < 0) {
     el::refuse(e, "a vector match over this element type: {type_kind(elm)}");
     return void;
   }
@@ -1763,6 +1845,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
         vars.cursor = [];
         b = el_ex_pattern::empty_vector_arm(e, vars, body, expected) ?? el_ex_pattern::arm_body(e, vars, body, expected);
         vars.cursor = arm_cursor;
+        // (A record literal's arm is typed as the record: the literal's work ref is its block's
+        // own, not the arm's — `slice_binding: ref(P)` around `Object: ref(P)["__ref_p2_1"]`.)
+        if !e.first_pass && match el_ir::unspan(b.code) { NdBlock { block: obk } => obk[0].name == "Object", _ => false } && el_types::base(b.tp) is TyReference {
+          b = ex(b.code, el_types::without_deps(b.tp));
+        }
         // `@FR-C-Never`'s typed halt in a vector match (`type_null_arms` over the slice arms) is
         // not carried.
         if !e.first_pass && el_ex_null::ends_in_halt(e, b.code) {
@@ -1771,6 +1858,11 @@ pub fn vector_match(e: el::El, vars: el_vars::Vars, x: Ex, arms: vector<integer>
         }
         if arm_settles(result, b.tp) {
           result = b.tp;
+        }
+        // (Two variants of one struct enum join to the enum, `@FR-C-Var`.)
+        vjt = el_vars::variant_join(e, result, b.tp);
+        if vjt != null {
+          result = vjt!;
         }
         result = join_fn_arm(result, b);
         result = join_int_arm(e, vars, result, b);
@@ -2434,12 +2526,17 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // element read inline (`OpEq…(<element>, <literal>)`); -1 for none.
   head_blit: vector<integer> = [];
   tail_blit: vector<integer> = [];
+  // A capture's alternation or range (`[x: true | false, ..]`, `[x: 1..5, ..]`): tested as a
+  // field's sub-pattern is (`sub_pattern_cond` over a `_fp_subj_N` read), -1 for none.
+  head_sub: vector<integer> = [];
+  tail_sub: vector<integer> = [];
   plus_rest = 0;
   for el0 in elems {
     nm = "";
     pat = -1;
     lit = -1;
     blit = -1;
+    sub = -1;
     match e.p.nodes[el0] {
       PLit { e: ble } => {
         if ble == null || sed >= 0 {
@@ -2448,6 +2545,25 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
         }
         nm = "_";
         blit = ble!;
+      },
+      // `x: true | false` reads as an alternation whose first member is the capture: `x` names
+      // the element, every member (the capture's own pattern first) an alternative tested on it.
+      PAlt { alts: pal } => {
+        p0 = pal[0] ?? -1;
+        match e.p.nodes[p0] {
+          PCap { name: pcn, pat: pcp } => {
+            if pcp == null || sed >= 0 {
+              el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+              return null;
+            }
+            nm = pcn;
+            sub = el0;
+          },
+          _ => {
+            el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
+            return null;
+          }
+        }
       },
       PRest { name } => {
         if has_rest {
@@ -2487,9 +2603,31 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
             nm = cn;
             lit = cle!;
           },
+          PAlt { alts: _ } => {
+            if sed >= 0 {
+              el::refuse(e, "a slice pattern capture of an alternation over this element");
+              return null;
+            }
+            nm = cn;
+            sub = cpn;
+          },
+          PRange { lo: _ } => {
+            if sed >= 0 {
+              el::refuse(e, "a slice pattern capture of a range over this element");
+              return null;
+            }
+            nm = cn;
+            sub = cpn;
+          },
           // `p: Pt` (the element's struct named: the capture alone) and `p: Pt { … }` (the
           // capture, then the struct's pattern over the same element).
           PName { name: cpnm, member: cpm, fields: cpf, braces: cpb } => {
+            // (`tok: Ship { carrier }` over a struct-enum element: the capture, then the
+            // variant's pattern over the same element.)
+            if sed >= 0 && cpm == "" && el::variant_of(e, sed, cpnm) >= 0 {
+              nm = cn;
+              pat = cpn;
+            } else {
             cpsd = el_ex_base::struct_ref(e, el_types::base(elm));
             if sed >= 0 || cpsd < 0 || cpm != "" || cpnm != el::def(e, cpsd).name {
               el::refuse(e, "a slice pattern element of this form: {syn_kind(e, el0)}");
@@ -2498,6 +2636,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
             nm = cn;
             if len(cpf) > 0 || cpb {
               pat = cpn;
+            }
             }
           },
           _ => {
@@ -2524,11 +2663,13 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       tail_pat += [pat];
       tail_lit += [lit];
       tail_blit += [blit];
+      tail_sub += [sub];
     } else {
       head += [nm];
       head_pat += [pat];
       head_lit += [lit];
       head_blit += [blit];
+      head_sub += [sub];
     }
   }
   fixed = len(head) + len(tail);
@@ -2554,7 +2695,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       if h != "_" && h != "" {
         hcv = pattern_bind(vars, h, named_t, names);
         slice_element_view(vars, hcv, named_t);
-        binds += [el_ir::v_set(hcv, slice_elem(e, elm, at))];
+        alt_binds += [el_ir::v_set(hcv, slice_elem(e, elm, at))];
       }
       hsa = el_ex_pattern::struct_alternative(e, vars, ex(slice_elem(e, elm, at), elm), el_ex_base::struct_ref(e, el_types::base(elm)), head_pat[h#index] ?? -1, []);
       if hsa == null {
@@ -2563,20 +2704,24 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       for hsc in hsa!.conds {
         cond = el_ir::v_if(cond, hsc, ir::NdBoolean { b: false });
       }
-      binds += hsa!.binds;
+      alt_binds += hsa!.binds;
       names += hsa!.names;
     } else if (head_pat[h#index] ?? -1) >= 0 {
       hpn = head_pat[h#index] ?? -1;
+      // (A capture of the element binds it first, a view of the subject's element.)
+      if h != "_" && h != "" {
+        hev = pattern_bind(vars, h, named_t, names);
+        slice_element_view(vars, hev, named_t);
+        alt_binds += [el_ir::v_set(hev, slice_elem(e, elm, at))];
+      }
       va = if el_ex_pattern::single_alt_group(e, hpn) { el_ex_pattern::single_alt(e, vars, hpn, sed, elm, sv, src, if len(cur) > 0 { el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cur[3]! }, ir::NdInt { n: h#index }]) } else { ir::NdInt { n: h#index } }, names) } else { el_ex_pattern::slice_variant(e, vars, hpn, sed, rooted_elem(e, elm, at, sv), names) };
       if va == null {
         return null;
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
-      if el_ex_pattern::single_alt_group(e, hpn) {
-        alt_binds += va!.binds;
-      } else {
-        binds += va!.binds;
-      }
+      // (A pattern element's bindings come ahead of the plain names, as a single alternation's
+      // do: `[a, Pickup { store }, c]` binds `store` first.)
+      alt_binds += va!.binds;
     } else if (head_blit[h#index] ?? -1) >= 0 {
       hbx = el_ex_assign::expression(e, vars, head_blit[h#index] ?? 0);
       hbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), hbx);
@@ -2593,7 +2738,7 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       if t != "_" && t != "" {
         tcv = pattern_bind(vars, t, named_t, names);
         slice_element_view(vars, tcv, named_t);
-        binds += [el_ir::v_set(tcv, slice_elem(e, elm, at))];
+        alt_binds += [el_ir::v_set(tcv, slice_elem(e, elm, at))];
       }
       tsa = el_ex_pattern::struct_alternative(e, vars, ex(slice_elem(e, elm, at), elm), el_ex_base::struct_ref(e, el_types::base(elm)), tail_pat[t#index] ?? -1, []);
       if tsa == null {
@@ -2602,20 +2747,21 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
       for tsc in tsa!.conds {
         cond = el_ir::v_if(cond, tsc, ir::NdBoolean { b: false });
       }
-      binds += tsa!.binds;
+      alt_binds += tsa!.binds;
       names += tsa!.names;
     } else if (tail_pat[t#index] ?? -1) >= 0 {
       tpn = tail_pat[t#index] ?? -1;
+      if t != "_" && t != "" {
+        tev = pattern_bind(vars, t, named_t, names);
+        slice_element_view(vars, tev, named_t);
+        alt_binds += [el_ir::v_set(tev, slice_elem(e, elm, at))];
+      }
       va = if el_ex_pattern::single_alt_group(e, tpn) { el_ex_pattern::single_alt(e, vars, tpn, sed, elm, sv, src, ir::NdInt { n: t#index - len(tail) }, names) } else { el_ex_pattern::slice_variant(e, vars, tpn, sed, rooted_elem(e, elm, at, sv), names) };
       if va == null {
         return null;
       }
       cond = el_ir::v_if(cond, va!.cond ?? ir::NdBoolean { b: true }, ir::NdBoolean { b: false });
-      if el_ex_pattern::single_alt_group(e, tpn) {
-        alt_binds += va!.binds;
-      } else {
-        binds += va!.binds;
-      }
+      alt_binds += va!.binds;
     } else if (tail_blit[t#index] ?? -1) >= 0 {
       tbx = el_ex_assign::expression(e, vars, tail_blit[t#index] ?? 0);
       tbe = el_ex_null::builtin_op(e, vars, "==", ex(slice_elem(e, elm, at), elm), tbx);
@@ -2631,7 +2777,40 @@ pub fn slice_arm(e: el::El, vars: el_vars::Vars, sv: integer, src: integer, elm:
   // Each capture's literal is tested (`#field_sub` over a `_fp_subj_N` read of the element),
   // joined to the length test, the element bound with the rest.  (Its temp is minted after the
   // captures' variables, as Rust numbers them.)
+  all_sub = head_sub + tail_sub;
   for hl in head_lit + tail_lit {
+    hsub = all_sub[hl#index] ?? -1;
+    if hl < 0 && hsub >= 0 {
+      si = hl#index;
+      spos = if si < len(head_lit) { si } else { si - len(head_lit) - len(tail_lit) };
+      sat2 = el_ir::cl(e, "OpGetVector", [ir::NdVar { n: sv }, ir::NdInt { n: es }, ir::NdInt { n: spos }]);
+      sfp = el_vars::create_unique(vars, "fp_subj", elm);
+      el_vars::set_defined(vars, sfp);
+      sc: ir::Node? = null;
+      match e.p.nodes[hsub] {
+        PAlt { alts: sal } => {
+          // (Each member its test, the capture's own pattern for the first; folded from the
+          // left, `if (if a true else b) true else c`, as Rust's alternation chains.)
+          chain = ir::NdNull;
+          for mp0 in sal {
+            mp = match e.p.nodes[mp0] { PCap { pat: mcp } => mcp ?? mp0, _ => mp0 };
+            mc = el_ex_pattern::sub_pattern_cond(e, vars, mp, sfp, elm);
+            if mc == null {
+              return null;
+            }
+            chain = if chain is NdNull { mc! } else { el_ir::v_if(chain, ir::NdBoolean { b: true }, mc!) };
+          }
+          sc = chain;
+        },
+        _ => {
+          sc = el_ex_pattern::sub_pattern_cond(e, vars, hsub, sfp, elm);
+        }
+      }
+      if sc == null {
+        return null;
+      }
+      cond = el_ir::v_if(cond, el_ir::v_block([el_ir::v_set(sfp, slice_elem(e, elm, sat2)), sc!], ir::TyBoolean, "field_sub"), ir::NdBoolean { b: false });
+    }
     if hl >= 0 {
       li = hl#index;
       lpos = if li < len(head_lit) { li } else { li - len(head_lit) - len(tail_lit) };

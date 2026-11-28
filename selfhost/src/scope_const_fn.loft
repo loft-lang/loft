@@ -1,0 +1,486 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/const_fn.rs` transcribed: `@FR-R-Const`.  A function whose body is one vector
+// literal has a constant twin `__const_<name>` (`Definition::literal_const`, the image's
+// `const_linked`): its body copies the twin (`OpAppendVector(v, OpConstRef(k), elem)`), and a
+// call of such a function whose result is only read (`use_analysis::read_only_uses`) answers a
+// view of the constant (`OpConstRef(k)`), its buffer's guarded mints dropped where nothing else
+// names it.  Run by `check` on the settled body after `rebind_place`, as Rust's is.  Rust keys
+// the admitted calls by their address; here by their path through the body.
+
+use ir;
+use scope_fn;
+use scope_args;
+use ir_pass_tree;
+use ir_fill_loop;
+
+// The constant twin of `d`, -1 for none.
+pub fn twin_of(b: ir::Bundle, d: integer) -> integer {
+  x = b.data.definitions[d];
+  if x == null || !x!.const_linked {
+    return -1;
+  }
+  nm = "__const_{x!.name}";
+  for c in b.data.definitions {
+    if c.name == nm && c.source == x!.source {
+      return c#index;
+    }
+  }
+  -1
+}
+
+// The one case the transcription refuses: a body copied from its twin whose element is a tuple,
+// whose stored type (`Data::vector_element_type` through `type_elm`) the port does not derive.
+pub fn refusal(b: ir::Bundle, d_nr: integer) -> text {
+  if env_variable("LOFT_NO_CONST_VIEW") != null || twin_of(b, d_nr) < 0 {
+    return "";
+  }
+  match scope_fn::base(b.data.definitions[d_nr]!.returned[0] ?? ir::TyVoid) {
+    TyVector { inner } => if scope_fn::base(inner) is TyTuple { "const_fn::copy_from_twin: a vector of tuples (Data::vector_element_type through type_elm)" } else { "" },
+    _ => ""
+  }
+}
+
+struct Cx {
+  b: ir::Bundle,
+  admitted: vector<text>,
+  const_ref: integer,
+  is_null: integer,
+  buffers: vector<integer>
+}
+
+// port: const_fn.rs fn rewrite
+pub fn rewrite(b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function) -> ir::Node {
+  if env_variable("LOFT_NO_CONST_VIEW") != null || b.data.definitions[d_nr]!.def_type != 1 {
+    return code;
+  }
+  out = code;
+  tw = twin_of(b, d_nr);
+  if tw >= 0 {
+    out = copy_from_twin(b, out, d_nr, tw);
+  }
+  if calls_one(b, out) {
+    nv = scope_fn::count(f);
+    oks: vector<boolean> = [for _ in 0..nv { true }];
+    sets: vector<integer> = [for _ in 0..nv { 0 }];
+    ro = Ro { b: b, ok: oks, sets: sets, calls: [], bound_path: [], bound_var: [], alias_w: [], alias_v: [] };
+    ro_walk(ro, out, "", true);
+    for v in 0..len(ro.ok) {
+      if ro.sets[v]! != 1 {
+        ro.ok[v] = false;
+      }
+    }
+    moved = true;
+    while moved {
+      moved = false;
+      for k in 0..len(ro.alias_w) {
+        w = ro.alias_w[k]!;
+        v = ro.alias_v[k]!;
+        if !(ro.ok[w] ?? false) && (ro.ok[v] ?? false) {
+          ro.ok[v] = false;
+          moved = true;
+        }
+      }
+    }
+    for k in 0..len(ro.bound_path) {
+      if ro.ok[ro.bound_var[k]!] ?? false {
+        ro.calls += [ro.bound_path[k]!];
+      }
+    }
+    cx = Cx { b: b, admitted: ro.calls, const_ref: scope_fn::def_nr(b, "OpConstRef"), is_null: scope_fn::def_nr(b, "OpRefIsNull"), buffers: [] };
+    out = substitute(cx, out, "");
+    if len(cx.buffers) > 0 {
+      frees: vector<integer> = [];
+      for nm in ["OpFreeRef", "OpFreeRefIfDistinct", "OpFreeRefUnlessEntry", "OpFreeRecordIn"] {
+        x = scope_fn::def_nr(b, nm);
+        if x >= 0 {
+          frees += [x];
+        }
+      }
+      for bf in cx.buffers {
+        if !mentions_outside_guards(out, bf, cx.is_null, frees) {
+          out = drop_guards(out, bf, cx.is_null);
+        }
+      }
+    }
+  }
+  out
+}
+
+fn marked(b: ir::Bundle, d: integer) -> boolean {
+  x = b.data.definitions[d];
+  x != null && x!.const_linked
+}
+
+fn calls_one(b: ir::Bundle, n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr } => if marked(b, def_nr) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if calls_one(b, c) {
+      return true;
+    }
+  }
+  false
+}
+
+fn step(path: text, i: integer) -> text {
+  if path == "" { "{i}" } else { "{path}.{i}" }
+}
+
+// The node read through its spans, and its path.
+fn unspan_path(n: ir::Node, path: text) -> text {
+  p = path;
+  u = n;
+  while u is NdSpan {
+    p = step(p, 0);
+    u = match u { NdSpan { inner } => inner, _ => u };
+  }
+  p
+}
+
+// `use_analysis::read_only_uses`'s state, with the admitted calls keyed by path.
+struct Ro {
+  b: ir::Bundle,
+  ok: vector<boolean>,
+  sets: vector<integer>,
+  calls: vector<text>,
+  bound_path: vector<text>,
+  bound_var: vector<integer>,
+  alias_w: vector<integer>,
+  alias_v: vector<integer>
+}
+
+fn deny(ro: Ro, v: integer) {
+  if v >= 0 && v < len(ro.ok) {
+    ro.ok[v] = false;
+  }
+}
+
+fn is_scalar_getter(nm: text) -> boolean {
+  nm == "OpGetBoolean" || nm == "OpGetByte" || nm == "OpGetByteNullable" || nm == "OpGetCharacter" || nm == "OpGetEnum"
+    || nm == "OpGetFloat" || nm == "OpGetInt" || nm == "OpGetShort" || nm == "OpGetShortFull" || nm == "OpGetShortRaw"
+    || nm == "OpGetSingle" || nm == "OpGetText" || nm == "OpGetTextSub" || nm == "OpGetStackText" || nm == "OpLengthVector"
+    || nm == "t_6vector_len"
+}
+
+// port: op_sets.rs fn is_first_arg_write_name
+fn is_first_arg_write_name(n: text) -> boolean {
+  n.starts_with("OpSet") || n.starts_with("OpPush") || n.starts_with("OpAppendStack") || n.starts_with("OpClearStack")
+    || n == "OpNewRecord" || n == "OpAppendCopy" || n == "OpAppendVector" || n == "OpClearVector" || n == "OpClearKeyed"
+    || n == "OpSetKeyed" || n == "OpHashRemove" || n == "OpInsertVector" || n == "OpRemoveVector" || n == "OpKeepVectorRange"
+    || n == "OpPrependVector" || n == "OpAdoptChildRec" || n == "OpMoveChildRec" || n == "OpChildRecInPlace" || n == "OpDemoteRec"
+}
+
+// `Pos::Read` is `read`, `Pos::Reach` its negation.
+fn ro_arg(ro: Ro, val: ir::Node, path: text, read: boolean, under_getter: boolean) {
+  u = scope_fn::unspan(val);
+  up = unspan_path(val, path);
+  match u {
+    NdVar { n: v } => if !(under_getter && read) { deny(ro, v); },
+    NdCall { def_nr, args } => if marked(ro.b, def_nr) {
+      if under_getter && read {
+        ro.calls += [up];
+      }
+      for a in args {
+        ro_arg(ro, a, step(up, a#index), false, false);
+      }
+    } else {
+      ro_walk(ro, val, path, read);
+    },
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      n = len(ops);
+      for op in ops {
+        i = op#index;
+        if i + 1 == n {
+          ro_arg(ro, op, step(up, i), read, under_getter);
+        } else {
+          ro_walk(ro, op, step(up, i), true);
+        }
+      }
+    },
+    _ => ro_walk(ro, val, path, read)
+  }
+}
+
+fn ro_walk(ro: Ro, node: ir::Node, path: text, read: boolean) {
+  u = scope_fn::unspan(node);
+  up = unspan_path(node, path);
+  match u {
+    NdCall { def_nr, args } => {
+      name = scope_args::def_name(ro.b, def_nr);
+      writer = is_first_arg_write_name(name);
+      scalar = is_scalar_getter(name);
+      projection = (!scalar && name.starts_with("OpGet")) || name == "OpVectorRef" || name == "OpVectorRefNullable";
+      for a in args {
+        i = a#index;
+        if i == 0 && writer {
+          ro_arg(ro, a, step(up, i), false, false);
+        } else if i == 0 && scalar {
+          ro_arg(ro, a, step(up, i), true, true);
+        } else if i == 0 && projection {
+          ro_arg(ro, a, step(up, i), read, read);
+        } else {
+          ro_arg(ro, a, step(up, i), false, false);
+        }
+      }
+    },
+    NdSet { var: v, inner } => {
+      if v >= 0 && v < len(ro.sets) {
+        ro.sets[v] = ro.sets[v]! + 1;
+      }
+      ru = scope_fn::unspan(inner);
+      rp = unspan_path(inner, step(up, 0));
+      match ru {
+        NdVar { n: w } => {
+          ro.alias_w += [v];
+          ro.alias_v += [w];
+        },
+        NdCall { def_nr, args } => if marked(ro.b, def_nr) {
+          ro.bound_path += [rp];
+          ro.bound_var += [v];
+          for a in args {
+            ro_arg(ro, a, step(rp, a#index), false, false);
+          }
+        } else {
+          ro_arg(ro, inner, step(up, 0), false, false);
+        },
+        _ => ro_arg(ro, inner, step(up, 0), false, false)
+      }
+    },
+    NdVar { n: v } => deny(ro, v),
+    NdIter { var: v, create, next, init } => {
+      deny(ro, v);
+      ro_arg(ro, create, step(up, 0), false, false);
+      ro_arg(ro, next, step(up, 1), false, false);
+      ro_arg(ro, init, step(up, 2), false, false);
+    },
+    NdTupleGet { var: v } => deny(ro, v),
+    NdFnRefDnr { n: v } => deny(ro, v),
+    NdTuplePut { var: v, inner } => {
+      deny(ro, v);
+      ro_arg(ro, inner, step(up, 0), false, false);
+    },
+    NdCallRef { var: v, args } => {
+      deny(ro, v);
+      for a in args {
+        ro_arg(ro, a, step(up, a#index), false, false);
+      }
+    },
+    NdReturn { inner } => ro_arg(ro, inner, step(up, 0), false, false),
+    NdDrop { inner } => ro_arg(ro, inner, step(up, 0), false, false),
+    NdYield { inner } => ro_arg(ro, inner, step(up, 0), false, false),
+    NdInsert { items } => for a in items { ro_arg(ro, a, step(up, a#index), false, false); },
+    NdTuple { items } => for a in items { ro_arg(ro, a, step(up, a#index), false, false); },
+    NdParallel { arms } => for a in arms { ro_arg(ro, a, step(up, a#index), false, false); },
+    NdIf { cond, t, f } => {
+      ro_arg(ro, cond, step(up, 0), false, false);
+      ro_walk(ro, t, step(up, 1), true);
+      ro_walk(ro, f, step(up, 2), true);
+    },
+    _ => for c in scope_fn::children(u) { ro_walk(ro, c, step(up, c#index), true); }
+  }
+}
+
+// port: const_fn.rs fn substitute
+fn substitute(cx: Cx, v: ir::Node, path: text) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: substitute(cx, inner, step(path, 0)) },
+    NdCall { def_nr, args } => if marked(cx.b, def_nr) {
+      buffer = if len(args) == 1 { match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 } } else { -1 };
+      if cx.admitted.contains(path) && buffer >= 0 {
+        if !scope_fn::has(cx.buffers, buffer) {
+          cx.buffers += [buffer];
+        }
+        return ir::NdCall { def_nr: cx.const_ref, args: [ir::NdInt { n: twin_of(cx.b, def_nr) }] };
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { substitute(cx, c, step(path, c#index)) }])
+}
+
+// port: const_fn.rs fn is_guard_of — `if OpRefIsNull(b) …`.
+fn is_guard_of(v: ir::Node, b: integer, is_null: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdIf { cond } => match scope_fn::unspan(cond) {
+      NdCall { def_nr, args } => def_nr == is_null && len(args) == 1 && (match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == b, _ => false }),
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// port: const_fn.rs fn mentions_outside_guards
+fn mentions_outside_guards(v: ir::Node, b: integer, is_null: integer, frees: vector<integer>) -> boolean {
+  if is_guard_of(v, b, is_null) {
+    return false;
+  }
+  u = scope_fn::unspan(v);
+  match u {
+    NdVar { n: x } => return x == b,
+    NdSet { var: x, inner } => return (x == b && !(scope_fn::unspan(inner) is NdNull)) || mentions_outside_guards(inner, b, is_null, frees),
+    NdCall { def_nr } => if scope_fn::has(frees, def_nr) { return false; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if mentions_outside_guards(c, b, is_null, frees) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: const_fn.rs fn drop_guards — every statement guarding on `b`'s absence removed.
+fn drop_guards(v: ir::Node, b: integer, is_null: integer) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: drop_guards(inner, b, is_null) },
+    NdBlock { block } => return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators if !is_guard_of(op, b, is_null) { drop_guards(op, b, is_null) }])] },
+    NdLoop { block } => return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for op in block[0]!.operators if !is_guard_of(op, b, is_null) { drop_guards(op, b, is_null) }])] },
+    NdInsert { items } => return ir::NdInsert { items: [for op in items if !is_guard_of(op, b, is_null) { drop_guards(op, b, is_null) }] },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { drop_guards(c, b, is_null) }])
+}
+
+// A literal argument: no variable, and no call but an operator.
+fn literal(b: ir::Bundle, a: ir::Node) -> boolean {
+  u = scope_fn::unspan(a);
+  match u {
+    NdVar => return false,
+    NdCall { def_nr } => if !scope_args::def_name(b, def_nr).starts_with("Op") { return false; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if !literal(b, c) {
+      return false;
+    }
+  }
+  true
+}
+
+struct Done { done: boolean = false }
+
+// port: const_fn.rs fn copy_from_twin — the first `Vector` literal block of the body made one
+// copy of the twin.
+fn copy_from_twin(b: ir::Bundle, code: ir::Node, d_nr: integer, twin: integer) -> ir::Node {
+  content = match scope_fn::base(b.data.definitions[d_nr]!.returned[0] ?? ir::TyVoid) { TyVector { inner } => inner, _ => return code };
+  elem = ir_fill_loop::vector_element_type(b, content);
+  if elem < 0 {
+    return code;
+  }
+  st = Done { };
+  twin_walk(b, code, twin, elem, st)
+}
+
+fn named(b: ir::Bundle, d: integer, nm: text) -> boolean {
+  d >= 0 && d < len(b.data.definitions) && scope_args::def_name(b, d) == nm
+}
+
+fn first_is(a: vector<ir::Node>, v: integer) -> boolean {
+  len(a) > 0 && (match scope_fn::unspan(a[0]!) { NdVar { n: x } => x == v, _ => false })
+}
+
+fn twin_walk(b: ir::Bundle, v: ir::Node, twin: integer, elem: integer, st: Done) -> ir::Node {
+  m = v;
+  if !st.done {
+    match scope_fn::unspan(v) {
+      NdBlock { block } => {
+        bl = block[0]!;
+        r = twin_block(b, bl, twin, elem);
+        if r != null {
+          st.done = true;
+          m = with_block(v, r!);
+        }
+      },
+      _ => {}
+    }
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { twin_walk(b, c, twin, elem, st) }])
+}
+
+fn with_block(n: ir::Node, bl: ir::Block) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_block(inner, bl) },
+    _ => ir::NdBlock { block: [bl] }
+  }
+}
+
+// The `Vector` literal block made one copy of the twin, null where it is not one.
+fn twin_block(b: ir::Bundle, bl: ir::Block, twin: integer, elem: integer) -> ir::Block? {
+  ops = bl.operators;
+  n = len(ops);
+  if bl.name != "Vector" || n < 4 {
+    return null;
+  }
+  vec = match scope_fn::unspan(ops[1]!) { NdSet { var } => var, _ => return null };
+  ok = match scope_fn::unspan(ops[0]!) { NdCall { def_nr } => named(b, def_nr, "OpDatabase"), _ => false }
+    && match scope_fn::unspan(ops[2]!) { NdCall { def_nr } => named(b, def_nr, "OpSetInt4"), _ => false }
+    && match scope_fn::unspan(ops[n - 1]!) { NdVar { n: x } => x == vec, _ => false };
+  if !ok || n - 4 <= 0 {
+    return null;
+  }
+  elems: vector<integer> = [];
+  for k in 3..n - 1 {
+    st = scope_fn::unspan(ops[k]!);
+    fine = match st {
+      NdCall { def_nr, args } => {
+        nm = scope_args::def_name(b, def_nr);
+        if nm == "OpPreAllocVector" || nm.starts_with("OpPush") {
+          first_is(args, vec) && all_literal(b, args)
+        } else if nm == "OpFinishRecord" {
+          first_is(args, vec)
+        } else if nm.starts_with("OpSet") {
+          (len(args) > 0 && (match scope_fn::unspan(args[0]!) { NdVar { n: x } => scope_fn::has(elems, x), _ => false })) && all_literal(b, args)
+        } else {
+          false
+        }
+      },
+      NdSet { var: e, inner } => {
+        good = match scope_fn::unspan(inner) { NdCall { def_nr, args } => named(b, def_nr, "OpNewRecord") && first_is(args, vec), _ => false };
+        if good {
+          elems += [e];
+        }
+        good
+      },
+      NdLine => true,
+      NdNull => true,
+      _ => false
+    };
+    if !fine {
+      return null;
+    }
+  }
+  append = scope_fn::def_nr(b, "OpAppendVector");
+  const_ref = scope_fn::def_nr(b, "OpConstRef");
+  out = [for o in ops if o#index < 3 { o }];
+  out += [ir::NdCall { def_nr: append, args: [ir::NdVar { n: vec }, ir::NdCall { def_nr: const_ref, args: [ir::NdInt { n: twin }] }, ir::NdInt { n: elem }] }];
+  out += [ops[n - 1]!];
+  ir_pass_tree::with_operators(bl, out)
+}
+
+// Every argument after the first is a literal.
+fn all_literal(b: ir::Bundle, args: vector<ir::Node>) -> boolean {
+  for a in args {
+    if a#index >= 1 && !literal(b, a) {
+      return false;
+    }
+  }
+  true
+}

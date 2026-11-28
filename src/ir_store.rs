@@ -399,6 +399,13 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
         let r = vars.push(stores);
         write_var_snapshot(stores, &r, &v);
         r.set_field_bool(stores, ds::VAR_ARM_CONSUMED, f.is_arm_consumed(i as u16));
+        r.set_field_bool(stores, ds::VAR_WAS_LOOP_VAR, f.was_loop_var(i as u16));
+        r.set_field_bool(stores, ds::VAR_PLACE_BUFFER, f.is_place_buffer(i as u16));
+        r.set_field_bool(stores, ds::VAR_REF_HOME, f.is_ref_home(i as u16));
+        let viewed = r.field_recvec(ds::VAR_VIEWED, ds::INT_STRIDE);
+        for d in f.viewed_of(i as u16) {
+            viewed.push(stores).set_field_int(stores, 0, i64::from(*d));
+        }
     }
     // names: name -> var_nr.  Store order is irrelevant — the reader collects
     // into a HashMap and the JSON oracle re-sorts on emit.
@@ -426,6 +433,14 @@ fn write_definition(
 ) {
     r.set_field_bool(stores, ds::DEF_WIDTH32, width32); // @PLN204
     r.set_field_bool(stores, ds::DEF_VALUE_STRUCT, value_struct); // @PLN91
+    r.set_field_bool(stores, ds::DEF_CONST_LINKED, d.literal_const != u32::MAX); // @PLN91
+    // @PLN91 `Function::ref_evacuations`, four integers each.
+    let evs = r.field_recvec(ds::DEF_REF_EVACUATIONS, ds::INT_STRIDE);
+    for e in d.variables.ref_evacuations() {
+        for x in e {
+            evs.push(stores).set_field_int(stores, 0, i64::from(*x));
+        }
+    }
     r.set_field_str(stores, ds::DEF_NAME, &d.name);
     r.set_field_int(stores, ds::DEF_SOURCE, i64::from(d.source));
     r.set_field_int(stores, ds::DEF_DEF_TYPE, def_type_code(&d.def_type));

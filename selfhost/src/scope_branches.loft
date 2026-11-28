@@ -10,6 +10,7 @@
 use ir;
 use scope_fn;
 use scope_scan;
+use scope_tuple_members;
 use scope_backings;
 use scope_phase;
 use binds;
@@ -126,6 +127,8 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
   backing_before = scope_scan::copy_ints(s.construction_backing);
   binds_before = scope_scan::copy_ints(s.bind_backing);
   views_before = scope_scan::copy_ints(s.view_backing);
+  mints_before = scope_scan::tmap_copy(s.tuple_call_mint);
+  now_before = scope_scan::tmap_copy(s.tuple_member_now);
   scanned_true = scope_scan::scan(s, b, t_val, f);
   owned_after_true = scope_scan::copy_ints(s.owned_refs);
   backing_after_true = scope_scan::copy_ints(s.construction_backing);
@@ -135,12 +138,61 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
   restore(s.construction_backing, backing_before);
   restore(s.bind_backing, binds_before);
   restore(s.view_backing, views_before);
+  mints_after_true = scope_scan::tmap_copy(s.tuple_call_mint);
+  now_after_true = scope_scan::tmap_copy(s.tuple_member_now);
+  s.tuple_call_mint.clear();
+  s.tuple_call_mint += mints_before;
+  s.tuple_member_now.clear();
+  s.tuple_member_now += now_before;
   scanned_false = scope_scan::scan(s, b, f_val, f);
   scope_scan::retain_same(s.owned_refs, owned_after_true);
   scope_scan::retain_same(s.construction_backing, backing_after_true);
   scope_scan::retain_same(s.bind_backing, binds_after_true);
   scope_scan::retain_same(s.view_backing, views_after_true);
+  // loft#1645 — two arms of a statement `if` that agree a tuple member is minted and disagree
+  // only on its claimant join to a sole owner, every claimant disarmed after the `if`.
+  disarms: vector<ir::Node> = [];
+  if is_statement_arm(scanned_true) && is_statement_arm(scanned_false) {
+    joined: vector<integer> = [];
+    dis_vars: vector<integer> = [];
+    for m in s.tuple_call_mint {
+      at = scope_scan::tmap_at(mints_after_true, m.t);
+      if at < 0 || scope_scan::tmap_eq(m, mints_after_true[at]!) {
+        continue;
+      }
+      for k in m.keys {
+        claim = m.vals[k#index]!;
+        other = scope_scan::tmap_get(mints_after_true, m.t, k);
+        if other != -2 && other != claim {
+          joined += [m.t * 65536 + k];
+          for w in [claim, other] {
+            if w >= 0 && !dis_vars.contains(w) {
+              dis_vars += [w];
+            }
+          }
+        }
+      }
+    }
+    for jk in scope_tuple_members::sorted_ints(joined) {
+      t = jk / 65536;
+      k = jk % 65536;
+      if scope_scan::tmap_at(s.tuple_call_mint, t) >= 0 && scope_scan::tmap_at(mints_after_true, t) >= 0 {
+        scope_scan::tmap_put(s.tuple_call_mint, t, k, -1);
+        scope_scan::tmap_put(mints_after_true, t, k, -1);
+      }
+    }
+    for w in scope_tuple_members::sorted_ints(dis_vars) {
+      disarms += [scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+    }
+  }
+  scope_scan::tmap_retain_same(s.tuple_call_mint, mints_after_true);
+  scope_scan::tmap_retain_same(s.tuple_member_now, now_after_true);
   scanned_if = ir::NdIf { cond: scanned_test, t: scanned_true, f: scanned_false };
+  if len(disarms) > 0 {
+    with_disarms: vector<ir::Node> = [scanned_if];
+    with_disarms += disarms;
+    scanned_if = ir::NdInsert { items: with_disarms };
+  }
   if len(pre_inits) == 0 {
     return scanned_if;
   }
@@ -154,6 +206,15 @@ pub fn scan_if(s: scope_scan::Scopes, b: ir::Bundle, test: ir::Node, t_val: ir::
   }
   stmts += [scanned_if];
   ir::NdInsert { items: stmts }
+}
+
+// An arm of a statement `if`: null, or a block answering nothing.
+fn is_statement_arm(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdNull => true,
+    NdBlock { block } => scope_fn::base(block[0]!.result[0] ?? ir::TyVoid) is TyVoid,
+    _ => false
+  }
 }
 
 // `std::mem::replace(&mut map, before)`.

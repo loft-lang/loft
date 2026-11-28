@@ -96,25 +96,11 @@
  "run|plain|program|benches": {
   "fail": 0,
   "nobuild": 0,
-  "pass": 61,
-  "programs": 61,
+  "pass": 62,
+  "programs": 62,
   "refused": 0,
-  "same": 46,
+  "same": 62,
   "switches": [
-   "LOFT_NO_APART",
-   "LOFT_NO_APPEND_LOOP_WINDOW",
-   "LOFT_NO_APPEND_TWIN",
-   "LOFT_NO_CALLEE_INPUTS",
-   "LOFT_NO_CHAR_WALK",
-   "LOFT_NO_DEFERRED_COPY",
-   "LOFT_NO_DESTINATION",
-   "LOFT_NO_GUARD_BOUND",
-   "LOFT_NO_LAZY_SPLIT",
-   "LOFT_NO_SPLIT_TABLE",
-   "LOFT_NO_TESTED_BORROW",
-   "LOFT_NO_TRANSIENT",
-   "LOFT_NO_VALUE_RECORD",
-   "LOFT_NO_VERSION",
    "LOFT_NO_WARNINGS"
   ]
  },
@@ -186,6 +172,15 @@
    "LOFT_NO_WARNINGS"
   ],
   "units": 1077
+ },
+ "unit|default|program|corpus": {
+  "agree": 1188,
+  "differ": 0,
+  "refused": 0,
+  "switches": [
+   "LOFT_NO_WARNINGS"
+  ],
+  "units": 1188
  },
  "writes|default|program|corpus": {
   "agree": 1077,

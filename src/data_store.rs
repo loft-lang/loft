@@ -266,9 +266,12 @@ pub(crate) const POS_FILE: u32 = 16;
 
 /// `Variable` record (element of `Function.variables` = `vector<Variable>`) —
 /// the fifteen codegen-read fields the snapshot seam exposes.
-pub(crate) const VARIABLE_STRIDE: u32 = 64;
+pub(crate) const VARIABLE_STRIDE: u32 = 72; // @PLN91 — +8 for was_loop_var
 pub(crate) const VAR_NAME: u32 = 40;
 pub(crate) const VAR_TYPE_DEF: u32 = 44; // vector<TypeT> (box-of-one)
+/// @PLN91 `Variable::viewed` — the deps each earlier bind ended with; the scope pass reads it.
+/// The flags after it move up by four; the stride stays 72.
+pub(crate) const VAR_VIEWED: u32 = 48; // vector<integer>
 pub(crate) const VAR_STACK_POS: u32 = 0;
 pub(crate) const VAR_USES: u32 = 8;
 pub(crate) const VAR_OWNER_WITNESS: u32 = 16;
@@ -276,33 +279,39 @@ pub(crate) const VAR_OWNER_WITNESS: u32 = 16;
 pub(crate) const VAR_REBIND_ORIG: u32 = 24;
 /// The scope that declares it; the yield emitter reads it (loft#1858).
 pub(crate) const VAR_SCOPE: u32 = 32;
-pub(crate) const VAR_ARGUMENT: u32 = 48;
-pub(crate) const VAR_STACK_ALLOCATED: u32 = 49;
-pub(crate) const VAR_SKIP_FREE: u32 = 50;
-pub(crate) const VAR_CAPTURED: u32 = 51;
-pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 52;
+pub(crate) const VAR_ARGUMENT: u32 = 52;
+pub(crate) const VAR_STACK_ALLOCATED: u32 = 53;
+pub(crate) const VAR_SKIP_FREE: u32 = 54;
+pub(crate) const VAR_CAPTURED: u32 = 55;
+pub(crate) const VAR_CALLER_HIDDEN_BUF: u32 = 56;
 /// @PLN157 § V-g — the elided-copy mark; a fact the EMITTERS read, so it is stored.
-pub(crate) const VAR_VIEW_ELIDED: u32 = 53;
+pub(crate) const VAR_VIEW_ELIDED: u32 = 57;
 /// `@FR-O-LazyBuffer` — the buffer's store is minted at its first use; the emitters read it.
-pub(crate) const VAR_LAZY_BUFFER: u32 = 54;
+pub(crate) const VAR_LAZY_BUFFER: u32 = 58;
 /// `@FR-O-Move` — the one bind after an `if`'s pre-init is a first bind; the emitters read it.
-pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 55;
+pub(crate) const VAR_DEFERRED_FIRST_BIND: u32 = 59;
 /// @PLN167 decision 1 — a `&` names this narrow local, which holds its field encoding.
-pub(crate) const VAR_LINKED_NARROW: u32 = 56;
+pub(crate) const VAR_LINKED_NARROW: u32 = 60;
 /// @PLN167 decision 2 — a `&text` link to a text field or element (the store kind).
-pub(crate) const VAR_STORE_TEXT_LINK: u32 = 57;
+pub(crate) const VAR_STORE_TEXT_LINK: u32 = 61;
 /// loft#1834 — a user identifier names it; `is_compiler_generated` reads it.
-pub(crate) const VAR_USER_NAMED: u32 = 58;
+pub(crate) const VAR_USER_NAMED: u32 = 62;
 /// loft#1840 — the program's own `+=` wrote into it; the `lost-write` lint reads it.
-pub(crate) const VAR_USER_APPENDED: u32 = 59;
+pub(crate) const VAR_USER_APPENDED: u32 = 63;
 /// loft#1840 — a whole-value bind copied a place into it; the `lost-write` lint reads it.
-pub(crate) const VAR_COPY_BOUND: u32 = 60;
+pub(crate) const VAR_COPY_BOUND: u32 = 64;
 /// loft#1522 — a construction work-ref still names its store; the displacement free reads it.
-pub(crate) const VAR_BUFFER_WITNESSED: u32 = 61;
+pub(crate) const VAR_BUFFER_WITNESSED: u32 = 65;
 /// loft#2034 — `const` before the type; the literal hoist's alias gate reads it.
-pub(crate) const VAR_VALUE_CONST: u32 = 62;
+pub(crate) const VAR_VALUE_CONST: u32 = 66;
 /// @PLN91 `Function::is_arm_consumed`, per variable.
-pub(crate) const VAR_ARM_CONSUMED: u32 = 63;
+pub(crate) const VAR_ARM_CONSUMED: u32 = 67;
+/// @PLN91 `Function::was_loop_var`, per variable: the scope pass reads it.
+pub(crate) const VAR_WAS_LOOP_VAR: u32 = 68;
+/// @PLN91 `Function::is_place_buffer` and `Function::is_ref_home` (`@FR-H-RefHome`), per
+/// variable: the scope pass reads both.
+pub(crate) const VAR_PLACE_BUFFER: u32 = 69;
+pub(crate) const VAR_REF_HOME: u32 = 70;
 
 /// `Function` field offsets, relative to a `Function` base (it is inlined in
 /// `Definition`, never stored in a vector).
@@ -320,7 +329,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 216; // @PLN204 — +8 for width32; loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left
+pub(crate) const DEFINITION_STRIDE: u32 = 216; // @PLN204 — +8 for width32; loft#2227 — +8 for native_answer_tp; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin; @PLN182 — +1 for operator; @PLN187 — +4 for returned_fact; @FR-R-CompleteWrite — no_prefill in the 4 bytes left; @PLN91 — ref_evacuations in the 4 the bools left, which move up by 4
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -344,14 +353,14 @@ pub(crate) const DEF_FIELD_GROUPS: u32 = 160; // vector<LinkedFieldGroup>
 pub(crate) const DEF_SYNTHETIC: u32 = 164; // Option<&str>; "" = None
 pub(crate) const DEF_CAP: u32 = 168; // @PLN86 the group#right call-gate link; "" = unlinked
 pub(crate) const DEF_SUPERSEDED: u32 = 172; // @PLN102 arc C #superseded "Y"; "" = not superseded
-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 200;
-pub(crate) const DEF_PUB_VISIBLE: u32 = 201;
-pub(crate) const DEF_NULL_SAFE: u32 = 202; // @PLN46 W2 #null_safe; false = unannotated
-pub(crate) const DEF_BUILTIN: u32 = 203; // @PLN165 arc E #builtin; false = an ordinary body
-pub(crate) const DEF_OPERATOR_FORM: u32 = 204; // @PLN182 written `operator`; false = a plain `fn`
-pub(crate) const DEF_RETURNED_CONST: u32 = 205; // @FR-Const-Foreign `-> const T`; false = writable
-pub(crate) const DEF_OP_HOT: u32 = 206; // `#hot` — an operator's first-class priority (`Data::op_code`)
-pub(crate) const DEF_OP_COLD: u32 = 207; // `#cold` — its last-class priority; neither = normal
+pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 204;
+pub(crate) const DEF_PUB_VISIBLE: u32 = 205;
+pub(crate) const DEF_NULL_SAFE: u32 = 206; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 207; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_OPERATOR_FORM: u32 = 208; // @PLN182 written `operator`; false = a plain `fn`
+pub(crate) const DEF_RETURNED_CONST: u32 = 209; // @FR-Const-Foreign `-> const T`; false = writable
+pub(crate) const DEF_OP_HOT: u32 = 210; // `#hot` — an operator's first-class priority (`Data::op_code`)
+pub(crate) const DEF_OP_COLD: u32 = 211; // `#cold` — its last-class priority; neither = normal
 pub(crate) const DEF_NATIVE_ANSWER_TP: u32 = 96; // loft#2227 a #native heap answer's copy-out type id
 pub(crate) const DEF_C_SYMBOL: u32 = 176; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 180; // @PLN24 the declared C signature; "" = none
@@ -360,8 +369,13 @@ pub(crate) const DEF_INSTANCE_OF: u32 = 88; // @PLN165 D3 the template; -1 = not
 pub(crate) const DEF_RETURNED_FACT: u32 = 192; // @PLN187 text: where the declared result names an alias
 pub(crate) const DEF_NO_PREFILL: u32 = 196; // @FR-R-CompleteWrite text: `NoPrefill::encode`
 pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
-pub(crate) const DEF_WIDTH32: u32 = 208; // @PLN204 the body is under the 32-bit regime
-pub(crate) const DEF_VALUE_STRUCT: u32 = 209; // @PLN91 a `value struct` (`Data::is_value_struct`)
+pub(crate) const DEF_WIDTH32: u32 = 212; // @PLN204 the body is under the 32-bit regime
+pub(crate) const DEF_VALUE_STRUCT: u32 = 213; // @PLN91 a `value struct` (`Data::is_value_struct`)
+/// @PLN91 `Definition::literal_const != u32::MAX`: the function's constant twin
+/// (`__const_<name>`, `@FR-R-Const`) is linked; the scope pass reads it.
+pub(crate) const DEF_CONST_LINKED: u32 = 214;
+/// @PLN91 `Function::ref_evacuations` (`@FR-H-RefHome`), flattened: holder, field, owner, type.
+pub(crate) const DEF_REF_EVACUATIONS: u32 = 200;
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -1728,6 +1742,10 @@ mod tests {
         assert_eq!(pos(ids.variable, "buffer_witnessed"), VAR_BUFFER_WITNESSED);
         assert_eq!(pos(ids.variable, "value_const"), VAR_VALUE_CONST);
         assert_eq!(pos(ids.variable, "arm_consumed"), VAR_ARM_CONSUMED);
+        assert_eq!(pos(ids.variable, "was_loop_var"), VAR_WAS_LOOP_VAR);
+        assert_eq!(pos(ids.variable, "place_buffer"), VAR_PLACE_BUFFER);
+        assert_eq!(pos(ids.variable, "ref_home"), VAR_REF_HOME);
+        assert_eq!(pos(ids.variable, "viewed"), VAR_VIEWED);
 
         // Function record.
         assert_eq!(pos(ids.function, "name"), FN_NAME);
@@ -1793,6 +1811,8 @@ mod tests {
         assert_eq!(pos(ids.definition, "op_cold"), DEF_OP_COLD);
         assert_eq!(pos(ids.definition, "width32"), DEF_WIDTH32);
         assert_eq!(pos(ids.definition, "value_struct"), DEF_VALUE_STRUCT);
+        assert_eq!(pos(ids.definition, "ref_evacuations"), DEF_REF_EVACUATIONS);
+        assert_eq!(pos(ids.definition, "const_linked"), DEF_CONST_LINKED);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

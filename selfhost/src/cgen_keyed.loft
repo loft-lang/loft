@@ -84,8 +84,8 @@ fn in_place(x: Cx, w: W, args: vector<ir::Node>, ind: integer, taken: &boolean) 
   kc = if kind == "hash" { "LOFT_KEYED_HASH" } else if kind == "sorted" { "LOFT_KEYED_SORTED" } else if kind == "index" { "LOFT_KEYED_INDEX" } else if kind == "ordered" { "LOFT_KEYED_ORDERED" } else if kind == "spatial" { "LOFT_KEYED_SPATIAL" } else { "LOFT_KEYED_TRIE" };
   common = "{kc}, {kname}, {len(kparts)}, {kv}, {len(values)}";
   e = temp(w, "ref");
-  line(w, ind, "{e} = loft_keyed_place_begin(loft_types, {elem}, {ct}, {common});");
-  line(w, ind, "loft_fill({e}, {cgen_tables::default_name(x, elem)}, {x.b.types[elem].size});");
+  line(w, ind, "{e} = loft_keyed_place_begin(cx, loft_types, {elem}, {ct}, {common});");
+  line(w, ind, "loft_fill(cx, {e}, {cgen_tables::default_name(x, elem)}, {x.b.types[elem].size});");
   raw_expr(w, e, "ref");
   for wr in writes {
     staged = [ir::NdRawExpr { s: e }] + wr.args;
@@ -95,7 +95,7 @@ fn in_place(x: Cx, w: W, args: vector<ir::Node>, ind: integer, taken: &boolean) 
     }
     line(w, ind, "{written.code};");
   }
-  line(w, ind, "loft_keyed_place_finish(loft_types, {elem}, {ct}, {e}, {common});");
+  line(w, ind, "loft_keyed_place_finish(cx, loft_types, {elem}, {ct}, {e}, {common});");
   E { code: "((void) 0)", kind: K_VOID }
 }
 

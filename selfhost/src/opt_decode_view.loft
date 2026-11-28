@@ -1,0 +1,1759 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-DecodeView` (`@C141`), instance 1, as `src/lower/decode_view.rs`
+// plans it: a text or byte-string field of a decoded enum value holds a SPAN of the byte frame
+// it was decoded from, inside the region of functions that decode the frame and read the result.
+//
+// - a VIEW TYPE is an enum whose record leaves its last eight bytes free in every variant with
+//   a `text` or `vector<u8>` field: the span word;
+// - a ROOT is a function with a byte-vector parameter `B` it hands, with nothing but reads of
+//   it, to a call answering a value of a view type;
+// - the REGION is every loft function such a value reaches from the root, each written again
+//   as `<f>__dv`; `B` is read only in it, and its aliases are the parameters it is handed to.
+//
+// The Rust plan keys a span local's holder statements by IR address.  Here the plan finds them
+// by their PATH from the function's root (`child`, `under`), and once the plans are made the
+// code is written again with each keyed statement wrapped in a MARKER span (`file: "dv"`,
+// line 0, `apply_marks`), which every other marker reader (`file == ""`) passes over.
+//
+// `LOFT_NO_DECODE_VIEW=1` keeps every field owned; `LOFT_TRACE_DECODE_VIEW=1` names each root
+// admitted and each one declined.
+
+use ir;
+use loop_shape;
+use cgen_types;
+use el_ir;
+use types;
+
+// ---- the marks a plan leaves in the code -------------------------------------------------
+
+// The marker file of a span local's holder statement (its `pos` the guard's index).
+pub MARK_FILE = "dv";
+
+// A node a plan keys, by its path from its function's root, and the marker it takes.
+pub struct Mark {
+  pub d: integer,
+  pub path: text,
+  pub file: text,
+  pub code: integer,
+}
+
+// The path of child `i` of the node at path `p`.
+pub fn child(p: text, i: integer) -> text {
+  "{p}.{i}"
+}
+
+// The path of `x`'s node under its spans, `x` at path `p`.
+pub fn under(p: text, x: ir::Node) -> text {
+  match x {
+    NdSpan { pos: _, inner } => under("{p}.0", inner),
+    _ => p,
+  }
+}
+
+// The codes of the marker spans of `file` around `v`, outermost first.
+pub fn marks_of(v: ir::Node, file: text) -> vector<integer> {
+  out: vector<integer> = [];
+  collect_marks(v, file, out);
+  out
+}
+
+fn collect_marks(v: ir::Node, file: text, out: vector<integer>) {
+  match v {
+    NdSpan { pos, inner } => {
+      if pos.line == 0 && pos.file == file {
+        out += [pos.pos];
+      }
+      collect_marks(inner, file, out);
+    },
+    _ => {},
+  }
+}
+
+// Every function `marks` names written again with each marked node wrapped in its marker.
+pub fn apply_marks(b: ir::Bundle, marks: vector<Mark>) {
+  done: vector<integer> = [];
+  for m in marks {
+    if done.contains(m.d) {
+      continue;
+    }
+    done += [m.d];
+    mine: vector<Mark> = [];
+    for o in marks {
+      if o.d == m.d {
+        mine += [o];
+      }
+    }
+    code = b.data.definitions[m.d]!.code[0] ?? continue;
+    b.data.definitions[m.d].code = [mark_tree(code, "", mine)];
+  }
+}
+
+fn mark_tree(n: ir::Node, p: text, marks: vector<Mark>) -> ir::Node {
+  pre = "{p}.";
+  below = false;
+  for m in marks {
+    if m.path.starts_with(pre) {
+      below = true;
+    }
+  }
+  out = n;
+  if below {
+    cs = el_ir::children(n);
+    kids: vector<ir::Node> = [];
+    for c in cs {
+      kids += [mark_tree(c, child(p, c#index), marks)];
+    }
+    out = with_children(n, kids);
+  }
+  for m in marks {
+    if m.path == p {
+      out = ir::NdSpan { pos: ir::Position { file: m.file, line: 0, pos: m.code }, inner: out };
+    }
+  }
+  out
+}
+
+// `n` with its direct children `cs` (`el_ir::children`'s order).
+pub fn with_children(n: ir::Node, cs: vector<ir::Node>) -> ir::Node {
+  match n {
+    NdSpan { pos, inner: _ } => ir::NdSpan { pos: pos, inner: cs[0]! },
+    NdCall { def_nr, args: _ } => ir::NdCall { def_nr: def_nr, args: cs },
+    NdCallRef { var, args: _ } => ir::NdCallRef { var: var, args: cs },
+    NdBlock { block } => {
+      bl = block[0];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: cs, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0];
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: cs, result: bl.result, scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items: _ } => ir::NdInsert { items: cs },
+    NdTuple { items: _ } => ir::NdTuple { items: cs },
+    NdParallel { arms: _ } => ir::NdParallel { arms: cs },
+    NdSet { var, inner: _ } => ir::NdSet { var: var, inner: cs[0]! },
+    NdReturn { inner: _ } => ir::NdReturn { inner: cs[0]! },
+    NdDrop { inner: _ } => ir::NdDrop { inner: cs[0]! },
+    NdYield { inner: _ } => ir::NdYield { inner: cs[0]! },
+    NdTuplePut { var, idx, inner: _ } => ir::NdTuplePut { var: var, idx: idx, inner: cs[0]! },
+    NdIf { cond: _, t: _, f: _ } => ir::NdIf { cond: cs[0]!, t: cs[1]!, f: cs[2]! },
+    NdIter { var, create: _, next: _, init: _ } => ir::NdIter { var: var, create: cs[0]!, next: cs[1]!, init: cs[2]! },
+    _ => n,
+  }
+}
+
+// ---- node helpers ----------------------------------------------------------------------------
+
+pub fn op_name(b: ir::Bundle, d: integer) -> text {
+  if d < 0 || d >= len(b.data.definitions) { "" } else { b.data.definitions[d]!.name }
+}
+
+// `int_of`: an integer or long literal, null for any other node.
+pub fn int_of(x: ir::Node) -> integer? {
+  match loop_shape::unspan(x) {
+    NdInt { n } => n,
+    NdLong { n } => n ?? null,
+    _ => null,
+  }
+}
+
+pub fn var_of(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdVar { n } => n,
+    _ => -1,
+  }
+}
+
+pub fn is_var(x: ir::Node, v: integer) -> boolean {
+  v >= 0 && var_of(x) == v
+}
+
+// The definition a call names, -1 for any other node.
+pub fn call_def(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr, args: _ } => def_nr,
+    _ => -1,
+  }
+}
+
+// A call's arguments, empty for any other node.
+pub fn call_args(x: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(x) {
+    NdCall { def_nr: _, args } => args,
+    _ => [],
+  }
+}
+
+// The operator a call names, "" for any other node.
+pub fn call_name(b: ir::Bundle, x: ir::Node) -> text {
+  d = call_def(x);
+  if d < 0 { "" } else { op_name(b, d) }
+}
+
+// Does any node of `x` name variable `v` — a read or an assignment (`Value::any_node`)?
+pub fn mentions(x: ir::Node, v: integer) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return mentions(inner, v),
+    NdVar { n } => if n == v { return true; },
+    NdSet { var, inner: _ } => if var == v { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if mentions(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does any node of `x` read variable `v`?
+pub fn mentions_read(x: ir::Node, v: integer) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return mentions_read(inner, v),
+    NdVar { n } => if n == v { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if mentions_read(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// Does any node of `x` assign variable `v`?
+pub fn assigns(x: ir::Node, v: integer) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return assigns(inner, v),
+    NdSet { var, inner: _ } => if var == v { return true; },
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if assigns(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// The variables `x` reads, each once per mention.
+pub fn vars_read(x: ir::Node, out: vector<integer>) {
+  match x {
+    NdSpan { pos: _, inner } => {
+      vars_read(inner, out);
+      return;
+    },
+    NdVar { n } => out += [n],
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    vars_read(c, out);
+  }
+}
+
+// Does `x` hold a `break` or a `continue`?
+pub fn has_jump(x: ir::Node) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return has_jump(inner),
+    NdBreak { n: _ } => return true,
+    NdContinue { n: _ } => return true,
+    _ => {},
+  }
+  for c in el_ir::children(x) {
+    if has_jump(c) {
+      return true;
+    }
+  }
+  false
+}
+
+// The variable an assignment sets, -1 for any other node.
+pub fn set_var(x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdSet { var, inner: _ } => var,
+    _ => -1,
+  }
+}
+
+// The value an assignment sets, `NdNull` for any other node.
+pub fn set_rhs(x: ir::Node) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdSet { var: _, inner } => inner,
+    _ => ir::NdNull,
+  }
+}
+
+// The block a node is, under its spans.
+pub fn block_ops(x: ir::Node) -> vector<ir::Node> {
+  match loop_shape::unspan(x) {
+    NdBlock { block } => block[0].operators,
+    NdLoop { block } => block[0].operators,
+    _ => [],
+  }
+}
+
+pub fn is_block(x: ir::Node) -> boolean {
+  match loop_shape::unspan(x) {
+    NdBlock { block: _ } => true,
+    _ => false,
+  }
+}
+
+pub fn block_name(x: ir::Node) -> text {
+  match loop_shape::unspan(x) {
+    NdBlock { block } => block[0].name,
+    _ => "",
+  }
+}
+
+// The type of variable `v` of definition `d`.
+pub fn var_tp(b: ir::Bundle, d: integer, v: integer) -> ir::TypeT {
+  f = b.data.definitions[d]!.variables;
+  if v < 0 || v >= len(f.variables) { ir::TyVoid } else { f.variables[v]!.type_def[0] ?? ir::TyVoid }
+}
+
+pub fn var_name(b: ir::Bundle, d: integer, v: integer) -> text {
+  f = b.data.definitions[d]!.variables;
+  if v < 0 || v >= len(f.variables) { "" } else { f.variables[v]!.name }
+}
+
+// The variable named `nm` in definition `d`, -1 for none.
+pub fn var_named(b: ir::Bundle, d: integer, nm: text) -> integer {
+  for e in b.data.definitions[d]!.variables.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+// The parameter variable of `d` at argument position `i` (`param_var`), -1 for none.
+pub fn param_var(b: ir::Bundle, d: integer, i: integer) -> integer {
+  attrs = b.data.definitions[d]!.attributes;
+  if i < 0 || i >= len(attrs) {
+    return -1;
+  }
+  v = var_named(b, d, attrs[i]!.name);
+  if v == 65535 { -1 } else { v }
+}
+
+pub fn returned(b: ir::Bundle, d: integer) -> ir::TypeT {
+  if d < 0 || d >= len(b.data.definitions) { ir::TyVoid } else { b.data.definitions[d]!.returned[0] ?? ir::TyVoid }
+}
+
+// A set of variables as a sorted vector.
+pub fn set_add(s: vector<integer>, v: integer) {
+  if s.contains(v) {
+    return;
+  }
+  s += [v];
+  s.sort();
+}
+
+// ---- the plan --------------------------------------------------------------------------------
+
+// The span fields of one view type (`DvType`), the enum's store type `tp`.
+pub struct DvType {
+  pub tp: integer,
+  pub spare: integer,
+  pub text: vector<integer>,
+  pub bytes_off: vector<integer>,
+  pub bytes_tp: vector<integer>,
+}
+
+// One function's part of the plan: its root frame (-1 none), whether it is in the region, the
+// variables that are the frame at every call, and its byte locals held as a span.
+pub struct DvFn {
+  pub d: integer,
+  pub root: integer,
+  pub region: boolean,
+  pub bparams: vector<integer>,
+  pub span_locals: vector<integer>,
+}
+
+// The program's plan (`DvPlan`).  Per store type: its view type's index (the enum's and its
+// variants'), whether it is the enum itself, its enum (a variant's); the functions the plan
+// names; the guards of the span locals' holders, by their marks' codes.
+pub struct DvPlan {
+  pub asked: boolean,
+  pub types: vector<DvType>,
+  pub type_at: vector<integer>,
+  pub is_enum: vector<boolean>,
+  pub variant_of: vector<integer>,
+  pub fns: vector<DvFn>,
+  pub guards: vector<ir::Node>,
+  pub marks: vector<Mark>,
+}
+
+pub fn no_plan() -> DvPlan {
+  DvPlan { asked: false, types: [], type_at: [], is_enum: [], variant_of: [], fns: [], guards: [], marks: [] }
+}
+
+pub fn enabled() -> boolean {
+  (env_variable("LOFT_NO_DECODE_VIEW") ?? "0") == "0"
+}
+
+fn trace_on() -> boolean {
+  (env_variable("LOFT_TRACE_DECODE_VIEW") ?? "0") != "0"
+}
+
+fn trace(msg: text) {
+  eprintln("[decode-view] {msg}");
+}
+
+// The part of the plan for function `d`, null for none.
+pub fn fn_of(p: DvPlan, d: integer) -> DvFn? {
+  for f in p.fns {
+    if f.d == d {
+      return f;
+    }
+  }
+  null
+}
+
+// The index of function `d`'s part of the plan, made where it has none.
+fn fn_entry(p: DvPlan, d: integer) -> integer {
+  for f in p.fns {
+    if f.d == d {
+      return f#index;
+    }
+  }
+  p.fns += [DvFn { d: d, root: -1, region: false, bparams: [], span_locals: [] }];
+  len(p.fns) - 1
+}
+
+// Is `d` a root?  Its frame variable, -1 for none.
+pub fn root_of(p: DvPlan, d: integer) -> integer {
+  f = fn_of(p, d);
+  if f == null { -1 } else { f.root }
+}
+
+pub fn in_region(p: DvPlan, d: integer) -> boolean {
+  f = fn_of(p, d);
+  f != null && f.region
+}
+
+pub fn any_root(p: DvPlan) -> boolean {
+  for f in p.fns {
+    if f.root >= 0 {
+      return true;
+    }
+  }
+  false
+}
+
+pub fn bparams(p: DvPlan, d: integer) -> vector<integer> {
+  f = fn_of(p, d);
+  if f == null { [] } else { f.bparams }
+}
+
+pub fn span_locals_of(p: DvPlan, d: integer) -> vector<integer> {
+  f = fn_of(p, d);
+  if f == null { [] } else { f.span_locals }
+}
+
+// The view type a record of store type `tp` is, or is a variant of (`view_type`), -1 none.
+pub fn view_type(p: DvPlan, tp: integer) -> integer {
+  if tp < 0 || tp >= len(p.type_at) { -1 } else { p.type_at[tp]! }
+}
+
+// A function with a loft body the region can write again (`loft_fn`).
+pub fn loft_fn(b: ir::Bundle, d: integer) -> boolean {
+  if d < 0 || d >= len(b.data.definitions) {
+    return false;
+  }
+  def = b.data.definitions[d]!;
+  if def.def_type != 1 || def.name.starts_with("Op") || def.rust != "" || len(def.code) == 0 || (def.code[0]! is NdNull) {
+    return false;
+  }
+  match cgen_types::base(def.returned[0] ?? ir::TyVoid) {
+    TyIterator { step: _, inner: _ } => false,
+    _ => true,
+  }
+}
+
+// `vector<u8>`: a vector of integers that fit a byte.
+pub fn byte_vector(tp: ir::TypeT) -> boolean {
+  match cgen_types::base(tp) {
+    TyVector { inner, dep: _ } => match cgen_types::base(inner) {
+      TyInteger { spec } => spec.min >= 0 && spec.max <= 255,
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn size_of(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) { 0 } else { b.types[tp]!.size }
+}
+
+fn vector_content(b: ir::Bundle, tp: integer) -> integer {
+  if tp < 0 || tp >= len(b.types) {
+    return -1;
+  }
+  match b.types[tp]!.parts[0] ?? ir::PtBase {
+    PtVector { content } => content,
+    _ => -1,
+  }
+}
+
+fn enum_variants(b: ir::Bundle, tp: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  match b.types[tp]!.parts[0] ?? ir::PtBase {
+    PtEnum { values } => {
+      for v in values {
+        out += [v.nr];
+      }
+    },
+    _ => {},
+  }
+  out
+}
+
+fn is_enum_value(b: ir::Bundle, tp: integer) -> boolean {
+  if tp < 0 || tp >= len(b.types) {
+    return false;
+  }
+  match b.types[tp]!.parts[0] ?? ir::PtBase {
+    PtEnumValue { value: _, fields: _ } => true,
+    _ => false,
+  }
+}
+
+// The view types (`view_types`): enums whose every text- or byte-string-carrying variant leaves
+// the record's last eight bytes free.
+fn view_types(b: ir::Bundle, p: DvPlan) {
+  text_tp = types::named(b.types, "text") ?? -1;
+  n = len(b.types);
+  p.type_at = [for _ in 0..n { -1 }];
+  p.is_enum = [for _ in 0..n { false }];
+  p.variant_of = [for _ in 0..n { -1 }];
+  for t in b.types {
+    tp = t#index;
+    match t.parts[0] ?? ir::PtBase {
+      PtEnum { values: _ } => {},
+      _ => continue,
+    }
+    size = t.size;
+    if size < 16 || size % 8 != 0 {
+      continue;
+    }
+    dv = DvType { tp: tp, spare: size - 8, text: [], bytes_off: [], bytes_tp: [] };
+    fits = true;
+    variants = enum_variants(b, tp);
+    for vtp in variants {
+      if !is_enum_value(b, vtp) {
+        continue;
+      }
+      span_pos: vector<integer> = [];
+      span_vec: vector<integer> = [];
+      end = 0;
+      for f in types::record_fields(b.types, vtp) {
+        e = f.position + size_of(b, f.content);
+        if e > end {
+          end = e;
+        }
+        if f.content == text_tp {
+          span_pos += [f.position];
+          span_vec += [-1];
+        } else {
+          el = vector_content(b, f.content);
+          if el >= 0 && size_of(b, el) == 1 {
+            span_pos += [f.position];
+            span_vec += [f.content];
+          }
+        }
+      }
+      if len(span_pos) == 0 {
+        continue;
+      }
+      if end > dv.spare {
+        fits = false;
+        break;
+      }
+      for sp in span_pos {
+        if span_vec[sp#index]! < 0 {
+          dv.text += [sp];
+        } else {
+          dv.bytes_off += [sp];
+          dv.bytes_tp += [span_vec[sp#index]!];
+        }
+      }
+    }
+    if !fits || (len(dv.text) == 0 && len(dv.bytes_off) == 0) {
+      continue;
+    }
+    at = len(p.types);
+    p.types += [dv];
+    for vtp in variants {
+      if vtp >= 0 && vtp < n {
+        p.variant_of[vtp] = tp;
+        p.type_at[vtp] = at;
+      }
+    }
+    p.type_at[tp] = at;
+    p.is_enum[tp] = true;
+  }
+}
+
+// A variant with a text or byte-string field (`span_variant`).
+fn span_variant(b: ir::Bundle, vtp: integer) -> boolean {
+  if !is_enum_value(b, vtp) {
+    return false;
+  }
+  text_tp = types::named(b.types, "text") ?? -1;
+  for f in types::record_fields(b.types, vtp) {
+    if f.content == text_tp {
+      return true;
+    }
+    el = vector_content(b, f.content);
+    if el >= 0 && size_of(b, el) == 1 {
+      return true;
+    }
+  }
+  false
+}
+
+// The store types that hold a value of a view type (`holding_types`): the view types and their
+// variants, and every record, variant and collection with such a field or element.
+fn holding_types(b: ir::Bundle, p: DvPlan) -> vector<boolean> {
+  n = len(b.types);
+  c: vector<boolean> = [for _ in 0..n { false }];
+  for t in 0..n {
+    if p.type_at[t]! >= 0 {
+      c[t] = true;
+    }
+  }
+  for _ in 0..n + 1 {
+    grew = false;
+    for t in b.types {
+      tp = t#index;
+      if c[tp]! {
+        continue;
+      }
+      holds = match t.parts[0] ?? ir::PtBase {
+        PtStruct { fields } => any_field_in(c, fields),
+        PtEnumValue { value: _, fields } => any_field_in(c, fields),
+        PtEnum { values } => any_variant_in(c, values),
+        PtVector { content } => in_set(c, content),
+        PtArray { content } => in_set(c, content),
+        PtSorted { content, keys: _ } => in_set(c, content),
+        PtOrdered { content, keys: _ } => in_set(c, content),
+        PtHash { content, fields: _ } => in_set(c, content),
+        PtIndex { content, keys: _ } => in_set(c, content),
+        PtRadix { content, fields: _ } => in_set(c, content),
+        _ => false,
+      };
+      if holds {
+        c[tp] = true;
+        grew = true;
+      }
+    }
+    if !grew {
+      break;
+    }
+  }
+  c
+}
+
+fn in_set(c: vector<boolean>, tp: integer) -> boolean {
+  tp >= 0 && tp < len(c) && c[tp]!
+}
+
+fn any_field_in(c: vector<boolean>, fields: vector<ir::DbField>) -> boolean {
+  for f in fields {
+    if in_set(c, f.content) {
+      return true;
+    }
+  }
+  false
+}
+
+fn any_variant_in(c: vector<boolean>, values: vector<ir::EnumPair>) -> boolean {
+  for v in values {
+    if in_set(c, v.nr) {
+      return true;
+    }
+  }
+  false
+}
+
+// ---- what the walk knows of an expression's type (`Types`) -----------------------------------
+
+pub const H_NO = 0;
+pub const H_YES = 1;
+pub const H_UNKNOWN = 2;
+
+// `known`: the store type definition `d` names, -1 for none.
+pub fn known(b: ir::Bundle, d: integer) -> integer {
+  if d < 0 || d >= len(b.data.definitions) {
+    return -1;
+  }
+  kt = b.data.definitions[d]!.known_type;
+  if kt == 65535 { -1 } else { kt }
+}
+
+// `record_tp`: the record store type a loft type names (a reference or any enum), -1 none.
+pub fn record_tp(b: ir::Bundle, tp: ir::TypeT) -> integer {
+  match cgen_types::base(tp) {
+    TyReference { n, dep: _ } => known(b, n),
+    TyEnum { n, is_ref: _, dep: _ } => known(b, n),
+    TyRefVar { inner } => record_tp(b, inner),
+    _ => -1,
+  }
+}
+
+fn holds_known(b: ir::Bundle, c: vector<boolean>, d: integer) -> integer {
+  k = known(b, d);
+  if k < 0 { H_UNKNOWN } else if in_set(c, k) { H_YES } else { H_NO }
+}
+
+pub fn holds_type(b: ir::Bundle, c: vector<boolean>, tp: ir::TypeT) -> integer {
+  match cgen_types::base(tp) {
+    TyReference { n, dep: _ } => holds_known(b, c, n),
+    TyEnum { n, is_ref: _, dep: _ } => holds_known(b, c, n),
+    TyRefVar { inner } => holds_type(b, c, inner),
+    TyVector { inner, dep: _ } => holds_type(b, c, inner),
+    TySorted { n, keys: _, dep: _ } => holds_known(b, c, n),
+    TyIndex { n, keys: _, dep: _ } => holds_known(b, c, n),
+    TyRadix { n, names: _, dep: _ } => holds_known(b, c, n),
+    TyTrie { n, key: _, dep: _ } => holds_known(b, c, n),
+    TyHash { n, names: _, dep: _ } => holds_known(b, c, n),
+    TyTuple { elems } => {
+      for e in elems {
+        if holds_type(b, c, e) != H_NO {
+          return H_UNKNOWN;
+        }
+      }
+      H_NO
+    },
+    TyIterator { step: _, inner: _ } => H_UNKNOWN,
+    TyFunction { args: _, result: _, dep: _, consts: _ } => H_UNKNOWN,
+    _ => H_NO,
+  }
+}
+
+// The element store type of a vector expression (`elem_tp`), -1 none.
+fn elem_tp(b: ir::Bundle, d: integer, vec: ir::Node) -> integer {
+  match loop_shape::unspan(vec) {
+    NdVar { n } => match cgen_types::base(var_tp(b, d, n)) {
+      TyVector { inner, dep: _ } => record_tp(b, inner),
+      _ => -1,
+    },
+    NdCall { def_nr, args } => {
+      if op_name(b, def_nr) != "OpGetField" || len(args) < 3 {
+        return -1;
+      }
+      vtp = int_of(args[2]!);
+      if vtp == null || vtp < 0 || vtp > 65535 {
+        return -1;
+      }
+      vector_content(b, vtp)
+    },
+    _ => -1,
+  }
+}
+
+// The record store type of a record expression (`rec_tp`), -1 none.
+pub fn rec_tp(b: ir::Bundle, d: integer, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdVar { n } => record_tp(b, var_tp(b, d, n)),
+    NdCall { def_nr, args } => {
+      name = op_name(b, def_nr);
+      if name == "OpGetField" {
+        return if len(args) < 3 { -1 } else { small(int_of(args[2]!)) };
+      }
+      if name == "OpGetVector" || name == "OpGetVectorNullable" {
+        return if len(args) == 0 { -1 } else { elem_tp(b, d, args[0]!) };
+      }
+      if name == "OpDatabase" || name == "OpDatabaseNP" {
+        return if len(args) < 2 { -1 } else { small(int_of(args[1]!)) };
+      }
+      if loft_fn(b, def_nr) {
+        return record_tp(b, returned(b, def_nr));
+      }
+      -1
+    },
+    NdBlock { block } => record_tp(b, block[0].result[0] ?? ir::TyVoid),
+    _ => -1,
+  }
+}
+
+// A literal that fits a store type number, -1 for any other.
+fn small(n: integer?) -> integer {
+  if n == null || n < 0 || n > 65535 { -1 } else { n }
+}
+
+// `args[0]` is a variable whose vector's elements hold nothing.
+fn element_of_a_vector_holding_nothing(b: ir::Bundle, c: vector<boolean>, d: integer, args: vector<ir::Node>) -> boolean {
+  if len(args) == 0 {
+    return false;
+  }
+  v = var_of(args[0]!);
+  if v < 0 {
+    return false;
+  }
+  match cgen_types::base(var_tp(b, d, v)) {
+    TyVector { inner, dep: _ } => holds_type(b, c, inner) == H_NO,
+    _ => false,
+  }
+}
+
+pub fn holds(b: ir::Bundle, c: vector<boolean>, d: integer, x: ir::Node) -> integer {
+  match loop_shape::unspan(x) {
+    NdVar { n } => holds_type(b, c, var_tp(b, d, n)),
+    NdCall { def_nr, args } => {
+      name = op_name(b, def_nr);
+      if (name == "OpGetVector" || name == "OpGetVectorNullable") && element_of_a_vector_holding_nothing(b, c, d, args) {
+        return H_NO;
+      }
+      if name == "OpGetField" || name == "OpGetVector" || name == "OpGetVectorNullable" || name == "OpDatabase" || name == "OpDatabaseNP" {
+        t = rec_tp(b, d, x);
+        return if t < 0 { H_UNKNOWN } else if in_set(c, t) { H_YES } else { H_NO };
+      }
+      ret = returned(b, def_nr);
+      generic = match cgen_types::base(ret) {
+        TyReference { n: _, dep: _ } => true,
+        TyVector { inner: _, dep: _ } => true,
+        TyRefVar { inner: _ } => true,
+        _ => false,
+      };
+      if generic && !loft_fn(b, def_nr) {
+        for a in args {
+          if holds(b, c, d, a) != H_NO {
+            return H_UNKNOWN;
+          }
+        }
+        return H_NO;
+      }
+      holds_type(b, c, ret)
+    },
+    NdBlock { block } => holds_type(b, c, block[0].result[0] ?? ir::TyVoid),
+    NdInsert { items } => if len(items) == 0 { H_NO } else { holds(b, c, d, items[len(items) - 1]!) },
+    NdIf { cond: _, t, f } => {
+      ht = holds(b, c, d, t);
+      hf = holds(b, c, d, f);
+      if ht == H_NO && hf == H_NO {
+        H_NO
+      } else if ht == H_YES || hf == H_YES {
+        H_YES
+      } else {
+        H_UNKNOWN
+      }
+    },
+    NdNull => H_NO,
+    NdLine { n: _ } => H_NO,
+    NdInt { n: _ } => H_NO,
+    NdLong { n: _ } => H_NO,
+    NdFloat { f: _ } => H_NO,
+    NdSingle { f: _ } => H_NO,
+    NdBoolean { b: _ } => H_NO,
+    NdText { s: _ } => H_NO,
+    NdEnum { ord: _, tp: _ } => H_NO,
+    NdSet { var: _, inner: _ } => H_NO,
+    NdReturn { inner: _ } => H_NO,
+    NdBreak { n: _ } => H_NO,
+    NdContinue { n: _ } => H_NO,
+    NdLoop { block: _ } => H_NO,
+    NdDrop { inner: _ } => H_NO,
+    NdKeys { keys: _ } => H_NO,
+    _ => H_UNKNOWN,
+  }
+}
+
+// The view type the record expression `rec` (in the body of `d`) is (`view_of`), -1 none.
+pub fn view_of(p: DvPlan, b: ir::Bundle, d: integer, rec: ir::Node) -> integer {
+  t = rec_tp(b, d, rec);
+  if t < 0 { -1 } else { view_type(p, t) }
+}
+
+// A text run's guarded read, as `(R-TextRun)` writes it (`text_run`): the value of a text field
+// set `{ if g { w = text_from_byte_range(b, lo, hi) } else { … }; w }`.
+pub struct TextRun {
+  pub ok: boolean,
+  pub guard: ir::Node,
+  pub frame: integer,
+  pub lo: ir::Node,
+  pub hi: ir::Node,
+  // The fallback arm.
+  pub other: ir::Node,
+}
+
+fn no_run() -> TextRun {
+  TextRun { ok: false, guard: ir::NdNull, frame: -1, lo: ir::NdNull, hi: ir::NdNull, other: ir::NdNull }
+}
+
+pub fn text_run(b: ir::Bundle, val: ir::Node) -> TextRun {
+  ops = match loop_shape::unspan(val) {
+    NdBlock { block } => block[0].operators,
+    _ => return no_run(),
+  };
+  if len(ops) != 2 {
+    return no_run();
+  }
+  w = var_of(ops[1]!);
+  if w < 0 {
+    return no_run();
+  }
+  match loop_shape::unspan(ops[0]!) {
+    NdIf { cond, t, f } => {
+      match only_op(t) {
+        NdSet { var, inner } => {
+          if var != w || call_name(b, inner) != "n_text_from_byte_range" {
+            return no_run();
+          }
+          args = call_args(inner);
+          if len(args) != 3 {
+            return no_run();
+          }
+          frame = var_of(args[0]!);
+          if frame < 0 {
+            return no_run();
+          }
+          TextRun { ok: true, guard: cond, frame: frame, lo: args[1]!, hi: args[2]!, other: f }
+        },
+        _ => no_run(),
+      }
+    },
+    _ => no_run(),
+  }
+}
+
+// The one operator of an arm written as a block or an insert of one, or the arm itself.
+pub fn only_op(x: ir::Node) -> ir::Node {
+  match loop_shape::unspan(x) {
+    NdBlock { block } => if len(block[0].operators) == 1 { loop_shape::unspan(block[0].operators[0]!) } else { loop_shape::unspan(x) },
+    NdInsert { items } => if len(items) == 1 { loop_shape::unspan(items[0]!) } else { loop_shape::unspan(x) },
+    _ => loop_shape::unspan(x),
+  }
+}
+
+// ---- the walk of one body for one root (`Scan`) ----------------------------------------------
+
+struct ScanCall {
+  callee: integer,
+  fb: vector<boolean>,
+}
+
+struct Scan {
+  b: ir::Bundle,
+  c: vector<boolean>,
+  p: DvPlan,
+  d: integer,
+  root: boolean,
+  frame: vector<integer>,
+  calls: vector<ScanCall>,
+  why: text,
+  sites: integer,
+}
+
+// Ops a region body may apply to a value of a view type, beyond those `call` reads (`ALLOWED`).
+fn allowed(name: text) -> boolean {
+  for a in ["OpGetField", "OpGetVector", "OpGetVectorNullable", "OpGetEnum", "OpSetEnum", "OpConvIntFromEnum", "OpGetInt", "OpGetInt4", "OpGetShort", "OpGetByte", "OpGetBoolean", "OpGetFloat", "OpGetSingle", "OpGetLong", "OpSetInt", "OpSetInt4", "OpSetShort", "OpSetByte", "OpSetBoolean", "OpSetFloat", "OpSetSingle", "OpSetLong", "OpSetText", "OpLengthVector", "OpCopyRecord", "OpClear", "OpFreeRef", "OpFreeRefIfDistinct", "OpFreeRecordIn", "OpRefIsNull", "OpConvBoolFromRef", "OpRefAlias", "OpNewRecord", "OpFinishRecord", "OpPreAllocVector", "OpPlaceRecord", "OpCreateStack", "OpDistinctStore", "OpMoveField", "OpMoveRecord"] {
+    if a == name {
+      return true;
+    }
+  }
+  false
+}
+
+fn decline(s: Scan, why: text) {
+  if s.why == "" {
+    s.why = why;
+  }
+}
+
+fn s_view(s: Scan, x: ir::Node) -> integer {
+  view_of(s.p, s.b, s.d, x)
+}
+
+fn is_frame(s: Scan, x: ir::Node) -> boolean {
+  v = var_of(x);
+  v >= 0 && s.frame.contains(v)
+}
+
+fn s_holds(s: Scan, x: ir::Node) -> integer {
+  holds(s.b, s.c, s.d, x)
+}
+
+fn walk(s: Scan, x: ir::Node) {
+  if s.why != "" {
+    return;
+  }
+  match loop_shape::unspan(x) {
+    NdVar { n } => {
+      if s.frame.contains(n) {
+        decline(s, "a mention of the frame no read serves");
+      }
+    },
+    NdSet { var, inner } => {
+      if s.frame.contains(var) {
+        decline(s, "the frame rebound");
+      }
+      walk(s, inner);
+    },
+    NdReturn { inner } => {
+      if s.root && s_holds(s, inner) != H_NO {
+        decline(s, "a decoded value returned out of its frame");
+      }
+      walk(s, inner);
+    },
+    NdCall { def_nr, args } => call(s, def_nr, args),
+    NdIter { var: _, create: _, next: _, init: _ } => decline(s, "an iterator, a function reference, a yield or a parallel block"),
+    NdCallRef { var: _, args: _ } => decline(s, "an iterator, a function reference, a yield or a parallel block"),
+    NdFnRef { def_nr: _, var: _, t: _ } => decline(s, "an iterator, a function reference, a yield or a parallel block"),
+    NdFnRefDnr { n: _ } => decline(s, "an iterator, a function reference, a yield or a parallel block"),
+    NdYield { inner: _ } => decline(s, "an iterator, a function reference, a yield or a parallel block"),
+    NdParallel { arms: _ } => decline(s, "an iterator, a function reference, a yield or a parallel block"),
+    NdTuple { items } => {
+      for i in items {
+        if s_holds(s, i) != H_NO || is_frame(s, i) {
+          decline(s, "a decoded value or the frame in a tuple");
+        }
+        walk(s, i);
+      }
+    },
+    NdTupleGet { var, idx: _ } => {
+      if holds_type(s.b, s.c, var_tp(s.b, s.d, var)) != H_NO {
+        decline(s, "a tuple holding a decoded value");
+      }
+    },
+    NdTuplePut { var, idx: _, inner } => {
+      if holds_type(s.b, s.c, var_tp(s.b, s.d, var)) != H_NO {
+        decline(s, "a tuple holding a decoded value");
+      } else {
+        walk(s, inner);
+      }
+    },
+    _ => {
+      for ch in el_ir::children(loop_shape::unspan(x)) {
+        walk(s, ch);
+      }
+    },
+  }
+}
+
+fn call(s: Scan, d: integer, args: vector<ir::Node>) {
+  name = op_name(s.b, d);
+  if !name.starts_with("Op") {
+    function(s, d, args);
+    return;
+  }
+  // An element of the frame READ: the address under a getter.
+  if name.starts_with("OpGet") && len(args) > 0 {
+    g = call_name(s.b, args[0]!);
+    gargs = call_args(args[0]!);
+    if (g == "OpGetVector" || g == "OpGetVectorNullable") && len(gargs) == 3 && is_frame(s, gargs[0]!) {
+      walk(s, gargs[2]!);
+      for a in args {
+        if a#index > 0 {
+          walk(s, a);
+        }
+      }
+      return;
+    }
+  }
+  n = len(args);
+  if name == "OpLengthVector" && n == 1 && is_frame(s, args[0]!) {
+    return;
+  }
+  if (name == "OpGetVector" || name == "OpGetVectorNullable") && n >= 1 && is_frame(s, args[0]!) {
+    decline(s, "an element address of the frame outside a read");
+    return;
+  }
+  if name == "OpSliceVector" && n == 5 && is_frame(s, args[1]!) {
+    s.sites += 1;
+    walk(s, args[0]!);
+    walk(s, args[2]!);
+    walk(s, args[3]!);
+    return;
+  }
+  if name == "OpGetText" && n == 2 {
+    o = int_of(args[1]!);
+    if s_view(s, args[0]!) < 0 && s_holds(s, args[0]!) == H_UNKNOWN && o != null {
+      typed = false;
+      for t in s.p.types {
+        if t.text.contains(o) {
+          typed = true;
+        }
+      }
+      if typed {
+        decline(s, "a text read of a record the walk cannot type");
+      }
+    }
+    walk(s, args[0]!);
+    return;
+  }
+  if name == "OpGetField" && n == 3 {
+    v = s_view(s, args[0]!);
+    o = int_of(args[1]!);
+    t = int_of(args[2]!);
+    if v >= 0 && o != null && t != null && bytes_field(s.p.types[v]!, o, t) {
+      decline(s, "a read of a decoded byte string");
+    }
+    walk(s, args[0]!);
+    return;
+  }
+  if name == "OpMoveVector" && n == 3 {
+    // The destination may be a byte-string field: a write, not a read.
+    dst = args[0]!;
+    if call_name(s.b, dst) == "OpGetField" && len(call_args(dst)) == 3 {
+      walk(s, call_args(dst)[0]!);
+    } else {
+      walk(s, dst);
+    }
+    walk(s, args[1]!);
+    return;
+  }
+  if name == "OpSetText" && n == 3 {
+    text_set(s, args[0]!, args[1]!, args[2]!);
+    return;
+  }
+  if (name == "OpDatabase" || name == "OpDatabaseNP") && n == 2 {
+    t = int_of(args[1]!);
+    if t != null && t >= 0 && t < len(s.p.variant_of) && s.p.variant_of[t]! >= 0 && !s.p.is_enum[t]! && span_variant(s.b, t) {
+      decline(s, "a span variant's record minted alone (it has no span word)");
+    }
+    walk(s, args[0]!);
+    return;
+  }
+  if !allowed(name) {
+    for a in args {
+      if s_holds(s, a) != H_NO {
+        decline(s, "an operator outside the allowed list on a decoded value ({name})");
+      }
+    }
+  }
+  for a in args {
+    walk(s, a);
+  }
+}
+
+// Is `(o, t)` one of view type `v`'s byte-string fields?
+pub fn bytes_field(v: DvType, o: integer, t: integer) -> boolean {
+  for bo in v.bytes_off {
+    if bo == o && v.bytes_tp[bo#index]! == t {
+      return true;
+    }
+  }
+  false
+}
+
+// A text field set: a text run of the frame into a view type's field is a span the region
+// writes, and its read of the frame is the run's own.
+fn text_set(s: Scan, rec: ir::Node, off: ir::Node, val: ir::Node) {
+  if s_view(s, rec) >= 0 {
+    run = text_run(s.b, val);
+    if run.ok && s.frame.contains(run.frame) {
+      s.sites += 1;
+      walk(s, rec);
+      walk(s, off);
+      walk(s, run.guard);
+      walk(s, run.lo);
+      walk(s, run.hi);
+      // The run's fallback arm reads its own vector, not the frame.
+      walk(s, run.other);
+      return;
+    }
+  }
+  walk(s, rec);
+  walk(s, off);
+  walk(s, val);
+}
+
+fn function(s: Scan, d: integer, args: vector<ir::Node>) {
+  holds_any = holds_type(s.b, s.c, returned(s.b, d)) != H_NO;
+  frame = false;
+  for a in args {
+    if s_holds(s, a) != H_NO {
+      holds_any = true;
+    }
+    if is_frame(s, a) {
+      frame = true;
+    }
+  }
+  if !holds_any && !frame {
+    for a in args {
+      walk(s, a);
+    }
+    return;
+  }
+  if !loft_fn(s.b, d) {
+    // A text read straight off the frame is a read.
+    if op_name(s.b, d) == "n_text_from_byte_range" && len(args) == 3 && is_frame(s, args[0]!) && !holds_any {
+      walk(s, args[1]!);
+      walk(s, args[2]!);
+      return;
+    }
+    decline(s, "a function with no loft body handed a decoded value or the frame ({op_name(s.b, d)})");
+    return;
+  }
+  fb: vector<boolean> = [];
+  for a in args {
+    if is_frame(s, a) {
+      fb += [true];
+    } else {
+      fb += [false];
+      walk(s, a);
+    }
+  }
+  s.calls += [ScanCall { callee: d, fb: fb }];
+}
+
+// ---- one root's region (`region_of`) ---------------------------------------------------------
+
+struct VarSet {
+  d: integer,
+  vs: vector<integer>,
+}
+
+struct Region {
+  members: vector<integer>,
+  frame: vector<VarSet>,
+  not_frame: vector<VarSet>,
+  sites: integer,
+  why: text,
+}
+
+fn set_of(sets: vector<VarSet>, d: integer) -> VarSet? {
+  for s in sets {
+    if s.d == d {
+      return s;
+    }
+  }
+  null
+}
+
+// The index of `d`'s set, made empty where it has none.
+fn set_entry(sets: vector<VarSet>, d: integer) -> integer {
+  for s in sets {
+    if s.d == d {
+      return s#index;
+    }
+  }
+  sets += [VarSet { d: d, vs: [] }];
+  len(sets) - 1
+}
+
+// Add `v` to `d`'s set.
+fn set_put(sets: vector<VarSet>, d: integer, v: integer) {
+  i = set_entry(sets, d);
+  set_add(sets[i]!.vs, v);
+}
+
+fn same_vars(a: vector<integer>, b: vector<integer>) -> boolean {
+  if len(a) != len(b) {
+    return false;
+  }
+  for x in a {
+    if x != b[x#index]! {
+      return false;
+    }
+  }
+  true
+}
+
+fn copy_vars(a: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in a {
+    out += [x];
+  }
+  out
+}
+
+fn region_of(b: ir::Bundle, c: vector<boolean>, p: DvPlan, root: integer, bv: integer) -> Region {
+  r = Region { members: [], frame: [], not_frame: [], sites: 0, why: "" };
+  set_put(r.frame, root, bv);
+  scanned: vector<VarSet> = [];
+  queue: vector<integer> = [root];
+  while len(queue) > 0 {
+    g = queue[len(queue) - 1]!;
+    queue = queue[0..len(queue) - 1];
+    known_frame = set_of(r.frame, g);
+    frame: vector<integer> = if known_frame == null { [] } else { copy_vars(known_frame.vs) };
+    was = set_of(scanned, g);
+    if was != null && same_vars(was.vs, frame) {
+      continue;
+    }
+    s = Scan { b: b, c: c, p: p, d: g, root: g == root, frame: frame, calls: [], why: "", sites: 0 };
+    walk(s, b.data.definitions[g]!.code[0] ?? ir::NdNull);
+    if s.why != "" {
+      r.why = "{op_name(b, g)}: {s.why}";
+      return r;
+    }
+    r.sites += s.sites;
+    for sc in s.calls {
+      callee = sc.callee;
+      if callee == root {
+        r.why = "the root is called from its own region";
+        return r;
+      }
+      if !r.members.contains(callee) {
+        r.members += [callee];
+      }
+      for is_b in sc.fb {
+        pv = param_var(b, callee, is_b#index);
+        if pv < 0 {
+          continue;
+        }
+        if is_b {
+          set_put(r.frame, callee, pv);
+        } else if byte_vector(var_tp(b, callee, pv)) {
+          set_put(r.not_frame, callee, pv);
+        }
+      }
+      sc_was = set_of(scanned, callee);
+      now = set_of(r.frame, callee);
+      now_vs: vector<integer> = if now == null { [] } else { now.vs };
+      if sc_was == null || !same_vars(sc_was.vs, now_vs) {
+        queue += [callee];
+      }
+    }
+    at = set_entry(scanned, g);
+    scanned[at].vs = frame;
+  }
+  r
+}
+
+// A root's frame (`root_frame`): a byte-vector parameter that is not a `&` one, of a function
+// whose other parameters cannot alias it (numbers and texts only); -1 for none.
+fn root_frame(b: ir::Bundle, c: vector<boolean>, d: integer) -> integer {
+  def = b.data.definitions[d]!;
+  frame = -1;
+  for a in def.attributes {
+    pv = param_var(b, d, a#index);
+    if pv < 0 {
+      return -1;
+    }
+    tp = var_tp(b, d, pv);
+    if byte_vector(tp) && !(tp is TyOptional) {
+      if frame >= 0 || a.hidden {
+        return -1;
+      }
+      frame = pv;
+    } else if a.hidden {
+      // A return or work buffer the call hands in: a record or a text, never the frame.
+    } else {
+      plain = match cgen_types::base(tp) {
+        TyInteger { spec: _ } => true,
+        TyFloat => true,
+        TySingle => true,
+        TyBoolean => true,
+        TyCharacter => true,
+        TyText { dep: _ } => true,
+        _ => false,
+      };
+      if !plain {
+        return -1;
+      }
+    }
+  }
+  if frame < 0 {
+    return -1;
+  }
+  // It hands the frame to a call that answers a decoded value.
+  hands = hands_frame(b, c, def.code[0] ?? ir::NdNull, frame);
+  if trace_on() {
+    trace("{def.name}: frame candidate `{var_name(b, d, frame)}`, hands it to a decoder: {hands}");
+  }
+  if hands { frame } else { -1 }
+}
+
+fn hands_frame(b: ir::Bundle, c: vector<boolean>, x: ir::Node, bv: integer) -> boolean {
+  match x {
+    NdSpan { pos: _, inner } => return hands_frame(b, c, inner, bv),
+    NdCall { def_nr, args } => {
+      if loft_fn(b, def_nr) && holds_type(b, c, returned(b, def_nr)) == H_YES {
+        for a in args {
+          if var_of(a) == bv {
+            return true;
+          }
+        }
+      }
+    },
+    _ => {},
+  }
+  for ch in el_ir::children(x) {
+    if hands_frame(b, c, ch, bv) {
+      return true;
+    }
+  }
+  false
+}
+
+// ---- span locals (`span_locals`) -------------------------------------------------------------
+
+// The byte locals of `d` a span stands for: `bs` filled only by `if g { OpSliceVector(bs, b,
+// lo, hi) } else { … }` from a frame parameter `b`, then moved, by the next statement that names
+// it, into a byte-string field of a view type.  Its holders are marked lazy.
+fn span_locals(b: ir::Bundle, p: DvPlan, d: integer, frame: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  code = b.data.definitions[d]!.code[0] ?? ir::NdNull;
+  cands: vector<integer> = [];
+  slice_cands(b, code, frame, cands);
+  for bs in cands {
+    if out.contains(bs) {
+      continue;
+    }
+    found = find_slice_block(b, code, "", bs);
+    if span_local_ok(b, code, found, bs) {
+      out += [bs];
+      holders(b, p, d, found, bs);
+    }
+  }
+  out
+}
+
+fn slice_cands(b: ir::Bundle, x: ir::Node, frame: vector<integer>, out: vector<integer>) {
+  match x {
+    NdSpan { pos: _, inner } => {
+      slice_cands(b, inner, frame, out);
+      return;
+    },
+    NdCall { def_nr, args } => {
+      if op_name(b, def_nr) == "OpSliceVector" && len(args) >= 2 {
+        bs = var_of(args[0]!);
+        bv = var_of(args[1]!);
+        if bs >= 0 && bv >= 0 && frame.contains(bv) {
+          out += [bs];
+        }
+      }
+    },
+    _ => {},
+  }
+  for ch in el_ir::children(x) {
+    slice_cands(b, ch, frame, out);
+  }
+}
+
+// The block holding the slice's `if` as one of its statements: its path, its statements and
+// the `if`'s index.
+struct SliceBlock {
+  ok: boolean,
+  path: text,
+  ops: vector<ir::Node>,
+  at: integer,
+}
+
+fn find_slice_block(b: ir::Bundle, x: ir::Node, p: text, bs: integer) -> SliceBlock {
+  match x {
+    NdSpan { pos: _, inner } => return find_slice_block(b, inner, child(p, 0), bs),
+    NdBlock { block } => {
+      for s in block[0].operators {
+        if is_slice_if(b, s, bs) {
+          return SliceBlock { ok: true, path: p, ops: block[0].operators, at: s#index };
+        }
+      }
+    },
+    _ => {},
+  }
+  for ch in el_ir::children(x) {
+    f = find_slice_block(b, ch, child(p, ch#index), bs);
+    if f.ok {
+      return f;
+    }
+  }
+  SliceBlock { ok: false, path: "", ops: [], at: -1 }
+}
+
+fn is_slice_if(b: ir::Bundle, x: ir::Node, bs: integer) -> boolean {
+  match loop_shape::unspan(x) {
+    NdIf { cond: _, t, f: _ } => {
+      then = only_op(t);
+      call_name(b, then) == "OpSliceVector" && len(call_args(then)) > 0 && var_of(call_args(then)[0]!) == bs
+    },
+    _ => false,
+  }
+}
+
+fn is_move_of(b: ir::Bundle, x: ir::Node, bs: integer) -> boolean {
+  call_name(b, x) == "OpMoveVector" && len(call_args(x)) > 1 && var_of(call_args(x)[1]!) == bs
+}
+
+// Every mention of `bs` inside `x` is the one move: answers the moves, -1 where another
+// mention is.
+fn only_the_move(b: ir::Bundle, x: ir::Node, bs: integer) -> integer {
+  if is_move_of(b, x, bs) {
+    return 1;
+  }
+  match loop_shape::unspan(x) {
+    NdVar { n } => if n == bs { return -1; },
+    NdSet { var, inner: _ } => if var == bs { return -1; },
+    _ => {},
+  }
+  moves = 0;
+  ok = true;
+  for ch in el_ir::children(x) {
+    m = only_the_move(b, ch, bs);
+    if m < 0 {
+      ok = false;
+    } else {
+      moves += m;
+    }
+  }
+  if ok { moves } else { -1 }
+}
+
+fn span_local_ok(b: ir::Bundle, code: ir::Node, found: SliceBlock, bs: integer) -> boolean {
+  if !found.ok {
+    if trace_on() {
+      trace("span local {bs}: no slice `if` as a statement");
+    }
+    return false;
+  }
+  ops = found.ops;
+  i = found.at;
+  // Before the `if`, in this block: its declaration and placement only — assignments.
+  for s in ops {
+    if s#index >= i {
+      break;
+    }
+    if mentions(s, bs) {
+      own_set = match loop_shape::unspan(s) { NdSet { var, inner: _ } => var == bs, _ => false };
+      if !own_set {
+        items = match loop_shape::unspan(s) { NdInsert { items } => items, _ => {
+          if trace_on() {
+            trace("span local {bs}: named before the slice");
+          }
+          return false;
+        } };
+        for it in items {
+          if mentions(it, bs) {
+            if trace_on() {
+              trace("span local {bs}: named in an insert before the slice");
+            }
+            return false;
+          }
+        }
+      }
+    }
+  }
+  // After it: the next statement naming `bs` holds the one move and no other mention, with
+  // no jump on the way; nothing after names it.
+  moved = false;
+  for s in ops {
+    if s#index <= i {
+      continue;
+    }
+    if moved {
+      if mentions(s, bs) {
+        return false;
+      }
+      continue;
+    }
+    if !mentions(s, bs) {
+      if has_jump(s) {
+        return false;
+      }
+      continue;
+    }
+    n = only_the_move(b, s, bs);
+    is_loop = match loop_shape::unspan(s) { NdLoop { block: _ } => true, _ => false };
+    if n != 1 || is_loop {
+      if trace_on() {
+        trace("span local {bs}: the next statement naming it is no single move");
+      }
+      return false;
+    }
+    moved = true;
+  }
+  // Nowhere else in the body but its declaration: only this block's statements name it.
+  moved && mentions_only_in(code, "", found.path, bs)
+}
+
+// No mention of `bs` lies outside the block at path `at`, but a `bs = null` declaration.
+fn mentions_only_in(x: ir::Node, p: text, at: text, bs: integer) -> boolean {
+  if is_block(x) && under(p, x) == at {
+    return true;
+  }
+  match loop_shape::unspan(x) {
+    NdSet { var, inner } => {
+      if var == bs {
+        return loop_shape::unspan(inner) is NdNull;
+      }
+    },
+    NdVar { n } => if n == bs { return false; },
+    _ => {},
+  }
+  for ch in el_ir::children(x) {
+    if !mentions_only_in(ch, child(p, ch#index), at, bs) {
+      return false;
+    }
+  }
+  true
+}
+
+// The statements before the slice's `if` that only build `bs`'s holder — its placement
+// (`__vdb = OpPlaceRecord(…)`, in an insert), `bs = OpGetField(__vdb, …)` and the holder's
+// `OpSetInt4` — marked lazy under the slice's guard, when nothing from the first of them to the
+// `if` assigns a variable the guard reads.
+fn holders(b: ir::Bundle, p: DvPlan, d: integer, found: SliceBlock, bs: integer) {
+  if !found.ok {
+    return;
+  }
+  ops = found.ops;
+  i = found.at;
+  guard = match loop_shape::unspan(ops[i]!) { NdIf { cond, t: _, f: _ } => cond, _ => return };
+  vdb = -1;
+  for s in ops {
+    if s#index >= i || vdb >= 0 {
+      break;
+    }
+    match loop_shape::unspan(s) {
+      NdSet { var, inner } => {
+        if var == bs && call_name(b, inner) == "OpGetField" && len(call_args(inner)) > 0 {
+          vdb = var_of(call_args(inner)[0]!);
+        }
+      },
+      _ => {},
+    }
+  }
+  if vdb < 0 {
+    return;
+  }
+  first = -1;
+  for s in ops {
+    if s#index >= i {
+      break;
+    }
+    if first < 0 && is_holder(b, s, bs, vdb) {
+      first = s#index;
+    }
+  }
+  if first < 0 {
+    return;
+  }
+  read: vector<integer> = [];
+  vars_read(guard, read);
+  for s in ops {
+    if s#index >= first && s#index < i {
+      for r in read {
+        if assigns(s, r) {
+          return;
+        }
+      }
+    }
+  }
+  for s in ops {
+    if s#index >= first && s#index < i && is_holder(b, s, bs, vdb) {
+      code = len(p.guards);
+      p.guards += [guard];
+      p.marks += [Mark { d: d, path: child(found.path, s#index), file: MARK_FILE, code: code }];
+    }
+  }
+}
+
+fn is_holder(b: ir::Bundle, s: ir::Node, bs: integer, vdb: integer) -> boolean {
+  match loop_shape::unspan(s) {
+    NdSet { var, inner: _ } => var == bs,
+    NdInsert { items } => {
+      for it in items {
+        match loop_shape::unspan(it) {
+          NdSet { var, inner } => {
+            if var == vdb && call_name(b, inner) == "OpPlaceRecord" {
+              return true;
+            }
+          },
+          _ => {},
+        }
+      }
+      false
+    },
+    NdCall { def_nr, args } => op_name(b, def_nr) == "OpSetInt4" && len(args) > 0 && var_of(args[0]!) == vdb,
+    _ => false,
+  }
+}
+
+// ---- the program's plan (`plan`) ------------------------------------------------------------
+
+// The holding types of the plan's view types, for the structure clause's walk.
+pub fn holding(b: ir::Bundle, p: DvPlan) -> vector<boolean> {
+  holding_types(b, p)
+}
+
+pub fn plan(b: ir::Bundle) -> DvPlan {
+  p = no_plan();
+  p.asked = true;
+  if !enabled() {
+    return p;
+  }
+  view_types(b, p);
+  if len(p.types) == 0 {
+    return p;
+  }
+  c = holding_types(b, p);
+  frame: vector<VarSet> = [];
+  not_frame: vector<VarSet> = [];
+  region: vector<integer> = [];
+  for def in b.data.definitions {
+    d = def#index;
+    if !loft_fn(b, d) {
+      continue;
+    }
+    bv = root_frame(b, c, d);
+    if bv < 0 {
+      continue;
+    }
+    r = region_of(b, c, p, d, bv);
+    if r.why == "" && r.sites > 0 {
+      if trace_on() {
+        trace("{def.name}: a root over `{var_name(b, d, bv)}`, region {len(r.members)}");
+      }
+      p.fns[fn_entry(p, d)].root = bv;
+      for m in r.members {
+        if !region.contains(m) {
+          region += [m];
+        }
+      }
+      for s in r.frame {
+        for v in s.vs {
+          set_put(frame, s.d, v);
+        }
+      }
+      for s in r.not_frame {
+        for v in s.vs {
+          set_put(not_frame, s.d, v);
+        }
+      }
+    } else if r.why == "" {
+      if trace_on() {
+        trace("{def.name}: declines: no span to write");
+      }
+    } else if trace_on() {
+      trace("{def.name}: declines: {r.why}");
+    }
+  }
+  for m in region {
+    p.fns[fn_entry(p, m)].region = true;
+  }
+  // A root no region reaches is written once, as a root; one that a region reaches is also a
+  // twin, and its own frame is then whatever its twin's callers hand it.
+  for g in 0..len(b.data.definitions) {
+    s = set_of(frame, g) ?? continue;
+    nf = set_of(not_frame, g);
+    exact: vector<integer> = [];
+    for v in s.vs {
+      if nf == null || !nf.vs.contains(v) {
+        exact += [v];
+      }
+    }
+    fi = fn_entry(p, g);
+    f = p.fns[fi]!;
+    if f.region {
+      sl = span_locals(b, p, g, exact);
+      if trace_on() {
+        names: vector<text> = [for v in exact { var_name(b, g, v) }];
+        names.sort();
+        sln: vector<text> = [for v in sl { var_name(b, g, v) }];
+        sln.sort();
+        trace("{op_name(b, g)}: frame [{names.join(",")}], span locals [{sln.join(",")}]");
+      }
+      sl.sort();
+      f.span_locals = sl;
+    }
+    f.bparams = exact;
+  }
+  p
+}

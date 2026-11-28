@@ -290,14 +290,24 @@ fn transitive_depers(f: ir::Function, st: integer) -> vector<integer> {
 }
 
 // port: last_use.rs fn reclaim_safe — store `st` may be freed early, relocated, and lose its
-// scope-exit free.  `Function::is_ref_home` is not in the image: `check` refuses a body with a
-// stored reference wherever the plan acts (`stored_reference`).
+// scope-exit free.
 fn reclaim_safe(code: ir::Node, f: ir::Function, st: integer) -> boolean {
   if !scope_fn::name(f, st).starts_with("__vdb") {
     return false;
   }
   if scope_fn::is_skip_free(f, st) || scope_fn::is_captured(f, st) || scope_fn::tp(f, st) is TyRefVar {
     return false;
+  }
+  // `@FR-H-RefHome` — a stored reference in an outer holder names a record of this store.
+  if scope_fn::is_ref_home(f, st) {
+    return false;
+  }
+  if scope_fn::has_ref_home(f) {
+    for v in transitive_depers(f, st) {
+      if scope_fn::is_ref_home(f, v) {
+        return false;
+      }
+    }
   }
   if scope_confinement::guard_escapes(code, st) {
     return false;

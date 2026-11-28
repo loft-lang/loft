@@ -1,0 +1,22 @@
+diff --git a/src/keys.rs b/src/keys.rs
+index 2e7d80e650..bd6d3451c3 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -3365,7 +3365,7 @@ pub fn delivered_first_adopt() -> bool {
+ #[must_use]
+ pub fn self_copy_guard() -> bool {
+     static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_SELF_COPY_GUARD"))
++    *ON.get_or_init(|| false)
+ }
+ 
+ /// `LOFT_NO_NCC_ENTRY_GUARD=1` — a `??` hoist promoted onto the return buffer takes the plain
+@@ -3374,7 +3374,7 @@ pub fn self_copy_guard() -> bool {
+ #[must_use]
+ pub fn ncc_entry_guard() -> bool {
+     static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_NCC_ENTRY_GUARD"))
++    *ON.get_or_init(|| false)
+ }
+ 
+ /// `LOFT_NO_JOIN_RETURN_BACKINGS=1` — a join return keeps, as before loft#2671, the stores a

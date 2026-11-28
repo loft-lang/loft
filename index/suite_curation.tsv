@@ -340,7 +340,7 @@ E-Report	operational	curated	7	2026-11-18	one cell
 E-Seq	operational	curated	3	2026-11-18	2 cells: gate E splits them
 E-Truthy	operational	curated	5	2026-11-18	2 cells: the loft#1919 patch and the definite-boolean program — distinct clauses
 E-Truthy-1	operational	curated	3	2026-11-18	one cell (a patch)
-E-Uncomp	operational	curated	9	2026-11-18	one cell (loft#1246)
+E-Uncomp	operational	curated	22	2026-11-27	regrown 9 -> 22: nothing new in its own dir; the growth is other chapters' cells (E-Asgn-Compound, E-Op-IntDivMod, N-Cast, W-Op, F-FaultSafe), the reference pages and tests/scripts citing it, each kept with its own rule or page; the suite cells pass both-c
 E-Uncomp-NN	operational	curated	7	2026-11-18	3 cells, all gate-E-agreeing
 E-Uncomp-Seen	operational	curated	1	2026-11-18	one cell
 E-Val	operational	curated	1	2026-11-18	no own directory; cited by suite cells of its chapter

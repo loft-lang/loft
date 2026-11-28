@@ -1,8 +1,8 @@
 diff --git a/src/parser/collections.rs b/src/parser/collections.rs
-index bcad52810..9b382c58a 100644
+index dada7e214e..509a40024f 100644
 --- a/src/parser/collections.rs
 +++ b/src/parser/collections.rs
-@@ -7628,9 +7628,8 @@ use #count instead"
+@@ -7762,9 +7762,8 @@ use #count instead"
              return true;
          };
          // The special form calls a function it names at compile time (`Value::Int(d)`); a
@@ -15,10 +15,10 @@ index bcad52810..9b382c58a 100644
          if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
              return false;
 diff --git a/src/parser/control.rs b/src/parser/control.rs
-index 4a5aa038a..cd008f8cd 100644
+index 79333c8942..1c9632a4b0 100644
 --- a/src/parser/control.rs
 +++ b/src/parser/control.rs
-@@ -16194,58 +16194,6 @@ impl Parser {
+@@ -16551,58 +16551,6 @@ impl Parser {
      // - Worker's first parameter must be a reference to T (type checked by name).
      // - Return type must be a primitive: integer, long, float, or boolean.
      // - Extra arg count must match the worker's extra parameters (args[1..]).
@@ -77,7 +77,7 @@ index 4a5aa038a..cd008f8cd 100644
      /// Compiler special-case for `reduce(v: vector<T>, init: U, f: fn(U, T) -> U) -> U`.
      /// Generates inline bytecode equivalent to a left-fold over the vector.
      /// Does a value of this type live in a STORE (or a text buffer) rather than in the
-@@ -16272,14 +16220,7 @@ impl Parser {
+@@ -16629,14 +16577,7 @@ impl Parser {
      pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
          self.state_route("parse_reduce");
          if self.first_pass {
@@ -93,17 +93,17 @@ index 4a5aa038a..cd008f8cd 100644
              if types.len() >= 2 {
                  return types[1].clone();
              }
-@@ -16293,7 +16234,7 @@ impl Parser {
+@@ -16650,7 +16591,7 @@ impl Parser {
              );
              return Type::Unknown(0);
          }
--        let in_elem_type = if let Type::Vector(elm, _) = &types[0] {
-+        let _in_elem_type = if let Type::Vector(elm, _) = &types[0] {
-             *elm.clone()
-         } else {
-             diagnostic!(
-@@ -16303,7 +16244,7 @@ impl Parser {
-             );
+-        let Some(in_elem_type) = self.combinator_source_elem(&types[0]) else {
++        let Some(_in_elem_type) = self.combinator_source_elem(&types[0]) else {
+             if !self.nullable_collection_refusal(
+                 &types[0],
+                 "reduce over",
+@@ -16661,7 +16602,7 @@ impl Parser {
+             }
              return Type::Unknown(0);
          };
 -        let (fn_param_types, fn_ret_type) = if let Type::Function(params, ret, ..) = &types[2] {
@@ -111,7 +111,7 @@ index 4a5aa038a..cd008f8cd 100644
              (params.clone(), *ret.clone())
          } else {
              diagnostic!(
-@@ -16373,24 +16314,6 @@ impl Parser {
+@@ -16731,11 +16672,6 @@ impl Parser {
              *val = v_block(list.to_vec(), carried, Self::TV_REDUCE);
              return acc_type;
          }
@@ -120,6 +120,13 @@ index 4a5aa038a..cd008f8cd 100644
 -        // answers what it accumulates.  The accumulator IS the fold's first parameter, so the
 -        // initial value is converted into it rather than the other way round; unchecked, a
 -        // float init folded through an integer function read the float's bits as an integer.
+         // A collection accumulator is folded by the declaration `reduce<T, U>`, which is declared
+         // over `vector<T>`; over any other source the fold below takes only a scalar or a
+         // `text` (loft#951's refusal further down), so say that first — the signature check
+@@ -16759,19 +16695,6 @@ impl Parser {
+             );
+             return acc_named;
+         }
 -        let mut init_code = list[1].clone();
 -        if !self.reduce_signature_fits(
 -            &mut init_code,
@@ -136,7 +143,7 @@ index 4a5aa038a..cd008f8cd 100644
          if Self::is_heap_storage(&acc_type) && !matches!(acc_type.base(), Type::Text(_)) {
              diagnostic!(
                  self.lexer,
-@@ -16417,23 +16340,17 @@ impl Parser {
+@@ -16798,10 +16721,6 @@ impl Parser {
              );
              return Type::Unknown(0);
          }
@@ -144,11 +151,10 @@ index 4a5aa038a..cd008f8cd 100644
 -        // A function VALUE reaches here only when the declaration `reduce<T, U>` did not take
 -        // it although its signature fits — an initial value that converts to the accumulator
 -        // without being it, which a type variable does not do.
--        let Value::Int(d) = list[2].unspan() else {
-+        // Extract the compile-time d_nr from the fn-ref value (always Value::Int(d_nr)).
-+        let fn_d_nr = if let Value::Int(d) = &list[2] {
-+            *d as u32
-+        } else {
+         // A source that is not a vector has no declaration to take a function VALUE
+         // (`reduce<T, U>` is declared over `vector<T>`), so the fold calls it here, held in a
+         // local as `map` and `filter` hold theirs (loft#2658).
+@@ -16821,11 +16740,7 @@ impl Parser {
              diagnostic!(
                  self.lexer,
                  Level::Error,
@@ -161,16 +167,12 @@ index 4a5aa038a..cd008f8cd 100644
              );
              return Type::Unknown(0);
          };
--        let fn_d_nr = *d as u32;
+@@ -16937,7 +16852,7 @@ impl Parser {
  
-         // loft#951 — a TEXT accumulator is minted as a WORK BUFFER, which puts it at
-         // FUNCTION scope rather than inside the `reduce` block.  The block's tail is the
-@@ -16535,7 +16452,7 @@ impl Parser {
+         let loop_body = vec![for_next, break_if_null, fold_step];
  
-         *val = v_block(
-             vec![
--                v_set(acc_var, init_code),
-+                v_set(acc_var, list[1].clone()),
-                 v_set(vec_copy_var, list[0].clone()),
-                 create_iter_code,
-                 v_loop(loop_body, "reduce loop"),
+-        let mut ops = vec![v_set(acc_var, init_code)];
++        let mut ops = vec![v_set(acc_var, list[1].clone())];
+         if let Some(fv) = fn_ref_var {
+             ops.push(v_set(fv, list[2].clone()));
+         }

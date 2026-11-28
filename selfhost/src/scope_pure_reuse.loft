@@ -1,0 +1,1152 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/pure_reuse.rs` `rewrite_program` transcribed (`@FR-R-PureReuse`): a call of an
+// effect-free function made twice on the same arguments, with nothing between that could change
+// what it reads, is made once and its value read twice.  Run by `scope_check::check` on the
+// parser's bodies before the loop, as `scopes::check` runs it.  With it `shared_call.rs`'s
+// `total` and `sharing_of`, which say where a site is; the two parts that would add to the
+// program are refused by name where Rust takes them: a sharing wrapper's VARIANT (a new
+// definition) and a vector handed into a total call's buffer (`shared_call::hand_in`).
+
+use ir;
+use scope_fn;
+use scope_pure;
+use binds;
+use ir_pass_tree;
+
+// One call the pass can reuse: the effect-free function and its argument variables.
+pub struct Key {
+  inner: integer,
+  args: vector<integer>
+}
+
+// What a wrapper's call is: a read of one call of `inner` (`pure_reuse.rs` struct Projection).
+pub struct Projection {
+  w: integer,
+  inner: integer,
+  args: vector<integer>,
+  read: integer,
+  consts: vector<ir::Node>
+}
+
+// A wrapper's one call of a total function (`shared_call.rs` struct Sharing).
+pub struct Sharing {
+  w: integer,
+  f: integer,
+  args: vector<integer>
+}
+
+// What the pass knows about the program's functions (`pure_reuse.rs` struct Rules), indexed by
+// definition: the projection or sharing a wrapper is (-1 for none).
+pub struct Rules {
+  free: vector<boolean>,
+  total: vector<boolean>,
+  projections: vector<Projection>,
+  wrapper_at: vector<integer>,
+  sharings: vector<Sharing>,
+  sharer_at: vector<integer>
+}
+
+// Site kinds (`pure_reuse.rs` enum Site).
+const SITE_READ = 0;
+const SITE_VARIANT = 1;
+const SITE_BARE = 2;
+
+// A reusable call and how its value is read: the key, the kind, and for a read its operator and
+// constants (the projection's index), for a variant the wrapper.
+pub struct Site {
+  key: Key,
+  kind: integer,
+  read: integer,
+  w: integer
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if x == null { "" } else { x!.name }
+}
+
+fn has_body(d: ir::Definition) -> boolean {
+  len(d.code) > 0 && !(d.code[0]! is NdNull)
+}
+
+// port: pure_reuse.rs fn candidates
+fn candidate(d: ir::Definition) -> boolean {
+  d.def_type == 1 && d.name.starts_with("n_") && has_body(d)
+}
+
+// ── shared_call.rs ──
+
+// port: shared_call.rs fn total_op
+fn total_op(nm: text) -> boolean {
+  env = nm == "OpGetDir" || nm == "OpGetFile" || nm == "OpGetFileText";
+  (nm.starts_with("OpGet") && !env) || nm.starts_with("OpLength") || scope_pure::comparison(nm)
+    || nm == "OpNot" || nm == "OpRefIsNull" || nm == "OpClearVector" || nm == "OpAdoptVector" || nm == "t_6vector_len" || nm == "t_4text_len"
+}
+
+// port: shared_call.rs fn pure_native
+pub fn pure_native(b: ir::Bundle, d: integer) -> boolean {
+  x = b.data.definitions[d];
+  x != null && !has_body(x!) && x!.purity == 1 && !x!.name.starts_with("Op")
+}
+
+fn body_total(b: ir::Bundle, n: ir::Node, total: vector<boolean>) -> boolean {
+  match n {
+    NdLoop => { return false; },
+    NdCallRef => { return false; },
+    NdYield => { return false; },
+    NdCall { def_nr } => if def_nr >= len(b.data.definitions) || !((total[def_nr] ?? false) || pure_native(b, def_nr) || total_op(def_name(b, def_nr))) {
+      return false;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if !body_total(b, c, total) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: shared_call.rs fn total — the least fixed point over the effect-free functions.
+fn total(b: ir::Bundle, free: vector<boolean>) -> vector<boolean> {
+  t: vector<boolean> = [for _ in b.data.definitions { false }];
+  changed = true;
+  while changed {
+    changed = false;
+    for d in b.data.definitions {
+      i = d#index;
+      if (free[i] ?? false) && !t[i]! && body_total(b, d.code[0] ?? ir::NdNull, t) {
+        t[i] = true;
+        changed = true;
+      }
+    }
+  }
+  t
+}
+
+// port: shared_call.rs fn vector_buffer — -1 for `None`.
+pub fn vector_buffer(b: ir::Bundle, f: integer) -> integer {
+  d = b.data.definitions[f];
+  if d == null {
+    return -1;
+  }
+  k = binds::hidden_return_buffer_attr(d!);
+  if k == null {
+    return -1;
+  }
+  if scope_fn::base(d!.attributes[k!]!.typedef[0] ?? ir::TyVoid) is TyVector { k! } else { -1 }
+}
+
+fn arguments(f: ir::Function) -> vector<integer> {
+  [for v in f.variables if v.argument { v#index }]
+}
+
+struct CallAt { f: integer, args: vector<ir::Node> }
+
+// `Value::walk` visits no `Span` itself, only what it wraps: each call once.
+fn total_vector_calls(b: ir::Bundle, n: ir::Node, w: integer, total: vector<boolean>, out: vector<CallAt>) {
+  match n {
+    NdCall { def_nr, args } => if def_nr != w && (total[def_nr] ?? false) && vector_buffer(b, def_nr) >= 0 {
+      out += [CallAt { f: def_nr, args: args }];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    total_vector_calls(b, c, w, total, out);
+  }
+}
+
+fn sets_any(n: ir::Node, vs: vector<integer>) -> boolean {
+  match n {
+    NdSet { var } => if scope_fn::has(vs, var) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if sets_any(c, vs) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: shared_call.rs fn sharing_of — true when `w` is a sharing wrapper, its `Sharing` added.
+fn sharing_of(b: ir::Bundle, w: integer, free: vector<boolean>, total: vector<boolean>, out: vector<Sharing>) -> boolean {
+  def = b.data.definitions[w]!;
+  if !(free[w] ?? false) || def.source == 0 {
+    return false;
+  }
+  calls: vector<CallAt> = [];
+  total_vector_calls(b, def.code[0]!, w, total, calls);
+  pick = -1;
+  for c in calls {
+    count = 0;
+    for g in calls {
+      if g.f == c.f {
+        count += 1;
+      }
+    }
+    if count == 1 {
+      pick = c#index;
+      break;
+    }
+  }
+  if pick < 0 {
+    return false;
+  }
+  f = calls[pick]!.f;
+  cargs = calls[pick]!.args;
+  kbuf = vector_buffer(b, f);
+  if kbuf < 0 {
+    return false;
+  }
+  attrs = def.attributes;
+  arg_vars = arguments(def.variables);
+  if len(arg_vars) != len(attrs) {
+    return false;
+  }
+  rb = binds::hidden_return_buffer_attr(def);
+  pos: vector<integer> = [];
+  params: vector<integer> = [];
+  for a in cargs {
+    x = match scope_fn::unspan(a) { NdVar { n } => n, _ => -1 };
+    if x < 0 {
+      return false;
+    }
+    if a#index == kbuf {
+      own_result = rb != null && arg_vars[rb!]! == x;
+      if scope_fn::is_argument(def.variables, x) && !own_result {
+        return false;
+      }
+      continue;
+    }
+    p = -1;
+    for av in arg_vars {
+      if av == x {
+        p = av#index;
+        break;
+      }
+    }
+    if p < 0 || attrs[p]!.hidden {
+      return false;
+    }
+    pos += [p];
+    params += [x];
+  }
+  if sets_any(def.code[0]!, params) {
+    return false;
+  }
+  out += [Sharing { w: w, f: f, args: pos }];
+  true
+}
+
+// ── the projections (pure_reuse.rs) ──
+
+// port: pure_reuse.rs fn significant — the statements that are no line marker or null init.
+fn significant(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    keep = match scope_fn::unspan(o) {
+      NdLine => false,
+      NdSet { inner } => !(scope_fn::unspan(inner) is NdNull),
+      _ => true
+    };
+    if keep {
+      out += [o];
+    }
+  }
+  out
+}
+
+// port: pure_reuse.rs fn inner_call — the effect-free function and, per argument before its
+// buffer, the wrapper parameter it is; the function -1 for `None`.
+fn inner_call(b: ir::Bundle, w: integer, free: vector<boolean>, call: ir::Node, args_out: vector<integer>) -> integer {
+  inner = -1;
+  iargs: vector<ir::Node> = [];
+  match scope_fn::unspan(call) {
+    NdCall { def_nr, args } => {
+      inner = def_nr;
+      iargs = args;
+    },
+    _ => { return -1; }
+  }
+  if !(free[inner] ?? false) {
+    return -1;
+  }
+  def = b.data.definitions[w]!;
+  iret = binds::hidden_return_buffer_attr(b.data.definitions[inner]!) ?? -1;
+  for a in iargs {
+    if a#index == iret {
+      continue;
+    }
+    x = match scope_fn::unspan(a) { NdVar { n } => n, _ => -1 };
+    if x < 0 {
+      return -1;
+    }
+    pos = -1;
+    for at in def.attributes {
+      if binds::var_named(def.variables, at.name) == x {
+        pos = at#index;
+        break;
+      }
+    }
+    if pos < 0 {
+      return -1;
+    }
+    args_out += [pos];
+  }
+  inner
+}
+
+// port: pure_reuse.rs fn read_of — `OpGet*(<base>, <constants>…)`: the read, its constants in
+// `consts`; -1 for `None`.  `base_var` -1 accepts any base.
+fn read_of(b: ir::Bundle, v: ir::Node, base_var: integer, consts: vector<ir::Node>) -> integer {
+  r = -1;
+  rargs: vector<ir::Node> = [];
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => {
+      r = def_nr;
+      rargs = args;
+    },
+    _ => { return -1; }
+  }
+  if !def_name(b, r).starts_with("OpGet") || len(rargs) == 0 {
+    return -1;
+  }
+  if base_var >= 0 {
+    ok = match scope_fn::unspan(rargs[0]!) { NdVar { n } => n == base_var, _ => false };
+    if !ok {
+      return -1;
+    }
+  }
+  for c in rargs[1..] {
+    u = scope_fn::unspan(c);
+    if !(u is NdInt) && !(u is NdLong) {
+      return -1;
+    }
+  }
+  for c in rargs[1..] {
+    consts += [c];
+  }
+  r
+}
+
+fn first_copy_source(ops: vector<ir::Node>, b: ir::Bundle) -> ir::Node {
+  for o in ops {
+    match scope_fn::unspan(o) {
+      NdCall { def_nr, args } => if def_name(b, def_nr) == "OpCopyRecord" && len(args) > 0 {
+        return args[0]!;
+      },
+      _ => {}
+    }
+  }
+  ir::NdNull
+}
+
+// The first `materialized_view_return` block's copy source in `n`, `NdNull` for none.
+fn copied_in(b: ir::Bundle, n: ir::Node) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdBlock { block } => if block[0].name == "materialized_view_return" {
+      src = first_copy_source(block[0].operators, b);
+      if !(src is NdNull) {
+        return src;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    r = copied_in(b, c);
+    if !(r is NdNull) {
+      return r;
+    }
+  }
+  ir::NdNull
+}
+
+fn projection(w: integer, inner: integer, args: vector<integer>, read: integer, consts: vector<ir::Node>, out: vector<Projection>) -> boolean {
+  out += [Projection { w: w, inner: inner, args: args, read: read, consts: consts }];
+  true
+}
+
+// port: pure_reuse.rs fn natural_projection
+fn natural_projection(b: ir::Bundle, w: integer, free: vector<boolean>, only: ir::Node, out: vector<Projection>) -> boolean {
+  e = scope_fn::unspan(only);
+  match e {
+    NdReturn { inner } => { e = scope_fn::unspan(inner); },
+    _ => {}
+  }
+  rs_ops: vector<ir::Node> = [];
+  is_rs = false;
+  is_mvr = false;
+  match e {
+    NdBlock { block } => {
+      is_rs = block[0].name == "return_source";
+      is_mvr = block[0].name == "materialized_view_return";
+      rs_ops = block[0].operators;
+    },
+    _ => {}
+  }
+  if is_rs {
+    body = significant(rs_ops);
+    at = -1;
+    d = -1;
+    inner = -1;
+    args: vector<integer> = [];
+    for op in body {
+      match scope_fn::unspan(op) {
+        NdSet { var, inner: call } => {
+          a: vector<integer> = [];
+          i = inner_call(b, w, free, call, a);
+          if i >= 0 {
+            at = op#index;
+            d = var;
+            inner = i;
+            args = a;
+          }
+        },
+        _ => {}
+      }
+      if at >= 0 {
+        break;
+      }
+    }
+    if at < 0 {
+      return false;
+    }
+    copied = ir::NdNull;
+    for op in body[at + 1..] {
+      if copied is NdNull {
+        copied = copied_in(b, op);
+      }
+    }
+    if copied is NdNull {
+      return false;
+    }
+    consts: vector<ir::Node> = [];
+    read = read_of(b, copied, d, consts);
+    if read < 0 || def_name(b, read) != "OpGetField" {
+      return false;
+    }
+    return projection(w, inner, args, read, consts, out);
+  }
+  read_node = if is_mvr { first_copy_source(rs_ops, b) } else { e };
+  if read_node is NdNull {
+    return false;
+  }
+  rargs: vector<ir::Node> = match scope_fn::unspan(read_node) { NdCall { args } => args, _ => [] };
+  if len(rargs) == 0 {
+    return false;
+  }
+  args: vector<integer> = [];
+  inner = inner_call(b, w, free, rargs[0]!, args);
+  if inner < 0 {
+    return false;
+  }
+  consts: vector<ir::Node> = [];
+  read = read_of(b, read_node, -1, consts);
+  if read < 0 {
+    return false;
+  }
+  if e is NdBlock && def_name(b, read) != "OpGetField" {
+    return false;
+  }
+  projection(w, inner, args, read, consts, out)
+}
+
+// port: pure_reuse.rs fn returns_field_copy
+fn returns_field_copy(code: ir::Node) -> boolean {
+  ops = match scope_fn::unspan(code) { NdBlock { block } => block[0].operators, _ => return false };
+  sig = significant(ops);
+  if len(sig) == 0 {
+    return false;
+  }
+  last = scope_fn::unspan(sig[len(sig) - 1]!);
+  tail = match last { NdReturn { inner } => scope_fn::unspan(inner), _ => last };
+  holds_copy = ir_pass_tree::has_block(tail, "materialized_view_return");
+  match tail {
+    NdBlock { block } => block[0].name == "materialized_view_return" || (block[0].name == "return_source" && holds_copy),
+    _ => false
+  }
+}
+
+// port: pure_reuse.rs fn copies_var
+fn copies_var(b: ir::Bundle, r: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(r) {
+    NdBlock { block } => {
+      if block[0].name != "materialized_view_return" {
+        return false;
+      }
+      for o in block[0].operators {
+        match scope_fn::unspan(o) {
+          NdCall { def_nr, args } => if def_name(b, def_nr) == "OpCopyRecord" && len(args) > 0 {
+            match scope_fn::unspan(args[0]!) {
+              NdVar { n } => if n == v { return true; },
+              _ => {}
+            }
+          },
+          _ => {}
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: pure_reuse.rs fn projection_of — true when `w` is a projection wrapper, added to `out`.
+fn projection_of(b: ir::Bundle, w: integer, free: vector<boolean>, out: vector<Projection>) -> boolean {
+  def = b.data.definitions[w]!;
+  code = def.code[0]!;
+  if binds::hidden_return_buffer_attr(def) != null && !returns_field_copy(code) {
+    return false;
+  }
+  ops = match scope_fn::unspan(code) { NdBlock { block } => block[0].operators, _ => return false };
+  body = significant(ops);
+  if len(body) == 1 {
+    return natural_projection(b, w, free, body[0]!, out);
+  }
+  for o in body {
+    rs = match scope_fn::unspan(o) { NdBlock { block } => block[0].name == "return_source", _ => false };
+    if rs {
+      return natural_projection(b, w, free, o, out);
+    }
+  }
+  if len(body) == 0 {
+    return false;
+  }
+  d = -1;
+  args: vector<integer> = [];
+  inner = -1;
+  match scope_fn::unspan(body[0]!) {
+    NdSet { var, inner: call } => {
+      d = var;
+      inner = inner_call(b, w, free, call, args);
+    },
+    _ => { return false; }
+  }
+  if inner < 0 {
+    return false;
+  }
+  if len(body) == 2 {
+    rv = match scope_fn::unspan(body[1]!) { NdReturn { inner: x } => x, _ => return false };
+    consts: vector<ir::Node> = [];
+    read = read_of(b, rv, d, consts);
+    if read < 0 {
+      return false;
+    }
+    return projection(w, inner, args, read, consts, out);
+  }
+  if len(body) == 3 {
+    v = -1;
+    consts: vector<ir::Node> = [];
+    read = -1;
+    match scope_fn::unspan(body[1]!) {
+      NdSet { var, inner: rv } => {
+        v = var;
+        read = read_of(b, rv, d, consts);
+      },
+      _ => { return false; }
+    }
+    if read < 0 || def_name(b, read) != "OpGetField" {
+      return false;
+    }
+    r = match scope_fn::unspan(body[2]!) { NdReturn { inner: x } => x, _ => return false };
+    if !copies_var(b, r, v) {
+      return false;
+    }
+    return projection(w, inner, args, read, consts, out);
+  }
+  false
+}
+
+// ── the sites ──
+
+fn same_key(a: Key, k: Key) -> boolean {
+  if a.inner != k.inner || len(a.args) != len(k.args) {
+    return false;
+  }
+  for x in a.args {
+    if k.args[x#index]! != x {
+      return false;
+    }
+  }
+  true
+}
+
+fn vars_at(wargs: vector<ir::Node>, positions: vector<integer>, out: vector<integer>) -> boolean {
+  for p in positions {
+    if p >= len(wargs) {
+      return false;
+    }
+    x = match scope_fn::unspan(wargs[p]!) { NdVar { n } => n, _ => -1 };
+    if x < 0 {
+      return false;
+    }
+    out += [x];
+  }
+  true
+}
+
+// port: pure_reuse.rs fn site_of — null for `None`.
+fn site_of(b: ir::Bundle, v: ir::Node, r: Rules) -> Site? {
+  w = -1;
+  wargs: vector<ir::Node> = [];
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => {
+      w = def_nr;
+      wargs = args;
+    },
+    _ => { return null; }
+  }
+  pi = r.wrapper_at[w] ?? -1;
+  if pi >= 0 {
+    args: vector<integer> = [];
+    if !vars_at(wargs, r.projections[pi]!.args, args) {
+      return null;
+    }
+    return Site { key: Key { inner: r.projections[pi]!.inner, args: args }, kind: SITE_READ, read: pi, w: w };
+  }
+  si = r.sharer_at[w] ?? -1;
+  if si >= 0 {
+    args: vector<integer> = [];
+    if !vars_at(wargs, r.sharings[si]!.args, args) {
+      return null;
+    }
+    return Site { key: Key { inner: r.sharings[si]!.f, args: args }, kind: SITE_VARIANT, read: -1, w: w };
+  }
+  if r.total[w] ?? false {
+    kbuf = vector_buffer(b, w);
+    if kbuf >= 0 && kbuf < len(wargs) && scope_fn::unspan(wargs[kbuf]!) is NdVar {
+      positions: vector<integer> = [for i in 0..len(wargs) if i != kbuf { i }];
+      args: vector<integer> = [];
+      if !vars_at(wargs, positions, args) {
+        return null;
+      }
+      return Site { key: Key { inner: w, args: args }, kind: SITE_BARE, read: -1, w: w };
+    }
+  }
+  null
+}
+
+fn site_matches(b: ir::Bundle, v: ir::Node, r: Rules, key: Key) -> boolean {
+  st = site_of(b, v, r);
+  st != null && same_key(st!.key, key)
+}
+
+// The keys of the sites in `n`, in walk order, not in `done` nor `keys`.
+fn collect_keys(b: ir::Bundle, n: ir::Node, r: Rules, done: vector<Key>, keys: vector<Key>) {
+  st = site_of(b, n, r);
+  if st != null {
+    seen = false;
+    for k in done {
+      if same_key(k, st!.key) {
+        seen = true;
+      }
+    }
+    for k in keys {
+      if same_key(k, st!.key) {
+        seen = true;
+      }
+    }
+    if !seen {
+      keys += [Key { inner: st!.key.inner, args: [for x in st!.key.args { x }] }];
+    }
+  }
+  for c in scope_fn::children(n) {
+    collect_keys(b, c, r, done, keys);
+  }
+}
+
+// port: pure_reuse.rs fn sites_in — whether `n` holds a call of `key` (`has`), and whether one
+// of them stands where the statement always evaluates it (`always_evaluated`: the statement,
+// an `if`'s test, an assignment's value, a call's arguments, a return's value).
+struct Sites { has: boolean, alw: boolean }
+
+fn sites_walk(b: ir::Bundle, n: ir::Node, key: Key, r: Rules, always: boolean, out: Sites) {
+  if site_matches(b, n, r, key) {
+    out.has = true;
+    if always {
+      out.alw = true;
+    }
+  }
+  match n {
+    NdSpan { inner } => sites_walk(b, inner, key, r, always, out),
+    NdIf { cond, t, f } => {
+      sites_walk(b, cond, key, r, always, out);
+      sites_walk(b, t, key, r, false, out);
+      sites_walk(b, f, key, r, false, out);
+    },
+    NdSet { inner } => sites_walk(b, inner, key, r, always, out),
+    NdCall { args } => {
+      for a in args {
+        sites_walk(b, a, key, r, always, out);
+      }
+    },
+    NdReturn { inner } => sites_walk(b, inner, key, r, always, out),
+    _ => {
+      for c in scope_fn::children(n) {
+        sites_walk(b, c, key, r, false, out);
+      }
+    }
+  }
+}
+
+fn sites_in(b: ir::Bundle, n: ir::Node, key: Key, r: Rules) -> Sites {
+  out = Sites { has: false, alw: false };
+  sites_walk(b, n, key, r, true, out);
+  out
+}
+
+// port: pure_reuse.rs fn leaves — an `if` arm that ends in a `return`.
+fn leaves(arm: ir::Node) -> boolean {
+  match scope_fn::unspan(arm) {
+    NdReturn => true,
+    NdBlock { block } => {
+      ops = block[0].operators;
+      k = len(ops) - 1;
+      while k >= 0 && scope_fn::unspan(ops[k]!) is NdLine {
+        k -= 1;
+      }
+      k >= 0 && leaves(ops[k]!)
+    },
+    _ => false
+  }
+}
+
+fn contains_site(b: ir::Bundle, n: ir::Node, key: Key, r: Rules) -> boolean {
+  if site_matches(b, n, r, key) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if contains_site(b, c, key, r) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: pure_reuse.rs fn own_writes — the argument positions an operator writes.
+fn own_writes(nm: text) -> vector<integer> {
+  if nm == "OpAdoptVector" {
+    return [0, 1];
+  }
+  t = scope_pure::text_write_target(nm);
+  if t < 0 {
+    return [-1];
+  }
+  [t]
+}
+
+// port: pure_reuse.rs fn disturbs
+fn disturbs(b: ir::Bundle, v: ir::Node, key: Key, r: Rules, fresh: vector<integer>, apart: boolean, beside: boolean, after: boolean) -> boolean {
+  if beside && site_matches(b, v, r, key) {
+    return false;
+  }
+  u = scope_fn::unspan(v);
+  match u {
+    NdSet { var, inner } => {
+      takes = after && contains_site(b, inner, key, r);
+      return (scope_fn::has(key.args, var) && !takes) || disturbs(b, inner, key, r, fresh, apart, beside, after);
+    },
+    NdCall { def_nr, args } => {
+      d = b.data.definitions[def_nr]!;
+      nm = d.name;
+      takes_any = false;
+      if after {
+        for a in args {
+          if contains_site(b, a, key, r) {
+            takes_any = true;
+          }
+        }
+      }
+      this = false;
+      if takes_any || (r.free[def_nr] ?? false) || d.synthetic == "shared-call variant" || scope_pure::reads_only(nm) || pure_native(b, def_nr) {
+        this = false;
+      } else {
+        ts = own_writes(nm);
+        if ts[0]! >= 0 {
+          all_fresh = apart;
+          for t in ts {
+            rt = if t < len(args) { scope_pure::root(b, args[t]!) } else { -1 };
+            if rt < 0 || !scope_fn::has(fresh, rt) {
+              all_fresh = false;
+            }
+          }
+          this = !all_fresh;
+        } else {
+          this = true;
+        }
+      }
+      if this {
+        return true;
+      }
+      for a in args {
+        if disturbs(b, a, key, r, fresh, apart, beside, after) {
+          return true;
+        }
+      }
+      return false;
+    },
+    NdIf { cond, t, f } => {
+      if disturbs(b, cond, key, r, fresh, apart, beside, after) {
+        return true;
+      }
+      if !leaves(t) && disturbs(b, t, key, r, fresh, apart, beside, after) {
+        return true;
+      }
+      return !leaves(f) && disturbs(b, f, key, r, fresh, apart, beside, after);
+    },
+    NdCallRef => { return true; },
+    NdYield => { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if disturbs(b, c, key, r, fresh, apart, beside, after) {
+      return true;
+    }
+  }
+  false
+}
+
+struct SetAt { x: integer, v: ir::Node }
+
+fn collect_sets(n: ir::Node, out: vector<SetAt>) {
+  match n {
+    NdSet { var, inner } => { out += [SetAt { x: var, v: inner }]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_sets(c, out);
+  }
+}
+
+fn fresh_value(b: ir::Bundle, v: ir::Node, fresh: vector<integer>) -> boolean {
+  match scope_fn::unspan(v) {
+    NdNull => true,
+    NdInt => true,
+    NdLong => true,
+    NdFloat => true,
+    NdSingle => true,
+    NdBoolean => true,
+    NdEnum => true,
+    NdText => true,
+    NdVar { n } => scope_fn::has(fresh, n),
+    NdCall { def_nr, args } => {
+      nm = def_name(b, def_nr);
+      if !(nm.starts_with("OpGet") || nm == "OpNewRecord") || len(args) == 0 {
+        return false;
+      }
+      rt = scope_pure::root(b, args[0]!);
+      rt >= 0 && scope_fn::has(fresh, rt)
+    },
+    NdBlock { block } => {
+      ops = block[0].operators;
+      len(ops) > 0 && fresh_value(b, ops[len(ops) - 1]!, fresh)
+    },
+    _ => false
+  }
+}
+
+// port: pure_reuse.rs fn fresh_locals — the greatest fixed point.
+fn fresh_locals(b: ir::Bundle, ops: vector<ir::Node>, vars: ir::Function) -> vector<integer> {
+  sets: vector<SetAt> = [];
+  for op in ops {
+    collect_sets(op, sets);
+  }
+  fresh: vector<integer> = [];
+  for s in sets {
+    if !scope_fn::is_argument(vars, s.x) && !scope_fn::has(fresh, s.x) {
+      fresh += [s.x];
+    }
+  }
+  changed = true;
+  while changed {
+    changed = false;
+    out: vector<integer> = [];
+    for s in sets {
+      if scope_fn::has(fresh, s.x) && !fresh_value(b, s.v, fresh) && !scope_fn::has(out, s.x) {
+        out += [s.x];
+      }
+    }
+    if len(out) > 0 {
+      changed = true;
+      kept: vector<integer> = [for x in fresh if !scope_fn::has(out, x) { x }];
+      fresh.clear();
+      fresh += kept;
+    }
+  }
+  fresh
+}
+
+// port: pure_reuse.rs fn apart
+fn apart(key: Key, vars: ir::Function) -> boolean {
+  for a in key.args {
+    if scope_fn::is_argument(vars, a) {
+      continue;
+    }
+    ok = match scope_fn::base(scope_fn::tp(vars, a)) {
+      TyInteger => true,
+      TyFloat => true,
+      TySingle => true,
+      TyBoolean => true,
+      TyCharacter => true,
+      _ => false
+    };
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// A variant site of `key` in `n`: the refused shared-call clause.
+fn has_variant_site(b: ir::Bundle, n: ir::Node, key: Key, r: Rules) -> boolean {
+  st = site_of(b, n, r);
+  if st != null && st!.kind == SITE_VARIANT && same_key(st!.key, key) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if has_variant_site(b, c, key, r) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: pure_reuse.rs fn replace_calls — each projection read of `key` in `v` by its read of
+// `local`; a bare call is left as it stands.
+fn replace_calls(b: ir::Bundle, v: ir::Node, key: Key, local: integer, r: Rules) -> ir::Node {
+  st = site_of(b, v, r);
+  if st != null && same_key(st!.key, key) {
+    if st!.kind == SITE_READ {
+      p = r.projections[st!.read]!;
+      args: vector<ir::Node> = [ir::NdVar { n: local }];
+      for c in p.consts {
+        args += [c];
+      }
+      return ir::NdCall { def_nr: p.read, args: args };
+    }
+    return v;
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  nk: vector<ir::Node> = [];
+  for c in kids {
+    nc = replace_calls(b, c, key, local, r);
+    nk += [nc];
+  }
+  ir_pass_tree::with_children(v, nk)
+}
+
+// port: pure_reuse.rs fn rewrite (the clauses carried: a projection's read, a bare call that
+// hands back no vector) — the call bound once before statement `i`.
+fn rewrite(b: ir::Bundle, ops: vector<ir::Node>, i: integer, later: vector<integer>, key: Key, vars: ir::Function, r: Rules) {
+  inner = b.data.definitions[key.inner]!;
+  ret_tp = deep_without_deps(inner.returned[0] ?? ir::TyVoid);
+  kbuf = binds::hidden_return_buffer_attr(inner);
+  args: vector<ir::Node> = [for a in key.args { ir::NdVar { n: a } }];
+  prelude: vector<ir::Node> = [];
+  local = ir_pass_tree::add_unique(vars, "reuse", ret_tp, 65535);
+  if kbuf != null {
+    buf = ir_pass_tree::add_unique(vars, "reuse_buf", inner.attributes[kbuf!]!.typedef[0] ?? ir::TyVoid, 65535);
+    prelude += [scope_fn::v_set(buf, ir::NdNull)];
+    at = if kbuf! < len(args) { kbuf! } else { len(args) };
+    na: vector<ir::Node> = [];
+    for a in args {
+      if a#index == at {
+        na += [ir::NdVar { n: buf }];
+      }
+      na += [a];
+    }
+    if at >= len(args) {
+      na += [ir::NdVar { n: buf }];
+    }
+    args = na;
+  }
+  prelude += [scope_fn::v_set(local, ir::NdCall { def_nr: key.inner, args: args })];
+  at_list: vector<integer> = [i];
+  at_list += later;
+  for at in at_list {
+    nv = replace_calls(b, ops[at]!, key, local, r);
+    ops[at] = nv;
+  }
+  out: vector<ir::Node> = [];
+  for o in ops {
+    if o#index == i {
+      out += prelude;
+    }
+    out += [o];
+  }
+  ops.clear();
+  ops += out;
+}
+
+// port: data.rs fn without_deps — every dep list emptied, a vector's element too.
+fn deep_without_deps(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyVector { inner } => {
+      e = deep_without_deps(inner);
+      ir::TyVector { inner: e, dep: [] }
+    },
+    TyOptional { inner } => {
+      e = deep_without_deps(inner);
+      ir::TyOptional { inner: e }
+    },
+    _ => scope_fn::without_deps(t)
+  }
+}
+
+// port: pure_reuse.rs fn reuse_in_block — one rewrite in the statements `ops` of function `f`;
+// answers whether it rewrote, and names in `why` a rewrite Rust makes that this does not carry.
+fn reuse_in_block(b: ir::Bundle, ops: vector<ir::Node>, vars: ir::Function, r: Rules, done: vector<Key>, why: vector<text>) -> boolean {
+  fresh: vector<integer> = [];
+  fresh_known = false;
+  for i in 0..len(ops) {
+    keys: vector<Key> = [];
+    collect_keys(b, ops[i]!, r, done, keys);
+    for key in keys {
+      tot = r.total[key.inner] ?? false;
+      si = sites_in(b, ops[i]!, key, r);
+      if !tot && !si.alw {
+        continue;
+      }
+      if !fresh_known {
+        fresh = fresh_locals(b, ops, vars);
+        fresh_known = true;
+      }
+      ap = apart(key, vars);
+      later: vector<integer> = [];
+      any_always = si.alw;
+      j = i + 1;
+      while j < len(ops) {
+        sj = sites_in(b, ops[j]!, key, r);
+        if !sj.has {
+          if disturbs(b, ops[j]!, key, r, fresh, ap, false, false) {
+            break;
+          }
+          j += 1;
+          continue;
+        }
+        if !tot && !sj.alw {
+          break;
+        }
+        if disturbs(b, ops[j]!, key, r, fresh, ap, true, false) {
+          if !disturbs(b, ops[j]!, key, r, fresh, ap, true, true) {
+            later += [j];
+            if sj.alw {
+              any_always = true;
+            }
+          }
+          break;
+        }
+        later += [j];
+        if sj.alw {
+          any_always = true;
+        }
+        j += 1;
+      }
+      if len(later) == 0 || !any_always {
+        continue;
+      }
+      if disturbs(b, ops[i]!, key, r, fresh, ap, true, false) {
+        continue;
+      }
+      variant = has_variant_site(b, ops[i]!, key, r);
+      for at in later {
+        if has_variant_site(b, ops[at]!, key, r) {
+          variant = true;
+        }
+      }
+      if variant {
+        why += ["pure_reuse::reuse_in_block: a call shared by two wrappers (shared_call::variant)"];
+        return false;
+      }
+      if vector_buffer(b, key.inner) >= 0 {
+        why += ["pure_reuse::reuse_in_block: a total call's vector handed in (shared_call::hand_in)"];
+        return false;
+      }
+      rewrite(b, ops, i, later, key, vars, r);
+      done += [key];
+      return true;
+    }
+  }
+  false
+}
+
+fn calls_a_site(b: ir::Bundle, n: ir::Node, r: Rules) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr } => if (r.wrapper_at[def_nr] ?? -1) >= 0 || (r.sharer_at[def_nr] ?? -1) >= 0 || ((r.total[def_nr] ?? false) && vector_buffer(b, def_nr) >= 0) {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls_a_site(b, c, r) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: pure_reuse.rs fn rewrite_program — every function of the program rewritten in place on
+// the parser's bodies; per definition the refusal (a rewrite not carried), "" for none.
+pub fn rewrite_program(b: ir::Bundle, free: vector<boolean>) -> vector<text> {
+  refused: vector<text> = [for _ in b.data.definitions { "" }];
+  if (env_variable("LOFT_NO_PURE_REUSE") ?? "0") != "0" {
+    return refused;
+  }
+  tot = total(b, free);
+  r = Rules { free: free, total: tot, projections: [], wrapper_at: [for _ in b.data.definitions { -1 }], sharings: [], sharer_at: [for _ in b.data.definitions { -1 }] };
+  // A variant changes which functions a call enters: not where a definition can change after its
+  // calls are compiled (`open_world`) nor where a run reports the functions it entered
+  // (`observes_entries`); neither is in the image, both false for a compiled program.
+  for d in b.data.definitions {
+    w = d#index;
+    if !candidate(d) {
+      continue;
+    }
+    if projection_of(b, w, free, r.projections) {
+      r.wrapper_at[w] = len(r.projections) - 1;
+    } else if sharing_of(b, w, free, tot, r.sharings) {
+      r.sharer_at[w] = len(r.sharings) - 1;
+    }
+  }
+  bare = false;
+  for d in b.data.definitions {
+    if (tot[d#index] ?? false) && vector_buffer(b, d#index) >= 0 {
+      bare = true;
+    }
+  }
+  if len(r.projections) == 0 && len(r.sharings) == 0 && !bare {
+    return refused;
+  }
+  for d in b.data.definitions {
+    f = d#index;
+    if !candidate(d) || d.source == 0 || !calls_a_site(b, d.code[0]!, r) {
+      continue;
+    }
+    code = d.code[0]!;
+    is_block = code is NdBlock;
+    if !is_block {
+      continue;
+    }
+    bl = match code { NdBlock { block } => block[0], _ => ir::Block { name: "", operators: [], result: [], scope: 0, var_size: 0 } };
+    ops: vector<ir::Node> = [for o in bl.operators { o }];
+    done: vector<Key> = [];
+    why: vector<text> = [];
+    changed = false;
+    while reuse_in_block(b, ops, b.data.definitions[f]!.variables, r, done, why) {
+      changed = true;
+    }
+    if len(why) > 0 {
+      refused[f] = why[0]!;
+    }
+    if changed {
+      b.data.definitions[f].code = [ir::NdBlock { block: [ir_pass_tree::with_operators(bl, ops)] }];
+    }
+  }
+  refused
+}

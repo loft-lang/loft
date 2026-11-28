@@ -434,6 +434,22 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
         data.definitions.push(read_definition(stores, dr, bodies));
     }
     data.restore_body_width32(&width32);
+    // @PLN91 — a linked constant twin is the function's `__const_<name>` of its own source.
+    for i in 0..defs.len(stores) {
+        if defs.get(i, stores).field_bool(stores, ds::DEF_CONST_LINKED) {
+            let (name, source) = (
+                format!("__const_{}", data.definitions[i as usize].name),
+                data.definitions[i as usize].source,
+            );
+            if let Some(c) = data
+                .definitions
+                .iter()
+                .position(|c| c.name == name && c.source == source)
+            {
+                data.definitions[i as usize].literal_const = c as u32;
+            }
+        }
+    }
     // The import tables go in BEFORE the rebuild: `rebuild_indices` replays
     // them to recreate the cross-source `def_names` bindings (loft#1359).
     let imports = r.field_recvec(ds::DATA_IMPORTS, ds::IMPORT_STRIDE);
@@ -741,7 +757,15 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
     let synthetic_s = r.field_str(stores, ds::DEF_SYNTHETIC);
     Definition {
         bound_holder: false,
-        variables: read_function(stores, r, ds::DEF_VARIABLES),
+        variables: {
+            let mut f = read_function(stores, r, ds::DEF_VARIABLES);
+            // @PLN91 `Function::ref_evacuations`, four integers each.
+            let evs = read_dep_list(stores, r, ds::DEF_REF_EVACUATIONS);
+            for &[a, b, c, d] in evs.as_chunks::<4>().0 {
+                f.add_ref_evacuation(a, b, c, d);
+            }
+            f
+        },
         attributes,
         attr_names,
         // codegen-derived: recomputed by the compile pass on load.
@@ -893,11 +917,25 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let vars_vec = parent.field_recvec(base + ds::FN_VARIABLES, ds::VARIABLE_STRIDE);
     let mut vars = Vec::with_capacity(vars_vec.len(stores) as usize);
     let mut arm_consumed = Vec::new();
+    let mut loop_vars = Vec::new();
+    let mut place_buffers = Vec::new();
+    let mut ref_homes = Vec::new();
+    let mut viewed: Vec<Vec<u16>> = Vec::new();
     for i in 0..vars_vec.len(stores) {
         let vr = vars_vec.get(i, stores);
         if vr.field_bool(stores, ds::VAR_ARM_CONSUMED) {
             arm_consumed.push(i as u16);
         }
+        if vr.field_bool(stores, ds::VAR_WAS_LOOP_VAR) {
+            loop_vars.push(i as u16);
+        }
+        if vr.field_bool(stores, ds::VAR_PLACE_BUFFER) {
+            place_buffers.push(i as u16);
+        }
+        if vr.field_bool(stores, ds::VAR_REF_HOME) {
+            ref_homes.push(i as u16);
+        }
+        viewed.push(read_dep_list(stores, vr, ds::VAR_VIEWED));
         vars.push(RestoredVar {
             name: vr.field_str(stores, ds::VAR_NAME).to_string(),
             type_def: read_type_child(stores, vr.field_recvec(ds::VAR_TYPE_DEF, ds::TYPET_STRIDE)),
@@ -937,6 +975,18 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let mut f = Function::from_snapshot(&name, &file, vars, names, inline_refs);
     for v in arm_consumed {
         f.set_arm_consumed(v);
+    }
+    for v in loop_vars {
+        f.served_as_loop_var(v);
+    }
+    for v in place_buffers {
+        f.mark_place_buffer(v);
+    }
+    for v in ref_homes {
+        f.mark_ref_home(v);
+    }
+    for (v, list) in viewed.into_iter().enumerate() {
+        f.set_viewed(v as u16, list);
     }
     f
 }

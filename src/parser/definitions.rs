@@ -3547,6 +3547,11 @@ impl Parser {
         let returned_fact = std::mem::take(&mut self.type_fact);
         self.vars
             .append(&mut self.data.definitions[self.context as usize].variables);
+        // `@FR-O-Borrow-Final`: a variable's dependencies are the ones its FINAL pass computed — pass 2
+        // starts from clean lists, and keeps pass 1's apart as a lookahead record.
+        if !self.first_pass {
+            self.vars.strip_carried_deps();
+        }
         if self.first_pass {
             self.data.set_returned(self.context, result);
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;

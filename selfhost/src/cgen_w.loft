@@ -9,7 +9,7 @@
 // in `cgen.loft`.
 
 use ir;
-use cgen::(Cx);
+use cgen::(Cx, type_ident);
 use cgen_names;
 use loop_shape;
 use opt_frame_calls;
@@ -57,6 +57,22 @@ struct E {
 }
 
 // A temporary and its shape; `verify`: only a `LOFT_VERIFY` proof reads it.
+// One `parallel` arm's function (`parallel::ArmFn`): its C name, its statements as the writer
+// wrote them, and what it copies in at its start.
+pub struct ArmFn {
+  name: text,
+  text: text,
+  copies: vector<ArmCopy>,
+}
+
+// A copy an arm makes at its start: the C name, its index in the site's address array, and for a
+// parameter its declaration ("" for a local, whose is the enclosing function's own).
+pub struct ArmCopy {
+  name: text,
+  at: integer,
+  decl: text,
+}
+
 struct Temp {
   name: text,
   shape: text,
@@ -204,6 +220,45 @@ struct Seed {
   value: integer,
 }
 
+// `@FR-R-DecodeView`'s structure clause: one walk's closure (`Closure`), written once the
+// enclosing body's declarations are known — its name, its statements, the C names it copies in
+// and back (each at its index in the site's array; a parameter's declaration, "" for a local),
+// the element's C type and the element variable.
+pub struct PsClosure {
+  name: text,
+  text: text,
+  copies: vector<text>,
+  decls: vector<text>,
+  elem_c: text,
+  elem: text,
+}
+
+// What a body of the structure clause holds (`PsBody`): its mode (`PS_NONE`, `PS_SHAPE`,
+// `PS_WALK`, `PS_CONSUMER`), the producer (a twin of it) or the consumer it writes, a walk twin's
+// field, the shapes the enclosing tag-tested arms computed (each value and the local holding its
+// shape), how deep in walk closures the writer is, the statement being written as itself, and
+// the closures written so far.
+pub struct PsBody {
+  mode: integer,
+  d: integer,
+  off: integer,
+  vtp: integer,
+  shape_x: vector<ir::Node>,
+  shape_s: vector<text>,
+  walk: integer,
+  bypass: boolean,
+  closures: vector<PsClosure>,
+}
+
+pub const PS_NONE = 0;
+pub const PS_SHAPE = 1;
+pub const PS_WALK = 2;
+pub const PS_CONSUMER = 3;
+
+pub fn no_ps() -> PsBody {
+  PsBody { mode: PS_NONE, d: -1, off: 0, vtp: 0, shape_x: [], shape_s: [], walk: 0, bypass: false, closures: [] }
+}
+
 // One function's writer (`FnWriter`): what it has written and where a fault reports.
 struct W {
   // The function's definition number and name.
@@ -212,6 +267,10 @@ struct W {
   // Per variable: its C name, and whether it is a parameter.
   names: vector<text>,
   params: vector<boolean>,
+  // Each parameter's declaration by variable ("" for a local), for a `parallel` arm that reads
+  // one; the arms' functions written so far (`FnWriter::arm_fns`).
+  param_decls: vector<text>,
+  arm_fns: vector<ArmFn>,
   // The function's facts as `opt_range` reads them.
   nn: vector<boolean>,
   rv: opt_range::Ranges,
@@ -438,6 +497,23 @@ struct W {
   vr: opt_vr_facts::VrFn,
   // The buffer of the forward call `expr` is writing (`vr_forward_target`), -1 none.
   vr_fwd: integer,
+  // `@FR-R-DecodeView`: this body takes the view plan (a `__dv` twin, or a root's own body),
+  // whether it is a twin, and the lazy holder being written as itself (its mark, -1 none).
+  dv_on: boolean,
+  dv_twin: boolean,
+  dv_bypass: integer,
+  // `@FR-R-DecodeView`'s structure clause: this body's positional mode and state.
+  ps: PsBody,
+}
+
+// `@PLN226`: an argument list with the store context first (`c::cx_args`).
+pub fn cx_args(args: vector<text>) -> text {
+  if len(args) == 0 { "cx" } else { "cx, {args.join(", ")}" }
+}
+
+// `@PLN226`: a parameter list with the store context first (`c::cx_params`).
+pub fn cx_params(params: vector<text>) -> text {
+  if len(params) == 0 { "loft_cx *cx" } else { "loft_cx *cx, {params.join(", ")}" }
 }
 
 // A function epilogue's place in the body while it is being written (`EPILOGUE_MARK`): a line
@@ -458,7 +534,7 @@ fn var_addr(w: W, v: integer) -> text {
 fn held_value(w: W, t: text, shape: text) -> E {
   if shape == "text" {
     w.pending += [t];
-    return E { code: "loft_view(&{t})", kind: K_VIEW };
+    return E { code: "loft_view(cx, &{t})", kind: K_VIEW };
   }
   if shape == "void" {
     return E { code: "(void) 0", kind: K_VOID };
@@ -470,7 +546,7 @@ fn held_value(w: W, t: text, shape: text) -> E {
 fn flush(w: W, ind: integer) {
   w.pending_work = [];
   for t in w.pending {
-    line(w, ind, "loft_text_free(&{t});");
+    line(w, ind, "loft_text_free(cx, &{t});");
   }
   w.pending = [];
 }
@@ -480,10 +556,10 @@ fn flush(w: W, ind: integer) {
 fn epilogue(w: W, ind: integer) {
   // A `return` from inside a held loop: the cursors go back before the frame does.
   for i in rev(0..len(w.file_holds)) {
-    line(w, ind, "loft_fcur_release(&{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
+    line(w, ind, "loft_fcur_release(cx, &{w.file_holds[i]!.name}, {w.file_holds[i]!.name}p);");
   }
   for t in w.split_tabs {
-    line(w, ind, "loft_stab_free(&st{t.var});");
+    line(w, ind, "loft_stab_free(cx, &st{t.var});");
   }
   line(w, ind, EPILOGUE_MARK);
 }
@@ -491,10 +567,10 @@ fn epilogue(w: W, ind: integer) {
 // The text temporary a view `loft_view(&t)` reads, when the current statement made it and may
 // hand its buffer on (`pending_text_temp`); "" for any other code.
 fn pending_text_temp(w: W, code: text) -> text {
-  if !code.starts_with("loft_view(&") || !code.ends_with(")") || (env_variable("LOFT_NO_C_TEXT_MOVE") ?? "0") != "0" {
+  if !code.starts_with("loft_view(cx, &") || !code.ends_with(")") || (env_variable("LOFT_NO_C_TEXT_MOVE") ?? "0") != "0" {
     return "";
   }
-  t = code[11..code.size() - 1];
+  t = code[15..code.size() - 1];
   made = false;
   for p in w.pending {
     if p == t {
@@ -712,9 +788,23 @@ pub fn number_pending(x: Cx, w: W) {
   w.numbered = n;
 }
 
-pub fn resolve_tuples(x: Cx, code: text) -> text {
+// A transient group's struct by its type's identifier, for `held`'s `lt_@<g>@`.
+fn resolve_groups(x: Cx, code: text) -> text {
   out = "";
   rest = code;
+  for _ in 0..code.size() {
+    at = rest.find("lt_@") ?? break;
+    close = rest[at + 4..rest.size()].find("@") ?? break;
+    g = rest[at + 4..at + 4 + close] as integer ?? break;
+    out += "{rest[0..at]}lt_{type_ident(x, g)}";
+    rest = rest[at + 5 + close..rest.size()];
+  }
+  out + rest
+}
+
+pub fn resolve_tuples(x: Cx, code: text) -> text {
+  out = "";
+  rest = resolve_groups(x, code);
   for _ in 0..code.size() {
     at = rest.find("loft_tup@") ?? break;
     close = rest[at + 9..rest.size()].find("@") ?? break;
@@ -722,6 +812,74 @@ pub fn resolve_tuples(x: Cx, code: text) -> text {
     id = tuple_id(x, shape);
     out += "{rest[0..at]}loft_tup{id}";
     rest = rest[at + 10 + close..rest.size()];
+  }
+  out + rest
+}
+
+// `Cx::tuple_code` (@PLN229 B0): a tuple's name part, one letter per member's C shape, a nested
+// tuple or a transient record as a letter, its part's length and the part — so two shapes never
+// share a name, and the name does not depend on which tuple the writer met first.
+fn tuple_code(x: Cx, shape: text) -> text {
+  out = "";
+  for m in tuple_members(shape) {
+    if is_tuple(m) {
+      inner = tuple_code(x, m);
+      out += "T{inner.size()}{inner}";
+    } else if m.starts_with("tr") && m != "trvec" {
+      ident = type_ident(x, m[2..m.size()] as integer ?? -1);
+      out += "R{ident.size()}{ident}";
+    } else {
+      out += if m == "int" { "l" } else if m == "int32" { "i" } else if m == "bool" { "b" } else if m == "text" { "t" } else if m == "ref" { "r" } else if m == "enum" { "e" } else if m == "float" { "d" } else if m == "single" { "f" } else if m == "char" { "c" } else if m == "fn" { "n" } else if m == "trvec" { "v" } else { "z" };
+    }
+  }
+  out
+}
+
+// `Cx::name_tuples` (@PLN229 B0): `code` with every tuple struct named from its members' shapes
+// (`loft_tup_<code>`) in place of its number of first use (`loft_tup<n>`, and a cast's
+// `loft_tup<n>_as<m>`), in one pass: a unit's C then changes only where a tuple it uses changes.
+pub fn name_tuples(x: Cx, given: text) -> text {
+  // A group a prototype or a twin named without passing `resolve_tuples` (the transient twins').
+  code = resolve_groups(x, given);
+  n = len(x.tuples);
+  if n == 0 {
+    return code;
+  }
+  codes: vector<text> = [for t in x.tuples { tuple_code(x, t) }];
+  out = "";
+  rest = code;
+  for _ in 0..code.size() {
+    at = rest.find("loft_tup") ?? break;
+    out += rest[0..at + 8];
+    rest = rest[at + 8..rest.size()];
+    digits = 0;
+    for c in rest {
+      if c < '0' || c > '9' {
+        break;
+      }
+      digits += 1;
+    }
+    i = if digits == 0 { -1 } else { rest[0..digits] as integer ?? -1 };
+    if i < 0 || i >= n {
+      continue;
+    }
+    out += "_{codes[i]!}";
+    rest = rest[digits..rest.size()];
+    if rest.starts_with("_as") {
+      cast = rest[3..rest.size()];
+      cd = 0;
+      for c in cast {
+        if c < '0' || c > '9' {
+          break;
+        }
+        cd += 1;
+      }
+      j = if cd == 0 { -1 } else { cast[0..cd] as integer ?? -1 };
+      if j >= 0 && j < n {
+        out += "_as_{codes[j]!}";
+        rest = cast[cd..cast.size()];
+      }
+    }
   }
   out + rest
 }
@@ -755,7 +913,9 @@ fn held(shape: text) -> text {
   } else if shape == "trvec" {
     "loft_ta_vec *"
   } else if shape.starts_with("tr") {
-    "lt_{shape[2..shape.size()]} *"
+    // The group's number stays in the shape (`TrVar::ctype`'s `tr<g>`); its C name is the
+    // type's identifier, put in where the unit resolves its tuples (`resolve_tuples`).
+    "lt_@{shape[2..shape.size()]}@ *"
   } else if shape == "ref" {
     "loft_ref"
   } else if shape == "fn" {
@@ -999,7 +1159,7 @@ fn as_int(w: W, e: E) -> text {
   if e.kind == K_INT {
     e.code
   } else if e.kind == K_INT32 {
-    "loft_w64({e.code})"
+    "loft_w64(cx, {e.code})"
   } else if e.kind == K_BOOL || e.kind == K_CHAR {
     "((int64_t) ({e.code}))"
   } else {
@@ -1011,7 +1171,7 @@ fn as_int(w: W, e: E) -> text {
 // @PLN204 — a value as a 32-bit integer: a 32-bit one as it is, any other narrowed
 // (`loft_n32`, a value that does not fit reading null).
 fn as_int32(w: W, e: E) -> text {
-  if e.kind == K_INT32 { e.code } else { "loft_n32({as_int(w, e)})" }
+  if e.kind == K_INT32 { e.code } else { "loft_n32(cx, {as_int(w, e)})" }
 }
 
 fn as_enum(w: W, e: E) -> text {
@@ -1044,7 +1204,7 @@ fn as_char(w: W, e: E) -> text {
   } else if e.kind == K_INT {
     "((uint32_t) ({e.code}))"
   } else if e.kind == K_INT32 {
-    "((uint32_t) loft_w64({e.code}))"
+    "((uint32_t) loft_w64(cx, {e.code}))"
   } else {
     refuse(w, "a character expected, a {kind_name(e.kind)} found");
     ""

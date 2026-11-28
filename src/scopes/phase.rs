@@ -206,6 +206,7 @@ pub(super) fn run_scan_phase(
         pending_extra_witnesses: std::cell::RefCell::new(Vec::new()),
         multi_assigned: multi_assigned_in(orig_code),
         view_temps: view_temps_in(orig_code, orig_vars, data),
+        construction_temps: construction_temps_in(orig_code, orig_vars),
         pending_fkeep: None,
         first_set: u16::MAX,
         whole_value_hoists: whole_value_hoists_in(orig_code, orig_vars, data),
@@ -1212,6 +1213,27 @@ pub(crate) fn view_temps_in(node: &Value, vars: &Function, data: &Data) -> HashM
             }
         }
     });
+    out
+}
+
+/// Per local, the record CONSTRUCTION work-refs its assignments adopt
+/// (`lt = {#Object … __ref_p2_N}`, `construction_work_ref`) — see `Scopes::construction_temps`.
+/// Only a local adopting two or more is listed: with one, the scan names the construction it
+/// holds and disarms that work-ref itself.
+pub(crate) fn construction_temps_in(node: &Value, vars: &Function) -> HashMap<u16, Vec<u16>> {
+    let mut out: HashMap<u16, Vec<u16>> = HashMap::default();
+    node.walk(&mut |n: &Value| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && let Some(t) = super::backings::construction_work_ref(rhs, vars)
+            && t != *v
+        {
+            let e = out.entry(*v).or_default();
+            if !e.contains(&t) {
+                e.push(t);
+            }
+        }
+    });
+    out.retain(|_, ts| ts.len() > 1);
     out
 }
 

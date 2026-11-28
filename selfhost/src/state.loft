@@ -1636,6 +1636,12 @@ pub fn clear(self: State, data: DbRef, raw: integer) {
 
 // `State::copy_ref_or_null`: the source popped; a null one frees the variable's store at `pos`
 // and leaves it null, any other is copied into the store the variable names.
+//
+// The source-free bit also marks an exchange site (`ReBind::exchange`, STORE_MODEL D43): no
+// `OpDatabase` came before, so the variable still holds its old value — or no live store at all,
+// when it gets a fresh one first.  A store holding more than its root is made again, as that
+// `OpDatabase` would, before the copy (whose own exchange then moves the answer in whole).  An
+// answer a call through a reference borrowed (`fn_borrowed`) is copied, never given up.
 pub fn copy_ref_or_null(self: State) {
   pos = self.code_u16();
   raw = self.code_u16();
@@ -1647,9 +1653,27 @@ pub fn copy_ref_or_null(self: State) {
       crt::free_ref(v.store_nr, v.rec, v.pos);
     }
     crt::set_slot_ref(self.stk, self.stack_pos - pos, NULL_STORE, 0, 0);
-  } else {
-    crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, raw & 16383, self.copy_flags(raw));
+    return;
   }
+  exchange = raw & 32768 != 0;
+  if len(self.fn_borrowed) > 0 && (self.fn_borrowed[0] ?? -1) == src.store_nr {
+    raw = raw & 32767;
+  }
+  self.fn_borrowed.clear();
+  tp = raw & 16383;
+  at = self.stack_pos - pos;
+  if exchange && (v.store_nr == NULL_STORE || !crt::store_live(v.store_nr)) {
+    crt::set_slot_ref(self.stk, at, NULL_STORE, 0, 0);
+    self.make_store(at, tp);
+    v = self.slot_dbref(at);
+  } else if exchange && v.rec == 1 && v.pos == 8 && !crt::store_only_root(v.store_nr) {
+    if src.store_nr == v.store_nr {
+      return;
+    }
+    self.make_store(at, tp);
+    v = self.slot_dbref(at);
+  }
+  crt::copy_record(src.store_nr, src.rec, src.pos, v.store_nr, v.rec, v.pos, tp, self.copy_flags(raw));
 }
 
 // `State::bind_or_copy`: the witness and then the source popped; a source in the witness's

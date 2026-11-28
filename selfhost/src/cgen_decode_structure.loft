@@ -1,0 +1,1138 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// @PLN91 strand 12 — `@FR-R-DecodeView`'s structure clause (`@C141`) in the C, as
+// `src/c/body/decode_structure.rs` writes the plan `opt_decode_structure` decides.  Every twin is
+// the ordinary writing of the function's body with this file's hooks in front of it (`stmt` in
+// the statement writer, `operator` in the expression writer):
+//
+// - the producer's SHAPE TWIN `P__ps(cx, B, position…)` answers the struct `(tag, x0, x1, scalar
+//   fields…)`: a dropped statement writes nothing; a recursive call answers its shape into the
+//   call variable and its arguments into `loft_pa<call>`; a `return` answers the variant's tag,
+//   its slot and the scalar fields;
+// - the producer's WALK TWIN `P__psw<k>(cx, B, position…, f, env, out)` runs the same body, where
+//   an append to the walked field's local hands the element's positions to `f`;
+// - a CONSUMER twin `G__ps(cx, loft_psb, …)` holds positions in structs; a walk is the walk twin
+//   with the loop's body as a CLOSURE, a function of its own, which copies the locals it names in
+//   from the site's address array at its start and back at each of its exits.  A root keeps its
+//   name and signature.
+//
+// The plan's node keys are the marks `opt_decode_structure` left in the code.
+
+use ir;
+use cgen::(Cx);
+use cgen_w::*;
+use cgen_fn;
+use cgen_names;
+use cgen_types;
+use cgen_text;
+use cgen_parallel;
+use loop_shape;
+use opt_names;
+use opt_decode_view;
+use opt_decode_structure::(Producer, PsPlan, MARK_FILE, P_DROP, C_SKIP, P_YIELD, C_WALK, SLOT_NONE, SLOT_NUM, SLOT_TEXT, SLOT_BUILT);
+use opt_decode_structure;
+use opt_decode_structure_scan::(Consumer, R_NONE, R_T, R_D);
+use opt_decode_structure_scan;
+use cgen_decode_view;
+use cgen_unit;
+
+// The marker a closure's exits carry: the copies back to the site's locals go there.
+PSC_OUT = "@@loft-psc-out@@";
+
+
+// ---- the C shapes of positions ---------------------------------------------------------------
+
+// A position parameter's C shape: an integer, or a boolean for `u8`.
+fn param_ctype(rust: text) -> text {
+  if rust == "u8" { "bool" } else { "int" }
+}
+
+// The shape struct `(tag, x0, x1, scalar fields…)` (`ps_shape_t`).
+pub fn shape_t(p: Producer) -> text {
+  parts: vector<text> = ["enum", "int", "int"];
+  for s in p.scalars {
+    parts += [param_ctype(s.rust)];
+  }
+  "tuple({parts.join(",")})"
+}
+
+// A position struct (`ps_rep_t`): the kind (`0` shape unknown, `1` known, `2` a unit literal),
+// the position's parameters, then the shape's tag and two slot words.
+pub fn rep_t(p: Producer) -> text {
+  parts: vector<text> = ["enum"];
+  for r in p.param_rust {
+    parts += [param_ctype(r)];
+  }
+  parts += ["enum", "int", "int"];
+  "tuple({parts.join(",")})"
+}
+
+// A recursive call's arguments: the position's parameters (`ps_pa_t`).
+fn pa_t(p: Producer) -> text {
+  parts: vector<text> = [for r in p.param_rust { param_ctype(r) }];
+  "tuple({parts.join(",")})"
+}
+
+// The field offsets of element record `etp`, sorted (`ps_elem_fields`).
+fn elem_fields(x: Cx, etp: integer) -> vector<integer> {
+  offs: vector<integer> = [];
+  if etp >= 0 && etp < len(x.b.types) {
+    match x.b.types[etp]!.parts[0] ?? ir::PtBase {
+      PtStruct { fields } => {
+        for f in fields {
+          offs += [f.position];
+        }
+      },
+      _ => {},
+    }
+  }
+  offs.sort();
+  offs
+}
+
+// The C shape a consumer holds `r` in (`ps_rep_ctype`).
+pub fn rep_ctype(x: Cx, p: Producer, r: integer) -> text {
+  rep = rep_t(p);
+  if r == R_D {
+    parts: vector<text> = [rep];
+    for s in p.scalars {
+      parts += [param_ctype(s.rust)];
+    }
+    return "tuple({parts.join(",")})";
+  }
+  if opt_decode_structure_scan::is_e(r) {
+    n = len(elem_fields(x, opt_decode_structure_scan::rep_tp(r)));
+    parts: vector<text> = [for _ in 0..n { rep }];
+    return "tuple({parts.join(",")})";
+  }
+  rep
+}
+
+// The element a walk of vector store type `vtp` hands its closure (`ps_elem_ctype`).
+fn elem_ctype(x: Cx, p: Producer, vtp: integer) -> text {
+  e = opt_decode_structure::elem_of(p, vtp);
+  if e == null || e.whole { rep_t(p) } else { rep_ctype(x, p, opt_decode_structure_scan::rep_e(e.etp)) }
+}
+
+// A unit literal's position (`ps_unit_rep`).
+fn unit_rep(p: Producer, tag: integer) -> text {
+  zeros = "";
+  for _ in p.params {
+    zeros += ", 0";
+  }
+  "(({held(rep_t(p))}) {{ 2{zeros}, {tag}, 0, 0 }})"
+}
+
+// The position `args` (a struct whose members `.f0…` are the parameters) with the shape `shape`
+// known (`ps_known_rep`).
+fn known_rep(p: Producer, args: text, shape: text) -> text {
+  out = "(({held(rep_t(p))}) {{ 1";
+  for pv in p.params {
+    out += ", {args}.f{pv#index}";
+  }
+  "{out}, {shape}.f0, {shape}.f1, {shape}.f2 }})"
+}
+
+fn ps_name(x: Cx, d: integer, suffix: text) -> text {
+  "{cgen_names::c_name(x.b, x.dups, d)}{suffix}"
+}
+
+// Is `d` written as a consumer TWIN (`d__ps`, `ps_twin`)?  A root is a consumer too, written in
+// its positional form under its own name.
+pub fn twin(x: Cx, d: integer) -> boolean {
+  cgen_decode_view::plans(x);
+  opt_decode_structure::consumer_of(x.ps, d) != null && !x.ps.roots.contains(d)
+}
+
+// Is `d` a root written in its positional form?
+pub fn is_root(x: Cx, d: integer) -> boolean {
+  cgen_decode_view::plans(x);
+  x.ps.roots.contains(d)
+}
+
+// ---- a body of the clause --------------------------------------------------------------------
+
+fn producer(x: Cx, w: W) -> Producer {
+  opt_decode_structure::producer_of(x.ps, w.ps.d)!
+}
+
+fn consumer(x: Cx, w: W) -> Consumer {
+  opt_decode_structure::consumer_of(x.ps, w.ps.d)!
+}
+
+fn consumer_producer(x: Cx, c: Consumer) -> Producer {
+  opt_decode_structure::producer_of(x.ps, c.producer)!
+}
+
+// `FnWriter::structure`: write this body in the clause's mode — a producer `d`'s shape or walk
+// twin, a consumer `d`'s twin or root.
+pub fn setup(x: Cx, w: W, mode: integer, d: integer, off: integer, vtp: integer) {
+  if mode == PS_NONE {
+    return;
+  }
+  w.ps = PsBody { mode: mode, d: d, off: off, vtp: vtp, shape_x: [], shape_s: [], walk: 0, bypass: false, closures: [] };
+  if mode == PS_SHAPE || mode == PS_WALK {
+    p = producer(x, w);
+    // The buffer is a local nothing binds; each call's shape and arguments.
+    w.params[p.retbuf] = false;
+    w.undeclared[p.retbuf] = true;
+    w.decls += ["loft_ref {w.names[p.retbuf]!} = {{ 0xFFFF, 0, 0, 0 }};"];
+    pa = held(pa_t(p));
+    calls: vector<integer> = [for c in p.calls { c }];
+    calls.sort();
+    for cr in calls {
+      w.decls += ["{pa} loft_pa{cr} = {{ 0 }};"];
+    }
+    return;
+  }
+  c = consumer(x, w);
+  p = consumer_producer(x, c);
+  if c.retbuf >= 0 {
+    w.params[c.retbuf] = false;
+  }
+  for r in c.reps {
+    v = r#index;
+    if r == R_NONE || w.params[v]! {
+      continue;
+    }
+    w.undeclared[v] = true;
+    w.decls += ["{held(rep_ctype(x, p, r))} {w.names[v]!} = {{ 0 }};"];
+  }
+}
+
+// The variable shapes of a body of the clause: each call variable of a producer twin its shape
+// struct, each position local of a consumer the struct it is held in.
+pub fn shapes(x: Cx, mode: integer, d: integer, shapes: vector<text>) {
+  cgen_decode_view::plans(x);
+  if mode == PS_SHAPE || mode == PS_WALK {
+    p = opt_decode_structure::producer_of(x.ps, d)!;
+    for cr in p.calls {
+      shapes[cr] = shape_t(p);
+    }
+    return;
+  }
+  if mode == PS_CONSUMER {
+    c = opt_decode_structure::consumer_of(x.ps, d)!;
+    p = opt_decode_structure::producer_of(x.ps, c.producer)!;
+    for r in c.reps {
+      if r != R_NONE && r#index < len(shapes) {
+        shapes[r#index] = rep_ctype(x, p, r);
+      }
+    }
+  }
+}
+
+// The frame expression this body hands the producer's twins (`ps_frame`).
+fn frame(x: Cx, w: W) -> text {
+  if w.ps.mode == PS_CONSUMER {
+    c = consumer(x, w);
+    if x.ps.roots.contains(w.ps.d) {
+      return w.names[if c.frame < 0 { 0 } else { c.frame }]!;
+    }
+    return "loft_psb";
+  }
+  w.names[producer(x, w).frame]!
+}
+
+// The structure marks around `v`.
+fn marks(v: ir::Node) -> vector<integer> {
+  opt_decode_view::marks_of(v, MARK_FILE)
+}
+
+// `ps_stmt`: a statement this file writes in full.  Answers whether it wrote `v`.
+pub fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  if w.ps.mode == PS_NONE {
+    return false;
+  }
+  if w.ps.bypass {
+    w.ps.bypass = false;
+    return false;
+  }
+  if w.ps.mode == PS_CONSUMER {
+    return consumer_stmt(x, w, v, ind);
+  }
+  producer_stmt(x, w, v, ind)
+}
+
+// ---- the producer's twins ----
+
+fn producer_stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  p = producer(x, w);
+  ms = marks(v);
+  if w.ps.mode == PS_WALK {
+    for m in ms {
+      if m >= P_YIELD && m < C_WALK && m - P_YIELD < len(p.yields) {
+        y = p.yields[m - P_YIELD]!;
+        k = opt_decode_structure::walked_key(p, w.ps.off, w.ps.vtp);
+        if k >= 0 && p.walked[k]!.locals.contains(y.local) {
+          walk_yield(x, w, p, y, ind);
+          return true;
+        }
+      }
+    }
+  }
+  if ms.contains(P_DROP) {
+    return true;
+  }
+  match loop_shape::unspan(v) {
+    NdBlock { block } => {
+      if !opt_decode_structure::returns_buffer(block[0].operators, p.retbuf) {
+        return false;
+      }
+      if w.ps.mode == PS_WALK {
+        epilogue(w, ind);
+        line(w, ind, "return 0;");
+      } else {
+        shape_return(x, w, p, block[0].operators, ind);
+      }
+      true
+    },
+    NdSet { var, inner } => {
+      if !p.calls.contains(var) || opt_decode_view::call_def(inner) != p.d {
+        return false;
+      }
+      pa = position_args(x, w, p, opt_decode_view::call_args(inner), ind);
+      line(w, ind, "loft_pa{var} = ({held(pa_t(p))}) {{ {pa} }};");
+      call = "{ps_name(x, p.d, "__ps")}(cx, {w.names[p.frame]!}";
+      for pv in p.params {
+        call += ", loft_pa{var}.f{pv#index}";
+      }
+      line(w, ind, "{w.names[var]!} = {call});");
+      true
+    },
+    _ => false,
+  }
+}
+
+// An element appended to the walked field: its parts' positions handed to the closure, the walk
+// stopped at its first answer.
+fn walk_yield(x: Cx, w: W, p: Producer, y: opt_decode_structure::Yield, ind: integer) {
+  // The parts by offset; each part was decoded by the walk itself: its shape is the call
+  // variable's.
+  order: vector<integer> = [];
+  for _ in y.offs {
+    best = -1;
+    for o in y.offs {
+      if !order.contains(o#index) && (best < 0 || o < y.offs[best]!) {
+        best = o#index;
+      }
+    }
+    order += [best];
+  }
+  ec = elem_ctype(x, p, w.ps.vtp);
+  elem = "";
+  if len(order) == 1 && y.offs[order[0]!]! < 0 {
+    cr = y.calls[order[0]!]!;
+    elem = known_rep(p, "loft_pa{cr}", w.names[cr]!);
+  } else {
+    items: vector<text> = [];
+    for i in order {
+      cr = y.calls[i]!;
+      items += [known_rep(p, "loft_pa{cr}", w.names[cr]!)];
+    }
+    elem = "(({held(ec)}) {{ {items.join(", ")} }})";
+  }
+  e = temp(w, ec);
+  line(w, ind, "{e} = {elem}; /* @FR-R-DecodeView structure walk */");
+  line(w, ind, "if (loft_pf(cx, loft_pv, &{e}, loft_pr)) {{");
+  epilogue(w, ind + 1);
+  line(w, ind + 1, "return 1;");
+  line(w, ind, "}}");
+}
+
+// The position arguments of a producer call, as a struct's members (`ps_position_args`).
+fn position_args(x: Cx, w: W, p: Producer, args: vector<ir::Node>, ind: integer) -> text {
+  def = x.b.data.definitions[p.d]!;
+  out: vector<text> = [];
+  for a in args {
+    v = opt_decode_view::var_named(x.b, p.d, def.attributes[a#index]!.name);
+    if v == p.frame || v == p.retbuf {
+      continue;
+    }
+    rust = "i64";
+    for pv in p.params {
+      if pv == v {
+        rust = p.param_rust[pv#index]!;
+      }
+    }
+    e = cgen_fn::expr(x, w, a, ind);
+    out += [as_shape(w, e, param_ctype(rust))];
+  }
+  out.join(", ")
+}
+
+fn shape_return(x: Cx, w: W, p: Producer, ops: vector<ir::Node>, ind: integer) {
+  form = opt_decode_structure::parse_return(x.b, p, ops);
+  if !form.ok {
+    refuse(w, "decode structure: a return the plan cannot read");
+    return;
+  }
+  st = shape_t(p);
+  shape = temp(w, st);
+  x0 = "INT64_C(0)";
+  x1 = "INT64_C(0)";
+  if form.slot == SLOT_NUM {
+    num = cgen_fn::expr(x, w, form.num, ind);
+    x0 = if num.kind == K_BOOL || num.kind == K_COND { "(int64_t) {as_bool(w, num)}" } else { as_shape(w, num, "int") };
+  } else if form.slot == SLOT_TEXT {
+    test = as_cond(w, cgen_fn::expr(x, w, form.guard, ind));
+    lo_t = temp(w, "int");
+    hi_t = temp(w, "int");
+    line(w, ind, "if ({bare(test)}) {{");
+    lo = as_shape(w, cgen_fn::expr(x, w, form.lo, ind + 1), "int");
+    hi = as_shape(w, cgen_fn::expr(x, w, form.hi, ind + 1), "int");
+    line(w, ind + 1, "{lo_t} = {lo};");
+    line(w, ind + 1, "{hi_t} = {hi};");
+    line(w, ind, "}} else {{");
+    line(w, ind + 1, "{lo_t} = LOFT_INT_NULL;");
+    line(w, ind + 1, "{hi_t} = 0;");
+    line(w, ind, "}}");
+    x0 = lo_t;
+    x1 = hi_t;
+  } else if form.slot == SLOT_BUILT {
+    x0 = "LOFT_INT_NULL";
+  }
+  members: vector<text> = ["{form.tag}", x0, x1];
+  for sc in p.scalars {
+    at = -1;
+    for o in form.sc_off {
+      if at < 0 && o == sc.off {
+        at = o#index;
+      }
+    }
+    if at >= 0 {
+      field = cgen_fn::expr(x, w, form.sc_val[at]!, ind);
+      members += [as_shape(w, field, param_ctype(sc.rust))];
+    } else {
+      members += ["0"];
+    }
+  }
+  line(w, ind, "{shape} = ({held(st)}) {{ {members.join(", ")} }};");
+  epilogue(w, ind);
+  line(w, ind, "return {shape};");
+}
+
+// ---- the consumers ----
+
+fn consumer_stmt(x: Cx, w: W, v: ir::Node, ind: integer) -> boolean {
+  c = consumer(x, w);
+  p = consumer_producer(x, c);
+  ms = marks(v);
+  if ms.contains(C_SKIP) {
+    return true;
+  }
+  for m in ms {
+    if m >= C_WALK && m - C_WALK < len(c.walks) {
+      if !opt_decode_view::is_block(v) {
+        return false;
+      }
+      walk_block(x, w, p, c, opt_decode_view::block_ops(v), c.walks[m - C_WALK]!, ind);
+      return true;
+    }
+  }
+  match loop_shape::unspan(v) {
+    NdSet { var, inner } => {
+      if opt_decode_structure_scan::rep_of_var(c, var) == R_NONE {
+        return false;
+      }
+      set(x, w, p, c, var, inner, ind);
+      true
+    },
+    NdReturn { inner } => {
+      if c.returns == R_NONE {
+        return false;
+      }
+      code = rep_value(x, w, p, c, inner);
+      ret(x, w, p, c, code, ind);
+      true
+    },
+    NdBlock { block } => {
+      if c.returns != R_NONE {
+        tag = opt_decode_structure::unit_return(x.b, v);
+        if tag >= 0 {
+          ret(x, w, p, c, unit_rep(p, tag), ind);
+          return true;
+        }
+      }
+      if block[0].name != "materialized_view_return" {
+        return false;
+      }
+      for o in block[0].operators {
+        if opt_decode_view::call_name(x.b, o) == "OpCopyRecord" {
+          code = rep_value(x, w, p, c, opt_decode_view::call_args(o)[0]!);
+          ret(x, w, p, c, code, ind);
+          return true;
+        }
+      }
+      false
+    },
+    NdIf { cond, t: _, f: _ } => {
+      tag = -1;
+      subject = opt_decode_structure_scan::tag_test(x.b, cond, tag);
+      if tag < 0 || !is_rep_expr(x, c, subject) {
+        return false;
+      }
+      // The value's shape, once for the test and the arm.
+      s = shape_of(x, w, p, c, subject, ind);
+      w.ps.shape_x += [subject];
+      w.ps.shape_s += [s];
+      w.ps.bypass = true;
+      cgen_fn::stmt(x, w, v, ind);
+      w.ps.bypass = false;
+      w.ps.shape_x.remove(len(w.ps.shape_x) - 1);
+      w.ps.shape_s.remove(len(w.ps.shape_s) - 1);
+      true
+    },
+    _ => false,
+  }
+}
+
+// `return code`: from the function, or — inside a walk's closure — into the site's answer,
+// ending the walk (`ps_return`).
+fn ret(x: Cx, w: W, p: Producer, c: Consumer, code: text, ind: integer) {
+  if c.returns == R_NONE {
+    refuse(w, "a return of no position");
+    return;
+  }
+  ct = rep_ctype(x, p, c.returns);
+  t = temp(w, ct);
+  line(w, ind, "{t} = {code};");
+  if w.ps.walk > 0 {
+    line(w, ind, "*({held(ct)} *) loft_pr = {t};");
+    line(w, ind, PSC_OUT);
+    epilogue(w, ind);
+    line(w, ind, "return 1;");
+  } else {
+    epilogue(w, ind);
+    line(w, ind, "return {t};");
+  }
+}
+
+fn is_rep_expr(x: Cx, c: Consumer, e: ir::Node) -> boolean {
+  match loop_shape::unspan(e) {
+    NdVar { n } => opt_decode_structure_scan::rep_of_var(c, n) != R_NONE,
+    NdCall { def_nr, args } => opt_decode_view::op_name(x.b, def_nr) == "OpGetField" && len(args) > 0 && (match loop_shape::unspan(args[0]!) { NdVar { n } => opt_decode_structure_scan::rep_of_var(c, n) != R_NONE, _ => false }),
+    _ => false,
+  }
+}
+
+// A position-valued expression (`ps_rep_value`): a position local, a field of a decoded record
+// or of an element, a unit literal.
+fn rep_value(x: Cx, w: W, p: Producer, c: Consumer, e: ir::Node) -> text {
+  tag = opt_decode_structure::unit_literal(x.b, e);
+  if tag >= 0 {
+    return unit_rep(p, tag);
+  }
+  match loop_shape::unspan(e) {
+    NdVar { n } => w.names[n]!,
+    NdCall { def_nr, args } => {
+      if opt_decode_view::op_name(x.b, def_nr) != "OpGetField" {
+        refuse(w, "decode structure: no position");
+        return "";
+      }
+      v = match loop_shape::unspan(args[0] ?? ir::NdNull) { NdVar { n } => n, _ => -1 };
+      if v < 0 {
+        refuse(w, "decode structure: a field of no position");
+        return "";
+      }
+      off = opt_decode_view::int_of(args[1] ?? ir::NdNull) ?? 0;
+      r = opt_decode_structure_scan::rep_of_var(c, v);
+      if r == R_D {
+        return "{w.names[v]!}.f0";
+      }
+      if opt_decode_structure_scan::is_e(r) {
+        k = 0;
+        for o in elem_fields(x, opt_decode_structure_scan::rep_tp(r)) {
+          if o == off && k == 0 {
+            k = o#index;
+          }
+        }
+        return "{w.names[v]!}.f{k}";
+      }
+      w.names[v]!
+    },
+    _ => {
+      refuse(w, "decode structure: no position");
+      ""
+    },
+  }
+}
+
+// The shape of the value `e` names (`ps_shape_of`): the cached one inside its arm, else computed.
+fn shape_of(x: Cx, w: W, p: Producer, c: Consumer, e: ir::Node, ind: integer) -> text {
+  u = loop_shape::unspan(e);
+  for i in rev(0..len(w.ps.shape_x)) {
+    if loop_shape::unspan(w.ps.shape_x[i]!) == u {
+      return w.ps.shape_s[i]!;
+    }
+  }
+  rt = rep_t(p);
+  st = shape_t(p);
+  r = temp(w, rt);
+  s = temp(w, st);
+  code = rep_value(x, w, p, c, e);
+  line(w, ind, "{r} = {code};");
+  k = len(p.params);
+  call = "{ps_name(x, p.d, "__ps")}(cx, {frame(x, w)}";
+  for i in 0..k {
+    call += ", {r}.f{i + 1}";
+  }
+  zeros = "";
+  for _ in p.scalars {
+    zeros += ", 0";
+  }
+  line(w, ind, "{s} = {r}.f0 == 0 ? {call}) : ({held(st)}) {{ {r}.f{k + 1}, {r}.f{k + 2}, {r}.f{k + 3}{zeros} }};");
+  s
+}
+
+fn set(x: Cx, w: W, p: Producer, c: Consumer, v: integer, rhs: ir::Node, ind: integer) {
+  xv = w.names[v]!;
+  u = loop_shape::unspan(rhs);
+  if u is NdNull {
+    return;
+  }
+  callee = opt_decode_view::call_def(rhs);
+  if callee >= 0 && callee == p.d {
+    // The producer's record, held as the call's position.
+    pa = position_args(x, w, p, opt_decode_view::call_args(rhs), ind);
+    pt = pa_t(p);
+    a = temp(w, pt);
+    s = temp(w, shape_t(p));
+    line(w, ind, "{a} = ({held(pt)}) {{ {pa} }};");
+    call = "{ps_name(x, p.d, "__ps")}(cx, {frame(x, w)}";
+    for pv in p.params {
+      call += ", {a}.f{pv#index}";
+    }
+    line(w, ind, "{s} = {call});");
+    members: vector<text> = [known_rep(p, a, s)];
+    for sc in p.scalars {
+      members += ["{s}.f{3 + sc#index}"];
+    }
+    line(w, ind, "{xv} = ({held(rep_ctype(x, p, R_D))}) {{ {members.join(", ")} }};");
+    return;
+  }
+  if callee >= 0 && twin(x, callee) {
+    code = twin_call(x, w, p, c, callee, opt_decode_view::call_args(rhs), ind);
+    line(w, ind, "{xv} = {code};");
+    return;
+  }
+  if opt_decode_view::block_name(rhs) == "Object" {
+    // The decoder's own record literal: a unit value and its scalar fields.
+    tag = 1;
+    offs: vector<integer> = [];
+    vals: vector<ir::Node> = [];
+    for o in opt_decode_view::block_ops(rhs) {
+      nm = opt_decode_view::call_name(x.b, o);
+      args = opt_decode_view::call_args(o);
+      if nm == "OpCopyRecord" && len(args) == 3 {
+        t = opt_decode_structure::unit_literal(x.b, args[0]!);
+        tag = if t < 0 { 1 } else { t };
+      } else if (nm == "OpSetInt" || nm == "OpSetBoolean") && len(args) == 3 {
+        o_off = opt_decode_view::int_of(args[1]!);
+        if o_off != null {
+          offs += [o_off];
+          vals += [args[2]!];
+        }
+      }
+    }
+    members: vector<text> = [unit_rep(p, tag)];
+    for sc in p.scalars {
+      at = -1;
+      for o in offs {
+        if at < 0 && o == sc.off {
+          at = o#index;
+        }
+      }
+      if at >= 0 {
+        e = cgen_fn::expr(x, w, vals[at]!, ind);
+        members += [as_shape(w, e, param_ctype(sc.rust))];
+      } else {
+        members += ["0"];
+      }
+    }
+    line(w, ind, "{xv} = ({held(rep_ctype(x, p, R_D))}) {{ {members.join(", ")} }};");
+    return;
+  }
+  code = rep_value(x, w, p, c, rhs);
+  line(w, ind, "{xv} = {code};");
+}
+
+// A call of consumer twin `g` (`ps_twin_call`): its frame first, a position argument as its
+// struct, the rest as the ordinary call writes them; no return buffer.
+fn twin_call(x: Cx, w: W, p: Producer, c: Consumer, g: integer, args: vector<ir::Node>, ind: integer) -> text {
+  gc = opt_decode_structure::consumer_of(x.ps, g);
+  if gc == null {
+    refuse(w, "a consumer twin without its plan");
+    return "";
+  }
+  def = x.b.data.definitions[g]!;
+  if len(args) != len(def.attributes) {
+    refuse(w, "a consumer call whose arguments do not match");
+    return "";
+  }
+  shapes: vector<text> = [for a in def.attributes { cgen_types::ctype(opt_names::peel_link(a.typedef[0] ?? ir::TyVoid)) ?? "void" }];
+  xs: vector<text> = [for _ in args { "" }];
+  keep: vector<boolean> = [for _ in args { true }];
+  // The `&` arguments first, as the ordinary call writes them (`link_args`).
+  for a in args {
+    i = a#index;
+    ptype = def.attributes[i]!.typedef[0] ?? ir::TyVoid;
+    if !(cgen_types::base(ptype) is TyRefVar) {
+      continue;
+    }
+    pa = cgen_fn::place_arg(x, w, a, ptype, ind);
+    if w.why != "" {
+      return "";
+    }
+    xs[i] = if pa != "" { pa } else { cgen_fn::link_arg(x, w, a, shapes[i]!, true, ind) };
+  }
+  for a in args {
+    i = a#index;
+    ptype = def.attributes[i]!.typedef[0] ?? ir::TyVoid;
+    if cgen_types::base(ptype) is TyRefVar {
+      continue;
+    }
+    v = opt_decode_view::var_named(x.b, g, def.attributes[i]!.name);
+    if gc.retbuf == v {
+      keep[i] = false;
+    } else if opt_decode_structure_scan::rep_of_var(gc!, v) != R_NONE {
+      xs[i] = rep_value(x, w, p, c, a);
+    } else {
+      e = cgen_fn::expr(x, w, a, ind);
+      xs[i] = as_shape(w, e, shapes[i]!);
+    }
+  }
+  call = "{ps_name(x, g, "__ps")}(cx, {frame(x, w)}";
+  for xa in xs {
+    if keep[xa#index]! {
+      call += ", {xa}";
+    }
+  }
+  "{call})"
+}
+
+// `ps_operator`: the reads of a position this file answers, and the calls of consumer twins;
+// `done` false for every other operator.
+pub fn ps_operator(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer, done: &boolean) -> E {
+  done = false;
+  if w.ps.mode == PS_NONE {
+    return none();
+  }
+  name = opt_decode_view::op_name(x.b, d);
+  n = len(args);
+  if w.ps.mode != PS_CONSUMER {
+    // The producer's twins: a scalar field of a call's result is its shape's member.
+    p = producer(x, w);
+    if (name == "OpGetBoolean" || name == "OpGetInt") && n == 2 {
+      cr = match args[0]! { NdVar { n: v } => v, _ => -1 };
+      i = opt_decode_structure::scalar_index(p, opt_decode_view::int_of(args[1]!));
+      if cr >= 0 && p.calls.contains(cr) && i >= 0 {
+        done = true;
+        return E { code: "{w.names[cr]!}.f{3 + i}", kind: if name == "OpGetInt" { K_INT } else { K_BOOL } };
+      }
+    }
+    return none();
+  }
+  c = consumer(x, w);
+  p = consumer_producer(x, c);
+  if (name == "OpGetBoolean" || name == "OpGetInt") && n == 2 {
+    xv = match args[0]! { NdVar { n: v } => v, _ => -1 };
+    if xv >= 0 && opt_decode_structure_scan::rep_of_var(c, xv) == R_D {
+      i = opt_decode_structure::scalar_index(p, opt_decode_view::int_of(args[1]!));
+      done = true;
+      return E { code: "{w.names[xv]!}.f{1 + (if i < 0 { 0 } else { i })}", kind: if name == "OpGetInt" { K_INT } else { K_BOOL } };
+    }
+  }
+  if (name == "OpGetInt" || name == "OpGetBoolean") && n == 2 && is_rep_expr(x, c, args[0]!) {
+    // The variant's number or boolean: the shape's first slot.
+    s = shape_of(x, w, p, c, args[0]!, ind);
+    done = true;
+    if name == "OpGetInt" {
+      return E { code: "{s}.f1", kind: K_INT };
+    }
+    return E { code: "((uint8_t) {s}.f1)", kind: K_BOOL };
+  }
+  if name == "OpGetEnum" && n == 2 && is_rep_expr(x, c, args[0]!) {
+    s = shape_of(x, w, p, c, args[0]!, ind);
+    done = true;
+    return E { code: "{s}.f0", kind: K_ENUM };
+  }
+  if name == "OpGetText" && n == 2 && is_rep_expr(x, c, args[0]!) {
+    done = true;
+    return text_read(x, w, p, c, args[0]!, args[1]!, ind);
+  }
+  if twin(x, d) {
+    done = true;
+    code = twin_call(x, w, p, c, d, args, ind);
+    gc = opt_decode_structure::consumer_of(x.ps, d)!;
+    if gc.returns != R_NONE {
+      ct = rep_ctype(x, p, gc.returns);
+      return E { code: code, kind: K_TUP, tup: ct };
+    }
+    ct = cgen_types::ctype(opt_decode_view::returned(x.b, d)) ?? "";
+    if ct == "" {
+      refuse(w, "a consumer twin of an unknown result");
+      return none();
+    }
+    if ct == "text" {
+      t = temp(w, "text");
+      line(w, ind, "loft_text_free(cx, &{t});");
+      line(w, ind, "{t} = {code};");
+      return held_value(w, t, "text");
+    }
+    return E { code: code, kind: kind_of(ct) };
+  }
+  none()
+}
+
+// A text leaf of a position (`ps_text_read`): the frame's bytes over the span, or — for a field
+// only the built value holds — that value's text, built at the position by the plain decoder.
+fn text_read(x: Cx, w: W, p: Producer, c: Consumer, e: ir::Node, off_n: ir::Node, ind: integer) -> E {
+  off = opt_decode_view::int_of(off_n) ?? 0;
+  field_view = w.field_view;
+  w.field_view = false;
+  s = shape_of(x, w, p, c, e, ind);
+  q = temp(w, rep_t(p));
+  code = rep_value(x, w, p, c, e);
+  line(w, ind, "{q} = {code};");
+  fr = frame(x, w);
+  t = temp(w, "text");
+  slow = "{ps_name(x, p.d, "__pst")}(cx, {fr}";
+  for pv in p.params {
+    slow += ", {q}.f{pv#index + 1}";
+  }
+  slow += ", INT64_C({p.vo + off}))";
+  line(w, ind, "loft_text_free(cx, &{t});");
+  if field_view {
+    // The slow text stays in its temporary until the site writes it again or the function
+    // ends: a borrowed bind views it for longer than the statement.
+    line(w, ind, "if ({s}.f1 == LOFT_INT_NULL) {t} = {slow};");
+    return E { code: "({s}.f1 != LOFT_INT_NULL ? loft_ps_text(cx, {fr}, {s}.f1, {s}.f2) : loft_view(cx, &{t}))", kind: K_VIEW };
+  }
+  line(w, ind, "{t} = {s}.f1 != LOFT_INT_NULL ? loft_text_own(cx, loft_ps_text(cx, {fr}, {s}.f1, {s}.f2)) : {slow};");
+  held_value(w, t, "text")
+}
+
+// `for e in v.items { body }` as the walk twin with the body as its closure (`ps_walk_block`).
+fn walk_block(x: Cx, w: W, p: Producer, c: Consumer, ops: vector<ir::Node>, wk: opt_decode_structure_scan::Walk, ind: integer) {
+  if w.ps.walk > 0 {
+    refuse(w, "decode structure: a walk inside a walk");
+    return;
+  }
+  lb = ir::NdNull;
+  for o in ops {
+    if (lb is NdNull) && (loop_shape::unspan(o) is NdLoop) {
+      lb = loop_shape::unspan(o);
+    }
+  }
+  if lb is NdNull {
+    refuse(w, "decode structure: a walk without its loop");
+    return;
+  }
+  k = opt_decode_structure::walk_index(x.ps, p.d, wk.off, wk.vtp);
+  if k < 0 {
+    k = 0;
+  }
+  // The owner: the vector local's source, a position.
+  owner = "";
+  for o in ops {
+    if owner == "" && opt_decode_view::set_var(o) == wk.vec {
+      owner = rep_value(x, w, p, c, opt_decode_view::set_rhs(o));
+    }
+  }
+  if owner == "" {
+    owner = w.names[wk.vec]!;
+  }
+  ec = elem_ctype(x, p, wk.vtp);
+  // The closure's statements, written by this writer into a body of their own.
+  temps_before = len(w.temps);
+  decls_before = len(w.decls);
+  saved_body = w.body;
+  w.body = "";
+  saved_pending = w.pending;
+  w.pending = [];
+  w.ps.walk += 1;
+  elem = w.names[wk.elem]!;
+  for o in opt_decode_view::block_ops(lb) {
+    if o#index < wk.body_from || (loop_shape::unspan(o) is NdLine) {
+      continue;
+    }
+    cgen_fn::stmt(x, w, o, 1);
+    if w.why != "" {
+      break;
+    }
+  }
+  flush(w, 1);
+  w.ps.walk -= 1;
+  body = w.body;
+  w.body = saved_body;
+  w.pending = saved_pending;
+  if w.why != "" {
+    return;
+  }
+  names: vector<text> = [];
+  decls: vector<text> = [];
+  closure_copies(x, w, body, wk.elem, temps_before, decls_before, names, decls);
+  if w.why != "" {
+    return;
+  }
+  name = "{cgen_names::c_name(x.b, x.dups, w.index)}__psc{len(w.ps.closures)}";
+  pv = if len(names) == 0 { "0" } else { [for nm in names { "(void *) &{nm}" }].join(", ") };
+  w.ps.closures += [PsClosure { name: name, text: body, copies: names, decls: decls, elem_c: held(ec), elem: elem }];
+  rt = rep_t(p);
+  o = temp(w, rt);
+  line(w, ind, "{o} = {owner}; /* @FR-R-DecodeView structure walk */");
+  ret_c = if c.returns == R_NONE { "" } else { rep_ctype(x, p, c.returns) };
+  answer = temp(w, if ret_c == "" { "int" } else { ret_c });
+  call = "{ps_name(x, p.d, "__psw{k}")}(cx, {frame(x, w)}";
+  for i in 0..len(p.params) {
+    call += ", {o}.f{i + 1}";
+  }
+  call += ", {name}, loft_pv, (void *) &{answer})";
+  line(w, ind, "{{");
+  line(w, ind + 1, "void *const loft_pv[] = {{ {pv} }};");
+  line(w, ind + 1, "if ({o}.f0 <= 1 && {call}) {{");
+  if ret_c != "" {
+    epilogue(w, ind + 2);
+    line(w, ind + 2, "return {answer};");
+  }
+  line(w, ind + 1, "}}");
+  line(w, ind, "}}");
+}
+
+// What a walk's closure copies in and back (`ps_closure_copies`): every local, parameter,
+// temporary and declaration of the enclosing body its `body` names but the element `elem`, and
+// the frame this body was handed — each name, and a parameter's declaration ("" a local's).
+fn closure_copies(x: Cx, w: W, body: text, elem: integer, temps_before: integer, decls_before: integer, names: vector<text>, decls: vector<text>) {
+  f = x.b.data.definitions[w.index]!.variables;
+  skip = var_name(f.variables[elem]!.name, elem);
+  ids = cgen_parallel::identifiers(body);
+  for sh in w.shapes {
+    v = sh#index;
+    nm = var_name(f.variables[v]!.name, v);
+    if !ids.contains(nm) || v == elem {
+      continue;
+    }
+    if w.params[v]! {
+      decl = w.param_decls[v] ?? "";
+      if decl == "" {
+        refuse(w, "a walk reads parameter {f.variables[v]!.name}");
+        return;
+      }
+      names += [nm];
+      decls += [decl];
+    } else {
+      names += [nm];
+      decls += [""];
+    }
+  }
+  for t in w.temps {
+    if t#index < temps_before && ids.contains(t.name) {
+      names += [t.name];
+      decls += [""];
+    }
+  }
+  for d in w.decls {
+    if d#index >= decls_before {
+      break;
+    }
+    n = cgen_parallel::declared_name(d);
+    if n != "" && ids.contains(n) && n != skip && !names.contains(n) {
+      names += [n];
+      decls += [""];
+    }
+  }
+  if ids.contains("loft_psb") {
+    names += ["loft_psb"];
+    decls += ["loft_ref loft_psb"];
+  }
+}
+
+// The walks' closures (`ps_closure_functions`), each declaring what the enclosing function
+// declares (`prologue`), copying in what it reads and back at each of its exits, and freeing at
+// its end only what it made.  Answers their declarations and their bodies.
+pub fn closure_functions(w: W, prologue: text) -> vector<text> {
+  decls = "";
+  bodies = "";
+  for c in w.ps.closures {
+    sig = "static int {c.name}(loft_cx *cx, void *const *loft_pv, const void *loft_pe, void *loft_pr)";
+    decls += "{sig};\n";
+    bodies += "\n{sig} {{\n{prologue}";
+    out_lines = "";
+    for nm in c.copies {
+      at = nm#index;
+      d = c.decls[at]!;
+      if d != "" {
+        bodies += "    {d};\n";
+      }
+      bodies += "    memcpy(&{nm}, loft_pv[{at}], sizeof {nm});\n";
+      out_lines += "memcpy(loft_pv[{at}], &{nm}, sizeof {nm}); memset(&{nm}, 0, sizeof {nm}); ";
+    }
+    bodies += "    (void) loft_pv;\n    (void) loft_pr;\n";
+    bodies += "    {c.elem} = *(const {c.elem_c} *) loft_pe;\n";
+    inner = "{c.text}    {PSC_OUT}\n    {EPILOGUE_MARK}\n    return 0;\n";
+    inner = inner.replace(PSC_OUT, out_lines);
+    bodies += cgen_text::expand_epilogues_in(w, inner);
+    bodies += "}}\n";
+  }
+  [decls, bodies]
+}
+
+// ---- the positional functions of the unit ----------------------------------------------------
+
+// `ps_functions`: the producers' shape, walk and slow-text twins and the consumers' twins,
+// written before the program's.  Their frame wrappers' prototypes and bodies go to `protos` and
+// `bodies`, their `__fr` bodies to the unit's; "" or why one of them cannot be written.
+pub fn functions(x: Cx, protos: &text, bodies: &text) -> text {
+  cgen_decode_view::plans(x);
+  p = x.ps;
+  producers: vector<integer> = [for pr in p.producers { pr.d }];
+  producers.sort();
+  for pd in producers {
+    pr = opt_decode_structure::producer_of(p, pd)!;
+    why = function(x, pd, PS_SHAPE, 0, 0, protos, bodies);
+    if why != "" {
+      return why;
+    }
+    for k in p.walks {
+      if k.pd == pd {
+        why = function(x, pd, PS_WALK, k.off, k.vtp, protos, bodies);
+        if why != "" {
+          return why;
+        }
+      }
+    }
+    slow_text(x, pr, protos, bodies);
+  }
+  consumers: vector<integer> = [];
+  for c in p.consumers {
+    if twin(x, c.d) {
+      consumers += [c.d];
+    }
+  }
+  consumers.sort();
+  for d in consumers {
+    why = function(x, d, PS_CONSUMER, 0, 0, protos, bodies);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+// One positional twin (`ps_function`): its prototype and its framed body (`framed_plain`), the
+// body's own declaration and definition with the unit's bodies.
+fn function(x: Cx, d: integer, mode: integer, off: integer, vtp: integer, protos: &text, bodies: &text) -> text {
+  wr = cgen_fn::write_positional(x, d, mode, off, vtp);
+  if wr.refused != "" {
+    return "{wr.name}: {wr.refused}";
+  }
+  x.gen_decls += "static {wr.ret} {wr.name}__fr({wr.list});\n";
+  x.gen_bodies += "\n{wr.text}";
+  protos += "static {wr.ret} {wr.name}({wr.list});\n";
+  bodies += "\nstatic {wr.ret} {wr.name}({wr.list}) {{\n{cgen_unit::wrapper(x, d, wr, "")}}}\n";
+  ""
+}
+
+// The result shape of a positional twin of `d` in `mode`: its shape struct, whether a walk
+// stopped, a consumer's position or its own result; "" for a result of no shape.
+pub fn twin_ret(x: Cx, mode: integer, d: integer) -> text {
+  cgen_decode_view::plans(x);
+  if mode == PS_SHAPE {
+    pr = opt_decode_structure::producer_of(x.ps, d)!;
+    return shape_t(pr);
+  }
+  if mode == PS_WALK {
+    return "bool";
+  }
+  c = opt_decode_structure::consumer_of(x.ps, d)!;
+  if c.returns != R_NONE {
+    pr = opt_decode_structure::producer_of(x.ps, c.producer)!;
+    return rep_ctype(x, pr, c.returns);
+  }
+  cgen_types::ctype(opt_decode_view::returned(x.b, d)) ?? ""
+}
+
+// The C name of a positional twin of `d` in `mode`.
+pub fn twin_name(x: Cx, mode: integer, d: integer, off: integer, vtp: integer) -> text {
+  if mode == PS_WALK {
+    cgen_decode_view::plans(x);
+    pr = opt_decode_structure::producer_of(x.ps, d)!;
+    pd = pr.d;
+    k = opt_decode_structure::walk_index(x.ps, pd, off, vtp);
+    return ps_name(x, d, "__psw{if k < 0 { 0 } else { k }}");
+  }
+  ps_name(x, d, "__ps")
+}
+
+// A positional twin's parameters, the store context apart: a consumer's frame first, each
+// argument but the dropped buffer as its shape, a walk twin's closure and its site last.  Each
+// parameter's declaration is kept by variable for a closure that reads one.
+pub fn twin_params(x: Cx, w: W, mode: integer, d: integer) -> vector<text> {
+  f = x.b.data.definitions[d]!.variables;
+  dropped = -1;
+  params: vector<text> = [];
+  if mode == PS_SHAPE || mode == PS_WALK {
+    pr = opt_decode_structure::producer_of(x.ps, d)!;
+    dropped = pr.retbuf;
+  } else {
+    c = opt_decode_structure::consumer_of(x.ps, d)!;
+    dropped = c.retbuf;
+    params += ["loft_ref loft_psb"];
+  }
+  for v in f.variables {
+    if !v.argument {
+      continue;
+    }
+    w.param_decls[v#index] = "";
+    if v#index == dropped {
+      continue;
+    }
+    c = w.shapes[v#index]!;
+    nm = var_name(v.name, v#index);
+    decl = if cgen_types::base(v.type_def[0] ?? ir::TyVoid) is TyRefVar { "{held(c)} *{nm}" } else { "{passed(c)} {nm}" };
+    w.param_decls[v#index] = decl;
+    params += [decl];
+  }
+  if mode == PS_WALK {
+    params += ["loft_ps_fn loft_pf", "void *const *loft_pv", "void *loft_pr"];
+  }
+  params
+}
+
+// `P__pst(cx, B, position…, off)` (`ps_slow_text`): the text at `off` of the value the plain
+// decoder builds at the position — the answer for a text field only the built value holds.
+fn slow_text(x: Cx, p: Producer, protos: &text, bodies: &text) {
+  def = x.b.data.definitions[p.d]!;
+  params: vector<text> = ["loft_cx *cx", "loft_ref b"];
+  for r in p.param_rust {
+    params += ["{held(param_ctype(r))} p{r#index}"];
+  }
+  params += ["int64_t off"];
+  sig = "static loft_text {ps_name(x, p.d, "__pst")}({params.join(", ")})";
+  call: vector<text> = [];
+  k = 0;
+  for a in def.attributes {
+    v = opt_decode_view::var_named(x.b, p.d, a.name);
+    if v == p.frame {
+      call += ["b"];
+    } else if v == p.retbuf {
+      call += ["loft_ref_null(cx)"];
+    } else {
+      call += ["p{k}"];
+      k += 1;
+    }
+  }
+  protos += "{sig};\n";
+  bodies += "\n{sig} {{\n    loft_ref d = {cgen_names::c_name(x.b, x.dups, p.d)}(cx, {call.join(", ")});\n    loft_text t = loft_text_own(cx, loft_get_text(cx, d, (uint32_t) off));\n    loft_free_ref(cx, d);\n    return t;\n}}\n";
+}
+
+// `LOFT_TRACE_DECODE_STRUCTURE=1`: a positional body this writer declined, with the reason.
+pub fn declined(x: Cx, d: integer, why: text) {
+  if opt_decode_structure::trace_on() {
+    name = if d < 0 { "the unit" } else { x.b.data.definitions[d]!.name };
+    eprintln("[decode-structure] C {name}: written without the clause: {why}");
+  }
+}

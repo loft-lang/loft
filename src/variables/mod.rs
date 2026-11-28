@@ -222,6 +222,12 @@ pub struct Variable {
     /// yet): pass 2 types it by its field ([`Function::unique`]).  On the variable, which is
     /// what carries over between the passes.
     blind_capture: bool,
+    /// `@FR-O-Borrow-Final` — the dependency list this variable ENDED pass 1 with, kept apart from its type
+    /// ([`Function::strip_carried_deps`]).  Pass 2 types each bind with its own deps; this is
+    /// the LOOKAHEAD pass 1 gives it: a bind that must know whether a LATER statement makes the
+    /// variable a view (`r = Lit {}` … `r = b.tp` further down) reads
+    /// [`Function::viewed_in_pass_one`], never the type.
+    pass1_deps: Vec<u16>,
     scope: u16,
     /// The deps each earlier bind of this variable ENDED with on pass 2 ([`Function::note_bind`])
     /// — each store a bind left it viewing.  The type keeps only the LAST bind's deps (a rebind
@@ -717,6 +723,10 @@ pub struct Function {
     loop_ord: u16,
     loop_ord_of: HashMap<u16, u16>,
     body_binds: HashMap<(u16, String), u16>,
+    /// The dead-assignment lint's pending writes as each open loop found them (`start_loop`):
+    /// a loop body may run zero times, so a write before the loop is never shown dead by one
+    /// inside it, and the state comes back at `finish_loop` (loft#2676).
+    loop_writes: Vec<Vec<(u16, (u32, u32), bool)>>,
     pub(crate) current_loop: u16,
     loops: Vec<Iterator>,
     variables: Vec<Variable>,
@@ -987,6 +997,7 @@ impl Function {
             loop_ord: 0,
             loop_ord_of: HashMap::new(),
             body_binds: HashMap::new(),
+            loop_writes: Vec::new(),
             current_loop: u16::MAX,
             loops: Vec::new(),
             work_text: 0,
@@ -1156,6 +1167,7 @@ impl Function {
                 write_source: (0, 0),
                 nullable_line: 0,
                 blind_capture: false,
+                pass1_deps: Vec::new(),
                 defined: false,
                 const_binding: false,
                 amp_link: false,
@@ -1179,6 +1191,41 @@ impl Function {
         // double-insert those frees (@PLN11 arc D / @PLAN28 C4 insight).
         f.done = true;
         f
+    }
+
+    /// `@FR-O-Borrow-Final`: take the dependency lists pass 1 left on every local of the table pass 2 starts
+    /// from OUT of their types, so pass 2 derives each list itself, and keep each as the
+    /// variable's lookahead record (`pass1_deps`).  A parameter keeps its list: that is the
+    /// signature's, not pass 1's analysis.  Unioned into pass 2 instead, a caller typed against a
+    /// callee's pass-1 return kept a borrow of a store it owned, and never freed it (loft#2660).
+    pub fn strip_carried_deps(&mut self) {
+        for v in &mut self.variables {
+            // A type with no list anywhere is already pass 2's: left as it is, it costs nothing.
+            if !v.argument && v.type_def.carries_deps() {
+                v.pass1_deps = v.type_def.depend();
+                v.type_def = v.type_def.without_deps();
+            }
+        }
+    }
+
+    /// `@FR-O-Borrow-Final` — whether pass 1 ended with `var_nr` borrowing a store other than its own: the
+    /// LOOKAHEAD a bind reads when a later statement may turn an owner into a view (a literal
+    /// bound to `r` that `r = b.tp` rebinds further down): [`Self::is_independent`]'s question,
+    /// asked of pass 1's final list.  Empty on pass 1 and wherever the lists stay in the types;
+    /// such a caller reads the type as before.
+    #[must_use]
+    pub fn viewed_in_pass_one(&self, var_nr: u16) -> bool {
+        let Some(v) = self.variables.get(var_nr as usize) else {
+            return false;
+        };
+        let d = &v.pass1_deps;
+        !(d.is_empty()
+            || (d.len() == 1
+                && d[0] == var_nr
+                && !matches!(
+                    v.type_def.base(),
+                    Type::Reference(_, _) | Type::Enum(_, true, _)
+                )))
     }
 
     pub fn append(&mut self, other: &mut Function) {
@@ -1331,6 +1378,7 @@ impl Function {
             loop_ord: 0,
             loop_ord_of: other.loop_ord_of.clone(),
             body_binds: other.body_binds.clone(),
+            loop_writes: Vec::new(),
             loops: other.loops.clone(),
             variables: other.variables.clone(),
             annotated: other.annotated.clone(),
@@ -1410,6 +1458,12 @@ impl Function {
             state_var: u16::MAX,
         });
         self.current_loop = self.loops.len() as u16 - 1;
+        // loft#2676, `@F100` — the body may run zero times, so a write the loop's code makes
+        // is never what shows a write before it dead: `hit = false; while … { hit = true; } hit`
+        // reads the `false` on an empty run.  Every loop form opens here (`while`, `for`, a
+        // comprehension), which is why the reset lives here and not at each of them.
+        self.loop_writes.push(self.save_and_clear_write_state());
+        self.clear_write_state();
         self.current_loop
     }
 
@@ -1653,6 +1707,9 @@ impl Function {
     pub fn finish_loop(&mut self, loop_nr: u16) {
         assert_eq!(self.current_loop, loop_nr, "Incorrect loop finish");
         self.current_loop = self.loops[self.current_loop as usize].inside;
+        if let Some(writes) = self.loop_writes.pop() {
+            self.restore_write_state(&writes);
+        }
     }
 
     /// Register `count_var` as the `#count` of the loop whose iteration variable
@@ -2907,6 +2964,22 @@ impl Function {
         self.current_loop
     }
 
+    /// Was `var_nr` first created inside the innermost loop being parsed now — a local its
+    /// body binds, bound afresh on every pass?  Asked by the loop's per-pass ORDINAL: a loop's
+    /// number differs between the two parser passes (`loop_ord`), and the variable was
+    /// created on the first.
+    #[must_use]
+    pub fn created_in_current_loop(&self, var_nr: u16) -> bool {
+        self.current_loop != u16::MAX
+            && match (
+                self.loop_ord_of.get(&self.created_in_loop(var_nr)),
+                self.loop_ord_of.get(&self.current_loop),
+            ) {
+                (Some(a), Some(b)) => a == b,
+                _ => false,
+            }
+    }
+
     /// The loop a variable was first created inside, or `u16::MAX` at function scope.
     #[must_use]
     pub fn created_in_loop(&self, var_nr: u16) -> u16 {
@@ -3121,7 +3194,26 @@ impl Function {
             self.trace_type_change(v, type_def, "unique(elm)");
             self.variables[v as usize].type_def = type_def.clone();
         }
+        self.adopt_remint_deps(&full, type_def);
         self.add_variable(&full, type_def, lexer)
+    }
+
+    /// `@FR-O-Borrow-Final`: a temp re-minted at the SAME shape takes this pass's borrows.  A temp's name is
+    /// minted once per pass (`unique`'s counter restarts in `append`; a match subject is keyed by
+    /// its site), so an existing entry is pass 1's, and its dependency list is no fact about
+    /// pass 2's value: a match subject `(a, k)` or `t.parts[0]!` borrows parameter `a` / `t`
+    /// because pass 2's subject type says so, not because pass 1 did (stripped, the temp read as
+    /// an owner and freed the parameter's store twice).  Only the deps are adopted: a shape that
+    /// differs stays pass 1's, which the families in `unique` rely on (a capture's local `τ?`).
+    fn adopt_remint_deps(&mut self, full: &str, type_def: &Type) {
+        if let Some(&v) = self.names.get(full)
+            && !type_def.is_unknown()
+            && self.variables[v as usize].type_def != *type_def
+            && self.variables[v as usize].type_def.without_deps() == type_def.without_deps()
+        {
+            self.trace_type_change(v, type_def, "re-mint(deps)");
+            self.variables[v as usize].type_def = type_def.clone();
+        }
     }
 
     /// The temp a `match` evaluates its subject into once (`@FR-M-Match`), named for its SITE.
@@ -3150,7 +3242,11 @@ impl Function {
             return v;
         }
         match self.subject_sites.get(&site) {
-            Some(&nr) => self.add_variable(&format!("_match_subj_{nr}"), type_def, lexer),
+            Some(&nr) => {
+                let full = format!("_match_subj_{nr}");
+                self.adopt_remint_deps(&full, type_def);
+                self.add_variable(&full, type_def, lexer)
+            }
             None => self.unique("match_subj_late", type_def, lexer),
         }
     }
@@ -3269,6 +3365,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: false,
             const_binding: false,
@@ -3336,6 +3433,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: self.variables[var as usize].defined,
             const_binding: self.variables[var as usize].const_binding,
@@ -3394,6 +3492,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: false,
             const_binding: false,
@@ -3448,6 +3547,7 @@ impl Function {
             write_source: (0, 0),
             nullable_line: 0,
             blind_capture: false,
+            pass1_deps: Vec::new(),
             argument: false,
             defined: true,
             const_binding: false,
@@ -5904,6 +6004,21 @@ impl Function {
             if views.len() == before {
                 return views;
             }
+        }
+    }
+
+    /// @PLN91 — `v`'s [`Variable::viewed`], for the image (`ir_store`).
+    #[must_use]
+    pub(crate) fn viewed_of(&self, v: u16) -> &[u16] {
+        self.variables
+            .get(v as usize)
+            .map_or(&[][..], |x| &x.viewed[..])
+    }
+
+    /// @PLN91 — `v`'s [`Variable::viewed`] read back from the image (`ir_read`).
+    pub(crate) fn set_viewed(&mut self, v: u16, list: Vec<u16>) {
+        if let Some(x) = self.variables.get_mut(v as usize) {
+            x.viewed = list;
         }
     }
 

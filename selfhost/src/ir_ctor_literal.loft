@@ -1,0 +1,918 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/ctor_literal.rs` transcribed (`@FR-R-CtorLiteral`): a call of a CONSTRUCTOR — a
+// function whose body is one record literal over its parameters — that declares a local is
+// replaced by the literal the callee would have built, written into that local; a vector-literal
+// argument is built in its field.  Inside a loop the literal is kept only where the local is a
+// loop record (`ir_loop_records::loop_records`).
+//
+// `Data::observes_entries` is not in the image: read as false.
+
+use ir;
+use scope_fn;
+use lower;
+use cgen_types;
+use opt_vr_shape;
+use ir_pass_tree;
+use ir_loop_records;
+
+// What a constructor's body writes, over its own variable numbers (`Ctor`).
+struct Ctor {
+  d: integer,
+  name: text,
+  tp: integer,
+  buf: integer,
+  params: vector<integer>,
+  group: vector<ir::Node>,
+  has_vectors: boolean,
+}
+
+fn name(b: ir::Bundle, d: integer) -> text {
+  ir_pass_tree::def_name(b, d)
+}
+
+fn is_var(v: ir::Node, x: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n == x,
+    _ => false,
+  }
+}
+
+fn var_n(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    _ => -1,
+  }
+}
+
+fn int_n(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) {
+    NdInt { n } => n,
+    _ => null,
+  }
+}
+
+fn literal(v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  u is NdInt || u is NdLong || u is NdFloat || u is NdSingle || u is NdBoolean || u is NdNull
+}
+
+FAMILIES = ["OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpConv", "OpEq", "OpNe", "OpLt", "OpLe", "OpGt", "OpGe", "OpAnd", "OpOr", "OpNot", "OpNeg", "OpEor", "OpLand", "OpLor", "OpSLeft", "OpSRight", "OpAbs"];
+
+fn non_line(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    if !(o is NdLine) {
+      out += [o];
+    }
+  }
+  out
+}
+
+fn non_line_unspanned(ops: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    if !(scope_fn::unspan(o) is NdLine) {
+      out += [o];
+    }
+  }
+  out
+}
+
+// port: ctor_literal.rs fn scalar_expr — an operator over variables and literals that neither
+// writes nor reads a store.
+fn scalar_expr(b: ir::Bundle, v: ir::Node) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdVar { n: _ } => true,
+    NdCall { def_nr, args } => {
+      n = name(b, def_nr);
+      fam = false;
+      for f in FAMILIES {
+        if n.starts_with(f) {
+          fam = true;
+        }
+      }
+      if !fam || n.contains("Text") {
+        return false;
+      }
+      for a in args {
+        if !scalar_expr(b, a) {
+          return false;
+        }
+      }
+      true
+    },
+    NdBlock { block } => {
+      if block[0]!.name != "Inline" {
+        return literal(u);
+      }
+      ops = non_line(block[0]!.operators);
+      if len(ops) != 1 {
+        return false;
+      }
+      scalar_expr(b, ops[0]!)
+    },
+    NdIf { cond, t, f } => scalar_expr(b, cond) && scalar_expr(b, t) && scalar_expr(b, f),
+    _ => literal(u),
+  }
+}
+
+// port: ctor_literal.rs fn mentions — a `Var(x)` or `Set(x, _)` in `v`.
+fn mentions(v: ir::Node, x: integer) -> boolean {
+  match v {
+    NdVar { n } => if n == x { return true; },
+    NdSet { var } => if var == x { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(v) {
+    if mentions(k, x) {
+      return true;
+    }
+  }
+  false
+}
+
+fn var_named(f: ir::Function, nm: text) -> integer {
+  for e in f.names {
+    if e.name == nm {
+      return e.nr;
+    }
+  }
+  -1
+}
+
+fn tp(f: ir::Function, v: integer) -> ir::TypeT {
+  f.variables[v]!.type_def[0] ?? ir::TyVoid
+}
+
+fn is_vector(t: ir::TypeT) -> boolean {
+  cgen_types::base(t) is TyVector
+}
+
+// port: ctor_literal.rs fn mint_type — the type the prologue `if <present> {} else
+// OpDatabase(buf, tp)` mints; null where it is no such mint.
+fn mint_type(b: ir::Bundle, prologue: ir::Node, buf: integer) -> integer? {
+  match scope_fn::unspan(prologue) {
+    NdIf { f } => {
+      match scope_fn::unspan(f) {
+        NdCall { def_nr, args } => {
+          if name(b, def_nr) == "OpDatabase" && len(args) == 2 && is_var(args[0]!, buf) {
+            return int_n(args[1]!);
+          }
+          null
+        },
+        _ => null,
+      }
+    },
+    _ => null,
+  }
+}
+
+fn any_foreign_var(v: ir::Node, allowed: vector<integer>) -> boolean {
+  match v {
+    NdVar { n } => {
+      ok = false;
+      for a in allowed {
+        if a == n {
+          ok = true;
+        }
+      }
+      if !ok {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(v) {
+    if any_foreign_var(k, allowed) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: ctor_literal.rs fn check_writes — the literal group's writes.
+fn check_writes(b: ir::Bundle, writes: vector<ir::Node>, buf: integer, params: vector<integer>, fv: ir::Function) -> boolean {
+  scalar_params: vector<integer> = [];
+  for p in params {
+    if !is_vector(tp(fv, p)) {
+      scalar_params += [p];
+    }
+  }
+  vec_uses: vector<integer> = [for _ in params { 0 }];
+  for w in writes {
+    op = -1;
+    a: vector<ir::Node> = [];
+    match scope_fn::unspan(w) {
+      NdCall { def_nr, args } => {
+        op = def_nr;
+        a = args;
+      },
+      _ => return false,
+    }
+    n = name(b, op);
+    if n == "OpAppendVector" {
+      field_ok = false;
+      if len(a) > 0 {
+        match scope_fn::unspan(a[0]!) {
+          NdCall { def_nr: g, args: ga } => field_ok = name(b, g) == "OpGetField" && len(ga) == 3 && is_var(ga[0]!, buf) && int_n(ga[1]!) != null && int_n(ga[2]!) != null,
+          _ => {}
+        }
+      }
+      p = if len(a) > 1 { var_n(a[1]!) } else { -1 };
+      if p < 0 {
+        return false;
+      }
+      pi = -1;
+      for x in params {
+        if x == p {
+          pi = x#index;
+        }
+      }
+      if !field_ok || pi < 0 || len(a) < 3 || (int_n(a[2]!) ?? -1) != 0 {
+        return false;
+      }
+      vec_uses[pi] = vec_uses[pi]! + 1;
+      continue;
+    }
+    if !n.starts_with("OpSet") || n.contains("Text") || len(a) != 3 || !is_var(a[0]!, buf) {
+      return false;
+    }
+    if int_n(a[1]!) == null {
+      return false;
+    }
+    if !scalar_expr(b, a[2]!) {
+      return false;
+    }
+    if any_foreign_var(a[2]!, scalar_params) {
+      return false;
+    }
+  }
+  for p in params {
+    if is_vector(tp(fv, p)) && vec_uses[p#index]! != 1 {
+      return false;
+    }
+  }
+  true
+}
+
+// port: ctor_literal.rs fn admit — the constructor a call of `d` is replaced by; null where it
+// is none.
+fn admit(b: ir::Bundle, d: integer) -> Ctor? {
+  def = b.data.definitions[d]!;
+  if def.def_type != 1 || len(def.code) == 0 {
+    return null;
+  }
+  body_ops = match def.code[0]! { NdBlock { block } => block[0]!.operators, _ => return null };
+  bi = opt_vr_shape::ret_buffer_attr(def);
+  if bi < 0 || bi + 1 != len(def.attributes) {
+    return null;
+  }
+  fv = def.variables;
+  params: vector<integer> = [];
+  for a in def.attributes {
+    v = var_named(fv, a.name);
+    if v < 0 || v >= len(fv.variables) || !fv.variables[v]!.argument || fv.variables[v]!.captured {
+      return null;
+    }
+    params += [v];
+  }
+  buf = params[bi]!;
+  ops = non_line_unspanned(body_ops);
+  if len(ops) == 0 {
+    return null;
+  }
+  unused: vector<integer> = [];
+  for k in 0..len(ops) - 1 {
+    match scope_fn::unspan(ops[k]!) {
+      NdSet { var, inner } => {
+        if !(scope_fn::unspan(inner) is NdNull) {
+          return null;
+        }
+        unused += [var];
+      },
+      _ => return null,
+    }
+  }
+  last = scope_fn::unspan(ops[len(ops) - 1]!);
+  object = match last { NdReturn { inner } => scope_fn::unspan(inner), _ => last };
+  obj_ops = match object { NdBlock { block } => block[0]!.operators, _ => return null };
+  group = non_line_unspanned(obj_ops);
+  if len(group) < 2 {
+    return null;
+  }
+  if !is_var(group[len(group) - 1]!, buf) {
+    return null;
+  }
+  t = mint_type(b, group[0]!, buf) ?? return null;
+  writes = group[1..len(group) - 1];
+  if !check_writes(b, writes, buf, params[0..bi], fv) {
+    return null;
+  }
+  for u in unused {
+    for w in writes {
+      if mentions(w, u) {
+        return null;
+      }
+    }
+  }
+  has_vectors = false;
+  match opt_vr_layout_peel(def.returned[0] ?? ir::TyVoid) {
+    TyReference { n: r } => {
+      for a in b.data.definitions[r]!.attributes {
+        if is_vector(a.typedef[0] ?? ir::TyVoid) {
+          has_vectors = true;
+        }
+      }
+    },
+    _ => {}
+  }
+  Ctor { d: d, name: def.name, tp: t, buf: buf, params: params, group: writes, has_vectors: has_vectors }
+}
+
+// `Type::peel_link`: `base()`, then through `&` and rewrite markers.
+fn opt_vr_layout_peel(t: ir::TypeT) -> ir::TypeT {
+  x = cgen_types::base(t);
+  match x {
+    TyRefVar { inner } => opt_vr_layout_peel(inner),
+    TyRewritten { inner } => opt_vr_layout_peel(inner),
+    _ => x,
+  }
+}
+
+// One vector literal's pushes retargeted at a field: its `__vdb` buffer (-1 none) and the pushes.
+struct Pushes {
+  vdb: integer,
+  out: vector<ir::Node>,
+}
+
+// port: ctor_literal.rs fn literal_pushes — the pushes of a vector-literal argument, retargeted
+// at `field`; null for any other shape.
+fn literal_pushes(b: ir::Bundle, blk: ir::Node, field: ir::Node, vtp: integer, target: integer) -> Pushes? {
+  bops = match scope_fn::unspan(blk) {
+    NdBlock { block } => if block[0]!.name == "Vector" { block[0]!.operators } else { return null },
+    _ => return null,
+  };
+  if mentions(blk, target) {
+    return null;
+  }
+  ops = non_line_unspanned(bops);
+  if len(ops) == 0 {
+    return null;
+  }
+  view = match scope_fn::unspan(ops[len(ops) - 1]!) { NdVar { n } => n, _ => return null };
+  vdb = -1;
+  out: vector<ir::Node> = [];
+  for k in 0..len(ops) - 1 {
+    s = scope_fn::unspan(ops[k]!);
+    handled = false;
+    match s {
+      NdSet { var, inner } => {
+        if var == view {
+          handled = true;
+          ga = match scope_fn::unspan(inner) {
+            NdCall { def_nr: g, args } => if name(b, g) == "OpGetField" { args } else { return null },
+            _ => return null,
+          };
+          if len(ga) != 3 || (int_n(ga[1]!) ?? -1) != 0 || int_n(ga[1]!) == null || (int_n(ga[2]!) ?? -1) != vtp || int_n(ga[2]!) == null {
+            return null;
+          }
+          dv = match scope_fn::unspan(ga[0]!) { NdVar { n } => n, _ => return null };
+          if vdb >= 0 && vdb != dv {
+            return null;
+          }
+          vdb = dv;
+        }
+      },
+      NdCall { def_nr: op, args: a } => {
+        handled = true;
+        n = name(b, op);
+        on_vdb = len(a) > 0 && (scope_fn::unspan(a[0]!) is NdVar) && (vdb < 0 || is_var(a[0]!, vdb));
+        if n == "OpDatabase" && len(a) == 2 && on_vdb {
+          vdb = var_n(a[0]!);
+        } else if n == "OpSetInt4" && len(a) == 3 && on_vdb && int_n(a[1]!) != null && int_n(a[1]!)! == 0 && int_n(a[2]!) != null && int_n(a[2]!)! == 0 {
+        } else if n == "OpPreAllocVector" && len(a) == 3 && is_var(a[0]!, view) {
+          small = int_n(a[1]!) != null && int_n(a[1]!)! <= 11;
+          if !small {
+            out += [ir::NdCall { def_nr: op, args: [field, a[1]!, a[2]!] }];
+          }
+        } else if n.starts_with("OpPush") && len(a) == 2 && is_var(a[0]!, view) && scalar_expr(b, a[1]!) && !mentions(a[1]!, view) {
+          out += [ir::NdCall { def_nr: op, args: [field, a[1]!] }];
+        } else {
+          return null;
+        }
+      },
+      _ => {}
+    }
+    if !handled {
+      return null;
+    }
+  }
+  if vdb < 0 {
+    return null;
+  }
+  Pushes { vdb: vdb, out: out }
+}
+
+// The call's names: a variable of the constructor and what stands for it.
+struct Map {
+  from: vector<integer>,
+  to: vector<ir::Node>,
+}
+
+// port: ctor_literal.rs fn remap — a copy of a constructor's write over the call's names.
+fn remap(v: ir::Node, m: Map, scope: integer) -> ir::Node {
+  match v {
+    NdVar { n } => {
+      for f in m.from {
+        if f == n {
+          return m.to[f#index]!;
+        }
+      }
+      v
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: remap(inner, m, scope) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { remap(a, m, scope) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: remap(cond, m, scope), t: remap(t, m, scope), f: remap(f, m, scope) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops = [for o in non_line(bl.operators) { remap(o, m, scope) }];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [for t in bl.result { t }], scope: scope, var_size: 0 }] }
+    },
+    _ => v,
+  }
+}
+
+// port: ctor_literal.rs fn prep_of — `if OpRefIsNull(buf) { OpDatabase(buf, tp) } else
+// OpClear(buf, tp)`.
+fn prep_of(b: ir::Bundle, cond: ir::Node, then: ir::Node, other: ir::Node, buf: integer) -> boolean {
+  call_on(b, cond, "OpRefIsNull", buf) && call_on(b, then, "OpDatabase", buf) && call_on(b, other, "OpClear", buf)
+}
+
+fn call_on(b: ir::Bundle, arm: ir::Node, want: text, buf: integer) -> boolean {
+  u = scope_fn::unspan(arm);
+  stmt = match u {
+    NdInsert { items } => if len(items) == 1 { scope_fn::unspan(items[0]!) } else { u },
+    NdBlock { block } => if len(block[0]!.operators) == 1 { scope_fn::unspan(block[0]!.operators[0]!) } else { u },
+    _ => u,
+  };
+  match stmt {
+    NdCall { def_nr, args } => name(b, def_nr) == want && len(args) > 0 && is_var(args[0]!, buf),
+    _ => false,
+  }
+}
+
+// port: ctor_literal.rs fn buffer_only_pooled — every mention of the pooled buffer is its
+// declaration, its prep, a free, or the one call being rewritten.
+fn buffer_only_pooled(b: ir::Bundle, body: ir::Node, buf: integer, target: integer) -> boolean {
+  st = [0, 1];
+  pool_walk(b, body, buf, target, st);
+  st[1]! == 1 && st[0]! == 1
+}
+
+fn pool_walk(b: ir::Bundle, node: ir::Node, buf: integer, target: integer, st: vector<integer>) {
+  if st[1]! == 0 {
+    return;
+  }
+  here = scope_fn::unspan(node);
+  match here {
+    NdVar { n } => if n == buf {
+      st[1] = 0;
+      return;
+    },
+    NdSet { var, inner } => if var == buf {
+      if !(scope_fn::unspan(inner) is NdNull) {
+        st[1] = 0;
+      }
+      return;
+    },
+    NdIf { cond, t, f } => if prep_of(b, cond, t, f, buf) {
+      return;
+    },
+    NdCall { def_nr, args } => {
+      nm = name(b, def_nr);
+      last_is_buf = len(args) > 0 && is_var(args[len(args) - 1]!, buf);
+      if (nm == "OpFreeRef" && len(args) == 1 && is_var(args[0]!, buf)) || (nm == "OpFreeRefIfDistinct" && len(args) == 2 && ((is_var(args[0]!, target) && is_var(args[1]!, buf)) || (is_var(args[0]!, buf) && is_var(args[1]!, target)))) {
+        return;
+      }
+      if last_is_buf && !nm.starts_with("Op") {
+        st[0] = st[0]! + 1;
+        for x in 0..len(args) - 1 {
+          pool_walk(b, args[x]!, buf, target, st);
+        }
+        return;
+      }
+    },
+    _ => {}
+  }
+  for k in scope_fn::children(here) {
+    pool_walk(b, k, buf, target, st);
+  }
+}
+
+// port: ctor_literal.rs fn vdb_only_literal.
+fn vdb_only_literal(b: ir::Bundle, body: ir::Node, vdb: integer) -> boolean {
+  vdb_uses(b, body, vdb) == 1
+}
+
+fn vdb_uses(b: ir::Bundle, n: ir::Node, vdb: integer) -> integer {
+  c = 0;
+  match n {
+    NdCall { def_nr, args } => {
+      if len(args) > 0 && is_var(args[0]!, vdb) {
+        nm = name(b, def_nr);
+        if !(nm == "OpFreeRef" || nm == "OpDatabase" || nm == "OpSetInt4" || nm == "OpGetField") {
+          c += 100;
+        }
+        if nm == "OpDatabase" {
+          c += 1;
+        }
+      }
+    },
+    NdSet { var, inner } => if var == vdb && !(scope_fn::unspan(inner) is NdNull) { c += 100; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    c += vdb_uses(b, k, vdb);
+  }
+  c
+}
+
+// One rewrite candidate: the statement `x = ctor(args)`.
+struct Site {
+  target: integer,
+  ctor: integer,
+  buf: integer,
+}
+
+fn ctor_at(ctors: vector<Ctor>, d: integer) -> integer {
+  for c in ctors {
+    if c.d == d {
+      return c#index;
+    }
+  }
+  -1
+}
+
+// port: ctor_literal.rs fn site_of; null for none.
+fn site_of(stmt: ir::Node, ctors: vector<Ctor>) -> Site? {
+  match scope_fn::unspan(stmt) {
+    NdSet { var: x, inner: rhs } => {
+      match scope_fn::unspan(rhs) {
+        NdCall { def_nr, args } => {
+          ci = ctor_at(ctors, def_nr);
+          if ci < 0 || len(args) != len(ctors[ci]!.params) || len(args) == 0 {
+            return null;
+          }
+          bv = match scope_fn::unspan(args[len(args) - 1]!) { NdVar { n } => n, _ => return null };
+          Site { target: x, ctor: def_nr, buf: bv }
+        },
+        _ => null,
+      }
+    },
+    _ => null,
+  }
+}
+
+// port: ctor_literal.rs fn expand — the statements that replace `stmt`, null where the call stays.
+fn expand(b: ir::Bundle, stmt: ir::Node, c: Ctor, site: Site, scope: integer, body: ir::Node) -> vector<ir::Node>? {
+  args = match scope_fn::unspan(stmt) {
+    NdSet { inner } => match scope_fn::unspan(inner) { NdCall { args } => args, _ => return null },
+    _ => return null,
+  };
+  x = site.target;
+  target = ir::NdVar { n: x };
+  m = Map { from: [c.buf], to: [target] };
+  lit_p: vector<integer> = [];
+  lit_a: vector<ir::Node> = [];
+  for p in c.params {
+    i = p#index;
+    if i >= len(c.params) - 1 || i >= len(args) {
+      break;
+    }
+    a = args[i]!;
+    if mentions(a, x) {
+      return null;
+    }
+    ua = scope_fn::unspan(a);
+    is_vec_lit = match ua { NdBlock { block } => block[0]!.name == "Vector", _ => false };
+    if is_vec_lit {
+      lit_p += [p];
+      lit_a += [a];
+    } else if scalar_expr(b, a) || literal(a) {
+      m.from += [p];
+      m.to += [ua];
+    } else {
+      return null;
+    }
+  }
+  // Profitable only for a record that holds a vector.
+  if !c.has_vectors {
+    return null;
+  }
+  db = lower::find(b, "OpDatabase") ?? -1;
+  out: vector<ir::Node> = [ir::NdSet { var: x, inner: ir::NdNull }, ir::NdCall { def_nr: db, args: [target, ir::NdInt { n: c.tp }] }];
+  for w in c.group {
+    done = false;
+    match scope_fn::unspan(w) {
+      NdCall { def_nr: op, args: a } => {
+        if name(b, op) == "OpAppendVector" && len(a) > 1 {
+          p = var_n(a[1]!);
+          li = -1;
+          for q in lit_p {
+            if q == p && p >= 0 {
+              li = q#index;
+            }
+          }
+          if li >= 0 {
+            field = remap(a[0]!, m, scope);
+            ga = match scope_fn::unspan(field) { NdCall { args: g } => g, _ => return null };
+            if len(ga) < 3 {
+              return null;
+            }
+            vtp = int_n(ga[2]!) ?? return null;
+            ps = literal_pushes(b, lit_a[li]!, field, vtp, x) ?? return null;
+            if !vdb_only_literal(b, body, ps.vdb) {
+              return null;
+            }
+            out += ps.out;
+            done = true;
+          }
+        }
+      },
+      _ => {}
+    }
+    if !done {
+      out += [remap(w, m, scope)];
+    }
+  }
+  out
+}
+
+// port: ctor_literal.rs fn retire_buffer — the pooled buffer's prep dropped, the target's
+// skip-the-buffer free turned into its own.
+fn retire_buffer(b: ir::Bundle, v: ir::Node, target: integer, buf: integer, free_ref: integer) -> ir::Node {
+  kids = scope_fn::children(v);
+  w = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for k in kids { retire_buffer(b, k, target, buf, free_ref) }]) };
+  match w {
+    NdBlock { block } => {
+      bl = block[0]!;
+      kept: vector<ir::Node> = [];
+      for o in bl.operators {
+        if !dead(b, o, target, buf) {
+          kept += [o];
+        }
+      }
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(bl, kept)] };
+    },
+    NdInsert { items } => {
+      kept: vector<ir::Node> = [];
+      for o in items {
+        if !dead(b, o, target, buf) {
+          kept += [o];
+        }
+      }
+      return ir::NdInsert { items: kept };
+    },
+    NdCall { def_nr, args } => {
+      if name(b, def_nr) == "OpFreeRefIfDistinct" && len(args) == 2 && is_var(args[0]!, target) && is_var(args[1]!, buf) {
+        return ir::NdCall { def_nr: free_ref, args: [ir::NdVar { n: target }] };
+      }
+    },
+    _ => {}
+  }
+  w
+}
+
+fn dead(b: ir::Bundle, o: ir::Node, target: integer, buf: integer) -> boolean {
+  match scope_fn::unspan(o) {
+    NdIf { cond, t, f } => prep_of(b, cond, t, f, buf),
+    NdCall { def_nr, args } => name(b, def_nr) == "OpFreeRefIfDistinct" && len(args) == 2 && is_var(args[0]!, buf) && is_var(args[1]!, target),
+    _ => false,
+  }
+}
+
+fn count_sets(n: ir::Node, counts: vector<integer>) {
+  match n {
+    NdSet { var } => if var >= 0 && var < len(counts) { counts[var] = counts[var]! + 1; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    count_sets(k, counts);
+  }
+}
+
+// `(target, buffer)` pairs, flat.
+struct Pairs {
+  v: vector<integer>,
+}
+
+fn has_pair(p: Pairs, t: integer, buf: integer) -> boolean {
+  i = 0;
+  while i + 1 < len(p.v) {
+    if p.v[i]! == t && p.v[i + 1]! == buf {
+      return true;
+    }
+    i += 2;
+  }
+  false
+}
+
+// port: ctor_literal.rs fn admitted_sites.
+fn admitted_sites(b: ir::Bundle, caller: integer, body: ir::Node, ctors: vector<Ctor>) -> Pairs {
+  f = b.data.definitions[caller]!.variables;
+  sets: vector<integer> = [for _ in f.variables { 0 }];
+  count_sets(body, sets);
+  out = Pairs { v: [] };
+  sites_walk(b, caller, body, body, ctors, f, sets, out);
+  out
+}
+
+fn sites_walk(b: ir::Bundle, caller: integer, n: ir::Node, body: ir::Node, ctors: vector<Ctor>, f: ir::Function, sets: vector<integer>, out: Pairs) {
+  if !(n is NdSpan) {
+    s = site_of(n, ctors);
+    if s != null && s!.ctor != caller {
+      t = s!.target;
+      ok = (sets[t] ?? 0) == 1 && !f.variables[t]!.argument && !(tp(f, t) is TyOptional) && !f.variables[t]!.captured && (cgen_types::base(tp(f, t)) is TyReference) && buffer_only_pooled(b, body, s!.buf, t);
+      if ok {
+        out.v += [t, s!.buf];
+      }
+    }
+  }
+  for k in scope_fn::children(n) {
+    sites_walk(b, caller, k, body, ctors, f, sets, out);
+  }
+}
+
+// One rewritten call site.
+struct Done {
+  target: integer,
+  buf: integer,
+  in_loop: boolean,
+}
+
+struct Walk {
+  ctors: vector<Ctor>,
+  whole: ir::Node,
+  ok: Pairs,
+  done: vector<Done>,
+}
+
+fn calls_ctor(n: ir::Node, ctors: vector<Ctor>, caller: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr != caller && ctor_at(ctors, def_nr) >= 0 { return true; },
+    _ => {}
+  }
+  for k in scope_fn::children(n) {
+    if calls_ctor(k, ctors, caller) {
+      return true;
+    }
+  }
+  false
+}
+
+fn blocked(n: ir::Node) -> boolean {
+  if n is NdYield || n is NdParallel {
+    return true;
+  }
+  for k in scope_fn::children(n) {
+    if blocked(k) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: ctor_literal.rs fn rewrite_program — `@FR-R-CtorLiteral` over the whole program; answers
+// the number of calls rewritten.
+pub fn rewrite_program(b: ir::Bundle) -> integer {
+  if (env_variable("LOFT_NO_CTOR_LITERAL") ?? "0") != "0" || b.open_world {
+    return 0;
+  }
+  ctors: vector<Ctor> = [];
+  for def in b.data.definitions {
+    if def.def_type != 1 || !def.name.starts_with("n_") {
+      continue;
+    }
+    c = admit(b, def#index);
+    if c != null {
+      ctors += [c!];
+    }
+  }
+  if len(ctors) == 0 {
+    return 0;
+  }
+  free_ref = lower::find(b, "OpFreeRef") ?? -1;
+  total = 0;
+  for def in b.data.definitions {
+    caller = def#index;
+    if !ir_pass_tree::has_body(def) {
+      continue;
+    }
+    body = def.code[0]!;
+    if blocked(body) || !calls_ctor(body, ctors, caller) {
+      continue;
+    }
+    ok_sites = admitted_sites(b, caller, body, ctors);
+    done = rewrite_gated(b, caller, body, ctors, ok_sites, free_ref);
+    if len(done) == 0 {
+      continue;
+    }
+    f = b.data.definitions[caller]!.variables;
+    for x in done {
+      match cgen_types::base(tp(f, x.target)) {
+        TyReference { n: r } => { f.variables[x.target].type_def = [ir::TyReference { n: r, dep: [] }]; },
+        _ => {}
+      }
+    }
+    ir_pass_tree::relayout(b, caller);
+    total += len(done);
+  }
+  total
+}
+
+fn loop_record_off() -> boolean {
+  (env_variable("LOFT_NO_LOOP_RECORD") ?? "0") != "0" || (env_variable("LOFT_NO_LOOP_RECORD_REFILL") ?? "0") != "0"
+}
+
+// port: ctor_literal.rs fn rewrite_gated — the rewrite of `caller`, kept only where it pays:
+// inside a loop the literal pays only as a loop record.
+fn rewrite_gated(b: ir::Bundle, caller: integer, body_in: ir::Node, ctors: vector<Ctor>, ok_in: Pairs, free_ref: integer) -> vector<Done> {
+  // Rust's `body.clone()`: the caller's body as it came in, held apart from the definition,
+  // whose code each attempt replaces (`body_in` is a view into it).
+  orig: vector<ir::Node> = [body_in];
+  ok_sites = ok_in;
+  // The empty set ends the rounds in the loop's condition, not by a `return` at the head of its
+  // body: `lost` below is a loop record (`@FR-R-LoopRecord`), and a return before its mint leaks
+  // the record the previous round kept, on both backends (the scope-pass port's step 13 notes).
+  rounds = 0;
+  while rounds < 1000 && len(ok_sites.v) > 0 {
+    rounds += 1;
+    body = orig[0]!;
+    w = Walk { ctors: ctors, whole: body, ok: ok_sites, done: [] };
+    code = rewrite_in(b, w, body, false);
+    for x in w.done {
+      code = retire_buffer(b, code, x.target, x.buf, free_ref);
+    }
+    b.data.definitions[caller].code = [code];
+    kept: vector<ir_loop_records::LoopRecord> = if loop_record_off() { [] } else { ir_loop_records::loop_records(b, caller) };
+    lost = Pairs { v: [] };
+    for x in w.done {
+      if x.in_loop {
+        is_kept = false;
+        for r in kept {
+          if r.v == x.target {
+            is_kept = true;
+          }
+        }
+        if !is_kept {
+          lost.v += [x.target, x.buf];
+        }
+      }
+    }
+    if len(lost.v) == 0 || len(w.done) == 0 {
+      return w.done;
+    }
+    nk = Pairs { v: [] };
+    i = 0;
+    while i + 1 < len(ok_sites.v) {
+      if !has_pair(lost, ok_sites.v[i]!, ok_sites.v[i + 1]!) {
+        nk.v += [ok_sites.v[i]!, ok_sites.v[i + 1]!];
+      }
+      i += 2;
+    }
+    ok_sites = nk;
+  }
+  if len(ok_sites.v) == 0 {
+    b.data.definitions[caller].code = [orig[0]!];
+  }
+  []
+}
+
+// port: ctor_literal.rs fn rewrite_in — every admitted site under `node` rewritten (children
+// first).
+fn rewrite_in(b: ir::Bundle, w: Walk, node: ir::Node, in_loop: boolean) -> ir::Node {
+  inner = in_loop || (node is NdLoop);
+  kids = scope_fn::children(node);
+  n2 = if len(kids) == 0 { node } else { ir_pass_tree::with_children(node, [for k in kids { rewrite_in(b, w, k, inner) }]) };
+  bl = match n2 { NdBlock { block } => block[0]!, _ => return n2 };
+  out: vector<ir::Node> = [];
+  for s in bl.operators {
+    site = site_of(s, w.ctors);
+    if site == null || !has_pair(w.ok, site!.target, site!.buf) {
+      out += [s];
+      continue;
+    }
+    c = w.ctors[ctor_at(w.ctors, site!.ctor)]!;
+    new = expand(b, s, c, site!, bl.scope, w.whole);
+    if new == null {
+      out += [s];
+      continue;
+    }
+    out += new!;
+    w.done += [Done { target: site!.target, buf: site!.buf, in_loop: in_loop }];
+  }
+  ir::NdBlock { block: [ir_pass_tree::with_operators(bl, out)] }
+}

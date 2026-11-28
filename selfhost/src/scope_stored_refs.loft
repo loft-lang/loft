@@ -1,0 +1,221 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — the parts of `src/scopes/stored_refs.rs` (`@FR-H-RefHome`) the scope pass runs on the
+// settled body: `insert_evacuations` and `keep_placed_results`.  The analysis itself
+// (`stored_reference_homes`) is the parser's, which leaves its facts in the image
+// (`Variable.place_buffer`, `Variable.ref_home`, `Definition.ref_evacuations`).
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+
+// port: stored_refs.rs fn keep_placed_results — a variable bound to a call handed a place
+// buffer holds the record claimed in the holder's store: the frees the pass emitted for it go.
+pub fn keep_placed_results(b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
+  any = false;
+  for v in 0..scope_fn::count(f) {
+    if scope_fn::is_place_buffer(f, v) {
+      any = true;
+    }
+  }
+  if !any {
+    return code;
+  }
+  bound: vector<integer> = [];
+  placed_binds(code, f, bound);
+  if len(bound) == 0 {
+    return code;
+  }
+  strip(code, scope_fn::def_nr(b, "OpFreeRef"), scope_fn::def_nr(b, "OpFreeRefIfDistinct"), bound)
+}
+
+fn placed_binds(n: ir::Node, f: ir::Function, bound: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: x, inner } => match scope_fn::unspan(inner) {
+      NdCall { args } => {
+        for a in args {
+          if (match scope_fn::unspan(a) { NdVar { n: p } => scope_fn::is_place_buffer(f, p), _ => false }) {
+            bound += [x];
+            break;
+          }
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    placed_binds(c, f, bound);
+  }
+}
+
+fn is_free(op: ir::Node, free_ref: integer, free_distinct: integer, bound: vector<integer>) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => (def_nr == free_ref || def_nr == free_distinct) && len(args) > 0 && (match scope_fn::unspan(args[0]!) { NdVar { n: x } => scope_fn::has(bound, x), _ => false }),
+    _ => false
+  }
+}
+
+// Every statement list (a block's, a loop body's, an insert's) without the frees of `bound`.
+fn strip(n: ir::Node, free_ref: integer, free_distinct: integer, bound: vector<integer>) -> ir::Node {
+  m = n;
+  match n {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: strip(inner, free_ref, free_distinct, bound) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      m = ir::NdBlock { block: [ir_pass_tree::with_operators(bl, [for o in bl.operators if !is_free(o, free_ref, free_distinct, bound) { o }])] };
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      m = ir::NdLoop { block: [ir_pass_tree::with_operators(bl, [for o in bl.operators if !is_free(o, free_ref, free_distinct, bound) { o }])] };
+    },
+    NdInsert { items } => {
+      m = ir::NdInsert { items: [for o in items if !is_free(o, free_ref, free_distinct, bound) { o }] };
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { strip(c, free_ref, free_distinct, bound) }])
+}
+
+struct EvacOps {
+  free_ref: integer,
+  free_distinct: integer,
+  evacuate: integer,
+  get_db_ref: integer,
+  distinct: integer,
+  // Every `OpDrop` / `OpDropAll` / `OpDropAllExcept` of the program.
+  drops: vector<integer>
+}
+
+// port: stored_refs.rs fn insert_evacuations — every free of a copied-out home's owner is
+// preceded by the copy-out of each reference that may name one of its records,
+// `OpEvacuate(holder, fld, owner, tp)`; `evs` is `Function::ref_evacuations`, flattened.
+pub fn insert_evacuations(b: ir::Bundle, code: ir::Node, evs: vector<integer>) -> ir::Node {
+  if len(evs) < 4 {
+    return code;
+  }
+  ops = EvacOps {
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    evacuate: scope_fn::def_nr(b, "OpEvacuate"),
+    get_db_ref: scope_fn::def_nr(b, "OpGetDbRef"),
+    distinct: scope_fn::def_nr(b, "OpDistinctStore"),
+    drops: [for d in b.data.definitions if d.def_type == 1 && (d.name.ends_with("_OpDrop") || d.name.ends_with("_OpDropAll") || d.name.ends_with("_OpDropAllExcept")) { d#index }]
+  };
+  visit_evacuations(code, evs, ops)
+}
+
+// The statement list of a block, a loop body or a spliced list, through spans; null for none.
+fn statements(n: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(n) {
+    NdBlock { block } => block[0]!.operators,
+    NdLoop { block } => block[0]!.operators,
+    NdInsert { items } => items,
+    _ => null
+  }
+}
+
+// `n` with its statement list replaced, through spans.
+fn with_statements(n: ir::Node, ops: vector<ir::Node>) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_statements(inner, ops) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, ops)] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, ops)] },
+    NdInsert { items: _ } => ir::NdInsert { items: ops },
+    _ => n
+  }
+}
+
+fn visit_evacuations(node: ir::Node, evs: vector<integer>, ops: EvacOps) -> ir::Node {
+  stmts = statements(node);
+  if stmts != null {
+    operators = [for o in stmts! { o }];
+    i = 0;
+    while i < len(operators) {
+      operators[i] = visit_evacuations(operators[i]!, evs, ops);
+      owner = match scope_fn::unspan(operators[i]!) {
+        NdCall { def_nr, args } => if (def_nr == ops.free_ref || def_nr == ops.free_distinct) && len(args) > 0 {
+          match scope_fn::unspan(args[0]!) { NdVar { n: o } => o, _ => -1 }
+        } else {
+          -1
+        },
+        _ => -1
+      };
+      before: vector<ir::Node> = [];
+      if owner >= 0 {
+        mine: vector<integer> = [];
+        k = 0;
+        while k + 3 < len(evs) {
+          if evs[k + 2]! == owner {
+            mine += [evs[k]!, evs[k + 1]!, evs[k + 2]!, evs[k + 3]!];
+          }
+          k += 4;
+        }
+        m = 0;
+        while m + 3 < len(mine) {
+          before += [ir::NdCall { def_nr: ops.evacuate, args: [ir::NdVar { n: mine[m]! }, ir::NdInt { n: mine[m + 1]! }, ir::NdVar { n: mine[m + 2]! }, ir::NdInt { n: mine[m + 3]! }] }];
+          m += 4;
+        }
+        // loft#2597 — the owner's `OpDrop` just before this free runs only where no holder took
+        // the record.
+        if len(mine) > 0 && i > 0 && drops_var(operators[i - 1]!, owner, ops.drops) {
+          stmt = operators[i - 1]!;
+          m = 0;
+          while m + 3 < len(mine) {
+            stmt = not_evacuated(stmt, mine[m]!, mine[m + 1]!, mine[m + 2]!, ops);
+            m += 4;
+          }
+          operators[i - 1] = stmt;
+        }
+      }
+      n = len(before);
+      if n > 0 {
+        rest = [for o in operators if o#index >= i { o }];
+        kept = [for o in operators if o#index < i { o }];
+        operators.clear();
+        operators += kept;
+        operators += before;
+        operators += rest;
+      }
+      i += n + 1;
+    }
+    return with_statements(node, operators);
+  }
+  kids = scope_fn::children(node);
+  if len(kids) == 0 {
+    return node;
+  }
+  ir_pass_tree::with_children(node, [for c in kids { visit_evacuations(c, evs, ops) }])
+}
+
+// port: stored_refs.rs fn drops_var — does `stmt` call a drop hook on `owner` itself?
+fn drops_var(stmt: ir::Node, owner: integer, drops: vector<integer>) -> boolean {
+  u = scope_fn::unspan(stmt);
+  match u {
+    NdCall { def_nr, args } => if scope_fn::has(drops, def_nr) && len(args) > 0 && (match scope_fn::unspan(args[0]!) { NdVar { n: v } => v == owner, _ => false }) {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if drops_var(c, owner, drops) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: stored_refs.rs fn not_evacuated — `stmt`, run only where `OpEvacuate(holder, fld, owner,
+// _)` copies nothing.
+fn not_evacuated(stmt: ir::Node, holder: integer, fld: integer, owner: integer, ops: EvacOps) -> ir::Node {
+  target = ir::NdCall { def_nr: ops.get_db_ref, args: [ir::NdVar { n: holder }, ir::NdInt { n: fld }] };
+  elsewhere = ir::NdCall { def_nr: ops.distinct, args: [target, ir::NdVar { n: owner }] };
+  holder_apart = ir::NdCall { def_nr: ops.distinct, args: [ir::NdVar { n: holder }, ir::NdVar { n: owner }] };
+  ir::NdIf { cond: elsewhere, t: stmt, f: ir::NdIf { cond: holder_apart, t: ir::NdNull, f: stmt } }
+}

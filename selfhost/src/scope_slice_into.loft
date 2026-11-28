@@ -1,0 +1,147 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/slice_into.rs` transcribed: `@FR-R-SliceInto`, a scalar slice used as a value
+// and appended to a place — `OpAppendVector(P, <slice block>, tp)` — is the slice's bound
+// statements and one `OpSliceVector(P, src, lo, hi, row)`.  The slice block's test is
+// `scope_slice_text`'s.  Run by `check` on the settled body, after `slice_text`, as Rust's is.
+
+use ir;
+use scope_fn;
+use binds;
+use ir_pass_tree;
+use scope_slice_text;
+
+struct Ops {
+  append: integer,
+  into: integer,
+  get_field: integer,
+  block: scope_slice_text::BlockOps
+}
+
+// port: slice_into.rs fn rewrite — every admitted append of a slice value of `d`.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if (env_variable("LOFT_NO_SLICE_INTO") ?? "0") != "0" || !binds::is_loft_defined(d) {
+    return code;
+  }
+  o = Ops {
+    append: scope_fn::def_nr(b, "OpAppendVector"),
+    into: scope_fn::def_nr(b, "OpSliceVector"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    block: scope_slice_text::block_ops(b)
+  };
+  if o.append < 0 || o.into < 0 {
+    return code;
+  }
+  tmps: vector<integer> = [];
+  find(code, code, f, o, tmps);
+  if len(tmps) == 0 {
+    return code;
+  }
+  map_sites(code, f, o, tmps)
+}
+
+fn find(n: ir::Node, code: ir::Node, f: ir::Function, o: Ops, tmps: vector<integer>) {
+  if n is NdSpan {
+    find(scope_fn::unspan(n), code, f, o, tmps);
+    return;
+  }
+  bl = host_block(n, o);
+  if bl != null {
+    args = ir_pass_tree::args_of(n);
+    a = scope_slice_text::admit(bl!, f, o.block);
+    if a.why == "" {
+      sp = scope_slice_text::split(bl!, a.site, o.block);
+      if fits(args[0]!, sp.prelude, args[2]!, sp.row, o.get_field) == "" && scope_slice_text::outside_mentions(code, a.site, o.block) == "" {
+        tmps += [a.site.tmp];
+      }
+    }
+  }
+  for c in scope_fn::children(n) {
+    find(c, code, f, o, tmps);
+  }
+}
+
+fn map_sites(n: ir::Node, f: ir::Function, o: Ops, tmps: vector<integer>) -> ir::Node {
+  m = n;
+  bl = host_block(n, o);
+  if bl != null {
+    a = scope_slice_text::admit(bl!, f, o.block);
+    if a.why == "" && scope_fn::has(tmps, a.site.tmp) {
+      place = ir_pass_tree::args_of(n)[0]!;
+      sp = scope_slice_text::split(bl!, a.site, o.block);
+      stmts = sp.prelude;
+      stmts += [ir::NdCall { def_nr: o.into, args: [place, sp.src, sp.lo, sp.hi, sp.row] }];
+      m = ir::NdBlock { block: [ir_pass_tree::block("slice into", stmts, ir::TyVoid, bl!.scope)] };
+    }
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { map_sites(c, f, o, tmps) }])
+}
+
+// port: slice_into.rs fn host — `OpAppendVector(place, <block>, tp)`: the slice block.
+fn host_block(n: ir::Node, o: Ops) -> ir::Block? {
+  match n {
+    NdCall { def_nr, args } => if def_nr == o.append && len(args) == 3 { scope_slice_text::slice_block(args[1]!) } else { null },
+    _ => null
+  }
+}
+
+// port: slice_into.rs fn fits — "" when the place reads only variables and constant field
+// offsets no bound statement assigns, and the append's element type is the slice's.
+fn fits(place: ir::Node, prelude: vector<ir::Node>, tp: ir::Node, row: ir::Node, get_field: integer) -> text {
+  a = ir_pass_tree::int_of(tp);
+  r = ir_pass_tree::int_of(row);
+  if a == null || r == null || a! != r! {
+    return "the append's element type is not the slice's";
+  }
+  read: vector<integer> = [];
+  if !plain_place(place, get_field, read) {
+    return "the place is not variables and field offsets";
+  }
+  for op in prelude {
+    if assigns(op, read) {
+      return "a bound statement assigns the place";
+    }
+  }
+  ""
+}
+
+fn assigns(n: ir::Node, read: vector<integer>) -> boolean {
+  match n {
+    NdSet { var: x } => if scope_fn::has(read, x) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if assigns(c, read) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: slice_into.rs fn plain_place
+fn plain_place(v: ir::Node, get_field: integer, read: vector<integer>) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar { n: x } => {
+      read += [x];
+      true
+    },
+    NdCall { def_nr, args } => {
+      if def_nr != get_field || len(args) == 0 {
+        return false;
+      }
+      for i in 1..len(args) {
+        if ir_pass_tree::int_of(args[i]!) == null {
+          return false;
+        }
+      }
+      plain_place(args[0]!, get_field, read)
+    },
+    _ => false
+  }
+}

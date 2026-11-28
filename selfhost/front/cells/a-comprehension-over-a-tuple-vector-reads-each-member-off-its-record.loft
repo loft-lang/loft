@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Gate E cell: a comprehension's variable over a tuple vector is the element's `__tuple<…>`
+// record, borrowing the hold (`x: ref(__tuple<integer,integer>)["_vector_1"]`), so a member is a
+// field read off it (`OpGetInt(x, 0)`) — as a statement walk's variable is (`for_type`, P189b).
+// A port that typed it as the tuple value read `x.0` as a tuple member: a silent image differ.
+// @FR-T-Record: a tuple is a record whose members are its fields.
+// @FR-I-Comp: `[for x in src { e }]` holds e for each element, in order (filtered by `if`).
+// Prints: 2 3 2 b 1 7 1 2
+
+fn ints(vi: vector<(integer, integer)>) -> vector<integer> { [for x in vi { x.1 }] }
+
+fn main() {
+  vi = [(1, 2), (3, 4)];
+  a = [for x in vi { x.0 }];
+  vt = [(1, "a"), (3, "b")];
+  b = [for x in vt { x.1 }];
+  c = [for x in vi if x.0 > 1 { x.0 + x.1 }];
+  d = ints([(1, 2)]);
+  println("{len(a)} {a[1]} {len(b)} {b[1]} {len(c)} {c[0]} {len(d)} {d[0]}");
+}

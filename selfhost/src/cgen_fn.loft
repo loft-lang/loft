@@ -14,7 +14,8 @@
 // call of a function and every other shape are refused by name.
 
 use ir;
-use cgen::(Cx, request_twin);
+use cgen::(Cx, request_twin, source_name);
+use cgen;
 use binds;
 use opt_apart_value;
 use cgen_transient;
@@ -29,6 +30,9 @@ use cgen_ref;
 use cgen_bind;
 use cgen_cold;
 use cgen_split;
+use cgen_reltable;
+use cgen_switch;
+use cgen_parallel;
 use cgen_tail;
 use cgen_recptr;
 use cgen_hoist;
@@ -69,6 +73,8 @@ use cgen_deferred;
 use cgen_apart;
 use opt_lease;
 use opt_below_len;
+use cgen_decode_view;
+use cgen_decode_structure;
 use opt_destination;
 use opt_append_twin;
 use cgen_rotate;
@@ -226,7 +232,7 @@ fn arg_with(x: Cx, w: W, operand: ir::Node, later_writes: boolean, ind: integer)
   };
   if later_writes && reads_local && value.kind == K_VIEW {
     held = temp(w, "text");
-    line(w, ind, "loft_text_set(&{held}, {value.code});");
+    line(w, ind, "loft_text_set(cx, &{held}, {value.code});");
     return held_value(w, held, "text");
   }
   simple = match bare_operand {
@@ -271,13 +277,21 @@ fn plain_macro(name: text, count: integer) -> text {
   }
 }
 
-// The checked helper of an integer operator, "" for any other operator.
+// The checked helper of an integer operator, "" for any other operator.  `@FR-E-Report`: the
+// undefended forms report an overflow under `--dev-soft-halt` (`loft_add_r` …); the `Nullable`
+// forms, the operand of `??`, say nothing.
 fn checked(name: text) -> text {
-  if name == "OpAddInt" || name == "OpAddLong" || name == "OpAddIntNullable" {
+  if name == "OpAddInt" || name == "OpAddLong" {
+    "loft_add_r"
+  } else if name == "OpMinInt" || name == "OpMinLong" {
+    "loft_sub_r"
+  } else if name == "OpMulInt" || name == "OpMulLong" {
+    "loft_mul_r"
+  } else if name == "OpAddIntNullable" {
     "loft_add"
-  } else if name == "OpMinInt" || name == "OpMinLong" || name == "OpMinIntNullable" {
+  } else if name == "OpMinIntNullable" {
     "loft_sub"
-  } else if name == "OpMulInt" || name == "OpMulLong" || name == "OpMulIntNullable" {
+  } else if name == "OpMulIntNullable" {
     "loft_mul"
   } else if name == "OpDivInt" || name == "OpDivLong" {
     "loft_div_at"
@@ -387,10 +401,10 @@ fn narrow32(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
         at = if guarded { "_at" } else { "" };
         where = if guarded { ", {site(w)}" } else { "" };
         if first.kind == K_INT32 && second.kind == K_INT32 {
-          return E { code: "{op32}{at}({first.code}, {second.code}{where})", kind: K_INT32 };
+          return E { code: "{op32}{at}(cx, {first.code}, {second.code}{where})", kind: K_INT32 };
         }
         wide = op32[0..op32.size() - 2];
-        return E { code: "loft_n32({wide}{at}({as_int(w, first)}, {as_int(w, second)}{where}))", kind: K_INT32 };
+        return E { code: "loft_n32(cx, {wide}{at}(cx, {as_int(w, first)}, {as_int(w, second)}{where}))", kind: K_INT32 };
       }
     },
     _ => {},
@@ -522,7 +536,7 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
     first = arg(x, w, args, 0, ind);
     second = arg(x, w, args, 1, ind);
     at = if helper.ends_with("_at") { ", {site(w)}" } else { "" };
-    return E { code: "{helper}({as_int(w, first)}, {as_int(w, second)}{at})", kind: K_INT };
+    return E { code: "{helper}(cx, {as_int(w, first)}, {as_int(w, second)}{at})", kind: K_INT };
   }
   op = comparison(name);
   if op != "" && count == 2 {
@@ -544,7 +558,7 @@ fn op_call(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   }
   if (name == "OpMinSingleInt" || name == "OpMinSingleLong") && count == 1 {
     first = arg(x, w, args, 0, ind);
-    return E { code: "loft_neg({as_int(w, first)})", kind: K_INT };
+    return E { code: "loft_neg(cx, {as_int(w, first)})", kind: K_INT };
   }
   if (name == "OpConvBoolFromInt" || name == "OpConvBoolFromLong") && count == 1 {
     first = arg(x, w, args, 0, ind);
@@ -627,7 +641,7 @@ fn scalar_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer
     hi = literal(w, args[2], "range bound");
     dflt = literal(w, args[3], "range default");
     v = expr(x, w, args[0], ind);
-    return E { code: "loft_range_default_at({as_int(w, v)}, {c_long(lo)}, {c_long(hi)}, {c_long(dflt)}, {site(w)})", kind: K_INT };
+    return E { code: "loft_range_default_at(cx, {as_int(w, v)}, {c_long(lo)}, {c_long(hi)}, {c_long(dflt)}, {site(w)})", kind: K_INT };
   }
   if name == "OpConvEnumFromNull" {
     return E { code: "(uint8_t) 255", kind: K_ENUM };
@@ -678,7 +692,7 @@ fn float_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
   if div != "" {
     a = arg(x, w, args, 0, ind);
     b = arg(x, w, args, 1, ind);
-    return E { code: "{div}({as_fp(w, a, single)}, {as_fp(w, b, single)}, {site(w)})", kind: k };
+    return E { code: "{div}(cx, {as_fp(w, a, single)}, {as_fp(w, b, single)}, {site(w)})", kind: k };
   }
   infix = if name == "OpAddFloat" || name == "OpAddSingle" {
     "+"
@@ -712,21 +726,31 @@ fn float_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
     b = arg(x, w, args, 1, ind);
     return E { code: "{call2}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: k };
   }
-  cmp = if name == "OpEqFloat" || name == "OpEqSingle" {
+  // @PLN217 — two singles compare in single precision (`loft_feq32` …): the double forms would
+  // widen both first, a library call each on a single-precision FPU.
+  cmp = if name == "OpEqFloat" {
     "loft_feq"
-  } else if name == "OpNeFloat" || name == "OpNeSingle" {
+  } else if name == "OpNeFloat" {
     "!loft_feq"
-  } else if name == "OpLtFloat" || name == "OpLtSingle" {
+  } else if name == "OpLtFloat" {
     "loft_flt"
-  } else if name == "OpLeFloat" || name == "OpLeSingle" {
+  } else if name == "OpLeFloat" {
     "loft_fle"
+  } else if name == "OpEqSingle" {
+    "loft_feq32"
+  } else if name == "OpNeSingle" {
+    "!loft_feq32"
+  } else if name == "OpLtSingle" {
+    "loft_flt32"
+  } else if name == "OpLeSingle" {
+    "loft_fle32"
   } else {
     ""
   };
   if cmp != "" {
     a = arg(x, w, args, 0, ind);
     b = arg(x, w, args, 1, ind);
-    return E { code: "{cmp}({as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: K_COND };
+    return E { code: "{cmp}(cx, {as_fp(w, a, single)}, {as_fp(w, b, single)})", kind: K_COND };
   }
   unary = if name == "OpMinSingleFloat" || name == "OpMinSingleSingle" {
     "-"
@@ -749,16 +773,16 @@ fn float_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer)
 fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) -> E {
   count = len(args);
   if name == "OpFloatBits" {
-    return E { code: "loft_f2bits({as_float(w, one(x, w, name, args, ind))})", kind: K_INT };
+    return E { code: "loft_f2bits(cx, {as_float(w, one(x, w, name, args, ind))})", kind: K_INT };
   }
   if name == "OpFloatFromBits" {
-    return E { code: "loft_bits2f({as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+    return E { code: "loft_bits2f(cx, {as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
   }
   if name == "OpSingleBits" {
-    return E { code: "loft_s2bits({as_single(w, one(x, w, name, args, ind))})", kind: K_INT };
+    return E { code: "loft_s2bits(cx, {as_single(w, one(x, w, name, args, ind))})", kind: K_INT };
   }
   if name == "OpSingleFromBits" {
-    return E { code: "loft_bits2s({as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+    return E { code: "loft_bits2s(cx, {as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
   }
   if name == "OpConvFloatFromNull" && count == 0 {
     return E { code: "(double) NAN", kind: K_FLOAT };
@@ -767,18 +791,18 @@ fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     return E { code: "(float) NAN", kind: K_SINGLE };
   }
   if (name == "OpConvFloatFromInt" || name == "OpConvFloatFromLong") && count == 1 {
-    return E { code: "loft_i2f({as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
+    return E { code: "loft_i2f(cx, {as_int(w, one(x, w, name, args, ind))})", kind: K_FLOAT };
   }
   if name == "OpConvSingleFromInt" && count == 1 {
-    return E { code: "loft_i2s({as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
+    return E { code: "loft_i2s(cx, {as_int(w, one(x, w, name, args, ind))})", kind: K_SINGLE };
   }
   if name == "OpCastIntFromFloat" && count == 1 {
     a = as_float(w, one(x, w, name, args, ind));
-    return E { code: "loft_f2i_at({a}, {site(w)})", kind: K_INT };
+    return E { code: "loft_f2i_at(cx, {a}, {site(w)})", kind: K_INT };
   }
   if name == "OpCastIntFromSingle" && count == 1 {
     a = as_single(w, one(x, w, name, args, ind));
-    return E { code: "loft_f2i_at((double) {a}, {site(w)})", kind: K_INT };
+    return E { code: "loft_f2i_at(cx, (double) {a}, {site(w)})", kind: K_INT };
   }
   if name == "OpConvBoolFromFloat" && count == 1 {
     return E { code: "(!isnan({as_float(w, one(x, w, name, args, ind))}))", kind: K_COND };
@@ -803,9 +827,9 @@ fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     id = literal(w, args[0], "math function") ?? 0;
     a = expr(x, w, args[1], ind);
     if name.ends_with("Single") {
-      return E { code: "loft_math1s({id}, {as_single(w, a)})", kind: K_SINGLE };
+      return E { code: "loft_math1s(cx, {id}, {as_single(w, a)})", kind: K_SINGLE };
     }
-    return E { code: "loft_math1({id}, {as_float(w, a)})", kind: K_FLOAT };
+    return E { code: "loft_math1(cx, {id}, {as_float(w, a)})", kind: K_FLOAT };
   }
   if (name == "OpMathFunc2Float" || name == "OpMathFunc2Single") && count == 3 {
     id = literal(w, args[0], "math function") ?? 0;
@@ -813,9 +837,9 @@ fn float_conversion(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: intege
     a = arg(x, w, pair, 0, ind);
     b = arg(x, w, pair, 1, ind);
     if name.ends_with("Single") {
-      return E { code: "loft_math2s({id}, {as_single(w, a)}, {as_single(w, b)})", kind: K_SINGLE };
+      return E { code: "loft_math2s(cx, {id}, {as_single(w, a)}, {as_single(w, b)})", kind: K_SINGLE };
     }
-    return E { code: "loft_math2({id}, {as_float(w, a)}, {as_float(w, b)})", kind: K_FLOAT };
+    return E { code: "loft_math2(cx, {id}, {as_float(w, a)}, {as_float(w, b)})", kind: K_FLOAT };
   }
   char_operator(x, w, name, args, ind)
 }
@@ -832,11 +856,11 @@ fn char_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) 
   }
   if name == "OpConvCharacterFromInt" && count == 1 {
     v = expr(x, w, args[0], ind);
-    return E { code: "loft_char_of_at({as_int(w, v)}, {site(w)})", kind: K_CHAR };
+    return E { code: "loft_char_of_at(cx, {as_int(w, v)}, {site(w)})", kind: K_CHAR };
   }
   if name == "OpConvIntFromCharacter" && count == 1 {
     v = expr(x, w, args[0], ind);
-    return E { code: "loft_char_int({as_char(w, v)})", kind: K_INT };
+    return E { code: "loft_char_int(cx, {as_char(w, v)})", kind: K_INT };
   }
   if name == "OpConvBoolFromCharacter" && count == 1 {
     v = expr(x, w, args[0], ind);
@@ -844,7 +868,7 @@ fn char_operator(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer) 
   }
   if name == "OpLengthCharacter" && count == 1 {
     v = expr(x, w, args[0], ind);
-    return E { code: "loft_char_len({as_char(w, v)})", kind: K_INT };
+    return E { code: "loft_char_len(cx, {as_char(w, v)})", kind: K_INT };
   }
   refuse(w, "operator {name}");
   none()
@@ -1004,8 +1028,8 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   // The store's memory report names each type by the unit's type-name table.
   if route == "n_store_memory" && len(args) == 0 {
     report = temp(w, "text");
-    line(w, ind, "loft_text_free(&{report});");
-    line(w, ind, "{report} = loft_store_memory(loft_tnames, loft_ntnames);");
+    line(w, ind, "loft_text_free(cx, &{report});");
+    line(w, ind, "{report} = loft_store_memory(cx, loft_tnames, loft_ntnames);");
     return held_value(w, report, "text");
   }
   // The length of a vector whose header a loop holds is the header's (`held_len`).
@@ -1031,8 +1055,8 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     f = cgen_unicode::unicode_case(x, route == "t_4text_to_uppercase");
     cased = expr(x, w, args[0], ind);
     r = temp(w, "text");
-    line(w, ind, "loft_text_free(&{r});");
-    line(w, ind, "{r} = {f}({as_view(w, cased)});");
+    line(w, ind, "loft_text_free(cx, &{r});");
+    line(w, ind, "{r} = {f}(cx, {as_view(w, cased)});");
     return held_value(w, r, "text");
   }
   // A record as JSON text (`struct_json_native`).
@@ -1040,7 +1064,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     tp = literal(w, args[1], "type") ?? return none();
     val = expr(x, w, args[0], ind);
     json = temp(w, "text");
-    line(w, ind, "loft_text_free(&{json});");
+    line(w, ind, "loft_text_free(cx, &{json});");
     shown = cgen_ref::show_top_call(x, w, tp, "&{json}", as_ref(w, val), if route == "n_struct_to_json" { "2" } else { "3" });
     if w.why != "" {
       return none();
@@ -1054,7 +1078,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     tp = literal(w, args[1], "type") ?? return none();
     cgen_parse::parse_type(x, w, tp);
     val = expr(x, w, args[0], ind);
-    return E { code: "loft_struct_from_jsonvalue(loft_ptypes, {as_ref(w, val)}, {tp})", kind: K_REF };
+    return E { code: "loft_struct_from_jsonvalue(cx, loft_ptypes, {as_ref(w, val)}, {tp})", kind: K_REF };
   }
   if route.starts_with("n_parallel_") {
     pe = cgen_par::par_native(x, w, route, args, ind);
@@ -1066,14 +1090,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if route == "t_4hash_len" && len(args) == 1 {
     hh = cgen_table::handle(x, w, args[0]);
     h = as_ref(w, expr(x, w, args[0], ind));
-    return E { code: if hh != "" { "loft_hh_len(&{hh}, {h})" } else { "loft_hash_len({h})" }, kind: K_INT };
+    return E { code: if hh != "" { "loft_hh_len(cx, &{hh}, {h})" } else { "loft_hash_len(cx, {h})" }, kind: K_INT };
   }
   // A character class (`c.is_numeric()` …): the unit's range table of the class.
   if route.starts_with("t_9character_is_") && len(args) == 1 {
     class_fn = cgen_unicode::unicode_class(x, route[16..route.size()]);
     if class_fn != "" {
       ch = expr(x, w, args[0], ind);
-      return E { code: "{class_fn}({as_char(w, ch)})", kind: K_BOOL };
+      return E { code: "{class_fn}(cx, {as_char(w, ch)})", kind: K_BOOL };
     }
   }
   if route.starts_with("n_store_") || route == "n_spatial_range" || route == "n_trie_prefix" {
@@ -1087,7 +1111,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if route == "n_env_variables" {
     for t in x.b.types {
       if t.name == "EnvVariable" {
-        return E { code: "loft_env_variables({t.size})", kind: K_REF };
+        return E { code: "loft_env_variables(cx, {t.size})", kind: K_REF };
       }
     }
   }
@@ -1211,7 +1235,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
       continue;
     }
     if loop_shape::unspan(a) == NdNull {
-      xs[i] = if shapes[i]! == "text" { "loft_null_text()" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" };
+      xs[i] = if shapes[i]! == "text" { "loft_null_text(cx)" } else { "(({held(shapes[i]!)}) {initial(shapes[i]!)})" };
       continue;
     }
     named = function_literal(x.b, a);
@@ -1310,6 +1334,11 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   if apr_call {
     t.apr = true;
   }
+  // `@FR-R-DecodeView`: a region function called from a twin or a root is its `__dv` twin, with
+  // whatever other variant this call takes.
+  if !tr_named && cgen_decode_view::dv_call(x, w, d) {
+    t.dv = true;
+  }
   name = if native != "" { native } else { cgen_names::c_name(x.b, x.dups, d) };
   if tr_named {
     name = trc.name;
@@ -1339,14 +1368,14 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
     buffer_c = if at_buf >= 0 && at_buf < len(xs) { xs[at_buf]! } else { "" };
     window = cgen_append::window_arg(x, w, d, args, xs, fresh);
   }
-  code = "{name}({xs.join(", ")})";
+  code = "{name}({cx_args(xs)})";
   // `@FR-R-Version`'s callee clause: inside a fast twin, a leaf it walked calls that leaf's own
   // fast twin; at a versioned site, the fast twin where the flag holds.
   if t.inv && (w.vf && version_callee(x, w, d) || vflag != "" && !t.ap && fresh == "") {
     ft = cgen_names::copy_twin(t);
     ft.vf = true;
     request_twin(x, ft);
-    fast = "{cgen_names::twin_name(x.b, x.dups, ft)}({xs.join(", ")})";
+    fast = "{cgen_names::twin_name(x.b, x.dups, ft)}({cx_args(xs)})";
     held_flag = false;
     for f in w.v_hold {
       if f == vflag {
@@ -1357,7 +1386,7 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
   }
   if fresh != "" {
     held_r = temp(w, "ref");
-    return E { code: "({fresh} = loft_win_of({buffer_c}, {window}), {held_r} = {code}, loft_win_sync({fresh}), {held_r})", kind: K_REF };
+    return E { code: "({fresh} = loft_win_of(cx, {buffer_c}, {window}), {held_r} = {code}, loft_win_sync(cx, {fresh}), {held_r})", kind: K_REF };
   }
   // `@FR-R-ValueRecord`: a forward writes the callee's struct into the buffer it was handed.
   if vr_key >= 0 {
@@ -1381,17 +1410,17 @@ fn call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
         return none();
       }
       if twin != "" {
-        line(w, ind, "{twin}({xs.join(", ")});");
+        line(w, ind, "{twin}({cx_args(xs)});");
         if call_site_buffer(args[at]!) && xs[at]!.starts_with("&") {
           w.pending_work += [xs[at]![1..xs[at]!.size()]];
         }
-        return E { code: "loft_view({xs[at]!})", kind: K_VIEW };
+        return E { code: "loft_view(cx, {xs[at]!})", kind: K_VIEW };
       }
     }
   }
   if ret == "text" {
     held = temp(w, "text");
-    line(w, ind, "loft_text_free(&{held});");
+    line(w, ind, "loft_text_free(cx, &{held});");
     line(w, ind, "{held} = {code};");
     return held_value(w, held, "text");
   }
@@ -1677,7 +1706,7 @@ fn work_twin(x: Cx, d: integer) -> text {
     x.work_twins[d] = 1;
     return "";
   }
-  written = write_body(x, cgen_names::plain(d), param, false, [], cgen_transient::no_fn());
+  written = write_body(x, cgen_names::plain(d), param, false, [], cgen_transient::no_fn(), PS_NONE, 0, 0);
   if written.refused != "" {
     x.work_twins[d] = 3;
     x.why_work = written.refused;
@@ -1686,6 +1715,28 @@ fn work_twin(x: Cx, d: integer) -> text {
   // `write_work_twin`: declared and defined with the unit's bodies, as the twin's own
   // `static inline void <name>(<params>)` around the body the writer wrote.
   sig = "static inline void {name}({written.list})";
+  // `@FR-R-DecodeView`: a root's work twin is a root too — its body is written over the plan,
+  // under a wrapper that names the frame for the length of the call.
+  dv_root = cgen_decode_view::root_frame(x, d);
+  if dv_root >= 0 {
+    inner = "{name}__dvw";
+    inner_sig = "static inline void {inner}({written.list})";
+    calls: vector<text> = [];
+    for raw in written.list.split(',') {
+      p = raw.trim();
+      at = 0;
+      for c in p {
+        if c == ' ' || c == '*' {
+          at = c#index + 1;
+        }
+      }
+      calls += [p[at..p.size()]];
+    }
+    frame = var_name(def.variables.variables[dv_root]!.name, dv_root);
+    x.gen_decls += "{inner_sig};\n{sig};\n";
+    x.gen_bodies += "\n{inner_sig} {{\n{written.inner}}}\n\n{sig} {{\n    loft_ref dvo = cx->dv_frame;\n    cx->dv_frame = {frame};\n    {inner}({calls.join(", ")});\n    cx->dv_frame = dvo;\n}}\n";
+    return name;
+  }
   // The body as written, never split: `(R-CSplit)` is the frame body's alone (`framed`).
   x.gen_decls += "{sig};\n";
   x.gen_bodies += "\n{sig} {{\n{written.inner}}}\n";
@@ -1700,7 +1751,7 @@ fn fn_value(x: Cx, d: integer) -> text {
   if n < len(x.fn_values) {
     x.fn_values[n] = true;
   }
-  "loft_fn_of(INT64_C({n}))"
+  "loft_fn_of(cx, INT64_C({n}))"
 }
 
 // The function an integer literal names where a function value is expected (`is_function`),
@@ -1746,7 +1797,7 @@ fn fn_ref_field_read(x: Cx, w: W, all: vector<ir::Node>, target: text, ind: inte
     }
   }
   clos = expr(x, w, ops[len(ops) - 1], ind);
-  line(w, ind, "{target} = loft_fn_make({dt}, {as_ref(w, clos)});");
+  line(w, ind, "{target} = loft_fn_make(cx, {dt}, {as_ref(w, clos)});");
 }
 
 // A call through function value `v` (`call_ref`): the dispatcher of its signature.
@@ -1827,7 +1878,7 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
     }
     a = args[i]!;
     if loop_shape::unspan(a) == NdNull {
-      xs[i] = if s == "text" { "loft_null_text()" } else { "(({held(s)}) {initial(s)})" };
+      xs[i] = if s == "text" { "loft_null_text(cx)" } else { "(({held(s)}) {initial(s)})" };
       continue;
     }
     named = function_literal(x.b, a);
@@ -1853,17 +1904,17 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
   // `@FR-R-FnRefBuffer`: a kept binding hands its own store to the target.
   buf = if ret == "ref" { w.callref_buf } else { "" };
   w.callref_buf = "";
-  code = if buf == "" { "loft_call{sig}({list.join(", ")})" } else { "" };
+  code = if buf == "" { "loft_call{sig}(cx, {list.join(", ")})" } else { "" };
   if buf != "" {
     if !x.sigs_buf.contains(sig) {
       x.sigs_buf += [sig];
     }
     list += [buf];
-    code = "loft_call{sig}b({list.join(", ")})";
+    code = "loft_call{sig}b(cx, {list.join(", ")})";
   }
   if ret == "text" {
     held_t = temp(w, "text");
-    line(w, ind, "loft_text_free(&{held_t});");
+    line(w, ind, "loft_text_free(cx, &{held_t});");
     line(w, ind, "{held_t} = {code};");
     return held_value(w, held_t, "text");
   }
@@ -1874,7 +1925,7 @@ fn call_ref(x: Cx, w: W, v: integer, args: vector<ir::Node>, ind: integer) -> E 
 // target's own buffer.
 fn copy_member(w: W, from: text, to: text, shape: text, ind: integer) {
   if shape == "text" {
-    line(w, ind, "loft_text_set(&{to}, loft_view(&{from}));");
+    line(w, ind, "loft_text_set(cx, &{to}, loft_view(cx, &{from}));");
   } else if is_tuple(shape) {
     for m in tuple_members(shape) {
       copy_member(w, "{from}.f{m#index}", "{to}.f{m#index}", m, ind);
@@ -2016,7 +2067,7 @@ fn expr(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
-  w.span_file = c_string(at.file);
+  w.span_file = c_string(source_name(x, at.file));
   w.span_line = at.line;
   value = expr_value(x, w, v, ind);
   w.span_file = saved_file;
@@ -2031,11 +2082,11 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
     NdLong { n } => if n == null { E { code: "LOFT_NULL", kind: K_INT } } else { E { code: "INT64_C({n})", kind: K_INT } },
     NdBoolean { b: on } => E { code: if on { "1" } else { "0" }, kind: K_COND },
     NdEnum { ord, tp: _ } => E { code: "(uint8_t) {ord}", kind: K_ENUM },
-    NdFloat { f } => E { code: "loft_f64(UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
-    NdSingle { f } => E { code: "loft_f32(UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
+    NdFloat { f } => E { code: "loft_f64(cx, UINT64_C(0x{float_bits(f)}))", kind: K_FLOAT },
+    NdSingle { f } => E { code: "loft_f32(cx, UINT32_C({if f == null { "0x7fc00000" } else { "{f.bits():#x}" }}))", kind: K_SINGLE },
     // The text `"\0"` is the null text's sentinel: the image reads it back as null, and the
     // unit spells it as the Rust writer does, one NUL byte.
-    NdText { s: literal } => if literal == null { E { code: "loft_lit(\"\\000\", 1)", kind: K_VIEW } } else { E { code: "loft_lit({c_string(literal)}, {literal.size()})", kind: K_VIEW } },
+    NdText { s: literal } => if literal == null { E { code: "loft_lit(cx, \"\\000\", 1)", kind: K_VIEW } } else { E { code: "loft_lit(cx, {c_string(literal)}, {literal.size()})", kind: K_VIEW } },
     // The definition number a function value names, as an integer.
     NdFnRefDnr { n } => E { code: "{w.names[n]!}.d", kind: K_INT },
     NdFnRef { def_nr, var, t: _ } => {
@@ -2043,7 +2094,7 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       if var == 65535 {
         return E { code: named, kind: K_FN };
       }
-      E { code: "loft_fn_make(INT64_C({def_nr}), {w.names[var]!})", kind: K_FN }
+      E { code: "loft_fn_make(cx, INT64_C({def_nr}), {w.names[var]!})", kind: K_FN }
     },
     NdCallRef { var, args } => call_ref(x, w, var, args, ind),
     NdVar { n } => {
@@ -2085,7 +2136,7 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
         return expr(x, w, read, ind);
       }
       if text_held(w, n) {
-        return E { code: "loft_view(&{w.names[n]!})", kind: K_VIEW };
+        return E { code: "loft_view(cx, &{w.names[n]!})", kind: K_VIEW };
       }
       E { code: w.names[n]!, kind: kind_of(shape), tup: if is_tuple(shape) { shape } else { "" } }
     },
@@ -2098,12 +2149,28 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       member = members[idx]!;
       place = "{w.names[var]!}.f{idx}";
       if member == "text" {
-        return E { code: "loft_view(&{place})", kind: K_VIEW };
+        return E { code: "loft_view(cx, &{place})", kind: K_VIEW };
       }
       E { code: place, kind: kind_of(member), tup: if is_tuple(member) { member } else { "" } }
     },
     NdCall { def_nr, args } => {
       name = def_name(x.b, def_nr);
+      // `@FR-R-DecodeView`'s structure clause: a read of a position.
+      if w.ps.mode != PS_NONE {
+        ps_done = false;
+        ps_e = cgen_decode_structure::ps_operator(x, w, def_nr, args, ind, ps_done);
+        if ps_done {
+          return ps_e;
+        }
+      }
+      // `@FR-R-DecodeView`: a span field's write, a span text's read.
+      if w.dv_on {
+        dv_done = false;
+        dv_e = cgen_decode_view::dv_operator(x, w, name, def_nr, args, ind, dv_done);
+        if dv_done {
+          return dv_e;
+        }
+      }
       // `@FR-R-Version`'s markers of this call (a fast twin's raw access or plain operator, a
       // caller's site), for the writer of this call alone.
       saved_kind = w.call_kind;
@@ -2171,6 +2238,12 @@ fn expr_value(x: Cx, w: W, v: ir::Node, ind: integer) -> E {
       none()
     },
   }
+}
+
+// An operator or a call as the ordinary writer writes it, below the hooks of `expr_value`.
+pub fn plain_call(x: Cx, w: W, d: integer, args: vector<ir::Node>, ind: integer) -> E {
+  name = def_name(x.b, d);
+  if !name.starts_with("Op") { call(x, w, d, args, ind) } else { op_call(x, w, name, typed_nulls(x.b, d, args), ind) }
 }
 
 // A compound read as a value: held in a temporary its statements assign.
@@ -2343,11 +2416,11 @@ fn null_into(w: W, target: text, shape: text, ind: integer) {
   } else if shape == "char" {
     line(w, ind, "{target} = 0;");
   } else if shape == "text" {
-    line(w, ind, "loft_text_set(&{target}, loft_null_text());");
+    line(w, ind, "loft_text_set(cx, &{target}, loft_null_text(cx));");
   } else if shape == "ref" {
-    line(w, ind, "{target} = loft_ref_null();");
+    line(w, ind, "{target} = loft_ref_null(cx);");
   } else if shape == "fn" {
-    line(w, ind, "{target} = loft_fn_of(LOFT_NULL);");
+    line(w, ind, "{target} = loft_fn_of(cx, LOFT_NULL);");
   } else if cgen_transient::is_tr_shape(shape) {
     line(w, ind, "{target} = 0;");
   } else if shape != "void" {
@@ -2371,7 +2444,7 @@ fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
   }
   saved_file = w.span_file;
   saved_line = w.span_line;
-  w.span_file = c_string(at.file);
+  w.span_file = c_string(source_name(x, at.file));
   w.span_line = at.line;
   assign_value(x, w, v, target, shape, ind);
   w.span_file = saved_file;
@@ -2379,6 +2452,11 @@ fn assign(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
 }
 
 fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: integer) {
+  // `@FR-R-DecodeView`'s structure clause: a return over positions in value position is written
+  // as the statement it is.
+  if w.ps.mode != PS_NONE && cgen_decode_structure::stmt(x, w, v, ind) {
+    return;
+  }
   node = loop_shape::unspan(v);
   // A function named where a function value is expected.
   if shape == "fn" && function_literal(x.b, node) >= 0 {
@@ -2469,8 +2547,8 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
         moved = pending_text_temp(w, e.code);
         // `@FR-R-BufferReturn`'s bind clause: the target takes the call site's own buffer.
         work = "";
-        if e.code.starts_with("loft_view(&") && e.code.ends_with(")") {
-          named = e.code[11..e.code.size() - 1];
+        if e.code.starts_with("loft_view(cx, &") && e.code.ends_with(")") {
+          named = e.code[15..e.code.size() - 1];
           for pw in w.pending_work {
             if pw == named && named != target {
               work = named;
@@ -2478,11 +2556,11 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
           }
         }
         if moved != "" {
-          line(w, ind, "loft_text_move(&{target}, &{moved});");
+          line(w, ind, "loft_text_move(cx, &{target}, &{moved});");
         } else if work != "" {
-          line(w, ind, "loft_text_move(&{target}, &{work});");
+          line(w, ind, "loft_text_move(cx, &{target}, &{work});");
         } else {
-          line(w, ind, "loft_text_set(&{target}, {as_view(w, e)});");
+          line(w, ind, "loft_text_set(cx, &{target}, {as_view(w, e)});");
         }
         return;
       }
@@ -2501,7 +2579,7 @@ fn assign_value(x: Cx, w: W, v: ir::Node, target: text, shape: text, ind: intege
           tuple_text_leaves(target, shape, old);
           frees = "";
           for t in old {
-            frees += " loft_text_free(&{t});";
+            frees += " loft_text_free(cx, &{t});";
           }
           line(w, ind, "{{ {held(shape)} mv = {as_shape(w, e, shape)};{frees} {target} = mv; }}");
           return;
@@ -2672,6 +2750,17 @@ fn stmts(x: Cx, w: W, ops: vector<ir::Node>, ind: integer) {
 // `ops[..end]`, the statements of a list whose remainder the caller writes (`stmts_upto`).
 // The statements just before a loop seed its counters (`@FR-R-Peel`).
 fn stmts_upto(x: Cx, w: W, ops: vector<ir::Node>, end: integer, ind: integer) {
+  // `@FR-R-DecodeView`'s structure clause: a positional body is its statements one by one — no
+  // run of them is rewritten as a whole, so each meets the clause's hooks.
+  if w.ps.mode != PS_NONE {
+    for o in ops {
+      if o#index >= end || w.why != "" {
+        break;
+      }
+      stmt(x, w, o, ind);
+    }
+    return;
+  }
   // The end of the push run a reservation was made for, and whether a push header is open
   // for it.
   run_end = 0;
@@ -2793,6 +2882,10 @@ fn block_stmt(x: Cx, w: W, node: ir::Node, name: text, ops: vector<ir::Node>, in
   // `@FR-R-RetAdopt` — inside the exit delivery of an adopted result local the buffer's
   // clear and its append emit nothing.
   delivery = w.adopt_v >= 0 && name == "one_buffer_vec_copy";
+  // A long integer `match` as one C `switch` (`switch_match`).
+  if name == "scalar_match" && !delivery && cgen_switch::switch_match(x, w, ops, ind) {
+    return;
+  }
   if delivery {
     w.in_delivery += 1;
   }
@@ -2828,7 +2921,7 @@ fn ret_value(x: Cx, w: W, v: ir::Node, ind: integer) {
     // null text in that buffer.
     answered = w.work_ret >= 0 && loop_shape::var_of(loop_shape::unspan(v)) == w.work_ret;
     if !absent && !answered && w.work_ret >= 0 && is_null_text(x.b, v) {
-      line(w, ind, "loft_text_set(&{w.names[w.work_ret]!}, loft_null_text());");
+      line(w, ind, "loft_text_set(cx, &{w.names[w.work_ret]!}, loft_null_text(cx));");
     } else if !absent && !answered {
       stmt(x, w, v, ind);
     }
@@ -2855,6 +2948,14 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   listed = w.list_stmt;
   w.list_stmt = false;
   if w.why != "" {
+    return;
+  }
+  // `@FR-R-DecodeView`'s structure clause: a statement over positions.
+  if w.ps.mode != PS_NONE && cgen_decode_structure::stmt(x, w, v, ind) {
+    return;
+  }
+  // `@FR-R-DecodeView`: a span local's holder, placed on its slice guard's fallback only.
+  if w.dv_on && cgen_decode_view::stmt(x, w, v, ind) {
     return;
   }
   // What the previous statement filed reaches this one only when it is a lookup's binding;
@@ -2929,7 +3030,7 @@ fn stmt(x: Cx, w: W, v: ir::Node, ind: integer) {
   } else {
     saved_file = w.span_file;
     saved_line = w.span_line;
-    w.span_file = c_string(at.file);
+    w.span_file = c_string(source_name(x, at.file));
     w.span_line = at.line;
     stmt_kind(x, w, v, ind);
     w.span_file = saved_file;
@@ -3070,7 +3171,7 @@ fn note_site(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdInsert { items: _ } => {},
     _ => {
       if w.cur_line != 0 && opt_frame_calls::calls_a_frame(x.b, v) {
-        line(w, ind, "loft_frame_site({w.cur_line});");
+        line(w, ind, "loft_frame_site(cx, {w.cur_line});");
       }
     },
   }
@@ -3119,7 +3220,7 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
       saved_file = w.span_file;
       saved_line = w.span_line;
       if pos.line != 0 {
-        w.span_file = c_string(pos.file);
+        w.span_file = c_string(source_name(x, pos.file));
         w.span_line = pos.line;
       }
       stmt(x, w, inner, ind);
@@ -3321,11 +3422,8 @@ fn stmt_kind(x: Cx, w: W, v: ir::Node, ind: integer) {
     NdYield { inner } => cgen_gen::gen_yield(x, w, inner, ind),
     // `parallel { … }`: the arms run one after another — each arm's effect is the one its
     // thread has.
-    NdParallel { arms } => {
-      for a in arms {
-        stmt(x, w, a, ind);
-      }
-    },
+    // `@FR-C-Arms`: each arm a function of its own, run on threads at once.
+    NdParallel { arms } => cgen_parallel::parallel_block(x, w, arms, ind),
     NdDrop { inner } => {
       whole = match loop_shape::unspan(inner) {
         NdIf { cond: _, t: _, f: _ } => true,
@@ -3370,7 +3468,7 @@ fn statement_count(body: text) -> integer {
   count = 0;
   for l in body.split('\n') {
     t = l.trim();
-    if t == "" || l.contains("loft_frame_site(") || t.starts_with("#line ") {
+    if t == "" || l.contains("loft_frame_site(cx, ") || t.starts_with("#line ") {
       continue;
     }
     if t == "}}" || t == "{{" || t == "}};" || t == "}} else {{" {
@@ -3595,31 +3693,48 @@ pub fn write_function(x: Cx, twin: cgen_names::Twin) -> Written {
   // the body did not keep to the plan.
   if cgen_names::is_plain(twin) && plain_rules() && cgen_gen::gen_elem(x.b.data.definitions[twin.d]!) == "" {
     // `@FR-R-Transient`: a plain function with a root site is written with it first, and again
-    // without it when the writer declines it.
-    site = cgen_transient::site_plan(x, twin.d);
+    // without it when the writer declines it.  A root of `@FR-R-DecodeView` keeps its decoded
+    // values in the store, where their span words are: it takes no transient site.
+    site = if cgen_decode_view::root_frame(x, twin.d) >= 0 { cgen_transient::no_fn() } else { cgen_transient::site_plan(x, twin.d) };
     if site.any {
-      with_site = write_body(x, twin, -1, false, [], site);
+      with_site = write_body(x, twin, -1, false, [], site, PS_NONE, 0, 0);
       if with_site.refused == "" {
         return with_site;
       }
     }
-    tried = write_body(x, twin, -1, true, [], cgen_transient::no_fn());
+    // `@FR-R-DecodeView`'s structure clause: a root whose chain holds every decoded value as a
+    // position is written in its positional form, under its own name; one this writer cannot
+    // write keeps the form it had.
+    if cgen_decode_structure::is_root(x, twin.d) {
+      positional = write_body(x, twin, -1, false, [], cgen_transient::no_fn(), PS_CONSUMER, 0, 0);
+      if positional.refused == "" {
+        return positional;
+      }
+      cgen_decode_structure::declined(x, twin.d, positional.refused);
+    }
+    tried = write_body(x, twin, -1, true, [], cgen_transient::no_fn(), PS_NONE, 0, 0);
     if tried.refused != cgen_cold::COLD_ESCAPED {
       return tried;
     }
   }
-  write_body(x, twin, -1, false, [], cgen_transient::no_fn())
+  write_body(x, twin, -1, false, [], cgen_transient::no_fn(), PS_NONE, 0, 0)
 }
 
 // `@FR-R-Transient`: the body of definition `d` written with transient facts `tf` — a twin's
 // (its inner body, no frame wrapper) or a site's.
 pub fn write_transient_body(x: Cx, d: integer, tf: cgen_transient::TrFn) -> Written {
-  write_body(x, cgen_names::plain(d), -1, false, [], tf)
+  write_body(x, cgen_names::plain(d), -1, false, [], tf, PS_NONE, 0, 0)
+}
+
+// `@FR-R-DecodeView`'s structure clause: a positional twin of `d` in `mode` (`ps_function`) — a
+// producer's shape twin, its walk twin of the field `(off, vtp)`, a consumer's twin.
+pub fn write_positional(x: Cx, d: integer, mode: integer, off: integer, vtp: integer) -> Written {
+  write_body(x, cgen_names::plain(d), -1, false, [], cgen_transient::no_fn(), mode, off, vtp)
 }
 
 // The body of twin `twin` (`FnWriter::write`); with `work_ret` a `__wr` twin's — the body
 // alone, answering nothing, its result the caller's buffer `work_ret`.
-fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>, tf: cgen_transient::TrFn) -> Written {
+fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean, helper: vector<ColdArm>, tf: cgen_transient::TrFn, ps_mode: integer, ps_off: integer, ps_vtp: integer) -> Written {
   index = twin.d;
   // `@FR-R-Base`'s guard clause: the guarded index slots marked in the code every body of the
   // function is written from (`opt_below_len::mark`).
@@ -3654,6 +3769,13 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // `@FR-R-ValueRecord`: the value locals and tuple parameters are structs.
   cgen_vr::local_shapes(x, index, shapes);
   number_tuples(x, shapes);
+  // `@FR-R-DecodeView`'s structure clause: a producer twin's call variables hold shapes, a
+  // consumer's position locals the structs they are held in.
+  ps_twin = ps_mode == PS_SHAPE || ps_mode == PS_WALK || (ps_mode == PS_CONSUMER && !cgen_decode_structure::is_root(x, index));
+  if ps_mode != PS_NONE {
+    cgen_decode_structure::shapes(x, ps_mode, index, shapes);
+    number_tuples(x, shapes);
+  }
   // `@FR-R-Transient`: the transient locals are pointers into the arena.
   if tf.any {
     cgen_transient::apply_shapes(tf, shapes);
@@ -3692,6 +3814,15 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   if tf.any && tf.builds {
     ret = tf.ret;
   }
+  // A positional twin answers its shape, whether its walk stopped, or its position.
+  ps_ret = if ps_twin { cgen_decode_structure::twin_ret(x, ps_mode, index) } else { "" };
+  if ps_twin {
+    if ps_ret == "" {
+      return Written { text: "", refused: "a consumer of an unknown result" };
+    }
+    ret = ps_ret;
+    vr_dropped = -1;
+  }
   if held(ret) == "" || ((ret == "ref" || ret == "fn" || is_tuple(ret)) && !plain_rules()) {
     return Written { text: "", refused: "a result of shape {ret}" };
   }
@@ -3700,6 +3831,8 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   raw: vector<text> = [];
   links: vector<boolean> = [];
   is_param: vector<boolean> = [];
+  // Each parameter's declaration by variable, for a `parallel` arm that reads one.
+  param_decls: vector<text> = [];
   // `@FR-R-ValueRecord`'s pointer clause: the parameters that arrive as `const loft_tupN *`.
   by_ptr = cgen_value::vr_ptr_params(x, index);
   // `@FR-R-Apart` instance 2: an `__apv` twin's record parameters arrive as values.
@@ -3728,15 +3861,19 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     // @PLN219 — a `&S` whose `S` is held out of line points at a slot cell, which may name a
     // field: read through the test.
     pointed = v.argument && by_ptr.contains(ordinal);
-    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(*{own})" } else if link || pointed { "(*{own})" } else { own }];
+    names += [if link && binds::slot_link_def(x.b, v.type_def[0]!) != null { "loft_slot_read(cx, *{own})" } else if link || pointed { "(*{own})" } else { own }];
     links += [link];
     is_param += [v.argument];
     if v.argument {
       // `@FR-R-Apart` instance 4: an `__apr` twin takes its apart parameter as the field buffers.
       apr_param = twin.apr && cgen_apart::twin_at(x, index) == ordinal;
       apv_t = if twin.apv && apv_roles.any && (apv_roles.apart[v#index] ?? -1) >= 0 { opt_apart_value::ctype(cgen_apart::value_plan(x), apv_roles.apart[v#index]!) } else { "" };
-      params += [if apv_t != "" { "const {apv_t} *loft_avp{v#index}" } else if apr_param { "loft_text *loft_aprp" } else if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" }];
+      decl = if apv_t != "" { "const {apv_t} *loft_avp{v#index}" } else if apr_param { "loft_text *loft_aprp" } else if link { "{held(shape)} *{own}" } else if pointed { "const {passed(shape)} *{own}" } else { "{passed(shape)} {own}" };
+      params += [decl];
+      param_decls += [decl];
       ordinal += 1;
+    } else {
+      param_decls += [""];
     }
   }
   if len(params) != len(d.attributes) {
@@ -3766,9 +3903,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     name: d.name,
     names: names,
     params: is_param,
+    param_decls: param_decls,
+    arm_fns: [],
     nn: nn,
     rv: opt_range::range_vars_seeded(x.b, x.p, x.c, index, nn, opt_range::walks_of(x.b, index), seeds),
-    file: d.position.file,
+    file: source_name(x, d.position.file),
     line: d.position.line,
     shapes: shapes,
     ret: ret,
@@ -3877,12 +4016,16 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     dc_null_only: [],
     dc_pending: 0,
     dc_ctx: [],
-    apv: if plain_rules() && !tf.any { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
-    apr: if plain_rules() && !tf.any { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
+    apv: if plain_rules() && !tf.any && ps_mode == PS_NONE { opt_apart_vector::roles(x.b, index) } else { opt_apart_vector::no_roles() },
+    apr: if plain_rules() && !tf.any && ps_mode == PS_NONE { cgen_apart::record_roles(x, index, twin.apr) } else { opt_apart_records::no_roles() },
     tr: tf,
     wr_call: -1,
     vr: opt_vr_facts::no_fn(),
     vr_fwd: -1,
+    dv_on: false,
+    dv_twin: false,
+    dv_bypass: -1,
+    ps: no_ps(),
     av: opt_apart_value::no_roles(),
     av_twin: false,
     av_rb: -1,
@@ -3906,12 +4049,18 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     if tf.phantom >= 0 {
       w.params[tf.phantom] = false;
       if tf.kind[tf.phantom]! == 2 {
-        w.decls += ["{w.names[tf.phantom]!} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));"];
+        w.decls += ["{w.names[tf.phantom]!} = (loft_ta_vec *) loft_ta_alloc(cx, sizeof(loft_ta_vec));"];
       }
     }
     if cgen_transient::has_roots(tf) {
-      w.decls += ["loft_ta_mark_t loft_tmf = loft_ta_mark();"];
+      w.decls += ["loft_ta_mark_t loft_tmf = loft_ta_mark(cx);"];
     }
+  }
+  // `@FR-R-DecodeView`: a positional body's mode (`structure`), and the view plan a `__dv`
+  // twin or a root takes (`decode_view`) — not a positional twin, which takes none.
+  cgen_decode_structure::setup(x, w, ps_mode, index, ps_off, ps_vtp);
+  if !ps_twin {
+    cgen_decode_view::setup(x, w, twin.dv);
   }
   // `store_links`: a place twin's `&` parameters (`twin.places`, by parameter) and a store
   // instance's text parameters (`n_app@st1`, `parser/store_text.rs`) are store links, and so is every `&` local each bind of which names a field or an element — each a
@@ -3989,7 +4138,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   // `@FR-R-Apart` instance 2: the body's roles; an `__apv` twin takes no return buffer and
   // answers through `loft_apo`.
-  if plain_rules() && !tf.any {
+  if plain_rules() && !tf.any && ps_mode == PS_NONE {
     cgen_apart::value_setup(x, w, index, twin.apv);
   }
   // `@FR-R-ValueRecord` (`FnWriter::new`'s `VrFn::of`): the body's facts — none in a transient
@@ -4024,6 +4173,11 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
     }
     params += ["{apo_t} *loft_apo"];
   }
+  // A positional twin's parameters (`ps_function`): the store context, a consumer's frame, each
+  // argument but the dropped buffer as its shape, a walk twin's closure and its site.
+  if ps_twin {
+    params = cgen_decode_structure::twin_params(x, w, ps_mode, index);
+  }
   cgen_text::declare_owns(w);
   cgen_apart::decls(w);
   cgen_apart::av_decls(x, w);
@@ -4053,7 +4207,7 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   }
   if gen_elem != "" {
     stmt(x, w, code, 1);
-    return cgen_gen::write_gen(x, w, cgen_names::twin_name(x.b, x.dups, twin), if len(params) == 0 { "void" } else { params.join(", ") });
+    return cgen_gen::write_gen(x, w, cgen_names::twin_name(x.b, x.dups, twin), cx_params(params));
   }
   if cold_on {
     planned = cgen_cold::cold_plan(x, w);
@@ -4113,22 +4267,36 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   for decl in w.decls {
     out += "    {decl}\n";
   }
+  // `@FR-C-Arms`: the arms' functions declare what this function declares.
+  armed: vector<text> = if len(w.arm_fns) > 0 { cgen_parallel::arm_functions(w, out) } else { [] };
+  // `@FR-R-DecodeView`'s structure clause: a walk's closures declare what this function does.
+  closed: vector<text> = if len(w.ps.closures) > 0 { cgen_decode_structure::closure_functions(w, out) } else { [] };
   out += cgen_text::hold_line(w);
   body = cgen_text::expand_epilogues(w);
   statements = statement_count(body);
   out += body;
+  // The arms' functions land only with the body that calls them: a body the writer declines is
+  // written again, and its arms with it.
+  if len(armed) == 2 {
+    x.gen_decls += armed[0]!;
+    x.gen_bodies += armed[1]!;
+  }
+  if len(closed) == 2 {
+    x.gen_decls += resolve_tuples(x, closed[0]!);
+    x.gen_bodies += resolve_tuples(x, closed[1]!);
+  }
   if len(w.cold) > 0 {
     if cgen_cold::cold_escaped(w, out) {
       return Written { text: "", refused: cgen_cold::COLD_ESCAPED };
     }
     for a in w.cold {
-      part = write_body(x, twin, -1, false, [a], tf);
+      part = write_body(x, twin, -1, false, [a], tf, ps_mode, ps_off, ps_vtp);
       if part.refused != "" {
         return Written { text: "", refused: part.refused };
       }
     }
   }
-  out = cgen_text::park_work_texts(w, d, out);
+  out = cgen_text::park_work_texts(w, d, cgen_names::c_name(x.b, x.dups, w.index), out);
   // `@FR-R-Tabulate`: a classifier of a byte reads its answer from the table the compiler
   // evaluated when its one parameter is in the table's range, and runs its body otherwise.
   if len(params) == 1 && params[0].starts_with("int64_t ") && ret == "int" && !tf.builds {
@@ -4154,11 +4322,22 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   } else {
     "static"
   };
-  list = if len(params) == 0 { "void" } else { params.join(", ") };
+  // `@PLN226`: the store context comes first in every function the unit writes.
+  list = cx_params(params);
   name = cgen_names::twin_name(x.b, x.dups, twin);
   // The frame wrapper's storage (`function`'s `storage`): inline with its body, the helper
   // marker resolved once the twins are written, or out of line.
   outer = if statements <= 12 || hot_twin { "static inline" } else if statements <= 80 && plain_but_rg(twin) { "static /*loft_hot:{index}*/" } else { "static" };
+  // A body whose calls reach it again keeps the wrapper's hint and no more (`on_call_cycle`).
+  if cgen::on_call_cycle(x, index) {
+    storage = outer;
+  }
+  // A positional twin is framed plainly (`framed_plain`), under its own name.
+  if ps_twin {
+    storage = "static";
+    outer = "static";
+    name = cgen_decode_structure::twin_name(x, ps_mode, index, ps_off, ps_vtp);
+  }
   rtext = resolve_tuples(x, "{storage} {held(ret)} {name}__fr({list}) {{\n{out}}}\n");
   rret = resolve_tuples(x, held(ret));
   rlist = resolve_tuples(x, list);
@@ -4168,6 +4347,10 @@ fn write_body(x: Cx, twin: cgen_names::Twin, work_ret: integer, cold_on: boolean
   // each C compiler takes them above its own size (loft_cc.h), the whole body (out of line, as
   // its parts are) in the `#else` arm.
   parts = cgen_split::split_body(outer, rret, "{name}__fr", rlist, rinner);
+  // `@FR-R-CTable`: the parts' runs of releases are written as data.
+  if parts != "" {
+    parts = cgen_reltable::tables("{name}__fr", parts);
+  }
   // `@FR-R-CTail`: the whole body's shared release tails are written once; the parts keep
   // every exit's own statements, and `inner` stays the body before this pass.
   merged = cgen_tail::merge(rret, rinner);
@@ -4215,7 +4398,7 @@ fn direct_place(x: Cx, w: W, var: integer, inner: ir::Node, ind: integer) -> tex
   absent = temp(w, c);
   null_into(w, absent, c, ind);
   e = expr(x, w, inner, ind);
-  "({held(c)} *) loft_place({as_ref(w, e)}, &{absent})"
+  "({held(c)} *) loft_place(cx, {as_ref(w, e)}, &{absent})"
 }
 
 fn number_tuples(x: Cx, shapes: vector<text>) {
@@ -4228,7 +4411,7 @@ fn number_tuples(x: Cx, shapes: vector<text>) {
 
 // `hot_helper_size`'s mask test: no twin bit but `__rg`'s.
 fn plain_but_rg(t: cgen_names::Twin) -> boolean {
-  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf
+  t.places == 0 && t.nn == 0 && !t.inv && !t.nk && !t.apr && !t.apv && !t.kh && !t.ap && !t.ds && !t.vf && !t.dv
 }
 
 // Is argument `i` one of a call's tuple parameters (`[idx, key, …]`)?

@@ -5035,6 +5035,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 return early;
             }
         }
+        self.type_placeholder_element(elm, &in_t);
         // convert parts to the common type
         if in_t == Type::Null {
             return in_t;
@@ -5861,7 +5862,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     ///   the destination (loft#2397);
     /// * the destination's own root reached through an element step that may be the same
     ///   element — another index variable, or an index the statement cannot name
-    ///   (`f.vars[j].tp`, `f.vars[i * 1].tp` for the destination `f.vars[i].tp`).
+    ///   (`f.vars[j].tp`, `f.vars[i * 1].tp` for the destination `f.vars[i].tp`);
+    /// * under `=`, a PREFIX of the destination's place handed to a loft function — `tp(f, 0)`,
+    ///   `g(f.vars)`, `h(f.vars[j])` for the destination `f.vars[i].tp` — through which the
+    ///   callee reads the destination under its parameter's name (loft#2678).  The prefix is
+    ///   compared as the element steps are, so an index the statement cannot name
+    ///   (`f.vars[p.i].tp`) is a prefix of every element.  Only `=` detaches the field before
+    ///   the build (`@FR-O-Detach`); a `+=` keeps it, and its record literal's field values
+    ///   are staged ahead of the mint (`stage_append_fields`).  A primitive is the
+    ///   construction's own machinery (`keyed_entry_ints` writes the entry), not a read.
     ///
     /// A construction slot (an inline-ref element) is the build's own record, not a read.
     /// Over-wide costs a temp or a buffer, never a wrong answer: a sibling element read
@@ -5905,9 +5914,35 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         let exact =
             |s: &[Option<PlaceStep>]| s == steps.as_slice() && s.iter().all(Option::is_some);
+        let loft_fn = |d: u32| {
+            let def = self.data.def(d);
+            !def.name().starts_with("Op")
+                && (!matches!(def.code(), Value::Null) || def.rust().is_empty())
+        };
+        // A function argument naming a place that may hold the destination: a prefix of it.
+        // An EXACT prefix of a destination named in full, inside a part that is itself a
+        // loft call answering a scalar or a record, is the read `snapshot_read_destination`
+        // stages that part for (`reads_through`), so it is left to that.
+        let replaces = self.assign_replaces;
+        let named = steps.iter().all(Option::is_some);
+        let staged_elem = !matches!(in_t.base(), Type::Vector(_, _));
+        let prefix = |a: &Value, staged: bool| {
+            replaces
+                && self.loose_place(a).is_some_and(|(r, s)| {
+                    r == root
+                        && s.len() < steps.len()
+                        && s.iter().zip(&steps).all(|(a, b)| compatible(a, b))
+                        && !(staged && named && s.iter().zip(&steps).all(|(a, b)| a == b))
+                })
+        };
         parts.iter().any(|p| {
+            let staged = staged_elem && matches!(p.unspan(), Value::Call(d, _) if loft_fn(*d));
             p.any_node(&mut |n| match n {
                 Value::Var(x) | Value::TupleGet(x, _) => aliases.contains(x),
+                Value::Call(d, args) if loft_fn(*d) && args.iter().any(|a| prefix(a, staged)) => {
+                    true
+                }
+                Value::CallRef(_, args) if args.iter().any(|a| prefix(a, staged)) => true,
                 _ => self.loose_place(n).is_some_and(|(r, s)| {
                     r == root
                         && s.len() == steps.len()
@@ -6581,6 +6616,37 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             && vec == self.assign_target
             && !self.assign_replaces
             && parts.iter().any(|v| v.reads_var(vec))
+    }
+
+    /// The element variable of a literal no context typed, once its items are read.
+    ///
+    /// A literal in VALUE position with no hint — a `for` source, a format hole — mints its
+    /// element variable before the first item is read, against a container whose content is
+    /// still unknown, so [`Self::unique_elm_var`] types it with the placeholder def 0
+    /// (`ref(boolean)`).  A bound local and a call argument are hinted and never see it.  The
+    /// placeholder is not a type the slot holds, and `(H-Move)` reads the element's type:
+    /// `scopes::appends_to_element` asks whether its record owns a droppable, and `boolean`
+    /// owns none, so a unit variant built in a work-ref and copied into the element kept its
+    /// own release beside the container's — `for x in [A { id: 1 }, B]` ran `B`'s `OpDrop`
+    /// twice, on both backends.  Typed here as a hinted literal's element is typed (a record of
+    /// its struct, a struct-enum's record as its enum, a vector element as that vector), with
+    /// the borrows it was minted with.  Any other element — a scalar, a text, an element type
+    /// still unknown — keeps the variable as it is: no rule reads a slot type there.
+    fn type_placeholder_element(&mut self, elm: u16, in_t: &Type) {
+        let Type::Reference(0, deps) = self.vars.tp(elm).base().clone() else {
+            return;
+        };
+        let typed = match in_t.base() {
+            Type::Reference(d, _)
+                if *d != 0 && !self.data.def(*d).name.starts_with("__nullable<") =>
+            {
+                Type::Reference(*d, deps)
+            }
+            Type::Enum(e, true, _) => Type::Enum(*e, true, deps),
+            Type::Vector(inner, _) => Type::Vector(inner.clone(), deps),
+            _ => return,
+        };
+        self.vars.set_type(elm, typed);
     }
 
     pub(crate) fn unique_elm_var(&mut self, parent_tp: &Type, assign_tp: &Type, vec: u16) -> u16 {

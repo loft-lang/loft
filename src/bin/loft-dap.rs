@@ -83,9 +83,11 @@ fn main() {
                 continue; // a malformed frame is dropped — DAP has no error reply for it
             };
             if field_str(&msg, "command").as_deref() == Some("pause") {
-                loft::interp::debugger::INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
+                // Answered BEFORE the interrupt is raised: raised first, the running program
+                // could stop and report `stopped` ahead of this response, against DAP's order.
                 let request_seq = field_i64(&msg, "seq").unwrap_or(0);
                 send_response(&stdout, request_seq, "pause", true, None, None);
+                loft::interp::debugger::INTERRUPT.store(true, std::sync::atomic::Ordering::Release);
             }
             if tx.send(msg).is_err() {
                 break;

@@ -560,6 +560,14 @@ pub fn uaf_check_enabled() -> bool {
     *UAF.get_or_init(|| env_set("LOFT_UAF"))
 }
 
+/// `LOFT_RETURN_DRIFT` — report each function whose return dependencies differ between pass 1
+/// and pass 2 (`Parser::report_return_drift`), the census `scripts/return_drift.py` reads for the
+/// stale-borrow class of loft#2660 (@PLN233).  A measurement, off by default: one cached env read.
+pub fn return_drift_enabled() -> bool {
+    static DRIFT: OnceLock<bool> = OnceLock::new();
+    *DRIFT.get_or_init(|| env_set("LOFT_RETURN_DRIFT"))
+}
+
 /// `LOFT_UAF_SRC` — the cheap companion to `LOFT_UAF`: record each free's pc and
 /// report when `do_copy_record` reads a still-freed SOURCE, but SKIP the expensive
 /// per-op frame scan (which floods + slows a real-scale run past its timeout before
@@ -3331,6 +3339,52 @@ pub fn element_view_present() -> bool {
 pub fn arm_frees_param_deps() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+}
+
+/// `LOFT_NO_DELIVERED_EVERY_RETURN=1` — a callee whose TAIL hands its parameter back counts as
+/// delivering the construction it was handed even where an earlier `return` answers a record of
+/// its own, as before loft#2674.
+#[must_use]
+pub fn delivered_every_return() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_EVERY_RETURN"))
+}
+
+/// `LOFT_NO_DELIVERED_FIRST_ADOPT=1` — a first bind of a call that delivers its construction
+/// hoists the construction out and copies the answer, as before loft#2674, while the
+/// construction's buffer is still paired with the binding as its adopter: the buffer leaks.
+#[must_use]
+pub fn delivered_first_adopt() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_FIRST_ADOPT"))
+}
+
+/// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local
+/// the body assigns copies even where the source IS that buffer, as before loft#2673: the
+/// re-mint clears the record and the copy reads the cleared record back.
+#[must_use]
+pub fn self_copy_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SELF_COPY_GUARD"))
+}
+
+/// `LOFT_NO_NCC_ENTRY_GUARD=1` — a `??` hoist promoted onto the return buffer takes the plain
+/// transition free at its rebind again, as before loft#2673: it releases the store the caller
+/// handed in, which the caller frees a second time.
+#[must_use]
+pub fn ncc_entry_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NCC_ENTRY_GUARD"))
+}
+
+/// `LOFT_NO_JOIN_RETURN_BACKINGS=1` — a join return keeps, as before loft#2671, the stores a
+/// source that owns nothing views (`node = if c { f(n) } else { n }`, answered on one arm of
+/// `if r != null { r! } else { node }`), and keys a buffer's free on that source rather than
+/// on the value returned: the run answering the other arm leaks them, or frees the answer.
+#[must_use]
+pub fn join_return_backings() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_RETURN_BACKINGS"))
 }
 
 /// `LOFT_NO_VIEW_TEMP_SCOPE_END_GUARD=1` — a joined local's scope-end free

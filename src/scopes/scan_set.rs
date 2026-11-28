@@ -731,6 +731,12 @@ impl Scopes<'_> {
             // @FR-O-Proxy asks free — the ownership-TRANSITION free of the store the hoist
             // is about to stop naming, with its @FR-O-Override veto as one question.
             && function.proxy_says_owned(v)
+            // `@FR-O-Buffer`, loft#2673 — and not where the hoist was promoted onto the return
+            // buffer (`palt(p) ?? p` as a tail): the store it holds on entry is the CALLER's, and
+            // the rebind's own free, guarded by the entry witness, is the one home for the
+            // displaced store, as for the transition frees above.  Unguarded here it released
+            // the caller's buffer, which the caller freed again.
+            && (function.entry_witness(v).is_none() || !crate::keys::ncc_entry_guard())
         {
             transition_free = Some(call("OpFreeRef", v, data));
         }
@@ -2212,6 +2218,27 @@ impl Scopes<'_> {
             } else {
                 free
             };
+            // `@FR-H-FreeTwice`, loft#2680 — the displaced store may be one of several record
+            // constructions' work-refs' (`lt = TyVoid; if c { lt = TyRef {…} }; lt = …`): where
+            // the free releases it here, at the rebind, whichever work-ref names it is disarmed
+            // with it, so the frame's exit does not release it again.  ONLY where it releases:
+            // the free above may be guarded (a lift, a view temporary) and decline, and a work-ref
+            // disarmed beside a free that did not run is a store nobody releases.  A work-ref
+            // naming another store keeps it.  Where the scan names the one construction it
+            // disarms that itself.
+            let temps: Vec<u16> = self
+                .construction_temps
+                .get(&v)
+                .into_iter()
+                .flatten()
+                .copied()
+                .filter(|&t| t != v)
+                .collect();
+            let free = if temps.is_empty() {
+                free
+            } else {
+                disarm_at_release(free, v, &temps, data)
+            };
             prefix.push(free);
         }
         // …and the witness snapshot is written AFTER it, so the free compares against the
@@ -2928,4 +2955,62 @@ impl Scopes<'_> {
         );
         Some((pre, vec![free]))
     }
+}
+
+/// loft#2680 — `free` with each release of `v` it holds preceded by the disarm of every work-ref
+/// in `temps` that names `v`'s store, so a disarm runs exactly where the release does.  A plain
+/// `OpFreeRef(v)` is preceded by the disarms; an `OpFreeRefIfDistinct(v, w)` by the disarms under
+/// its own test, since it releases only where `v` and `w` differ.  Any other node is rebuilt
+/// with its children walked: a guard around a release keeps the disarm inside it, so a guard
+/// that declines disarms nothing — the one direction that is safe, because a work-ref left
+/// armed still releases the store at the frame's exit.
+fn disarm_at_release(free: Value, v: u16, temps: &[u16], data: &Data) -> Value {
+    let distinct = data.def_nr("OpDistinctStore");
+    let sentinel = data.def_nr("OpNullRefSentinel");
+    let free_ref = data.def_nr("OpFreeRef");
+    let free_if = data.def_nr("OpFreeRefIfDistinct");
+    let disarms = || -> Vec<Value> {
+        temps
+            .iter()
+            .map(|&t| {
+                v_if(
+                    Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]),
+                    Value::Null,
+                    v_set(t, Value::Call(sentinel, vec![])),
+                )
+            })
+            .collect()
+    };
+    fn walk(n: &mut Value, f: &dyn Fn(&Value) -> Option<Value>) {
+        if let Some(r) = f(n) {
+            *n = r;
+            return;
+        }
+        n.for_each_child_mut(&mut |c| walk(c, f));
+    }
+    let mut out = free;
+    walk(&mut out, &|n: &Value| match n.unspan() {
+        Value::Call(d, args)
+            if *d == free_ref
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
+        {
+            let mut ops = disarms();
+            ops.push(n.clone());
+            Some(Value::Insert(ops))
+        }
+        Value::Call(d, args)
+            if *d == free_if
+                && args.len() == 2
+                && matches!(args[0].unspan(), Value::Var(x) if *x == v) =>
+        {
+            let guard = v_if(
+                Value::Call(distinct, vec![Value::Var(v), args[1].clone()]),
+                Value::Insert(disarms()),
+                Value::Null,
+            );
+            Some(Value::Insert(vec![guard, n.clone()]))
+        }
+        _ => None,
+    });
+    out
 }

@@ -4245,3 +4245,87 @@ fn a_called_workflow_asks_for_no_more_than_its_caller_grants() {
         wrong.join("\n  ")
     );
 }
+
+/// Every server test owns its port BASE: no two test functions hand one base to the port
+/// helpers.  `bind_port` resolves a base to the same port in every test process of one checkout,
+/// and nextest runs the tests side by side, so two tests sharing a base share a port — one
+/// connects to the other's kernel and reads its messages (`hi:0` where `got:ready` was due),
+/// a red that passes on its retry.  Read from the source: a literal base handed to
+/// `bind_port`, `test_port` or `backends` (whose C leg is `base + 20`), or listed in a
+/// `[(base, true), (base, false)]` leg table, keyed by the test function it stands in.
+#[test]
+fn every_server_test_owns_its_port_base() {
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
+    let mut owner: std::collections::BTreeMap<u32, (String, String)> = Default::default();
+    let mut clashes = Vec::new();
+    let mut files: Vec<_> = fa::read_dir(&root)
+        .expect("cannot read tests/")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|x| x == "rs"))
+        .collect();
+    files.sort();
+    for path in files {
+        let name = fa::file_name(&path).unwrap_or_default();
+        let text = fa::read_to_string(&path).unwrap_or_default();
+        let mut func = String::new();
+        for line in text.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix("fn ").or_else(|| t.strip_prefix("pub fn ")) {
+                func = rest.split('(').next().unwrap_or("").to_string();
+            }
+            let mut bases: Vec<u32> = Vec::new();
+            for helper in ["bind_port(", "test_port(", "backends("] {
+                for (at, _) in line.match_indices(helper) {
+                    let before = line[..at].chars().next_back();
+                    if before.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                        continue;
+                    }
+                    if let Some(b) = leading_port(&line[at + helper.len()..], ')') {
+                        bases.push(b);
+                        if helper == "backends(" {
+                            bases.push(b + 20);
+                        }
+                    }
+                }
+            }
+            if line.contains(" in [(") {
+                for (at, _) in line.match_indices('(') {
+                    if let Some(b) = leading_port(&line[at + 1..], ',') {
+                        bases.push(b);
+                    }
+                }
+            }
+            for b in bases {
+                let here = (name.clone(), func.clone());
+                match owner.get(&b) {
+                    Some(o) if *o != here => clashes.push(format!(
+                        "  {b}: {}::{} and {}::{}",
+                        o.0, o.1, here.0, here.1
+                    )),
+                    Some(_) => {}
+                    None => {
+                        owner.insert(b, here);
+                    }
+                }
+            }
+        }
+    }
+    assert!(
+        clashes.is_empty(),
+        "two server tests share a port base, so they share a port when nextest runs them side by \
+         side; give one of them a base no other test uses:\n{}",
+        clashes.join("\n")
+    );
+}
+
+/// A 4–5 digit port literal at the start of `rest`, closed by `close` (spaces allowed).
+fn leading_port(rest: &str, close: char) -> Option<u32> {
+    let digits: String = rest
+        .trim_start()
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    let after = rest.trim_start()[digits.len()..].trim_start();
+    ((4..=5).contains(&digits.len()) && after.starts_with(close)).then(|| digits.parse().ok())?
+}

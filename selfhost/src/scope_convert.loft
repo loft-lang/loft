@@ -9,6 +9,10 @@
 
 use ir;
 use scope_fn;
+use opt_names;
+use own;
+use scope_join_rewrite;
+use scope_tuple_members;
 use scope_scan;
 use scope_branches;
 use scope_free_vars;
@@ -81,11 +85,15 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     sv = scope_scan::scan(s, b, v, f);
     ls += rebind_pre;
     ls += promoted_refill.pre;
-    // The hand-offs a statement arms after it is scanned (`drop_handoff_node`, the tuple member
-    // moves) are facts about drop-bearing records and tuples, refused where they are bound.
+    // The hand-offs a statement arms after it is scanned: `drop_handoff_node`'s are facts about
+    // drop-bearing records, refused where they are bound; the tuple member moves follow.
+    arm_moved = tuple_member_moves(s, b, v, f);
     match sv {
       NdInsert { items } => { ls += items; },
       _ => { ls += [sv]; }
+    }
+    for member in scope_tuple_members::sorted_ints(arm_moved) {
+      ls += [scope_fn::v_set(tuple_moved_flag(s, f, member), ir::NdBoolean { b: true })];
     }
     if promoted_refill.waits {
       at_end += promoted_refill.post;
@@ -293,11 +301,9 @@ fn locals_read_after(s: scope_scan::Scopes, op: ir::Node, rest: vector<ir::Node>
     _ => {}
   }
   for v in assigned {
-    if scope_scan::in_scope(s, v) || scope_fn::has(out, v) || !scope_branches::needs_pre_init(scope_fn::tp(f, v)) {
+    if scope_scan::in_scope(s, v) || scope_fn::has(out, v) || scope_fn::was_loop_var(f, v) || !scope_branches::needs_pre_init(scope_fn::tp(f, v)) {
       continue;
     }
-    // `function.was_loop_var(v)` is not in the image: a loop's own variable is a scalar or a
-    // collection's element, and an element that needs a pre-init is refused below.
     all_ready = true;
     for d in scope_fn::deps(f, v) {
       if !scope_scan::in_scope(s, d) {
@@ -308,9 +314,6 @@ fn locals_read_after(s: scope_scan::Scopes, op: ir::Node, rest: vector<ir::Node>
       continue;
     }
     if first_use_in_seq(rest, v) == 1 {
-      if !(scope_fn::tp(f, v) is TyText) {
-        scope_scan::refuse(s, "convert::locals_read_after: a store local read after its loop (variables::was_loop_var, not in the image)");
-      }
       out += [v];
     }
   }
@@ -577,5 +580,182 @@ fn arm_work(n: ir::Node, f: ir::Function, work: vector<integer>) {
   }
   for c in scope_fn::children(n) {
     arm_work(c, f, work);
+  }
+}
+
+// port: convert.rs fn Scopes::tuple_moved_flag — the per-path flag of tuple member `key`
+// (`t * 65536 + i`), minted on first use.
+fn tuple_moved_flag(s: scope_scan::Scopes, f: ir::Function, member: integer) -> integer {
+  fl = scope_scan::tmap_get(s.tuple_moved, 0, member);
+  if fl >= 0 {
+    return fl;
+  }
+  t = member / 65536;
+  flag = scope_fn::add_temp_var(f, "__tmov_{scope_fn::name(f, t)}#{t}_{member % 65536}", ir::TyBoolean);
+  scope_scan::set_scope_of(s, flag, 0);
+  s.var_order += [flag];
+  scope_scan::tmap_put(s.tuple_moved, 0, member, flag);
+  flag
+}
+
+// The visit `walk_unconditional` makes: each node, then the children of its unspanned form —
+// not an `if`'s arms and not a loop's body.
+fn unconditional_blocks(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdBlock { block } => if block[0]!.name == "tuple_member_move" || block[0]!.name == "synthetic_tuple_return" {
+      out += [n];
+    },
+    _ => {}
+  }
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { cond } => unconditional_blocks(cond, out),
+    NdLoop => {},
+    _ => for c in scope_fn::children(u) {
+      unconditional_blocks(c, out);
+    }
+  }
+}
+
+// `walk_member_writes`: the calls of a member-write block, entering an `if` whose test reads
+// one of the block's `stash`es.
+fn member_write_calls(n: ir::Node, stash: vector<integer>, out: vector<ir::Node>) {
+  if n is NdCall {
+    out += [n];
+  }
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { cond, t, f: e } => {
+      member_write_calls(cond, stash, out);
+      reads = false;
+      for st in stash {
+        if scope_fn::names_var(cond, st / 4294967296) {
+          reads = true;
+        }
+      }
+      if reads {
+        member_write_calls(t, stash, out);
+        member_write_calls(e, stash, out);
+      }
+    },
+    NdLoop => {},
+    _ => for c in scope_fn::children(u) {
+      member_write_calls(c, stash, out);
+    }
+  }
+}
+
+// The compiler temps of a member-write block bound to a tuple member (`__ref_2 = a.1`), as
+// `t << 32 | base * 65536 + idx`.
+fn stash_walk(n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => if scope_fn::is_compiler_generated(f, t) {
+      match scope_fn::unspan(inner) {
+        NdTupleGet { var: base, idx } => { out += [t * 4294967296 + base * 65536 + idx]; },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    stash_walk(c, f, out);
+  }
+}
+
+// port: convert.rs, the tuple half of the hand-offs a statement arms after it is scanned: a
+// call-minted member's release moves only where the copy is certain to run; a whole-tuple move
+// of a tuple bound outside this block takes a per-path flag (loft#1645, the members answered);
+// a sole owner's moved member loses its pairing.
+fn tuple_member_moves(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::Function) -> vector<integer> {
+  arm_moved: vector<integer> = [];
+  if len(s.tuple_call_mint) == 0 {
+    return arm_moved;
+  }
+  certain: vector<scope_scan::TMap> = [for m in s.tuple_call_mint if scope_scan::get(s.var_scope, m.t) == s.scope { m }];
+  copy_d = scope_fn::def_nr(b, "OpCopyRecord");
+  append_d = scope_fn::def_nr(b, "OpAppendVector");
+  loop_depth = len(s.loops);
+  sole_moved: vector<integer> = [];
+  blocks: vector<ir::Node> = [];
+  unconditional_blocks(v, blocks);
+  for n in blocks {
+    whole_move = match n { NdBlock { block } => block[0]!.name == "tuple_member_move", _ => false };
+    stash: vector<integer> = [];
+    stash_walk(n, f, stash);
+    calls: vector<ir::Node> = [];
+    member_write_calls(n, stash, calls);
+    for c in calls {
+      d = -1;
+      args: vector<ir::Node> = [];
+      match c {
+        NdCall { def_nr, args: a } => {
+          d = def_nr;
+          args = a;
+        },
+        _ => {}
+      }
+      member = -1;
+      if len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdTupleGet { var: base, idx } => { member = base * 65536 + idx; },
+          NdVar { n: t } => for st in stash {
+            if st / 4294967296 == t {
+              member = st % 4294967296;
+            }
+          },
+          _ => {}
+        }
+      }
+      if whole_move && d == copy_d && len(args) >= 3 && member >= 0
+        && scope_scan::tmap_at(certain, member / 65536) < 0
+        && scope_scan::get(s.tuple_depth, member / 65536) == loop_depth
+        && scope_scan::tmap_get(s.tuple_call_mint, member / 65536, member % 65536) != -2
+        && !arm_moved.contains(member) {
+        arm_moved += [member];
+      }
+      if d == copy_d && len(args) >= 3 && member >= 0 {
+        claim = scope_scan::tmap_get(certain, member / 65536, member % 65536);
+        // `call_minted_member_handoff` moves a release only for a member whose record carries
+        // a drop (`copy_moves_drop_from`, `copy_hands_off`): not transcribed.
+        if claim >= 0 && member_has_drop(b, f, member) {
+          scope_scan::refuse(s, "convert::call_minted_member_handoff: a call-minted tuple member with a drop moved");
+        }
+        to_ref = match scope_fn::unspan(args[1]!) { NdVar { n: dst } => scope_fn::name(f, dst).starts_with("__ref"), _ => false };
+        if claim == -1 && (to_ref || scope_join_rewrite::copy_hands_off(b, args[1]!, f)) {
+          sole_moved += [member];
+        }
+      }
+      if d == append_d && len(args) > 1 {
+        match scope_fn::unspan(args[1]!) {
+          NdTupleGet { var: base, idx } => if scope_scan::get(s.var_scope, base) == s.scope {
+            bk = scope_scan::tmap_get(s.tuple_member_now, base, idx);
+            if bk >= 0 && scope_drops::drop_hook(s, b, f, bk) != null {
+              scope_scan::refuse(s, "convert: a tuple's vector member of droppable elements copied (tuple_member_now)");
+            }
+          },
+          _ => {}
+        }
+      }
+    }
+  }
+  for m in sole_moved {
+    scope_scan::tmap_unput(s.tuple_call_mint, m / 65536, m % 65536);
+  }
+  arm_moved
+}
+
+// The member's record type has a drop cascade.
+fn member_has_drop(b: ir::Bundle, f: ir::Function, member: integer) -> boolean {
+  match scope_fn::base(scope_fn::tp(f, member / 65536)) {
+    TyTuple { elems } => {
+      e = elems[member % 65536];
+      if e == null {
+        return false;
+      }
+      rec = own::heap_def_nr(e!);
+      rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE
+    },
+    _ => false
   }
 }

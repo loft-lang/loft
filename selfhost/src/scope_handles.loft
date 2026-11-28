@@ -1,0 +1,422 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/handles.rs` transcribed: generator HANDLES — which locals and tuple
+// members own a handle, which only view a member's handle, and the retain that keeps a handle
+// alive while a second holder shares it (`(G-Hold)`, `retain_shared_handles`, run by `check`
+// on each body before its scan, as Rust's is).
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use own;
+use ir_pass_tree;
+
+// port: handles.rs fn is_handle_projection — a generator handle read out of a field or an
+// element (`OpGetDbRef`), a VIEW of a member's handle (loft#1585).
+fn is_handle_projection(b: ir::Bundle, rhs: ir::Node) -> boolean {
+  match scope_fn::unspan(rhs) {
+    NdCall { def_nr } => scope_args::def_name(b, def_nr) == "OpGetDbRef",
+    _ => false
+  }
+}
+
+// port: handles.rs fn handle_leaves — the values a handle right-hand side can deliver: the tails
+// of a value `if` and of a block, each arm on its own path.
+fn handle_leaves(rhs: ir::Node, out: vector<ir::Node>) {
+  u = scope_fn::unspan(rhs);
+  match u {
+    NdIf { t, f } => {
+      handle_leaves(t, out);
+      handle_leaves(f, out);
+    },
+    NdBlock { block } => {
+      k = len(block[0]!.operators);
+      if k > 0 {
+        handle_leaves(block[0]!.operators[k - 1]!, out);
+      }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k > 0 {
+        handle_leaves(items[k - 1]!, out);
+      }
+    },
+    NdNull => {},
+    _ => { out += [u]; }
+  }
+}
+
+// port: handles.rs fn handle_rhs_kinds — does the right-hand side deliver a member's handle on
+// some path (`[0]`), and one of its own on some path (`[1]`)?
+pub fn handle_rhs_kinds(b: ir::Bundle, rhs: ir::Node) -> vector<boolean> {
+  leaves: vector<ir::Node> = [];
+  handle_leaves(rhs, leaves);
+  views = 0;
+  for l in leaves {
+    if is_handle_projection(b, l) {
+      views += 1;
+    }
+  }
+  [views > 0, views < len(leaves)]
+}
+
+// port: handles.rs fn tag_handle_leaves — `rhs` with the handle's per-path `flag` written in
+// every arm that delivers one: `true` where the arm delivers a member's handle.
+pub fn tag_handle_leaves(b: ir::Bundle, rhs: ir::Node, flag: integer) -> ir::Node {
+  match rhs {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: tag_handle_leaves(b, inner, flag) },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: tag_handle_leaves(b, t, flag), f: tag_handle_leaves(b, f, flag) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      k = len(bl.operators);
+      if k == 0 {
+        return ir::NdInsert { items: [tag(b, rhs, flag), rhs] };
+      }
+      tail = bl.operators[k - 1]!;
+      ut = scope_fn::unspan(tail);
+      ops: vector<ir::Node> = [];
+      for o in bl.operators {
+        if o#index < k - 1 {
+          ops += [o];
+        }
+      }
+      if ut is NdIf || ut is NdBlock || ut is NdInsert {
+        ops += [tag_handle_leaves(b, tail, flag)];
+      } else if ut is NdNull {
+        ops += [tail];
+      } else {
+        ops += [tag(b, tail, flag), tail];
+      }
+      ir::NdBlock { block: [ir_pass_tree::with_operators(bl, ops)] }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return ir::NdInsert { items: [tag(b, rhs, flag), rhs] };
+      }
+      ops: vector<ir::Node> = [for o in items { if o#index < k - 1 { o } else { tag_handle_leaves(b, o, flag) } }];
+      ir::NdInsert { items: ops }
+    },
+    NdNull => ir::NdNull,
+    _ => ir::NdInsert { items: [tag(b, rhs, flag), rhs] }
+  }
+}
+
+fn tag(b: ir::Bundle, leaf: ir::Node, flag: integer) -> ir::Node {
+  scope_fn::v_set(flag, ir::NdBoolean { b: is_handle_projection(b, leaf) })
+}
+
+// port: handles.rs fn owned_handle_members's `fresh`.
+fn fresh(b: ir::Bundle, rhs: ir::Node, idx: integer) -> boolean {
+  match scope_fn::unspan(rhs) {
+    // A tuple a call answers (a generator's advance included) is the caller's whole.
+    NdCall { def_nr } => {
+      nm = scope_args::def_name(b, def_nr);
+      !nm.starts_with("Op") || nm == "OpCoroutineNext"
+    },
+    NdTuple { items } => {
+      m = items[idx];
+      m != null && match scope_fn::unspan(m!) {
+        NdCall { def_nr } => scope_args::def_name(b, def_nr) != "OpGetDbRef",
+        _ => false
+      }
+    },
+    NdBlock { block } => {
+      k = len(block[0]!.operators);
+      k > 0 && fresh(b, block[0]!.operators[k - 1]!, idx)
+    },
+    NdInsert { items } => len(items) > 0 && fresh(b, items[len(items) - 1]!, idx),
+    _ => false
+  }
+}
+
+// The verdicts `owned_handle_members` collects, keyed `v * 65536 + i`, in insertion order.
+struct Verdicts { keys: vector<integer>, owned: vector<boolean> }
+
+fn verdict(vs: Verdicts, key: integer, ok: boolean) {
+  for k in vs.keys {
+    if k == key {
+      vs.owned[k#index] = vs.owned[k#index]! && ok;
+      return;
+    }
+  }
+  vs.keys += [key];
+  vs.owned += [ok];
+}
+
+fn member_verdicts(b: ir::Bundle, n: ir::Node, f: ir::Function, vs: Verdicts) {
+  u = scope_fn::unspan(n);
+  v = -1;
+  rhs = ir::NdNull;
+  only = -1;
+  match u {
+    NdSet { var, inner } => {
+      v = var;
+      rhs = inner;
+    },
+    NdTuplePut { var, idx, inner } => {
+      v = var;
+      rhs = inner;
+      only = idx;
+    },
+    _ => {}
+  }
+  if v >= 0 {
+    match scope_fn::base(scope_fn::tp(f, v)) {
+      TyTuple { elems } => for t in elems {
+        i = t#index;
+        if !(scope_fn::base(t) is TyIterator) || (only >= 0 && only != i) {
+          continue;
+        }
+        ok = if only >= 0 {
+          match scope_fn::unspan(rhs) {
+            NdCall { def_nr } => scope_args::def_name(b, def_nr) != "OpGetDbRef",
+            _ => false
+          }
+        } else {
+          fresh(b, rhs, i)
+        };
+        verdict(vs, v * 65536 + i, ok);
+      },
+      _ => {}
+    }
+  }
+  for c in scope_fn::children(u) {
+    member_verdicts(b, c, f, vs);
+  }
+}
+
+// port: handles.rs fn owned_handle_members — the `(tuple, member)` pairs (keyed
+// `v * 65536 + i`) whose every assignment is a fresh handle.
+pub fn owned_handle_members(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  vs = Verdicts { keys: [], owned: [] };
+  member_verdicts(b, code, f, vs);
+  out: vector<integer> = [];
+  for k in vs.keys {
+    if vs.owned[k#index]! {
+      out += [k];
+    }
+  }
+  out
+}
+
+fn handle_view_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, views: vector<integer>, owned: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: v, inner } => if scope_fn::base(scope_fn::tp(f, v)) is TyIterator && scope_fn::is_skip_free(f, v) {
+      k = handle_rhs_kinds(b, inner);
+      if k[0]! && !views.contains(v) {
+        views += [v];
+      }
+      if k[1]! && !owned.contains(v) {
+        owned += [v];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    handle_view_walk(b, c, f, views, owned);
+  }
+}
+
+// port: handles.rs fn mixed_handle_views — the generator locals assigned both a member's handle
+// and a value of their own, sorted.
+pub fn mixed_handle_views(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
+  views: vector<integer> = [];
+  owned: vector<integer> = [];
+  handle_view_walk(b, code, f, views, owned);
+  out: vector<integer> = [for v in views if owned.contains(v) { v }];
+  sorted(out)
+}
+
+pub fn sorted(v: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in v {
+    at = len(out);
+    for y in out {
+      if x < y && at == len(out) {
+        at = y#index;
+      }
+    }
+    out.insert(at, x);
+  }
+  out
+}
+
+// What `retain_shared_handles` reads.
+struct RetainCx {
+  b: ir::Bundle,
+  f: ir::Function,
+  retain: integer,
+  set_dbref: integer,
+  get_dbref: integer
+}
+
+// port: handles.rs fn retain_shared_handles — `(G-Hold)`, loft#1708: a generator handle that
+// lands in a SECOND holder while its source keeps its own hold takes a hold on the frame
+// (`OpCoroutineRetain`).
+pub fn retain_shared_handles(b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function) -> ir::Node {
+  retain = scope_fn::def_nr(b, "OpCoroutineRetain");
+  if retain < 0 || env_variable("LOFT_NO_HANDLE_RETAIN") != null {
+    return code;
+  }
+  cx = RetainCx { b: b, f: f, retain: retain, set_dbref: scope_fn::def_nr(b, "OpSetDbRef"), get_dbref: scope_fn::def_nr(b, "OpGetDbRef") };
+  out = rewrite(cx, code);
+  if scope_fn::base(b.data.definitions[d_nr]!.returned[0] ?? ir::TyVoid) is TyTuple {
+    out = rewrite_tuple_members(cx, out);
+  }
+  out
+}
+
+fn is_handle_var(cx: RetainCx, x: integer) -> boolean {
+  scope_fn::base(scope_fn::tp(cx.f, x)) is TyIterator
+}
+
+// port: handles.rs fn RetainCx::kept — a handle whose source keeps its own hold.
+fn kept(cx: RetainCx, val: ir::Node) -> boolean {
+  match scope_fn::unspan(val) {
+    NdVar { n: x } => is_handle_var(cx, x) && (scope_fn::is_argument(cx.f, x) || scope_fn::is_skip_free(cx.f, x)),
+    NdTupleGet { var: x, idx } => match scope_fn::base(scope_fn::tp(cx.f, x)) {
+      TyTuple { elems } => {
+        e = elems[idx];
+        e != null && scope_fn::base(e!) is TyIterator
+      },
+      _ => false
+    },
+    NdCall { def_nr, args } => def_nr == cx.get_dbref && handle_field(cx, args),
+    _ => false
+  }
+}
+
+// port: handles.rs fn RetainCx::handle_field — `OpGetDbRef(rec, off)` reads a generator-handle
+// field.
+fn handle_field(cx: RetainCx, args: vector<ir::Node>) -> boolean {
+  if len(args) < 2 {
+    return false;
+  }
+  r = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+  off = match scope_fn::unspan(args[1]!) { NdInt { n } => n, _ => -1 };
+  if r < 0 || off < 0 {
+    return false;
+  }
+  d = own::heap_def_nr(scope_fn::base(scope_fn::tp(cx.f, r)));
+  if d == null {
+    return false;
+  }
+  def = cx.b.data.definitions[d!]!;
+  for a in def.attributes {
+    if scope_fn::base(a.typedef[0] ?? ir::TyVoid) is TyIterator && position(cx.b, def.known_type, a.name) == off {
+      return true;
+    }
+  }
+  false
+}
+
+// port: database/types.rs fn Stores::position — 65535 where the field is not there.
+fn position(b: ir::Bundle, tp: integer, field: text) -> integer {
+  t = b.types[tp];
+  if tp < 0 || t == null {
+    return 65535;
+  }
+  fields: vector<ir::DbField> = match t!.parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { fields } => fields,
+    _ => []
+  };
+  for fld in fields {
+    if fld.name == field {
+      return fld.position;
+    }
+  }
+  65535
+}
+
+fn wrap(cx: RetainCx, v: ir::Node) -> ir::Node {
+  ir::NdCall { def_nr: cx.retain, args: [v] }
+}
+
+fn is_generator(cx: RetainCx, d: integer) -> boolean {
+  def = cx.b.data.definitions[d];
+  if d < 0 || def == null {
+    return false;
+  }
+  binds::is_loft_defined(def!) && len(def!.code) > 0 && !(def!.code[0]! is NdNull) && scope_fn::base(def!.returned[0] ?? ir::TyVoid) is TyIterator
+}
+
+// port: handles.rs fn RetainCx::rewrite_tuple_members
+fn rewrite_tuple_members(cx: RetainCx, v: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rewrite_tuple_members(cx, inner) },
+    // A block's value is its last operator — a function body's tail is its return.
+    NdBlock { block } => {
+      bl = block[0]!;
+      k = len(bl.operators);
+      ir::NdBlock { block: [ir_pass_tree::with_operators(bl, [for o in bl.operators { if o#index == k - 1 { rewrite_tuple_members(cx, o) } else { o } }])] }
+    },
+    NdTuple { items } => ir::NdTuple { items: [for m in items { if kept(cx, m) { wrap(cx, m) } else { m } }] },
+    _ => v
+  }
+}
+
+// port: handles.rs fn RetainCx::rewrite — children first, then the node.
+fn rewrite(cx: RetainCx, v: ir::Node) -> ir::Node {
+  kids = scope_fn::children(v);
+  n = if len(kids) == 0 { v } else { ir_pass_tree::with_children(v, [for c in kids { rewrite(cx, c) }]) };
+  match n {
+    NdCall { def_nr, args } => {
+      if def_nr == cx.set_dbref && len(args) == 3 {
+        if kept(cx, args[2]!) {
+          return ir::NdCall { def_nr: def_nr, args: [args[0]!, args[1]!, wrap(cx, args[2]!)] };
+        }
+        return n;
+      }
+      // A generator HOLDS every handle it is handed, to its end or its abandonment.
+      if is_generator(cx, def_nr) {
+        return ir::NdCall { def_nr: def_nr, args: [for a in args {
+          handle = match scope_fn::unspan(a) {
+            NdVar { n: x } => is_handle_var(cx, x),
+            _ => kept(cx, a)
+          };
+          if handle { wrap(cx, a) } else { a }
+        }] };
+      }
+      n
+    },
+    // A LOCAL that will release, bound from a parameter or a view VARIABLE.
+    NdSet { var: x, inner } => {
+      if is_handle_var(cx, x) && !scope_fn::is_argument(cx.f, x) && !scope_fn::is_skip_free(cx.f, x) && scope_fn::unspan(inner) is NdVar && kept(cx, inner) {
+        return ir::NdSet { var: x, inner: wrap(cx, inner) };
+      }
+      if scope_fn::base(scope_fn::tp(cx.f, x)) is TyTuple {
+        return ir::NdSet { var: x, inner: rewrite_tuple_members(cx, inner) };
+      }
+      n
+    },
+    NdReturn { inner } => ir::NdReturn { inner: rewrite_tuple_members(cx, inner) },
+    _ => n
+  }
+}
+
+// port: handles.rs fn Scopes::tuple_handle_frees — the frees of the generator-handle members
+// tuple `v` owns (`owned`, keyed `v * 65536 + i`), in reverse index order.
+pub fn tuple_handle_frees(b: ir::Bundle, owned: vector<integer>, v: integer, f: ir::Function) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  n = match scope_fn::base(scope_fn::tp(f, v)) {
+    TyTuple { elems } => len(elems),
+    _ => return out
+  };
+  if scope_fn::is_skip_free(f, v) {
+    return out;
+  }
+  free = scope_fn::def_nr(b, "OpFreeRef");
+  i = n - 1;
+  while i >= 0 {
+    if owned.contains(v * 65536 + i) {
+      out += [ir::NdCall { def_nr: free, args: [ir::NdTupleGet { var: v, idx: i }] }];
+    }
+    i -= 1;
+  }
+  out
+}

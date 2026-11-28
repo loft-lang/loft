@@ -321,6 +321,17 @@ impl Run<'_> {
     /// generation of the store from here, and a use of it is a use after its end
     /// (`@FR-H-RefHome`, loft#2621: a holder re-minted in a loop cleared the record its field
     /// was about to name).  `LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live.
+    ///
+    /// The same holds for a variable that names `x`'s record itself (`@FR-O-Detach`): the
+    /// re-init is the release of what the record held, so a binding left naming it — `c`, bound
+    /// on an earlier pass to the literal a construction temporary `w` built, re-initialised by
+    /// the next pass's `OpDatabase(w)` before the literal's initialisers read `c` — reads the
+    /// cleared record (loft#2667).  A name that may hold the store, where `x` holds nothing else;
+    /// the compiler's own witnesses (`__…`) name a store for its identity, never its content.
+    /// A bound join (`___ret_join_N`) is no witness: it is the VALUE a return copies, and a
+    /// re-mint of the buffer it may name, ahead of that copy, clears what the copy then reads
+    /// (loft#2673: `palt(p) ?? p` copied a cleared record into the buffer it was).
+    /// `LOFT_RECORDS_NO_REMINT_ENDS_ALIASES=1` leaves such a name live.
     pub(super) fn remint_ends_placed(&mut self, st: &mut State, x: u16, kept: &Pts) {
         let placed: Vec<u16> = st
             .placed
@@ -328,12 +339,42 @@ impl Run<'_> {
             .filter(|(_, h)| *h == x)
             .map(|(r, _)| *r)
             .collect();
+        let aliases_end =
+            !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_REMINT_ENDS_ALIASES").is_some());
+        // A `&` link on either side is the same place under two names (`@FR-B-Ref-Alias`):
+        // the re-mint through one is the new value the other reads.  A COLLECTION's link is
+        // lowered to a plain view of its source (`c = &n` on a `hash` reads `n`'s store), so
+        // only a RECORD's re-mint is asked: its links are `&`-typed.
+        let vars = &self.data.def(self.d_nr).variables;
+        let is_link =
+            |v: u16| v < vars.count() && matches!(vars.tp(v).base(), crate::data::Type::RefVar(_));
+        let record = x < vars.count()
+            && matches!(
+                vars.tp(x).base(),
+                crate::data::Type::Reference(_, _) | crate::data::Type::Enum(_, true, _)
+            );
         for k in Self::stores_of(kept) {
-            let gone: Vec<u16> = placed
+            let held_by_x = Self::pts(st, x)
+                .iter()
+                .all(|p| *p == Pt::Store(k) || *p == Pt::Null);
+            let mut gone: Vec<u16> = placed
                 .iter()
                 .copied()
                 .filter(|r| Self::pts(st, *r).contains(&Pt::Store(k)))
                 .collect();
+            if aliases_end && held_by_x && record && !is_link(x) && info_of(st, k).has(LIVE) {
+                for (&r, p) in &st.vars {
+                    if r != x
+                        && !gone.contains(&r)
+                        && p.contains(&Pt::Store(k))
+                        && !is_link(r)
+                        && (!self.var_name(r).starts_with("__")
+                            || self.var_name(r).starts_with("___ret_join_"))
+                    {
+                        gone.push(r);
+                    }
+                }
+            }
             if gone.is_empty() {
                 continue;
             }
@@ -1317,6 +1358,22 @@ impl Run<'_> {
                 Some(Summary::Arg(_) | Summary::Args(_))
             )
             && !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_FN_RETURN").is_some());
+        // A `par` loop's queue names the vector it iterates and its worker; the rows the body
+        // reads answer from them until the buffer is dropped (`Run::par_row`).
+        match def.name() {
+            "n_parallel_queue_ref" => {
+                let worker = match args.get(4).map(Value::unspan) {
+                    Some(Value::Int(w)) => u32::try_from(*w).unwrap_or(u32::MAX),
+                    _ => u32::MAX,
+                };
+                let input = vals.first().cloned().unwrap_or_else(Val::unknown);
+                self.par_sources.push((input, worker));
+            }
+            "n_parallel_buf_drop_ref" => {
+                self.par_sources.pop();
+            }
+            _ => {}
+        }
         if def.returned().heap_dep().is_none() && !fn_answer {
             return Some((s, Val::null()));
         }
@@ -1417,6 +1474,8 @@ impl Run<'_> {
                 }
             } else if def.name().starts_with("Op") {
                 vals.into_iter().next().unwrap_or_else(Val::unknown)
+            } else if def.name() == "n_parallel_buf_get_ref" {
+                self.par_row()
             } else {
                 self.native_answer(node, d, &vals, &mut s)
             };
@@ -1439,6 +1498,32 @@ impl Run<'_> {
                     corr: [k].into(),
                 }
             }
+            // loft#2677 — handed a NULL buffer, the callee mints the record it answers on that
+            // path, or answers the argument's store, borrowed: the answer owns only what the
+            // callee made.  Handed a live buffer the answer is the buffer or the argument, a
+            // store this frame already follows by another name, and it stays not followed.
+            Summary::BufArg(buf, arg)
+                if vals
+                    .get(buf as usize)
+                    .is_none_or(|v| v.pts.iter().all(|p| *p == Pt::Null)) =>
+            {
+                let mut pts = vals
+                    .get(arg as usize)
+                    .map(|v| v.pts.clone())
+                    .unwrap_or_default();
+                let mut corr = BTreeSet::new();
+                let site = self.site(node, Origin::Call(d));
+                let minted = Self::fresh(&mut s, site);
+                pts.insert(Pt::Store(minted));
+                corr.insert(minted);
+                // A `-> T?` callee may answer null instead, as `Fresh` says: the stores are
+                // named only where the answer is present.
+                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+                    pts.insert(Pt::Null);
+                }
+                Val { pts, corr }
+            }
+            Summary::BufArg(..) => Val::unknown(),
             // The argument's store, BORROWED: the answer owns none of it, so a copy or a join
             // guard that consumes what its value owns leaves it with the argument's owner.
             Summary::Arg(i) => vals.get(i as usize).map_or_else(Val::unknown, |v| Val {

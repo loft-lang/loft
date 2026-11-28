@@ -1011,10 +1011,23 @@ pub fn split_body(storage: text, ret: text, name: text, params: text, body: text
     out += "    {ret} loft_split_ret;\n";
   }
   out += "    char loft_unused;\n}};\n";
+  // The function's context, under its own name in every part: a statement's `cx` is written
+  // `loft_fr->cx`, but a runtime macro names `cx` in its expansion (`LOFT_WRITE_REFUSED`,
+  // `LOFT_HOLD`, `LOFT_KNOWN`), which no rewrite of the statement's text can reach.  The
+  // parameter is copied into the frame once and never assigned, so the two are one value.
+  has_cx = false;
+  for m in frame_members {
+    if m.trim().ends_with("*cx") {
+      has_cx = true;
+    }
+  }
   for p in parts {
     pi = p#index;
     kind = if returns[pi]! { "int" } else { "void" };
     out += "static LOFT_NOINLINE {kind} {name}__part{pi}(void *loft_frv) {{\n    struct {frame} *const loft_fr = (struct {frame} *) loft_frv;\n";
+    if has_cx {
+      out += "    loft_cx *const cx = loft_fr->cx;\n    (void) cx;\n";
+    }
     for d in part_locals[pi]! {
       out += "    {d};\n";
     }

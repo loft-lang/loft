@@ -1,0 +1,65 @@
+name: Loft in loft (the listed programs)
+
+# @PLN91 — the programs the loft-written toolchain carries (`selfhost/bench/loft_in_loft.list`),
+# each checked through both halves: the whole loft interpreter path (elaborator, scope pass, IR
+# passes, bytecode writer, runner) runs it as `loft --interpret` does, and the C generator in loft
+# writes the Rust writer's unit for it, which runs alike.  A listed program that stops passing
+# fails the job, naming the half (`selfhost/bench/lil_check.py`).  Advisory: never a required
+# check until the owner makes it one.
+#
+# A diff can break it — the compiler (`src/`, `default/`) moves what the port must reproduce, and
+# the port (`selfhost/`) is what runs — so it runs on the pull requests that touch those, and on
+# main.  Re-pin the list with `python3 selfhost/bench/lil_check.py --discover --write`.
+
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'default/**'
+      - 'selfhost/**'
+      - 'tests/scripts/**'
+      - 'tests/loft-suite.pin'
+      - 'Cargo.lock'
+      - '.github/workflows/loft-in-loft.yml'
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: loft-in-loft-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: '1'
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  LOFT_SUITE_DIR: loft-suite
+
+jobs:
+  listed:
+    # @windows-exempt: the loft-written toolchain's own gate; the C backend's Windows legs cover the platform
+    name: loft in loft — the listed programs
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: ./.github/actions/checkout-suite
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build loft
+        run: cargo build --release --bin loft
+      - name: The listed programs through both halves
+        run: |
+          # The tools build one at a time inside the script; the C generator's optimised build
+          # is the larger, and the cap leaves the runner room beside it.
+          ulimit -v 13000000
+          set -o pipefail
+          python3 selfhost/bench/lil_check.py --jobs 4 | tee target/loft-in-loft.txt
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: loft-in-loft-${{ github.sha }}
+          path: target/loft-in-loft.txt

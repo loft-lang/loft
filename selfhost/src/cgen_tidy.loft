@@ -226,7 +226,7 @@ fn declaration(line: text) -> Declaration? {
 // writer's constant spellings; any other call may have an effect.
 fn pure(init: text) -> boolean {
   s = init;
-  for keep in ["loft_ref_null()", "(double) NAN", "(float) NAN", "INT64_C(", "UINT64_C(", "INT32_C("] {
+  for keep in ["loft_ref_null(cx)", "(double) NAN", "(float) NAN", "INT64_C(", "UINT64_C(", "INT32_C("] {
     s = s.replace(keep, " ");
   }
   !s.contains("(") && !s.contains("\"") && !s.contains("'")

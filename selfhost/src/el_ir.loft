@@ -210,11 +210,17 @@ pub fn respan(n: ir::Node, by: ir::Node) -> ir::Node {
   }
 }
 
+// A walk rather than a recursion: a recursive `unspan` called in a match arm whose argument views
+// the subject leaked the answer's store on both backends (loft#2660, a pass-1 borrow pass 2 kept).
 pub fn unspan(n: ir::Node) -> ir::Node {
-  match n {
-    NdSpan { inner } => unspan(inner),
-    _ => n
+  c = n;
+  for _ in 0..1000000 {
+    match c {
+      NdSpan { inner } => { c = inner; },
+      _ => { return c; },
+    }
   }
+  c
 }
 
 // `replace_var_in_ir`: every read of variable `v` in `n` becomes `by`; an assignment's target

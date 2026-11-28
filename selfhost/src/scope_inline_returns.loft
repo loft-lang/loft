@@ -1,0 +1,919 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/inline_returns.rs` transcribed: whether a call's struct or collection
+// result is fresh and owned, so the argument or arm that holds it can be lifted into a temp that
+// frees it.  `inline_struct_return` answers the lifted temp's type, null for `None`; the
+// `Definition` facts it reads off a callee's body (`monomorph_return_is_fresh` and its
+// siblings, `data.rs`) come along.  A callee body this pass refused is its parser body, not the
+// settled one Rust reads, so a question that reads one is refused by name (`stale_defs`).
+
+use ir;
+use own;
+use binds;
+use scope_fn;
+use scope_scan;
+
+// `u16::MAX`: no witness.
+const MAX = 65535;
+// inline_returns.rs const DELEGATION_DEPTH
+const DELEGATION_DEPTH = 8;
+// `DefType::Struct`'s ordinal.
+const DT_STRUCT = 5;
+// `KeyKind` as `binds::split_key_kind` answers it.
+const KEY_METHOD = 1;
+const KEY_FREE_OVERLOAD = 2;
+const KEY_INSTANCE = 3;
+
+fn env_set(nm: text) -> boolean {
+  env_variable(nm) != null
+}
+
+// `Type::optional` — `Optional`, `Never` and `Null` stay as they are; `Rewritten` stays outermost.
+pub fn optional(t: ir::TypeT) -> ir::TypeT {
+  if t is TyOptional || t is TyNever || t is TyNull {
+    return t;
+  }
+  match t {
+    TyRewritten { inner } => {
+      w = optional(inner);
+      ir::TyRewritten { inner: w }
+    },
+    _ => ir::TyOptional { inner: t }
+  }
+}
+
+// port: inline_returns.rs fn reopt
+pub fn reopt(opt: boolean, t: ir::TypeT) -> ir::TypeT {
+  if !opt {
+    return t;
+  }
+  optional(t)
+}
+
+// `peel_optional().0`
+pub fn peeled(t: ir::TypeT) -> ir::TypeT {
+  match t { TyOptional { inner } => inner, _ => t }
+}
+
+// port: data.rs fn with_deps — the type with its dep list replaced (shallow; through
+// `Optional`, `RefVar` and each `Tuple` element).
+pub fn with_deps(t: ir::TypeT, deps: vector<integer>) -> ir::TypeT {
+  if t is TyOptional {
+    w = with_deps(peeled(t), deps);
+    return optional(w);
+  }
+  d: vector<integer> = [for x in deps { x }];
+  match t {
+    TyText => ir::TyText { dep: d },
+    TyReference { n } => ir::TyReference { n: n, dep: d },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: d },
+    TyIndex { n, keys } => ir::TyIndex { n: n, keys: keys, dep: d },
+    TyRadix { n, names } => ir::TyRadix { n: n, names: names, dep: d },
+    TyTrie { n, key } => ir::TyTrie { n: n, key: key, dep: d },
+    TyHash { n, names } => ir::TyHash { n: n, names: names, dep: d },
+    TySorted { n, keys } => ir::TySorted { n: n, keys: keys, dep: d },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: d },
+    TyFunction { args, result, consts } => ir::TyFunction { args: args, result: result, dep: d, consts: consts },
+    TyRefVar { inner } => ir::TyRefVar { inner: with_deps(inner, deps) },
+    TyTuple { elems } => ir::TyTuple { elems: [for e in elems { with_deps(e, deps) }] },
+    _ => t
+  }
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if x == null { "" } else { x!.name }
+}
+
+fn has_attr(d: ir::Definition, nm: text) -> boolean {
+  for a in d.attributes {
+    if a.name == nm {
+      return true;
+    }
+  }
+  false
+}
+
+fn returned_of(d: ir::Definition) -> ir::TypeT {
+  d.returned[0] ?? ir::TyVoid
+}
+
+fn is_record_type(t: ir::TypeT) -> boolean {
+  match t {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  }
+}
+
+fn is_join(o: own::Own) -> boolean {
+  match o { Join => true, _ => false }
+}
+
+// `matches!(o, Own::Join { base } if base != u16::MAX)`
+fn is_named_join(o: own::Own) -> boolean {
+  match o { Join { base } => base != MAX, _ => false }
+}
+
+fn join_base(o: own::Own) -> integer {
+  match o { Join { base } => base, _ => MAX }
+}
+
+// Refuse where a callee's body is read and this pass refused that callee: the image holds its
+// parser body, Rust reads the settled one.
+fn guard_body(s: scope_scan::Scopes, d: integer) {
+  if scope_fn::has(s.stale_defs, d) {
+    scope_scan::refuse(s, "use_analysis::return_ownership: a callee laid out earlier was refused (its summary reads its settled body)");
+  }
+}
+
+// ── the `Definition` facts read off a callee's body (data.rs) ──
+
+fn collect_returns(n: ir::Node, out: vector<ir::Node>) {
+  match n {
+    NdReturn { inner } => { out += [inner]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_returns(c, out);
+  }
+}
+
+// port: data.rs fn return_sites — each `return`'s value, plus the body's own tail.
+fn return_sites(d: ir::Definition) -> vector<ir::Node> {
+  sites: vector<ir::Node> = [];
+  if len(d.code) == 0 {
+    return sites;
+  }
+  collect_returns(d.code[0]!, sites);
+  code = d.code[0]!;
+  body = match code {
+    NdInsert { items } => if len(items) > 0 { items[len(items) - 1]! } else { code },
+    _ => code
+  };
+  match body {
+    NdBlock { block } => {
+      ops = block[0].operators;
+      k = len(ops);
+      if k > 0 {
+        tail = ops[k - 1]!;
+        u = scope_fn::unspan(tail);
+        if !(u is NdReturn) && !(u is NdLoop) {
+          sites += [tail];
+        }
+      }
+    },
+    _ => {}
+  }
+  sites
+}
+
+// port: data.rs fn value_return_buffer_var — -1 for `None`.
+fn value_return_buffer_var(d: ir::Definition) -> integer {
+  if len(scope_fn::depend(returned_of(d))) > 0 {
+    return -1;
+  }
+  a = binds::hidden_return_buffer_attr(d);
+  if a == null {
+    return -1;
+  }
+  v = binds::var_named(d.variables, d.attributes[a!]!.name);
+  if v == MAX { -1 } else { v }
+}
+
+// port: data.rs fn root_var — -1 for `None`.
+fn root_var(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    NdCall { args } => if len(args) > 0 { root_var(args[0]!) } else { -1 },
+    _ => -1
+  }
+}
+
+fn views_a_parameter(n: integer, vars: ir::Function, buf: integer, seen: vector<integer>) -> boolean {
+  if scope_fn::has(seen, n) {
+    return false;
+  }
+  seen += [n];
+  for d in scope_fn::deps(vars, n) {
+    if d < scope_fn::count(vars) && buf != d && (scope_fn::is_argument(vars, d) || views_a_parameter(d, vars, buf, seen)) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs fn local_owns
+fn local_owns(n: integer, vars: ir::Function, buf: integer) -> boolean {
+  seen: vector<integer> = [];
+  n >= 0 && n < scope_fn::count(vars) && (buf == n || (!scope_fn::is_argument(vars, n) && !views_a_parameter(n, vars, buf, seen)))
+}
+
+// port: data.rs fn site_is_fresh
+fn site_is_fresh(v: ir::Node, vars: ir::Function, buf: integer, null_ref: integer, self_nr: integer) -> boolean {
+  u = scope_fn::unspan(v);
+  match u {
+    NdCall { def_nr, args } => {
+      if def_nr == self_nr {
+        return true;
+      }
+      if def_nr == null_ref && len(args) == 0 {
+        return true;
+      }
+    },
+    NdNull => { return true; },
+    NdVar { n } => { return local_owns(n, vars, buf); },
+    NdReturn { inner } => { return site_is_fresh(inner, vars, buf, null_ref, self_nr); },
+    NdIf { t, f } => {
+      if !site_is_fresh(t, vars, buf, null_ref, self_nr) {
+        return false;
+      }
+      return site_is_fresh(f, vars, buf, null_ref, self_nr);
+    },
+    NdBlock { block } => {
+      ops = block[0].operators;
+      if len(ops) == 0 {
+        return true;
+      }
+      return site_is_fresh(ops[len(ops) - 1]!, vars, buf, null_ref, self_nr);
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return true;
+      }
+      return site_is_fresh(items[len(items) - 1]!, vars, buf, null_ref, self_nr);
+    },
+    _ => {}
+  }
+  r = root_var(u);
+  r >= 0 && local_owns(r, vars, buf)
+}
+
+// A call through a fn-ref PARAMETER: its variable, -1 for none.
+fn fnref_param_site(site: ir::Node, vars: ir::Function) -> integer {
+  match scope_fn::unspan(site) {
+    NdCallRef { var } => if scope_fn::is_argument(vars, var) && (scope_fn::base(scope_fn::tp(vars, var)) is TyFunction) { var } else { -1 },
+    _ => -1
+  }
+}
+
+// port: data.rs fn monomorph_return_is_fresh
+fn monomorph_return_is_fresh(d: ir::Definition, null_ref: integer, self_nr: integer) -> boolean {
+  vars = d.variables;
+  buf = value_return_buffer_var(d);
+  sites = return_sites(d);
+  if len(sites) == 0 {
+    return false;
+  }
+  for site in sites {
+    if !site_is_fresh(site, vars, buf, null_ref, self_nr) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: data.rs fn has_fnref_return_site
+fn has_fnref_return_site(d: ir::Definition) -> boolean {
+  for site in return_sites(d) {
+    if fnref_param_site(site, d.variables) >= 0 {
+      return true;
+    }
+  }
+  false
+}
+
+// port: data.rs fn monomorph_fnref_return_slots — null for `None`.
+fn monomorph_fnref_return_slots(d: ir::Definition, null_ref: integer) -> vector<integer>? {
+  vars = d.variables;
+  buf = value_return_buffer_var(d);
+  sites = return_sites(d);
+  if len(sites) == 0 {
+    return null;
+  }
+  slots: vector<integer> = [];
+  for site in sites {
+    if site_is_fresh(site, vars, buf, null_ref, -1) {
+      continue;
+    }
+    v = fnref_param_site(site, vars);
+    if v < 0 {
+      return null;
+    }
+    slots += [v];
+  }
+  if len(slots) == 0 {
+    return null;
+  }
+  slots
+}
+
+// port: data.rs fn monomorph_direct_call_return_targets — null for `None`.
+fn monomorph_direct_call_return_targets(d: ir::Definition, null_ref: integer) -> vector<integer>? {
+  vars = d.variables;
+  buf = value_return_buffer_var(d);
+  sites = return_sites(d);
+  if len(sites) == 0 {
+    return null;
+  }
+  targets: vector<integer> = [];
+  for site in sites {
+    if site_is_fresh(site, vars, buf, null_ref, -1) {
+      continue;
+    }
+    t = match scope_fn::unspan(site) { NdCall { def_nr } => def_nr, _ => -1 };
+    if t < 0 {
+      return null;
+    }
+    targets += [t];
+  }
+  if len(targets) == 0 {
+    return null;
+  }
+  targets
+}
+
+// port: inline_returns.rs fn delegated_return_is_fresh_at
+fn delegated_return_is_fresh_at(s: scope_scan::Scopes, b: ir::Bundle, d: ir::Definition, depth: integer) -> boolean {
+  null_ref = s.ops.null_ref_sentinel;
+  targets = monomorph_direct_call_return_targets(d, null_ref);
+  if targets == null {
+    return false;
+  }
+  instance_copies = len(scope_fn::depend(returned_of(d))) == 0;
+  for t in targets! {
+    if t >= len(b.data.definitions) {
+      return false;
+    }
+    guard_body(s, t);
+    target = b.data.definitions[t]!;
+    if !binds::has_code(target) {
+      return false;
+    }
+    ok = false;
+    if own::returns_borrowed_view(target) {
+      ok = instance_copies && has_attr(target, "__retbuf");
+    } else if monomorph_return_is_fresh(target, null_ref, t) {
+      ok = true;
+    } else if binds::split_key_kind(target.name) == KEY_INSTANCE && depth < DELEGATION_DEPTH {
+      ok = delegated_return_is_fresh_at(s, b, target, depth + 1);
+    }
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// port: inline_returns.rs fn monomorph_fnref_return_is_fresh
+fn monomorph_fnref_return_is_fresh(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node, d: ir::Definition) -> boolean {
+  null_ref = s.ops.null_ref_sentinel;
+  slots = monomorph_fnref_return_slots(d, null_ref);
+  if slots == null {
+    return false;
+  }
+  args = match scope_fn::unspan(val) { NdCall { args } => args, _ => return false };
+  defs = scope_scan::defs(s, b);
+  for slot in slots! {
+    if slot >= len(args) {
+      return false;
+    }
+    fn_var = match scope_fn::unspan(args[slot]!) { NdVar { n } => n, _ => -1 };
+    if fn_var < 0 {
+      return false;
+    }
+    tn = own::fnref_target(defs, fn_var);
+    if tn == null || tn! == own::UMAX {
+      return false;
+    }
+    guard_body(s, tn!);
+    target = b.data.definitions[tn!]!;
+    if !binds::has_code(target) || own::returns_borrowed_view(target) || !monomorph_return_is_fresh(target, null_ref, tn!) {
+      return false;
+    }
+  }
+  true
+}
+
+// ── the fn-ref call ──
+
+// port: use_analysis.rs fn callref_capture_blocks
+fn callref_capture_blocks(s: scope_scan::Scopes, b: ir::Bundle, call: ir::Node) -> boolean {
+  v = match scope_fn::unspan(call) { NdCallRef { var } => var, _ => return false };
+  if !binds::callref_captures(b, s.d_nr, scope_fn::unspan(call)) {
+    return false;
+  }
+  callee = own::fnref_target(scope_scan::defs(s, b), v);
+  if callee == null || callee! == own::UMAX {
+    return true;
+  }
+  def = b.data.definitions[callee!]!;
+  closure_attr = MAX;
+  for a in def.attributes {
+    if a.name == "__closure" {
+      closure_attr = a#index;
+      break;
+    }
+  }
+  if !scope_fn::has(scope_fn::depend(returned_of(def)), closure_attr) {
+    return false;
+  }
+  if len(own::capture_return_offsets(b, callee!, s.own_ops)) == 0 {
+    return true;
+  }
+  !is_named_join(scope_scan::ownership(s, b, call))
+}
+
+// port: inline_returns.rs fn lift_deps
+fn lift_deps(base_witness: integer) -> vector<integer> {
+  if base_witness == MAX {
+    return [];
+  }
+  [base_witness]
+}
+
+// port: inline_returns.rs fn callref_owned_return
+fn callref_owned_return(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function, outer_call: integer) -> ir::TypeT? {
+  v_nr = match scope_fn::unspan(val) { NdCallRef { var } => var, _ => return null };
+  defs = scope_scan::defs(s, b);
+  target = own::fnref_target(defs, v_nr);
+  if target == null || target! == own::UMAX {
+    // loft#1659 — an unresolved target: a record result binds through `OpBindFnRefResult`.
+    r = match scope_fn::base(scope_fn::tp(f, v_nr)) { TyFunction { result } => result, _ => return null };
+    s.pending_join_witness = MAX;
+    returned = peeled(r);
+    opt = r is TyOptional;
+    return match returned {
+      TyReference { n } => reopt(opt, ir::TyReference { n: n, dep: [] }),
+      TyEnum { n, is_ref } => if is_ref { reopt(opt, ir::TyEnum { n: n, is_ref: true, dep: [] }) } else { null },
+      _ => null
+    };
+  }
+  def = b.data.definitions[target!]!;
+  if !binds::has_code(def) {
+    return null;
+  }
+  rt = returned_of(def);
+  returned = peeled(rt);
+  opt = rt is TyOptional;
+  record_return = is_record_type(returned);
+  // Only a record or a collection is lifted: any other return answers `None` whatever the
+  // oracle says, so it is not asked.
+  if !scope_fn::is_dbref(returned) {
+    return null;
+  }
+  o = scope_scan::ownership(s, b, val);
+  join_lifts = record_return && is_named_join(o) && outer_call >= 0;
+  blocks = callref_capture_blocks(s, b, val);
+  collection_join = !record_return && is_named_join(o);
+  witnessed_lifts = !blocks && (record_return || collection_join) && binds::protectable_ref_args(b, defs, val).covers_all;
+  if blocks && !join_lifts {
+    return null;
+  }
+  if own::returns_borrowed_view(def) && !join_lifts && !witnessed_lifts {
+    return null;
+  }
+  base_witness = MAX;
+  if !record_return {
+    o2 = scope_scan::ownership(s, b, val);
+    if is_named_join(o2) {
+      if env_set("LOFT_NO_LIFT_JOIN_WITNESS") {
+        return null;
+      }
+      base_witness = join_base(o2);
+    }
+  }
+  ld = lift_deps(base_witness);
+  lifted: ir::TypeT? = match returned {
+    TyReference { n } => reopt(opt, ir::TyReference { n: n, dep: [] }),
+    TyEnum { n, is_ref } => if is_ref { reopt(opt, ir::TyEnum { n: n, is_ref: true, dep: [] }) } else { null },
+    TyVector { inner } => reopt(opt, ir::TyVector { inner: inner, dep: ld }),
+    TyHash { n, names } => reopt(opt, ir::TyHash { n: n, names: names, dep: ld }),
+    TySorted { n, keys } => reopt(opt, ir::TySorted { n: n, keys: keys, dep: ld }),
+    TyIndex { n, keys } => reopt(opt, ir::TyIndex { n: n, keys: keys, dep: ld }),
+    TyRadix { n, names } => reopt(opt, ir::TyRadix { n: n, names: names, dep: ld }),
+    TyTrie { n, key } => reopt(opt, ir::TyTrie { n: n, key: key, dep: ld }),
+    _ => null
+  };
+  s.pending_join_witness = if lifted != null { base_witness } else { MAX };
+  lifted
+}
+
+// ── the `??` blocks ──
+
+// port: inline_returns.rs fn join_is_witnessed
+fn join_is_witnessed(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node) -> boolean {
+  !env_set("LOFT_NO_JOIN_OWN") && is_named_join(scope_scan::ownership(s, b, val))
+}
+
+// port: inline_returns.rs fn ncc_join_is_witnessed
+fn ncc_join_is_witnessed(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node) -> boolean {
+  if env_set("LOFT_NO_JOIN_OWN") {
+    return false;
+  }
+  ops = match scope_fn::unspan(val) { NdBlock { block } => block[0].operators, _ => return false };
+  rhs = ir::NdNull;
+  found = false;
+  for op in ops {
+    u = scope_fn::unspan(op);
+    is_free = match u { NdCall { def_nr } => def_name(b, def_nr) == "OpFreeRef", _ => false };
+    if is_free {
+      continue;
+    }
+    match u {
+      NdSet { inner } => {
+        rhs = inner;
+        found = true;
+      },
+      _ => {}
+    }
+    break;
+  }
+  if !found {
+    return false;
+  }
+  subject_is_user_call = match scope_fn::unspan(rhs) {
+    NdCall { def_nr } => binds::is_loft_defined(b.data.definitions[def_nr]!),
+    NdCallRef => true,
+    _ => false
+  };
+  borrow_through_subject = is_join(scope_scan::ownership(s, b, rhs));
+  subject_is_user_call && borrow_through_subject && join_is_witnessed(s, b, val)
+}
+
+// port: inline_returns.rs fn ncc_tail_arms
+fn ncc_tail_arms(val: ir::Node, out: vector<ir::Node>) {
+  u = scope_fn::unspan(val);
+  match u {
+    NdIf { t, f } => {
+      ncc_tail_arms(t, out);
+      ncc_tail_arms(f, out);
+    },
+    NdBlock { block } => {
+      if len(block[0].operators) == 1 {
+        ncc_tail_arms(block[0].operators[0]!, out);
+      } else {
+        out += [u];
+      }
+    },
+    _ => { out += [u]; }
+  }
+}
+
+// port: inline_returns.rs fn ncc_flat_arms — the arms in `out`, whether each is the block's
+// SUBJECT (its value standing in for the `__ncc_N` name) in `subj`.
+fn ncc_flat_arms(ops: vector<ir::Node>, out: vector<ir::Node>, subj: vector<boolean>) -> boolean {
+  k = len(ops);
+  if k == 0 {
+    return false;
+  }
+  sv = -1;
+  sval = ir::NdNull;
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdSet { var, inner } => if !(scope_fn::unspan(inner) is NdNull) {
+        sv = var;
+        sval = inner;
+        break;
+      },
+      _ => {}
+    }
+  }
+  arms: vector<ir::Node> = [];
+  ncc_tail_arms(ops[k - 1]!, arms);
+  if len(arms) < 2 {
+    return false;
+  }
+  for a in arms {
+    is_subject = match a { NdVar { n } => sv >= 0 && n == sv, _ => false };
+    if is_subject {
+      out += [sval];
+      subj += [true];
+      continue;
+    }
+    inner_ops: vector<ir::Node> = [];
+    nested = false;
+    match a {
+      NdBlock { block } => if block[0].name == "ncc" && !env_set("LOFT_NO_NCC_CHAIN_FLAT") {
+        nested = true;
+        inner_ops = block[0].operators;
+      },
+      _ => {}
+    }
+    if nested {
+      ok = ncc_flat_arms(inner_ops, out, subj);
+      if !ok {
+        out += [a];
+        subj += [false];
+      }
+      continue;
+    }
+    out += [a];
+    subj += [false];
+  }
+  true
+}
+
+// port: inline_returns.rs fn ncc_arms_are_all_owned
+pub fn ncc_arms_are_all_owned(b: ir::Bundle, ops: vector<ir::Node>) -> boolean {
+  arms: vector<ir::Node> = [];
+  subj: vector<boolean> = [];
+  if !ncc_flat_arms(ops, arms, subj) {
+    return false;
+  }
+  for a in arms {
+    roots: vector<integer> = [];
+    if own::view_root_slots(b, a, roots) {
+      return false;
+    }
+  }
+  true
+}
+
+// `Own::Owned` by the oracle, and no tuple member.
+fn arm_owned(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node) -> boolean {
+  if scope_fn::unspan(v) is NdTupleGet {
+    return false;
+  }
+  scope_scan::ownership(s, b, v) is Owned
+}
+
+fn add_base(bases: vector<integer>, v: integer) {
+  if !scope_fn::has(bases, v) {
+    bases += [v];
+  }
+}
+
+// port: inline_returns.rs fn ncc_local_arm_bases — null for `None`.
+fn ncc_local_arm_bases(s: scope_scan::Scopes, b: ir::Bundle, ops: vector<ir::Node>, f: ir::Function) -> vector<integer>? {
+  arms: vector<ir::Node> = [];
+  subj: vector<boolean> = [];
+  if !ncc_flat_arms(ops, arms, subj) {
+    return null;
+  }
+  bases: vector<integer> = [];
+  for a in arms {
+    ua = scope_fn::unspan(a);
+    if subj[a#index] {
+      match ua {
+        NdVar { n } => {
+          add_base(bases, n);
+          continue;
+        },
+        _ => {}
+      }
+      if arm_owned(s, b, a) {
+        continue;
+      }
+      if !env_set("LOFT_NO_NCC_SUBJECT_ROOT") {
+        roots: vector<integer> = [];
+        if own::view_root_slots(b, a, roots) && len(roots) == 1 {
+          add_base(bases, roots[0]!);
+          continue;
+        }
+      }
+      return null;
+    }
+    match ua {
+      NdVar { n } => {
+        add_base(bases, n);
+        continue;
+      },
+      _ => {}
+    }
+    w = -1;
+    if !env_set("LOFT_NO_NCC_ARM_OWNER_BASE") {
+      match ua {
+        NdBlock { block } => {
+          jops = block[0].operators;
+          if len(jops) > 0 {
+            lw = match scope_fn::unspan(jops[len(jops) - 1]!) { NdVar { n } => n, _ => -1 };
+            if lw >= 0 && (block[0].name == "join-arm-owner" || (lw < scope_fn::count(f) && binds::owns_literal_backing_store(scope_fn::name(f, lw)))) {
+              w = lw;
+            }
+          }
+        },
+        _ => {}
+      }
+    }
+    if w >= 0 {
+      add_base(bases, w);
+      continue;
+    }
+    if !arm_owned(s, b, a) {
+      roots: vector<integer> = [];
+      if !own::view_root_slots(b, a, roots) || len(roots) != 1 {
+        return null;
+      }
+      add_base(bases, roots[0]!);
+    }
+  }
+  single = env_set("LOFT_NO_NCC_MULTI_WITNESS");
+  if len(bases) > 0 && (!single || len(bases) == 1) {
+    return bases;
+  }
+  null
+}
+
+// port: inline_returns.rs fn ncc_literal_accumulators
+pub fn ncc_literal_accumulators(ops: vector<ir::Node>, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  k = len(ops);
+  if k == 0 {
+    return out;
+  }
+  arms: vector<ir::Node> = [];
+  ncc_tail_arms(ops[k - 1]!, arms);
+  for a in arms {
+    match a {
+      NdBlock { block } => {
+        bops = block[0].operators;
+        if len(bops) > 0 {
+          match scope_fn::unspan(bops[len(bops) - 1]!) {
+            NdVar { n } => if binds::owns_literal_backing_store(scope_fn::name(f, n)) {
+              out += [n];
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  out
+}
+
+// ── the decision ──
+
+// port: inline_returns.rs fn inline_struct_return — the lifted temp's type, null for `None`.
+pub fn inline_struct_return(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node, outer_call: integer, f: ir::Function) -> ir::TypeT? {
+  cr = callref_owned_return(s, b, val, f, outer_call);
+  if cr != null {
+    return cr;
+  }
+  u = scope_fn::unspan(val);
+  bname = "";
+  bops: vector<ir::Node> = [];
+  bres = ir::TyVoid;
+  match u {
+    NdBlock { block } => {
+      bname = block[0].name;
+      bops = block[0].operators;
+      bres = block[0].result[0] ?? ir::TyVoid;
+    },
+    _ => {}
+  }
+  subject_is_call_ref = false;
+  subject_owned = false;
+  if bname == "ncc" {
+    if len(bops) > 0 {
+      match scope_fn::unspan(bops[0]!) {
+        NdSet { inner } => match scope_fn::unspan(inner) {
+          NdCallRef { var } => {
+            subject_is_call_ref = match scope_fn::tp(f, var) { TyFunction { dep } => len(dep) > 0, _ => true };
+          },
+          _ => {}
+        },
+        _ => {}
+      }
+    }
+    if !env_set("LOFT_NCC_LIFT_BESIDE_OWNER") {
+      for op in bops {
+        t = match scope_fn::unspan(op) { NdSet { var } => var, _ => -1 };
+        if t >= 0 {
+          subject_owned = t < scope_fn::count(f) && !scope_fn::is_skip_free(f, t);
+          break;
+        }
+      }
+    }
+  }
+  bpeel = peeled(bres);
+  bopt = bres is TyOptional;
+  if bname == "ncc" && !subject_owned {
+    match bpeel {
+      TyReference { n, dep } => if (len(dep) == 0 && !subject_is_call_ref) || ncc_join_is_witnessed(s, b, val) {
+        return reopt(bopt, ir::TyReference { n: n, dep: [] });
+      },
+      _ => {}
+    }
+  }
+  // A `!` discharge of a loft call's record answer (`{#ncr _ncr_N = f(…); <check>; _ncr_N }`).
+  if bname == "ncr" && is_record_type(bpeel) && len(scope_fn::depend(bpeel)) == 0 && len(bops) > 0 && !env_set("LOFT_NO_NCR_LIFT") {
+    borrowing_call = match scope_fn::unspan(bops[0]!) {
+      NdSet { inner } => match scope_fn::unspan(inner) {
+        NdCall { def_nr } => {
+          cd = b.data.definitions[def_nr]!;
+          !cd.name.starts_with("Op") && binds::is_loft_defined(cd) && own::returns_borrowed_view(cd)
+        },
+        _ => false
+      },
+      _ => false
+    };
+    if borrowing_call {
+      return reopt(bopt, with_deps(bpeel, []));
+    }
+  }
+  // loft#1157 — a keyed `??` whose arms are all owned.
+  if bname == "ncc" && scope_fn::is_keyed(bres) && len(scope_fn::depend(bres)) == 0 && !subject_is_call_ref && ncc_arms_are_all_owned(b, bops) {
+    return scope_fn::without_deps(bres);
+  }
+  // loft#2643 — one whose borrowed arms are locals or projections: lifted with them as bases.
+  if bname == "ncc" && scope_fn::is_keyed(bres) && !subject_is_call_ref && !env_set("LOFT_NO_LIFT_JOIN_WITNESS") && !env_set("LOFT_NO_NCC_LOCAL_ARM_WITNESS") {
+    bases = ncc_local_arm_bases(s, b, bops, f);
+    if bases != null {
+      s.pending_join_witness = bases![0]!;
+      s.pending_extra_witnesses.clear();
+      for x in bases![1..] {
+        s.pending_extra_witnesses += [x];
+      }
+      return with_deps(bres, bases!);
+    }
+  }
+  fn_nr = match u { NdCall { def_nr } => def_nr, _ => -1 };
+  if fn_nr < 0 {
+    return null;
+  }
+  def = b.data.definitions[fn_nr]!;
+  rt = returned_of(def);
+  returned = peeled(rt);
+  opt = rt is TyOptional;
+  // Every arm below answers a heap type or a fn-ref: a scalar or text result answers `None`
+  // whatever the callee's body holds, so no body is read for one.
+  if !scope_fn::is_dbref(returned) && !(returned is TyFunction) {
+    return null;
+  }
+  kind = binds::split_key_kind(def.name);
+  is_inst = kind == KEY_INSTANCE;
+  if binds::is_loft_defined(def) {
+    guard_body(s, fn_nr);
+  }
+  monomorph_returns_a_borrow = (def.name.starts_with("t_") || is_inst) && own::returns_borrowed_view(def);
+  lift_owned_return = false;
+  if has_fnref_return_site(def) {
+    lift_owned_return = monomorph_fnref_return_is_fresh(s, b, val, def);
+  } else if def.name.starts_with("n_") || kind == KEY_FREE_OVERLOAD || kind == KEY_METHOD || monomorph_returns_a_borrow {
+    lift_owned_return = true;
+  } else if def.name.starts_with("t_") || is_inst {
+    if has_attr(def, "__retbuf") || monomorph_return_is_fresh(def, s.ops.null_ref_sentinel, fn_nr) || delegated_return_is_fresh_at(s, b, def, 0) {
+      lift_owned_return = true;
+    } else if !opt && own::heap_def_nr(returned) != null {
+      scope_scan::oracle_guard(s, val);
+      lift_owned_return = is_join(own::return_ownership_of(b, s.own_ops, fn_nr));
+    }
+  }
+  has_body = binds::has_code(def);
+  if lift_owned_return && has_body {
+    o = scope_scan::ownership(s, b, val);
+    lift_by_oracle = match o {
+      Owned => true,
+      Unknown => true,
+      Join { base } => outer_call >= 0 && base != MAX,
+      _ => false
+    };
+    if own::heap_def_nr(returned) != null && (!own::returns_borrowed_view(def) || has_attr(def, "__retbuf") || monomorph_returns_a_borrow || lift_by_oracle) {
+      return reopt(opt, with_deps(returned, []));
+    }
+    match returned {
+      TyFunction { args, result, consts } => {
+        return reopt(opt, ir::TyFunction { args: args, result: result, dep: [], consts: consts });
+      },
+      _ => {}
+    }
+  }
+  // loft#792 — a body-less native that mints a concrete struct.
+  if lift_owned_return && !has_body {
+    match returned {
+      TyReference { n, dep } => if len(dep) == 0 && (b.data.definitions[n]!).def_type == DT_STRUCT {
+        param_supplies = false;
+        for a in def.attributes {
+          match scope_fn::base(a.typedef[0] ?? ir::TyVoid) {
+            TyReference { n: p } => if p == n { param_supplies = true; },
+            _ => {}
+          }
+        }
+        if !param_supplies {
+          return reopt(opt, ir::TyReference { n: n, dep: [] });
+        }
+      },
+      _ => {}
+    }
+  }
+  // @P393 / @PLN85 p188 — an owned vector or keyed collection returned by value.
+  if binds::is_loft_defined(def) && scope_fn::is_dbref(returned) && !is_record_type(returned) && len(scope_fn::depend(returned)) == 0 {
+    return reopt(opt, with_deps(returned, []));
+  }
+  // #490 — a native constructor: a struct-enum or a vector minted fresh.
+  if !has_body && len(scope_fn::depend(returned)) == 0 {
+    match returned {
+      TyEnum { n, is_ref } => if is_ref {
+        return reopt(opt, ir::TyEnum { n: n, is_ref: true, dep: [] });
+      },
+      TyVector { inner } => {
+        return reopt(opt, ir::TyVector { inner: inner, dep: [] });
+      },
+      _ => {}
+    }
+  }
+  null
+}

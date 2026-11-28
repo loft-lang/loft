@@ -10,6 +10,7 @@
 // struct is the order tuples were first met in, which a per-function comparison cannot know.
 
 use ir;
+use opt_non_sentinel;
 use cgen::(Cx);
 
 // `Type::base`: the type without its `τ?` marker.
@@ -107,6 +108,17 @@ fn type_word(t: ir::TypeT) -> text {
 // Null where a variable has no shape, the reason in `why`.
 pub fn variable_shapes(d: ir::Definition, why: &text) -> vector<text>? {
   shapes: vector<text> = [];
+  // The locals a statement binds.  A `parallel` arm's locals are never scoped (the arm runs on a
+  // frame of its own), so an unscoped local is no proof that nothing binds it.
+  bound: vector<boolean> = [for _ in d.variables.variables { false }];
+  if len(d.code) > 0 {
+    opt_non_sentinel::walk(d.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdSet { var, inner: _ } => { bound[var] = true; },
+        _ => {},
+      }
+    });
+  }
   for v in d.variables.variables {
     whole = base(v.type_def[0]);
     tp = match whole {
@@ -118,7 +130,7 @@ pub fn variable_shapes(d: ir::Definition, why: &text) -> vector<text>? {
     placeholder = match tp {
       TyNull => true,
       TyNever => true,
-      _ => is_unknown(tp) && v.scope == 65535,
+      _ => is_unknown(tp) && v.scope == 65535 && !(bound[v#index] ?? false),
     };
     if placeholder && !v.argument {
       shapes += ["int"];

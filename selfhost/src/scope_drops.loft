@@ -44,7 +44,9 @@ pub fn drop_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
       return ir::NdIf { cond: live, t: ir::NdCall { def_nr: cnr, args: [ir::NdVar { n: subject }] }, f: ir::NdNull };
     },
     _ => {
-      if scope_fn::is_keyed(t) {
+      // loft#1601 — a keyed collection whose records hold a generator releases their frames
+      // through its type's walk; any other keyed type has no hook.
+      if keyed_holds_generator(b, t) {
         scope_scan::refuse(s, "drops::drop_hook: a keyed collection's generator walk");
       }
       return null;
@@ -58,6 +60,49 @@ pub fn drop_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
   scope_scan::refuse(s, "drops::drop_hook: a record type with a drop cascade");
   live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] };
   ir::NdIf { cond: live, t: ir::NdCall { def_nr: nr, args: [ir::NdVar { n: v }] }, f: ir::NdNull }
+}
+
+// port: data.rs fn keyed_holds_generator — a keyed type whose records hold a generator handle.
+pub fn keyed_holds_generator(b: ir::Bundle, t: ir::TypeT) -> boolean {
+  if !scope_fn::is_keyed(t) {
+    return false;
+  }
+  path: vector<integer> = [];
+  type_holds_generator(b, scope_fn::base(t), path)
+}
+
+// port: data.rs fn type_holds_generator, its walk.
+fn type_holds_generator(b: ir::Bundle, t: ir::TypeT, path: vector<integer>) -> boolean {
+  d = match t {
+    TyIterator => { return true; },
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    TySorted { n } => n,
+    TyIndex { n } => n,
+    TyHash { n } => n,
+    TyRadix { n } => n,
+    TyTrie { n } => n,
+    _ => -1
+  };
+  if d < 0 || scope_fn::has(path, d) {
+    return false;
+  }
+  path += [d];
+  for a in b.data.definitions[d]!.attributes {
+    if type_holds_generator(b, a.typedef[0] ?? ir::TyVoid, path) {
+      return true;
+    }
+  }
+  for c in b.data.definitions {
+    if c.parent == d && c.def_type == 4 {
+      for a in c.attributes {
+        if type_holds_generator(b, a.typedef[0] ?? ir::TyVoid, path) {
+          return true;
+        }
+      }
+    }
+  }
+  false
 }
 
 // port: drops.rs fn scope_end_drop — the hook unless a move-copy took it; guarded on the

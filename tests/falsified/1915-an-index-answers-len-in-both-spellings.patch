@@ -1,8 +1,8 @@
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
-index ab66a0d64..e299699f8 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
-@@ -400,20 +400,6 @@ impl Parser {
+diff --git a/src/parser/fields.rs b/src/parser/fields.rs
+index e0bd5e98e6..146306025f 100644
+--- a/src/parser/fields.rs
++++ b/src/parser/fields.rs
+@@ -434,20 +434,6 @@ impl Parser {
              self.first_pass,
          );
          if fnr == usize::MAX {
@@ -20,6 +20,6 @@ index ab66a0d64..e299699f8 100644
 -                }
 -                return crate::data::I64.clone();
 -            }
-             // Plan-17 phase 01 (B) — bounded-T method dispatch must run
-             // on BOTH passes so the call's return type propagates into
-             // first-pass type inference of the enclosing variable.
+             // loft#2658, `@FR-I-Map` / `@FR-I-Filter` / `@FR-I-Reduce` — `h.map(f)` on a keyed
+             // collection or a generator, which the stdlib's declarations (over `vector<T>`)
+             // cannot carry.  The vector's `#builtin` stub takes the call: it hints the callback

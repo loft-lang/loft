@@ -1,0 +1,119 @@
+diff --git b/src/scopes/scan.rs a/src/scopes/scan.rs
+index 9a19baef3..7ae987a0c 100644
+--- b/src/scopes/scan.rs
++++ a/src/scopes/scan.rs
+@@ -895,30 +895,6 @@ impl Scopes<'_> {
+             }
+             Value::Drop(inner) => {
+                 let scanned = self.scan(inner, function, data);
+-                // loft#2677 — the scanned value may carry its source position: a `Span` around
+-                // the `Insert` a lifted argument made (`visit(t, []);`, the vector literal hoisted)
+-                // hid the shape below, so the discarded call's owned result was never lifted
+-                // and nothing freed it, one record per evaluation.  The position stays on the
+-                // final value, as `scan_set`'s flatten keeps it (loft#1884).
+-                // `LOFT_NO_DROP_SPAN_PEEL=1` leaves the span in place.
+-                let scanned = match scanned {
+-                    Value::Span(b)
+-                        if matches!(&b.1, Value::Insert(ops) if !ops.is_empty())
+-                            && !crate::env_once!(
+-                                std::env::var_os("LOFT_NO_DROP_SPAN_PEEL").is_some()
+-                            ) =>
+-                    {
+-                        let (pos, inner) = *b;
+-                        let Value::Insert(mut ops) = inner else {
+-                            unreachable!("matched as an Insert above")
+-                        };
+-                        if let Some(last) = ops.pop() {
+-                            ops.push(Value::Span(Box::new((pos, last))));
+-                        }
+-                        Value::Insert(ops)
+-                    }
+-                    other => other,
+-                };
+                 // #490 — a discarded statement result that owns a fresh store
+                 // (`json_parse(x);`, `mk();`) lowers to a plain stack-pop
+                 // (`FreeStack` on the interpreter, a dropped Rust return value
+diff --git b/src/store_records.rs a/src/store_records.rs
+index 823158a29..502c2f1e3 100644
+--- b/src/store_records.rs
++++ a/src/store_records.rs
+@@ -944,18 +944,13 @@ enum Summary {
+     /// Fresh on some paths, the record the i-th argument's slot names on others
+     /// (`h.link ?? S { … }`).
+     JoinSlot(u16, i32),
+-    /// The hidden buffer (the first index) filled — a fresh store where the caller handed it
+-    /// null — on some paths, the second argument's store on others: `if … { return P { … }; } p`
+-    /// (loft#2677).  Read as `Unknown`, a dropped answer the callee minted was followed by
+-    /// nothing, and its leak went unreported.
+-    BufArg(u16, u16),
+     /// Not followed.
+     Unknown,
+ }
+ 
+ impl Summary {
+     fn join(self, other: Summary) -> Summary {
+-        use Summary::{Arg, Args, Bottom, Buf, BufArg, Fresh, Join, JoinSlot, Slot, Unknown};
++        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, JoinSlot, Slot, Unknown};
+         let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
+         // Every rule naming an argument index names ONE index on both sides (or collects them
+         // in `Args`): the answer does not depend on the order the returns are met in.
+@@ -971,9 +966,6 @@ impl Summary {
+             (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
+             (Fresh, Arg(i) | Buf(i) | Join(i)) | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
+             (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
+-            (Buf(b), Arg(a)) | (Arg(a), Buf(b)) if b != a && buf_arg_summary() => BufArg(b, a),
+-            (BufArg(b, a), Buf(c)) | (Buf(c), BufArg(b, a)) if b == c => BufArg(b, a),
+-            (BufArg(b, a), Arg(c)) | (Arg(c), BufArg(b, a)) if a == c => BufArg(b, a),
+             (Fresh, Slot(i, o) | JoinSlot(i, o)) | (Slot(i, o) | JoinSlot(i, o), Fresh) => {
+                 JoinSlot(i, o)
+             }
+@@ -985,12 +977,6 @@ impl Summary {
+     }
+ }
+ 
+-/// `LOFT_RECORDS_NO_BUF_ARG=1` reads a callee answering its buffer or an argument as `Unknown`
+-/// again, as before loft#2677.
+-fn buf_arg_summary() -> bool {
+-    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BUF_ARG").is_some())
+-}
+-
+ /// One record per creation site.
+ #[derive(Default)]
+ struct SiteRec {
+diff --git b/src/store_records/call.rs a/src/store_records/call.rs
+index f1a60fe28..fd5656f4f 100644
+--- b/src/store_records/call.rs
++++ a/src/store_records/call.rs
+@@ -1480,32 +1480,6 @@ impl Run<'_> {
+                     corr: [k].into(),
+                 }
+             }
+-            // loft#2677 — handed a NULL buffer, the callee mints the record it answers on that
+-            // path, or answers the argument's store, borrowed: the answer owns only what the
+-            // callee made.  Handed a live buffer the answer is the buffer or the argument, a
+-            // store this frame already follows by another name, and it stays not followed.
+-            Summary::BufArg(buf, arg)
+-                if vals
+-                    .get(buf as usize)
+-                    .is_none_or(|v| v.pts.iter().all(|p| *p == Pt::Null)) =>
+-            {
+-                let mut pts = vals
+-                    .get(arg as usize)
+-                    .map(|v| v.pts.clone())
+-                    .unwrap_or_default();
+-                let mut corr = BTreeSet::new();
+-                let site = self.site(node, Origin::Call(d));
+-                let minted = Self::fresh(&mut s, site);
+-                pts.insert(Pt::Store(minted));
+-                corr.insert(minted);
+-                // A `-> T?` callee may answer null instead, as `Fresh` says: the stores are
+-                // named only where the answer is present.
+-                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+-                    pts.insert(Pt::Null);
+-                }
+-                Val { pts, corr }
+-            }
+-            Summary::BufArg(..) => Val::unknown(),
+             // The argument's store, BORROWED: the answer owns none of it, so a copy or a join
+             // guard that consumes what its value owns leaves it with the argument's owner.
+             Summary::Arg(i) => vals.get(i as usize).map_or_else(Val::unknown, |v| Val {

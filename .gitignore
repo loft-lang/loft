@@ -84,6 +84,9 @@ dist/
 # `make optional-ratchet` compares against it, and the number in the DIFF is the receipt for
 # the walk that lowered it.
 !/index/optional_ratchet.json
+# @PLN233 phase 0: the return-drift census baseline is committed for the same reason —
+# `scripts/return_drift.py --check` compares against it, and the diff is the receipt.
+!/index/return_drift.tsv
 # (Cap-Safe): the reviewed list of ungated stdlib functions is committed — every one is
 # admitted in every sandbox, so the list IS the review, and
 # `the_ungated_stdlib_surface_is_the_reviewed_list` compares against it.

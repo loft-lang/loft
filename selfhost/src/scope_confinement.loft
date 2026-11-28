@@ -501,8 +501,10 @@ pub fn store_confinement(code: ir::Node, f: ir::Function, free_ref: integer, get
     if scope_fn::is_skip_free(f, local) || scope_fn::is_skip_free(f, vdb) || guard_escapes(code, local) {
       continue;
     }
-    // `Function::is_ref_home` is not in the image: `check` refuses a body with a stored
-    // reference wherever this answers a store (`stored_reference`).
+    // `@FR-H-RefHome` — a stored reference in an outer holder names a record of this store.
+    if scope_fn::is_ref_home(f, vdb) || scope_fn::is_ref_home(f, local) {
+      continue;
+    }
     multi_store = recovered || len(scope_fn::deps(f, local)) != 1;
     if multi_store && !confine_reassign_safe(code, local) {
       continue;

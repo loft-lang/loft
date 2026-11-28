@@ -1,0 +1,565 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/literal_host.rs` transcribed: `@FR-R-MoveLast`'s host clause, a record literal
+// whose vector field takes an owned local at its last use is built in that local's store
+// (`OpPlaceRecord(src, tp)` for its mint, `OpMoveVector` for the field's copy, and every free of
+// the literal `OpFreeRefIfDistinct(cur, owner)`).  `Function::is_ref_named` (a stored reference
+// naming a record of the store, the parser's `stored_reference_homes` fact) is not in the image:
+// where the program declares a `reference<T>` field (`Stores::has_reference_fields`, which that
+// analysis asks first) an admitted literal is refused by name.  Run by `check` on the settled
+// body, after `forward_result`, as Rust's is.
+
+use ir;
+use scope_fn;
+use binds;
+use ir_pass_tree;
+
+struct Ops {
+  database: integer,
+  get_field: integer,
+  append: integer,
+  free_ref: integer,
+  free_if_distinct: integer,
+  place: integer,
+  move_vec: integer,
+  // The ops that would take `cur` as an OWNER.
+  consuming: vector<integer>
+}
+
+fn ops_of(b: ir::Bundle) -> Ops? {
+  o = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    append: scope_fn::def_nr(b, "OpAppendVector"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    place: scope_fn::def_nr(b, "OpPlaceRecord"),
+    move_vec: scope_fn::def_nr(b, "OpMoveVector"),
+    consuming: [for n in ["OpFreeRefIfDistinct", "OpFreeRefIfDistinctBorrow", "OpMoveRecord", "OpMoveField", "OpMoveVector", "OpFreeRecordIn", "OpPlaceRecord", "OpEvacuate"] { scope_fn::def_nr(b, n) }]
+  };
+  if o.database < 0 || o.get_field < 0 || o.append < 0 || o.free_ref < 0 || o.free_if_distinct < 0 || o.place < 0 || o.move_vec < 0 {
+    return null;
+  }
+  o
+}
+
+// port: literal_host.rs struct Plan
+struct Plan {
+  cur: integer,
+  init: integer,
+  src: integer,
+  owner: integer,
+  tp: integer,
+  mint: integer,
+  mv: integer
+}
+
+fn disabled() -> boolean {
+  env_variable("LOFT_NO_LITERAL_HOST") != null
+}
+
+// port: literal_host.rs fn rewrite — every admitted literal of `d`.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if disabled() || !binds::is_loft_defined(d) {
+    return code;
+  }
+  o = ops_of(b);
+  if o == null {
+    return code;
+  }
+  plans = admitted(b, code, f, o!);
+  out = code;
+  for p in plans {
+    out = apply(out, p, o!);
+  }
+  out
+}
+
+// The refusal of a body with an admitted literal where a stored reference may name its stores,
+// "" for none.
+pub fn refusal(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
+  if disabled() || !binds::is_loft_defined(d) || !has_reference_fields(b) {
+    return "";
+  }
+  o = ops_of(b);
+  if o == null || len(admitted(b, code, f, o!)) == 0 {
+    return "";
+  }
+  "literal_host::rewrite: a literal built in a vector's store where a stored reference may name it (Function::is_ref_named, not in the image)"
+}
+
+// port: database/structures.rs fn has_reference_fields — some struct or variant declares a
+// `reference<T>` field (a stored reference with a target type).
+pub fn has_reference_fields(b: ir::Bundle) -> boolean {
+  for t in b.types {
+    fields: vector<ir::DbField> = [];
+    match t.parts[0] ?? ir::PtBase {
+      PtStruct { fields: fs } => { fields = fs; },
+      PtEnumValue { fields: fs } => { fields = fs; },
+      _ => {}
+    }
+    for fl in fields {
+      if fl.target != 65535 {
+        c = b.types[fl.content];
+        if c != null && (c!.parts[0] ?? ir::PtBase) is PtDbRef {
+          return true;
+        }
+      }
+    }
+  }
+  false
+}
+
+fn is_var(n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) { NdVar { n: x } => x == w, _ => false }
+}
+
+// port: literal_host.rs fn names_var
+fn names_var(n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == w,
+    NdSet { var } => var == w,
+    NdTupleGet { var } => var == w,
+    NdTuplePut { var } => var == w,
+    NdCallRef { var } => var == w,
+    NdFnRefDnr { n: x } => x == w,
+    NdIter { var } => var == w,
+    NdFnRef { var } => var == w,
+    _ => false
+  }
+}
+
+// port: literal_host.rs fn mentions
+fn mentions(n: ir::Node, w: integer) -> integer {
+  if n is NdSpan {
+    return mentions(scope_fn::unspan(n), w);
+  }
+  k = if names_var(n, w) { 1 } else { 0 };
+  for c in scope_fn::children(n) {
+    k += mentions(c, w);
+  }
+  k
+}
+
+// port: literal_host.rs fn rooted_at — a place rooted at the literal.
+fn rooted_at(n: ir::Node, cur: integer, o: Ops) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == cur,
+    NdCall { def_nr, args } => def_nr == o.get_field && len(args) > 0 && rooted_at(args[0]!, cur, o),
+    _ => false
+  }
+}
+
+// port: literal_host.rs fn frees — `OpFreeRef(w)` as a statement.
+fn frees(n: ir::Node, w: integer, o: Ops) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => def_nr == o.free_ref && len(args) == 1 && is_var(args[0]!, w),
+    _ => false
+  }
+}
+
+fn top_list(code: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(code) {
+    NdBlock { block } => block[0]!.operators,
+    _ => null
+  }
+}
+
+// port: literal_host.rs fn admitted
+fn admitted(b: ir::Bundle, code: ir::Node, f: ir::Function, o: Ops) -> vector<Plan> {
+  plans: vector<Plan> = [];
+  list = top_list(code);
+  if list == null {
+    return plans;
+  }
+  for at in 0..len(list!) {
+    c = candidate(f, list!, at, o);
+    if c == null {
+      continue;
+    }
+    if check(b, f, code, list!, c!, o) != "" {
+      continue;
+    }
+    dup = false;
+    for p in plans {
+      if p.cur == c!.cur || p.owner == c!.owner {
+        dup = true;
+      }
+    }
+    if !dup {
+      plans += [c!];
+    }
+  }
+  plans
+}
+
+// port: literal_host.rs fn candidate
+fn candidate(f: ir::Function, list: vector<ir::Node>, at: integer, o: Ops) -> Plan? {
+  cur = -1;
+  match scope_fn::unspan(list[at]!) {
+    NdSet { var, inner } => {
+      if !(scope_fn::unspan(inner) is NdNull) {
+        return null;
+      }
+      cur = var;
+    },
+    _ => { return null; }
+  }
+  t = scope_fn::tp(f, cur);
+  if scope_fn::is_argument(f, cur) || scope_fn::is_captured(f, cur) || t is TyOptional || !(scope_fn::base(t) is TyReference) {
+    return null;
+  }
+  i = at + 1;
+  while i < len(list) && scope_fn::unspan(list[i]!) is NdLine {
+    i += 1;
+  }
+  if i >= len(list) {
+    return null;
+  }
+  tp = -1;
+  match scope_fn::unspan(list[i]!) {
+    NdCall { def_nr, args } => {
+      if def_nr != o.database || len(args) != 2 {
+        return null;
+      }
+      w = match args[0]! { NdVar { n: x } => x, _ => -1 };
+      k = match args[1]! { NdInt { n: x } => x, _ => -1 };
+      if w < 0 || w != cur || args[1]! is NdSpan || !(args[1]! is NdInt) {
+        return null;
+      }
+      tp = k;
+    },
+    _ => { return null; }
+  }
+  mint = i;
+  i += 1;
+  while i < len(list) {
+    stop = true;
+    match scope_fn::unspan(list[i]!) {
+      NdCall { def_nr, args } => if len(args) > 0 && rooted_at(args[0]!, cur, o) {
+        stop = false;
+        if def_nr == o.append && len(args) > 1 {
+          field_of_cur = match scope_fn::unspan(args[0]!) {
+            NdCall { def_nr: g, args: ga } => g == o.get_field && len(ga) > 0 && is_var(ga[0]!, cur),
+            _ => false
+          };
+          src = match scope_fn::unspan(args[1]!) { NdVar { n: x } => x, _ => -1 };
+          if field_of_cur && src >= 0 {
+            owner = store_owner(f, src);
+            if owner >= 0 {
+              return Plan { cur: cur, init: at, src: src, owner: owner, tp: tp, mint: mint, mv: i };
+            }
+          }
+        }
+      },
+      _ => {}
+    }
+    if stop {
+      break;
+    }
+    i += 1;
+  }
+  null
+}
+
+// port: literal_host.rs fn store_owner — the local whose free releases `src`'s store, -1 for none.
+fn store_owner(f: ir::Function, src: integer) -> integer {
+  if !local(f, src) {
+    return -1;
+  }
+  t = scope_fn::tp(f, src);
+  if t is TyOptional || !(scope_fn::base(t) is TyVector) {
+    return -1;
+  }
+  ds = scope_fn::deps(f, src);
+  if len(ds) == 0 {
+    return src;
+  }
+  if len(ds) == 1 && local(f, ds[0]) && len(scope_fn::deps(f, ds[0])) == 0 {
+    return ds[0];
+  }
+  -1
+}
+
+fn local(f: ir::Function, v: integer) -> boolean {
+  v < scope_fn::count(f) && !scope_fn::is_argument(f, v) && !scope_fn::is_captured(f, v)
+}
+
+// port: variables/mod.rs fn views_of — the locals whose deps reach `roots`, transitively.
+fn views_of(f: ir::Function, roots: vector<integer>) -> vector<integer> {
+  reach: vector<integer> = [for r in roots { r }];
+  views: vector<integer> = [];
+  before = -1;
+  while len(views) != before {
+    before = len(views);
+    for w in 0..scope_fn::count(f) {
+      if scope_fn::has(reach, w) {
+        continue;
+      }
+      for d in scope_fn::deps(f, w) {
+        if scope_fn::has(reach, d) {
+          reach += [w];
+          views += [w];
+          break;
+        }
+      }
+    }
+  }
+  views
+}
+
+fn count_frees(n: ir::Node, w: integer, o: Ops) -> integer {
+  if n is NdSpan {
+    return count_frees(scope_fn::unspan(n), w, o);
+  }
+  k = if frees(n, w, o) { 1 } else { 0 };
+  for c in scope_fn::children(n) {
+    k += count_frees(c, w, o);
+  }
+  k
+}
+
+// port: literal_host.rs fn check — "" when admitted, else why not.  (`is_ref_named` is not in
+// the image: `refusal` covers it.)
+fn check(b: ir::Bundle, f: ir::Function, code: ir::Node, list: vector<ir::Node>, p: Plan, o: Ops) -> text {
+  views = views_of(f, [p.src, p.owner]);
+  for i in p.mv + 1..len(list) {
+    for w in views {
+      if mentions(list[i]!, w) > 0 {
+        return "a view of the vector is named after the move";
+      }
+    }
+  }
+  for i in p.mv + 1..len(list) {
+    s = list[i]!;
+    owner_frees = count_frees(s, p.owner, o);
+    named = mentions(s, p.src) + if p.src == p.owner { 0 } else { mentions(s, p.owner) };
+    if named != owner_frees {
+      return "the vector or its store's owner is named after the move";
+    }
+  }
+  if p.src != p.owner && count_frees(code, p.src, o) > 0 {
+    return "the vector is freed apart from its store's owner";
+  }
+  cx = Cx { o: o, cur: p.cur, inits: 0, mints: 0 };
+  why = scan_top(b, cx, code, p.mint);
+  if why != "" {
+    return why;
+  }
+  if cx.inits != 1 || cx.mints != 1 {
+    return "the literal is not bound once, by its null init and its mint";
+  }
+  pairing(code, list, p, o)
+}
+
+struct Cx {
+  o: Ops,
+  cur: integer,
+  inits: integer,
+  mints: integer
+}
+
+// `Cx::scan` of the whole body, the statement at `mint` of its top list being the mint.
+fn scan_top(b: ir::Bundle, cx: Cx, code: ir::Node, mint: integer) -> text {
+  u = scope_fn::unspan(code);
+  match u {
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      for i in 0..len(ops) {
+        why = scan(b, cx, ops[i]!, i == mint);
+        if why != "" {
+          return why;
+        }
+      }
+      ""
+    },
+    _ => scan(b, cx, code, false)
+  }
+}
+
+// port: literal_host.rs fn Cx::scan — every mention of `cur` is its null init, its mint, a free,
+// the receiver of a native op or a borrowed argument of a loft-defined call.
+fn scan(b: ir::Bundle, cx: Cx, n: ir::Node, is_mint: boolean) -> text {
+  node = scope_fn::unspan(n);
+  match node {
+    NdSet { var: w, inner: val } => {
+      if w == cx.cur {
+        if !(scope_fn::unspan(val) is NdNull) {
+          return "the literal is rebound";
+        }
+        cx.inits += 1;
+        return "";
+      }
+      if is_var(val, cx.cur) {
+        return "the literal is aliased, returned or dropped bare";
+      }
+    },
+    NdReturn { inner: val } => if is_var(val, cx.cur) { return "the literal is aliased, returned or dropped bare"; },
+    NdDrop { inner: val } => if is_var(val, cx.cur) { return "the literal is aliased, returned or dropped bare"; },
+    NdCall { def_nr, args } => return call(b, cx, def_nr, args, is_mint),
+    NdVar { n: x } => if x == cx.cur { return "the literal is named outside a receiver position"; },
+    _ => {}
+  }
+  if !(node is NdSet || node is NdReturn || node is NdDrop) && names_var(node, cx.cur) {
+    return "the literal is named outside a receiver position";
+  }
+  for c in scope_fn::children(node) {
+    why = scan(b, cx, c, false);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+// port: literal_host.rs fn Cx::call
+fn call(b: ir::Bundle, cx: Cx, d: integer, args: vector<ir::Node>, is_mint: boolean) -> text {
+  o = cx.o;
+  first_is = len(args) > 0 && is_var(args[0]!, cx.cur);
+  if d == o.database && first_is {
+    if is_mint {
+      cx.mints += 1;
+      return "";
+    }
+    return "the literal is minted twice";
+  }
+  if d == o.free_ref && first_is {
+    return "";
+  }
+  if scope_fn::has(o.consuming, d) {
+    for a in args {
+      if rooted_at(a, cx.cur, o) {
+        return "the literal is handed to an op that takes it as an owner";
+      }
+    }
+  }
+  def = b.data.definitions[d];
+  loft_defined = def != null && binds::is_loft_defined(def!);
+  for i in 0..len(args) {
+    a = args[i]!;
+    if is_var(a, cx.cur) {
+      if i == 0 || loft_defined {
+        continue;
+      }
+      return "the literal is an argument the op may keep";
+    }
+    why = scan(b, cx, a, false);
+    if why != "" {
+      return why;
+    }
+  }
+  ""
+}
+
+// port: literal_host.rs fn pairing
+fn pairing(code: ir::Node, list: vector<ir::Node>, p: Plan, o: Ops) -> text {
+  st = [0, 0, 0];  // seen_cur, seen_owner, bad
+  region = list[p.init..];
+  pair(region, p, o, st);
+  for s in region {
+    pair_walk(s, p, o, st);
+  }
+  if st[2] > 0 {
+    return "a free of the literal is not followed by its store owner's free";
+  }
+  if st[0] == 0 {
+    return "the literal is freed nowhere";
+  }
+  in_region = 0;
+  for s in region {
+    in_region += count_frees(s, p.owner, o);
+  }
+  if st[0] != count_frees(code, p.cur, o) || st[1] != in_region {
+    return "a free stands outside a statement list";
+  }
+  ""
+}
+
+fn pair(stmts: vector<ir::Node>, p: Plan, o: Ops, st: vector<integer>) {
+  pending = 0;
+  for s in stmts {
+    if frees(s, p.cur, o) {
+      pending += 1;
+      st[0] = st[0] + 1;
+    } else if frees(s, p.owner, o) {
+      st[1] = st[1] + 1;
+      if pending == 0 {
+        st[2] = 1;
+      } else {
+        pending -= 1;
+      }
+    }
+  }
+  if pending > 0 {
+    st[2] = 1;
+  }
+}
+
+fn pair_walk(n: ir::Node, p: Plan, o: Ops, st: vector<integer>) {
+  match n {
+    NdBlock { block } => pair(block[0]!.operators, p, o, st),
+    NdLoop { block } => pair(block[0]!.operators, p, o, st),
+    NdInsert { items } => pair(items, p, o, st),
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    pair_walk(c, p, o, st);
+  }
+}
+
+// port: literal_host.rs fn apply
+fn apply(code: ir::Node, p: Plan, o: Ops) -> ir::Node {
+  match code {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: apply(inner, p, o) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops: vector<ir::Node> = [];
+      for i in 0..len(bl.operators) {
+        op = bl.operators[i]!;
+        if i == p.mint {
+          op = in_span(op, ir::NdSet { var: p.cur, inner: ir::NdCall { def_nr: o.place, args: [ir::NdVar { n: p.src }, ir::NdInt { n: p.tp }] } });
+        } else if i == p.mv {
+          op = moved(op, o);
+        }
+        ops += [distinct_frees(op, p, o)];
+      }
+      ir::NdBlock { block: [ir_pass_tree::with_operators(bl, ops)] }
+    },
+    _ => code
+  }
+}
+
+// `node.unspan_mut()` replaced by `with`, the spans around it kept.
+fn in_span(n: ir::Node, with: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: in_span(inner, with) },
+    _ => with
+  }
+}
+
+// The field's copy at the move site, now a handle move.
+fn moved(n: ir::Node, o: Ops) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: moved(inner, o) },
+    NdCall { def_nr, args } => if def_nr == o.append { ir::NdCall { def_nr: o.move_vec, args: args } } else { n },
+    _ => n
+  }
+}
+
+// Every `OpFreeRef(cur)` becomes `OpFreeRefIfDistinct(cur, owner)`.
+fn distinct_frees(n: ir::Node, p: Plan, o: Ops) -> ir::Node {
+  m = n;
+  match n {
+    NdCall { def_nr, args } => if def_nr == o.free_ref && len(args) == 1 && is_var(args[0]!, p.cur) {
+      m = ir::NdCall { def_nr: o.free_if_distinct, args: [args[0]!, ir::NdVar { n: p.owner }] };
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { distinct_frees(c, p, o) }])
+}

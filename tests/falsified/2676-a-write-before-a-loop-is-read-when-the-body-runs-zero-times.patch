@@ -1,0 +1,54 @@
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 357f04828..b729c8b6c 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -717,10 +717,6 @@ pub struct Function {
+     loop_ord: u16,
+     loop_ord_of: HashMap<u16, u16>,
+     body_binds: HashMap<(u16, String), u16>,
+-    /// The dead-assignment lint's pending writes as each open loop found them (`start_loop`):
+-    /// a loop body may run zero times, so a write before the loop is never shown dead by one
+-    /// inside it, and the state comes back at `finish_loop` (loft#2676).
+-    loop_writes: Vec<Vec<(u16, (u32, u32), bool)>>,
+     pub(crate) current_loop: u16,
+     loops: Vec<Iterator>,
+     variables: Vec<Variable>,
+@@ -991,7 +987,6 @@ impl Function {
+             loop_ord: 0,
+             loop_ord_of: HashMap::new(),
+             body_binds: HashMap::new(),
+-            loop_writes: Vec::new(),
+             current_loop: u16::MAX,
+             loops: Vec::new(),
+             work_text: 0,
+@@ -1336,7 +1331,6 @@ impl Function {
+             loop_ord: 0,
+             loop_ord_of: other.loop_ord_of.clone(),
+             body_binds: other.body_binds.clone(),
+-            loop_writes: Vec::new(),
+             loops: other.loops.clone(),
+             variables: other.variables.clone(),
+             annotated: other.annotated.clone(),
+@@ -1416,12 +1410,6 @@ impl Function {
+             state_var: u16::MAX,
+         });
+         self.current_loop = self.loops.len() as u16 - 1;
+-        // loft#2676, `@F100` — the body may run zero times, so a write the loop's code makes
+-        // is never what shows a write before it dead: `hit = false; while … { hit = true; } hit`
+-        // reads the `false` on an empty run.  Every loop form opens here (`while`, `for`, a
+-        // comprehension), which is why the reset lives here and not at each of them.
+-        self.loop_writes.push(self.save_and_clear_write_state());
+-        self.clear_write_state();
+         self.current_loop
+     }
+ 
+@@ -1665,9 +1653,6 @@ impl Function {
+     pub fn finish_loop(&mut self, loop_nr: u16) {
+         assert_eq!(self.current_loop, loop_nr, "Incorrect loop finish");
+         self.current_loop = self.loops[self.current_loop as usize].inside;
+-        if let Some(writes) = self.loop_writes.pop() {
+-            self.restore_write_state(&writes);
+-        }
+     }
+ 
+     /// Register `count_var` as the `#count` of the loop whose iteration variable

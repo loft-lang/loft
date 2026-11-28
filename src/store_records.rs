@@ -944,13 +944,18 @@ enum Summary {
     /// Fresh on some paths, the record the i-th argument's slot names on others
     /// (`h.link ?? S { … }`).
     JoinSlot(u16, i32),
+    /// The hidden buffer (the first index) filled — a fresh store where the caller handed it
+    /// null — on some paths, the second argument's store on others: `if … { return P { … }; } p`
+    /// (loft#2677).  Read as `Unknown`, a dropped answer the callee minted was followed by
+    /// nothing, and its leak went unreported.
+    BufArg(u16, u16),
     /// Not followed.
     Unknown,
 }
 
 impl Summary {
     fn join(self, other: Summary) -> Summary {
-        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, JoinSlot, Slot, Unknown};
+        use Summary::{Arg, Args, Bottom, Buf, BufArg, Fresh, Join, JoinSlot, Slot, Unknown};
         let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
         // Every rule naming an argument index names ONE index on both sides (or collects them
         // in `Args`): the answer does not depend on the order the returns are met in.
@@ -966,6 +971,9 @@ impl Summary {
             (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
             (Fresh, Arg(i) | Buf(i) | Join(i)) | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
             (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
+            (Buf(b), Arg(a)) | (Arg(a), Buf(b)) if b != a && buf_arg_summary() => BufArg(b, a),
+            (BufArg(b, a), Buf(c)) | (Buf(c), BufArg(b, a)) if b == c => BufArg(b, a),
+            (BufArg(b, a), Arg(c)) | (Arg(c), BufArg(b, a)) if a == c => BufArg(b, a),
             (Fresh, Slot(i, o) | JoinSlot(i, o)) | (Slot(i, o) | JoinSlot(i, o), Fresh) => {
                 JoinSlot(i, o)
             }
@@ -975,6 +983,12 @@ impl Summary {
             _ => Unknown,
         }
     }
+}
+
+/// `LOFT_RECORDS_NO_BUF_ARG=1` reads a callee answering its buffer or an argument as `Unknown`
+/// again, as before loft#2677.
+fn buf_arg_summary() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BUF_ARG").is_some())
 }
 
 /// One record per creation site.
@@ -1157,6 +1171,9 @@ struct Run<'a> {
     /// The compiler temporaries the function frees with a plain `OpFreeRef` (a lift, a literal's
     /// work-ref): each still owns the record it holds, wherever a reference to it is written.
     freed_temps: BTreeSet<u16>,
+    /// The `par` loops being read, innermost last: the iterated vector and the worker, from
+    /// each `n_parallel_queue_ref` until its `n_parallel_buf_drop_ref` (`Run::par_row`).
+    par_sources: Vec<(Val, u32)>,
     /// A tuple literal met as a MEMBER of an enclosing tuple's value (the tail of a
     /// `tuple_member_move` block): its stores are that member's, not handed on.
     member_tuple: bool,
@@ -1250,9 +1267,14 @@ impl Run<'_> {
     fn read(st: &State, v: u16) -> Val {
         let pts = Self::pts(st, v);
         let single = pts.len() == 1;
+        // A key that joins a live generation and an ended one (`demote`) is correlated with a
+        // name the live part holds, and not with any other: a may-stale name reads the end.
         let corr = Self::stores_of(&pts)
             .into_iter()
-            .filter(|k| single || info_of(st, *k).live.contains(&v))
+            .filter(|k| {
+                let info = info_of(st, *k);
+                info.live.contains(&v) || (single && !(info.has(ENDED) && info.has(LIVE)))
+            })
             .collect();
         Val { pts, corr }
     }
@@ -1326,7 +1348,13 @@ impl Run<'_> {
                         a.insert(v);
                     }
                 }
-                if single && info.status & ENDED != 0 {
+                // Not where the value was read from a name the store's LIVE part holds: a key
+                // can join two generations of one site (a loop's re-mint demotes the live one
+                // onto an ended one), and an alias of the live name names the live record.
+                if single
+                    && info.status & ENDED != 0
+                    && !(info.status & LIVE != 0 && val.corr.contains(&k))
+                {
                     info.ended.insert(v);
                 }
                 // An alias made after the end points into it wherever it is ended.
@@ -1462,6 +1490,7 @@ fn run_fn<'a>(
         protected: Vec::new(),
         call_bracket: None,
         freed_temps: BTreeSet::new(),
+        par_sources: Vec::new(),
         member_tuple: false,
     };
     let body = def.code.clone();

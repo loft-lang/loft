@@ -681,10 +681,11 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       return ex(ir::NdCall { def_nr: pf, args: [ir::NdVar { n: fv }] }, el::def(e, pf).returned[0] ?? ir::TyUnknown { n: 0 });
     }
   }
-  if attr == "index" && arg == null && tp == null {
+  // (`x#next` likewise: a text walk's position past `x`, the loop's own `x#next`.)
+  if (attr == "index" || attr == "next") && arg == null && tp == null {
     lv = el_vars::var(vars, var);
     if lv >= 0 {
-      idx = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#index");
+      idx = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#{attr}");
       if idx >= 0 {
         el_vars::in_use(vars, idx, true);
         return ex(ir::NdVar { n: idx }, count_type(e));
@@ -699,13 +700,11 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
     while k >= 0 && vars.active_loops[k] != lv {
       k -= 1;
     }
-    if lv >= 0 && k >= 0 && vars.whiles == 0 {
-      out = len(vars.active_loops) - 1 - k;
+    if lv >= 0 && k >= 0 {
+      // (Every `while` opened inside the target loop is a level out too: `Function::loops_out`.)
+      inner_whiles = len([for wm in vars.while_marks if wm > k { 1 }]);
+      out = len(vars.active_loops) - 1 - k + inner_whiles;
       return ex(if attr == "break" { ir::NdBreak { n: out } } else { ir::NdContinue { n: out } }, ir::TyNever);
-    }
-    if vars.whiles > 0 {
-      el::refuse(e, "a `#break` or `#continue` with a `while` open");
-      return ex(ir::NdNull, ir::TyNever);
     }
   }
   // `x#remove` in a forward walk of a vector local: `OpRemove(x#index, v, on, row)` — `on` the
@@ -2104,8 +2103,9 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
   }
   // `(N-Join)` for a record: `S?` beside `S` joins to `S?`, borrowing what either arm does — a
   // literal arm's dep on the store it mints is no borrow (`arm_join_type`); each arm keeps its
-  // own type.
-  if (t.tp is TyOptional) != (f.tp is TyOptional) && struct_ref(e, el_types::base(t.tp)) >= 0 && struct_ref(e, el_types::base(t.tp)) == struct_ref(e, el_types::base(f.tp)) {
+  // own type.  (A struct enum the same: `E?` beside `E` is `E?`.)
+  same_enum = el_types::struct_enum_def(el_types::base(t.tp)) >= 0 && el_types::struct_enum_def(el_types::base(t.tp)) == el_types::struct_enum_def(el_types::base(f.tp)) && !is_nullable_wrapper(e, el_types::base(t.tp)) && !is_nullable_wrapper(e, el_types::base(f.tp)) && el_types::base(t.tp) is TyEnum && el_types::base(f.tp) is TyEnum;
+  if (t.tp is TyOptional) != (f.tp is TyOptional) && ((struct_ref(e, el_types::base(t.tp)) >= 0 && struct_ref(e, el_types::base(t.tp)) == struct_ref(e, el_types::base(f.tp))) || same_enum) {
     ds = outside_deps(e, t.code, el_types::deps(t.tp));
     fd = outside_deps(e, f.code, el_types::deps(f.tp));
     for x in fd {
@@ -2119,7 +2119,7 @@ pub fn if_expr(e: el::El, vars: el_vars::Vars, cond: integer, then: integer, oth
     joined = el_ir::v_if(c.code, t.code, fc);
     // An arm whose call answers a fresh record beside a borrowing one gets a home in this frame
     // (`own_joined_call_arms`).
-    if !e.first_pass && len(ds) > 0 && el_types::base(t.tp) is TyReference {
+    if !e.first_pass && len(ds) > 0 && (el_types::base(t.tp) is TyReference || same_enum) {
       joined = own_join_arm(e, vars, joined, jt);
     }
     return ex(joined, jt);
@@ -2705,6 +2705,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
   if kind == "return" {
     result = el::def(e, e.context).returned[0];
     if x == null {
+      // (A bare `return` from a function answering `τ?` answers `τ`'s null: `?? return` in a
+      // `-> integer?` is `return OpConvIntFromNull()`.)
+      if result is TyOptional {
+        rnl = el_convert::null_of(e, el_types::base(result));
+        if rnl != null {
+          return ex(ir::NdReturn { inner: rnl! }, ir::TyNever);
+        }
+      }
       if !(result is TyVoid) {
         el::refuse(e, "a `return` without a value from a function with one");
       }
@@ -3069,6 +3077,11 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         _ => {}
       }
     }
+    // (A void function returning a void call — `x ?? return note(0)` — runs the call and leaves:
+    // `return n_note(0)`.)
+    if result is TyVoid && v.tp is TyVoid {
+      return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+    }
     if (!el_ex_call::scalar(el_types::base(result)) && !scalar_tuple) || result is TyVoid {
       el::refuse(e, "a `return` with a value of this type: {type_kind(result)}");
       return ex(ir::NdNull, ir::TyNever);
@@ -3205,9 +3218,21 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
   if !e.first_pass && unrenamed && el_ex_deliver::fresh_literal_ref(x) >= 0 {
     return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
   }
+  // (A call through a function value answers a record of no buffer this frame knows: `ref_return`
+  // takes no decision at a `return` of one — `return f(4)` is handed up as it is.)
+  if el_ir::unspan(x) is NdCallRef {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
+  // (`ref_return`'s `ls` for a literal is empty: no promotion on the first pass, and none on the
+  // second where the tail renamed the buffer onto a local of its own (`r = mk(n); r`) — the
+  // literal is handed up from its work ref.)
+  if el_ex_deliver::fresh_literal_ref(x) >= 0 && (e.first_pass || (!unrenamed && (!starts_with(el_vars::name_of(vars, return_buffer(e, vars)), "__ref_") || e.view_renamed.contains(e.context)))) {
+    return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+  }
   // A buffer a chain renamed onto its work ref (`chain_return_buffer_var`) is still the
   // caller's: a literal is built into it as into `__retbuf`.
-  if !e.first_pass && !unrenamed && !el_ex_assign::returns_projection(e, vars.body) {
+  // (Not a buffer the tail's `MaterializeView` work ref took: there the literal keeps its own.)
+  if !e.first_pass && !unrenamed && !el_ex_assign::returns_projection(e, vars.body) && !e.view_renamed.contains(e.context) {
     cb = return_buffer(e, vars);
     if cb >= 0 && starts_with(el_vars::name_of(vars, cb), "__ref_") && !starts_with(el_vars::name_of(vars, cb), "__ref_p2_") {
       built = el_ex_deliver::object_into_buffer(e, vars, x, cb, result);
@@ -3242,6 +3267,19 @@ pub fn record_return(e: el::El, vars: el_vars::Vars, v: Ex, result: ir::TypeT) -
           w = vhr;
           chain = true;
           own_view = true;
+        } else if vhr >= 0 && (starts_with(el::def(e, def_nr).name, "n_") || starts_with(el::def(e, def_nr).name, "t_")) && len(vdeps) == 1 && vdeps[0]! != vhr && vdeps[0]! >= 0 && vdeps[0]! < len(vars.vars) {
+          // (…which the rename takes — a loft call with a buffer of its own, not a field read
+          // `p.b`: `ls = ["x"]`, the local renamed onto the buffer on the first pass and the call handed back as it stands, the result borrowing it — `MergeAttr`
+          // on the second.)
+          xl = vdeps[0]!;
+          xa = attr_nr(el::def(e, d), el_vars::name_of(vars, xl));
+          if e.first_pass && unrenamed && !el_expressions::buffer_bound(e) && !vars.vars[xl].argument && el_expressions::rename_candidate(e, vars, v.code, ir::NdVar { n: xl }) == xl {
+            w = xl;
+            own_view = true;
+          } else if !e.first_pass && xa >= 0 && el::def(e, d).attributes[xa].hidden {
+            w = xl;
+            own_view = true;
+          }
         }
       }
     },
@@ -3788,7 +3826,9 @@ pub fn all_hoistable(e: el::El, l: vector<ir::Node>) -> boolean {
 // A `τ?` result keeps the declared type, borrows and all (`chain_site_set_shape`'s `other`
 // arm); a record or a vector borrows `w`.
 pub fn buffer_chain(call: ir::Node, w: integer, result: ir::TypeT) -> ir::Node {
-  own = if (result is TyOptional) { result } else { el_types::with_deps(el_types::without_deps(el_types::base(result)), [w]) };
+  // (`chain_site_set_shape`: a record or a vector result is typed as borrowing `w`; any other —
+  // a `τ?`, a struct enum's `Type::Enum` — is the declared result as it stands.)
+  own = if result is TyReference || result is TyVector { el_types::with_deps(el_types::without_deps(result), [w]) } else { result };
   el_ir::v_block([el_ir::v_set(w, call), ir::NdVar { n: w }], own, "one_buffer_chain")
 }
 

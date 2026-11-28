@@ -13,6 +13,7 @@ use binds;
 use lower;
 use cgen::(Cx, request_twin);
 use cgen_w::*;
+use cgen_tables;
 use cgen_names;
 use cgen_types;
 use opt_names;
@@ -140,7 +141,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
       args += ["&{w}"];
       buffers += [w];
     } else if a.work_buffer {
-      args += ["loft_ref_null()"];
+      args += ["loft_ref_null(cx)"];
     } else if !(t is TyOptional) && heap_type(t) {
       if vec_buf >= 0 && ret == "ref" {
         uses_vec_buf = true;
@@ -150,7 +151,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
         rb_used = true;
         args += ["rb"];
       } else {
-        args += ["loft_ref_null()"];
+        args += ["loft_ref_null(cx)"];
       }
     } else {
       return "a function value {def.name} with a hidden {a.name} buffer";
@@ -183,7 +184,7 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
   if mask != 0 {
     request_twin(x, arm);
   }
-  call = "{cgen_names::twin_name(x.b, x.dups, arm)}({args.join(", ")})";
+  call = "{cgen_names::twin_name(x.b, x.dups, arm)}({cx_args(args)})";
   out += "    case INT64_C({d}): {{";
   for w in buffers {
     out += " loft_text {w} = {{ 0, 0, 0 }};";
@@ -192,11 +193,14 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
   // an older one at once (`opaque_callref_stmt`), so nothing is held for it.
   hold = ret == "ref" && len(def.returned) > 0 && heap_type(def.returned[0]!) && !buf;
   if hold {
-    out += " uint64_t sn = loft_stores_allocated;";
+    out += " uint64_t sn = cx->stores_allocated;";
   }
   vec_tp = if uses_vec_buf && ret == "ref" { vec_buf } else { -1 };
   if vec_tp >= 0 {
-    out += " loft_ref hb = loft_ref_null(); loft_database_wrapper(loft_types, &hb, {x.b.types[vec_tp]!.size}, {vec_tp});";
+    // The wrapper is made through the unit's type table, which a unit writes only for the
+    // types it registers: one whose only use of the table is this call wrote none.
+    cgen_tables::copy_type(x, vec_tp);
+    out += " loft_ref hb = loft_ref_null(cx); loft_database_wrapper(cx, loft_types, &hb, {x.b.types[vec_tp]!.size}, {vec_tp});";
   }
   if ret == "void" {
     out += " {call};";
@@ -204,13 +208,13 @@ fn dispatch_arm(x: Cx, d: integer, ret: text, buf: boolean, places: vector<boole
     out += " {held(ret)} r = {call};";
   }
   if vec_tp >= 0 {
-    out += " loft_fnref_buf(r, hb);";
+    out += " loft_fnref_buf(cx, r, hb);";
   }
   if hold {
-    out += " loft_fnref_mint(r, sn, f.clos);";
+    out += " loft_fnref_mint(cx, r, sn, f.clos);";
   }
   for w in buffers {
-    out += " loft_text_free(&{w});";
+    out += " loft_text_free(cx, &{w});";
   }
   out += if ret == "void" { " return; }}\n" } else { " return r; }}\n" };
   ""
@@ -236,6 +240,21 @@ pub fn dispatch_code(x: Cx, fns: vector<integer>) -> Dispatch {
   Dispatch { code: out, refused: "" }
 }
 
+// `upcall_shapes`: whether a hosted unit can hand a call of this signature back to the
+// interpreter — every parameter a plain value of a shape the bridge carries, and the answer too.
+fn upcall_shapes(ps: vector<SigParam>, ret: text) -> boolean {
+  for p in ps {
+    if p.mode != 0 || !carried(p.shape) {
+      return false;
+    }
+  }
+  ret == "void" || carried(ret)
+}
+
+fn carried(shape: text) -> boolean {
+  shape == "int" || shape == "float" || shape == "bool" || shape == "text" || shape == "ref"
+}
+
 // One dispatcher of signature `key` (number `id`), its `b` variant when `buf`; "" or a refusal.
 fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean, out: &text) -> text {
   {
@@ -249,7 +268,31 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
     if buf {
       list += ["loft_ref rb"];
     }
-    out += "\nstatic {held(ret)} loft_call{id}{if buf { "b" } else { "" }}({list.join(", ")}) {{\n    switch (f.d) {{\n";
+    // `@PLN206` — in a hosted unit, a function value the interpreter handed in names the
+    // program's function: the call goes back to the interpreter (`loft_up{id}`).
+    up = upcall_shapes(ps, ret);
+    if up && !buf {
+      proto: vector<text> = ["loft_fn f"];
+      for p in ps {
+        proto += ["{passed(p.shape)} a{p#index}"];
+      }
+      out += "\n#ifdef LOFT_HOSTED\nstatic {held(ret)} loft_up{id}(loft_cx *cx, {proto.join(", ")});\n#endif\n";
+    }
+    out += "\nstatic {held(ret)} loft_call{id}{if buf { "b" } else { "" }}({cx_params(list)}) {{\n";
+    // A hosted unit's value carries the interpreter's number: the unit's own function is found
+    // by it, any other is the program's, called in the interpreter.
+    out += "#ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(cx, f.d);\n";
+    if up {
+      args: vector<text> = ["f"];
+      for p in ps {
+        args += ["a{p#index}"];
+      }
+      // A record answer the interpreter made is the caller's, as an arm's minted one.
+      call = "loft_up{id}({cx_args(args)})";
+      body = if ret == "void" { "{call}; return;" } else if ret == "ref" && !buf { "uint64_t sn = cx->stores_allocated; loft_ref r = {call}; loft_fnref_mint(cx, r, sn, f.clos); return r;" } else { "return {call};" };
+      out += "    if (loft_ud < 0 && f.d >= 0 && f.d != LOFT_NULL) {{ {body} }}\n";
+    }
+    out += "    switch (loft_ud) {{\n#else\n    switch (f.d) {{\n#endif\n";
     want = linked_key(key);
     places: vector<boolean> = [for p in ps { p.mode == 2 }];
     for v in x.fn_values {
@@ -275,7 +318,7 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
     if ret == "void" {
       out += "}}\n";
     } else if ret == "text" {
-      out += "    return loft_text_own(loft_null_text());\n}}\n";
+      out += "    return loft_text_own(cx, loft_null_text(cx));\n}}\n";
     } else {
       out += "    {{ {held(ret)} r = {initial(ret)}; return r; }}\n}}\n";
     }
@@ -285,7 +328,9 @@ fn dispatcher(x: Cx, fns: vector<integer>, key: text, id: integer, buf: boolean,
 
 // `drop_code`: `loft_drop_closure`, a value's closure record released through its cascade.
 pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
-  out = "\nstatic void loft_drop_closure(loft_fn f) {{\n    if (!loft_store_live(f.clos)) return;\n    switch (f.d) {{\n";
+  // A hosted unit's value carries the interpreter's number; one the interpreter made has its
+  // closure released there.
+  out = "\nstatic void loft_drop_closure(loft_cx *cx, loft_fn f) {{\n    if (!loft_store_live(cx, f.clos)) return;\n#ifdef LOFT_HOSTED\n    int64_t loft_ud = loft_funit(cx, f.d);\n    if (loft_ud < 0) return; /* the interpreter's closure */\n    switch (loft_ud) {{\n#else\n    switch (f.d) {{\n#endif\n";
   for v in x.fn_values {
     if !v {
       continue;
@@ -293,7 +338,7 @@ pub fn drop_code(x: Cx, fns: vector<integer>) -> text {
     d = v#index;
     cascade = opt_names::drop_cascade_nr(x.b, x.b.data.definitions[d]!.closure_record);
     if cascade >= 0 && cascade < len(x.b.data.definitions) && writes(fns, cascade) {
-      out += "    case INT64_C({d}): {cgen_names::c_name(x.b, x.dups, cascade)}(f.clos); return;\n";
+      out += "    case INT64_C({d}): {cgen_names::c_name(x.b, x.dups, cascade)}(cx, f.clos); return;\n";
     }
   }
   out + "    default:\n        return;\n    }}\n}}\n"

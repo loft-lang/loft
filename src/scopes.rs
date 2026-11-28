@@ -332,6 +332,11 @@ struct Scopes<'s> {
     /// backing (`x = OpGetField(__vdb_N, …)`) or a call's buffer (`x = f(…, __ref_N)`).  Their
     /// stores are theirs to release (`scan_set`'s transition free declines on them).
     view_temps: HashMap<u16, Vec<u16>>,
+    /// Per local adopting two or more record CONSTRUCTIONS (`lt = TyVoid; if c { lt = TyRef {…} }`):
+    /// their work-refs, any of which the local's store may be.  A rebind that releases the store
+    /// it displaces disarms whichever work-ref names it, so the frame's exit does not release it
+    /// again (`@FR-H-FreeTwice`, loft#2680) — as the scan does itself where it can name the one.
+    construction_temps: HashMap<u16, Vec<u16>>,
     /// The `__fkeep_N` snapshot `closure_keep_rebind` took of the fn-ref the statement being
     /// scanned rebinds, if any — for the rebuild release in `scan_set` to retire.
     pending_fkeep: Option<u16>,

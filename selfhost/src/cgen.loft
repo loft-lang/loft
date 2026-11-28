@@ -36,6 +36,8 @@ use cgen_clibs;
 use cgen_tables;
 use opt_destination;
 use opt_version;
+use opt_decode_view;
+use opt_decode_structure;
 
 // A unit, or why it was not written (`refused` is empty for a written unit).
 pub struct Unit {
@@ -50,9 +52,14 @@ fn refuse(why: text) -> Unit {
 // The call-depth cap both other backends enforce (`limits::MAX_CALL_DEPTH`).
 MAX_CALL_DEPTH = 10000;
 
+// The line a stack overflow prints after its message (`runtime_error::STACK_OVERFLOW_HELP`),
+// stated in the unit so the runtime holds no copy of it.
+pub STACK_OVERFLOW_HELP = "help: a call that is the last thing its function does runs as a loop and needs no frame; a walk over deep data keeps the work still to do in a vector and loops over it";
+
 // Where a unit's runtime starts: gcc and clang are told not to report an unused helper of the
-// runtime, a library every unit carries whole.
-RUNTIME_START = "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#endif\n";
+// runtime, a library every unit carries whole, nor a helper that takes the store context first
+// without reading it, nor a piece of the runtime's state whose only reader the unit does not call.
+RUNTIME_START = "#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic push\n#pragma GCC diagnostic ignored \"-Wunused-function\"\n#pragma GCC diagnostic ignored \"-Wunused-parameter\"\n#pragma GCC diagnostic ignored \"-Wunused-variable\"\n#endif\n";
 
 // Where it ends; the program's own functions after it are reported.
 pub RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)\n#pragma GCC diagnostic pop\n#endif\n";
@@ -61,7 +68,7 @@ pub RUNTIME_END = "\n#if defined(__GNUC__) && !defined(LOFT_LINT_RUNTIME_UNUSED)
 // order `RUNTIME` holds them in src/c/mod.rs.  Null where one cannot be read, named in `missing`.
 pub fn runtime(dir: text, missing: &text) -> text? {
   out = "";
-  for name in ["loft_width.h", "loft_cc.h", "loft_cx.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h"] {
+  for name in ["loft_os.h", "loft_width.h", "loft_cc.h", "loft_cx.h", "loft_text.h", "loft_store.h", "loft_rt.h", "loft_keys.h", "loft_hash.h", "loft_btree.h", "loft_radix.h", "loft_radix_walk.h", "loft_radix_db.h", "loft_image.h", "loft_paged.h", "loft_radix_walk.h", "loft_paged_load.h", "loft_keyed.h", "loft_par_move.h", "loft_json.h", "loft_parse.h", "loft_upgrade.h", "loft_reflect.h", "loft_io.h", "loft_host_io.h", "loft_deliver_web.h", "loft_web_page.h", "loft_log.h", "loft_lazy.h", "loft_sock.h", "loft_https.h", "loft_net.h", "loft_process.h", "loft_mapped.h", "loft_engine.h", "loft_ledger.h"] {
     part = file("{dir}/{name}").content();
     if part == null {
       missing = "{dir}/{name}";
@@ -204,6 +211,25 @@ pub struct Cx {
   pub sql_plans: vector<boolean>,
   // The types a `deliver` walks (`Cx::deliver_types`), per type number: one `loft_dlv{tp}`.
   pub delivers: vector<boolean>,
+  // A page's deliveries (`Cx::deliver_descs`, `deliver_flats`), per type number: the descriptor
+  // JSON ("" none), and whether the type has a flatten walker with its body.
+  pub dlv_descs: vector<text>,
+  pub dlv_flat: vector<boolean>,
+  pub dlv_flats: vector<text>,
+  // The roots a fault site, a frame and a line mark name a source from (`Cx::source_roots`,
+  // `Data::source_roots`): the program's directory and the standard library's.
+  pub main_dir: text,
+  pub std_dir: text,
+  // Each type's part of a C name (`Cx::type_ident`), by type number.
+  pub tids: vector<text>,
+  // Each constant's part of a C name (`Cx::const_ident`), by definition number.
+  pub cids: vector<text>,
+  // Per definition: is it on a call cycle (`Cx::on_cycle`)?  0 not asked, 1 no, 2 yes.
+  pub cycles: vector<integer>,
+  // `@FR-R-DecodeView`: the view clause's plan and the structure clause's (`Cx::dv_plan`,
+  // `Cx::ps_plan`), asked once.
+  pub dv: opt_decode_view::DvPlan,
+  pub ps: opt_decode_structure::PsPlan,
 }
 
 pub fn new_cx(b: ir::Bundle) -> Cx {
@@ -254,6 +280,16 @@ pub fn new_cx(b: ir::Bundle) -> Cx {
     lazy_fetchers: 0,
     sql_plans: [for _ in 0..len(b.types) { false }],
     delivers: [for _ in 0..len(b.types) { false }],
+    dlv_descs: [for _ in 0..len(b.types) { "" }],
+    dlv_flat: [for _ in 0..len(b.types) { false }],
+    dlv_flats: [for _ in 0..len(b.types) { "" }],
+    main_dir: cgen_names::program_dir(cgen_names::main_file(b)),
+    std_dir: cgen_names::std_dir(b),
+    tids: cgen_names::type_idents(b),
+    cycles: [for _ in 0..len(b.data.definitions) { 0 }],
+    cids: cgen_names::const_idents(b),
+    dv: opt_decode_view::no_plan(),
+    ps: opt_decode_structure::no_plan(),
   }
 }
 
@@ -280,7 +316,7 @@ fn empty_body(code: vector<ir::Node>) -> boolean {
 // The unit's defines (`unit_defines`) for a unit that reaches nothing but an empty `main`: no
 // locked store, no thread, none of the optional runtimes.
 fn unit_defines() -> text {
-  "#define LOFT_NO_LOCKS 1\n#define LOFT_NO_THREADS 1\n#define LOFT_MAX_CALL_DEPTH {MAX_CALL_DEPTH}\n"
+  "#define LOFT_NO_LOCKS 1\n#define LOFT_NO_THREADS 1\n#define LOFT_MAX_CALL_DEPTH {MAX_CALL_DEPTH}\n#define LOFT_STACK_OVERFLOW_HELP \"{STACK_OVERFLOW_HELP}\"\n"
 }
 
 // Always written (`Cx::type_name_table`): the heap ceiling's report names a type by it too.
@@ -303,27 +339,46 @@ fn bind_tables() -> text {
 // A function with no parameter, no answer and no statement (`function` + `framed`): the body
 // always inlined into its frame wrapper, the wrapper declared inline.  Answers the two
 // declarations and the two definitions.
-fn empty_function(d: ir::Definition, decls: &text, bodies: &text) {
+fn empty_function(b: ir::Bundle, d: ir::Definition, decls: &text, bodies: &text) {
   name = d.name;
-  decls += "LOFT_HOT_INLINE void {name}__fr(void);\nstatic inline void {name}(void);\n";
-  bodies += "\nLOFT_HOT_INLINE void {name}__fr(void) {{\n}}\n";
-  bodies += "\nstatic inline void {name}(void) {{\n    loft_frame_push({c_string(original_name(d))}, {c_string(d.position.file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr();\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop();\n}}\n";
+  file = cgen_names::name_from(d.position.file, cgen_names::program_dir(cgen_names::main_file(b)), cgen_names::std_dir(b));
+  decls += "LOFT_HOT_INLINE void {name}__fr(loft_cx *cx);\nstatic inline void {name}(loft_cx *cx);\n";
+  bodies += "\nLOFT_HOT_INLINE void {name}__fr(loft_cx *cx) {{\n}}\n";
+  bodies += "\nstatic inline void {name}(loft_cx *cx) {{\n    loft_frame_push(cx, {c_string(original_name(d))}, {c_string(file)}, {d.position.line});\n    LOFT_HOLD_MARK(hm);\n    {name}__fr(cx);\n    LOFT_HOLD_BACK(hm);\n    loft_frame_pop(cx);\n}}\n";
+}
+
+// `on_call_cycle`: whether `d`'s calls reach `d` again.  Such a body keeps its wrapper's hint
+// and no more: forced inline, its own call through the wrapper is a cycle of forced inlining,
+// which gcc 16 at -O3 compiled wrong on Windows.
+pub fn on_call_cycle(x: Cx, d: integer) -> boolean {
+  known = x.cycles[d] ?? 0;
+  if known == 0 {
+    known = if opt_frame_calls::reaches_itself(x.b, d) { 2 } else { 1 };
+    x.cycles[d] = known;
+  }
+  known == 2
+}
+
+// The part of a C name that stands for constant `d` (`Cx::const_ident`).
+pub fn const_ident(x: Cx, d: integer) -> text {
+  c = x.cids[d] ?? "";
+  if c == "" { "{d}" } else { c }
+}
+
+// The part of a C name that stands for type `tp` (`Cx::type_ident`).
+pub fn type_ident(x: Cx, tp: integer) -> text {
+  x.tids[tp] ?? "{tp}"
+}
+
+// The name a fault site, a frame and a line mark give source `file` (`source_name::name`):
+// from its root, never from where the unit was built, so a unit is the same text wherever it
+// is built.  The standard library's files under `default/`, the program's from its directory,
+// a package's from the directory that holds the package, anything else by its file name.
+pub fn source_name(x: Cx, file: text) -> text {
+  cgen_names::name_from(file, x.main_dir, x.std_dir)
 }
 
 // The number of the definition named `name`, -1 for none.
-// `Data::def_nr("n_main")` (`get_or_std`): the program's own `main` — the definition of that
-// name in the program's source — before one of the same name elsewhere (a library's).
-fn main_index(b: ir::Bundle) -> integer {
-  found = -1;
-  for d in b.data.definitions {
-    if d.name == "n_main" && (found < 0 || d.source == b.data.source) {
-      if found < 0 || b.data.definitions[found]!.source != b.data.source {
-        found = d#index;
-      }
-    }
-  }
-  found
-}
 
 // `test_functions`: the program's tests, the way `loft --tests` picks them — its own
 // zero-parameter functions (`MAIN_SOURCE`, not compiler-written, no iterator result), only the
@@ -358,7 +413,7 @@ pub fn test_functions(b: ir::Bundle) -> vector<integer> {
 
 // The roots of the program's unit: its `main`, or — a program without one — its tests.
 pub fn unit_roots(b: ir::Bundle) -> vector<integer> {
-  mi = main_index(b);
+  mi = cgen_names::main_index(b);
   if mi >= 0 { [mi] } else { test_functions(b) }
 }
 
@@ -377,7 +432,7 @@ fn def_index(b: ir::Bundle, name: text) -> integer {
 // statement has none, so what is carried today is the same text in both forms, and the form
 // becomes a parameter with the first statement written.
 pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
-  mi = main_index(b);
+  mi = cgen_names::main_index(b);
   main = if mi < 0 { null } else { b.data.definitions[mi] };
   if main == null {
     return refuse("no main: the tests' unit");
@@ -387,18 +442,26 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
   // The program's `main` by its C name: a name two definitions share is spelt apart
   // (`c_name`'s `_m<hash>`).
   main_c = cgen_names::c_name(b, cgen_names::duplicate_fn_names(b), mi);
-  call = "{main_c}();";
-  if len(main.attributes) > 0 {
-    a = main.attributes[0]!;
+  pre = "";
+  post = "";
+  args: vector<text> = [];
+  for a in main.attributes {
+    if a.hidden {
+      // A heap-returning `main`'s return buffer (`program_main`'s hidden parameters).
+      return refuse("main: a main that returns a value through a buffer");
+    }
     takes_texts = match binds::base(a.typedef[0] ?? ir::TyVoid) {
       TyVector { inner, dep: _ } => binds::base(inner) is TyText,
       _ => false,
     };
-    if len(main.attributes) != 1 || a.hidden || !takes_texts {
+    if !takes_texts {
       return refuse("main: a main that takes arguments other than `vector<text>`");
     }
-    call = "{{ loft_ref loft_main_args = loft_arguments(); {main_c}(loft_main_args); loft_free_ref(loft_main_args); }}";
+    pre += "loft_ref loft_main_args = loft_arguments(cx); ";
+    args += ["loft_main_args"];
+    post += "loft_free_ref(cx, loft_main_args); ";
   }
+  call = "{{ {pre}{main_c}({cgen_w::cx_args(args)}); {post}}}";
   if !empty_body(main.code) {
     // U-1: the unit of every function `main` reaches (`emit_unit_for`).
     a = cgen_unit::assemble(b, mi, cgen_clibs::tables(b), type_name_table(b.types), MAX_CALL_DEPTH);
@@ -415,16 +478,16 @@ pub fn emit_program(b: ir::Bundle, runtime_text: text) -> Unit {
     }
     unit = "{a.defines}{RUNTIME_START}{cgen_split::above_define()}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit("{a.written}{bind}")}";
     anchor = if load::program_relative(b) { 1 } else { 0 };
-    unit += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {call}\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+    unit += "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    loft_set_anchor(cx, {anchor});\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n";
     return Unit { code: cgen_tidy::drop_unnamed(unit, RUNTIME_END), refused: "" };
   }
   decls = "";
   bodies = "";
-  empty_function(main, decls, bodies);
-  written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(void) {{\n}}\n{decls}{bodies}{bind_tables()}";
+  empty_function(b, main, decls, bodies);
+  written = "{cgen_clibs::tables(b)}{type_name_table(b.types)}static void loft_init(loft_cx *cx) {{\n}}\n{decls}{bodies}{bind_tables()}";
   out = "{unit_defines()}{RUNTIME_START}{cgen_split::above_define()}{runtime_text}{RUNTIME_END}{cgen_tidy::tidy_unit(written)}";
   anchor = if load::program_relative(b) { 1 } else { 0 };
-  out += "\nint main(int argc, char **argv) {{\n    loft_bind_tables();\n    loft_start(argc, argv);\n    loft_set_anchor({anchor});\n    {main_c}();\n    loft_leak_report();\n    return loft_had_fatal;\n}}\n";
+  out += "\nint main(int argc, char **argv) {{\n    loft_cx *cx = &loft_main_cx;\n    loft_bind_tables();\n    loft_start(cx, argc, argv);\n    loft_set_anchor(cx, {anchor});\n    {call}\n    loft_leak_report(cx);\n    return loft_fatal_status(cx);\n}}\n";
   // The finished program names what it uses: what nothing names is not written.
   Unit { code: cgen_tidy::drop_unnamed(out, RUNTIME_END), refused: "" }
 }
@@ -495,7 +558,7 @@ pub fn layer(b: ir::Bundle, name: text) -> text? {
   if name == "tables" {
     // `LOFT_TRACE_TABLES`: the unit's type tables as its bodies registered them — for a unit
     // this generator writes whole.
-    root = main_index(b);
+    root = cgen_names::main_index(b);
     if root < 0 {
       return "";
     }

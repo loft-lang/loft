@@ -586,6 +586,9 @@ pub fn fill_instance(e: el::El, d: integer, g: integer, h: integer, bound: ir::T
   e.b.data.definitions[d].code = [code];
   // `fill_monomorph_body`'s tail: the text-return promotion the template took none of.
   promote_monomorph_text_return(e, d);
+  // …and its vector twin (`@FR-F-Ret` / `@FR-B-Copy`): a `-> T` that hands a vector argument up
+  // returns a copy of it.
+  promote_monomorph_vector_return(e, d);
   // `derive_monomorph_return_deps`: a text or record result every return of which is a bare
   // parameter borrows that parameter, by its attribute number (`-> text["x"]`, `-> P["x"]`).
   rt = el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid);
@@ -1087,7 +1090,9 @@ pub fn instance_preallocs(e: el::El, vars: el_vars::Vars, n: ir::Node) -> ir::No
     NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: instance_preallocs(e, vars, inner) },
     NdCall { def_nr, args } => {
       a2: vector<ir::Node> = [for a in args { instance_preallocs(e, vars, a) }];
-      if el::def(e, def_nr).name == "OpPreAllocVector" && len(a2) == 3 && a2[2]! is NdInt {
+      // (…and a `reserve` over a `vector<T>`, whose claim the template could not size —
+      // Rust's `TV_RESERVE`, lowered per instance at the bound element's width.)
+      if (el::def(e, def_nr).name == "OpPreAllocVector" || el::def(e, def_nr).name == "OpReserveVector") && len(a2) == 3 && a2[2]! is NdInt {
         match a2[0]! {
           NdVar { n: pv } => {
             match el_types::base(el_vars::tp(vars, pv)) {
@@ -1250,6 +1255,149 @@ pub fn promote_monomorph_text_return(e: el::El, d: integer) {
   e.context = ctx;
   e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
   e.b.data.definitions[d].variables = el_vars::stored(vars);
+  if !e.tret_instances.contains(d) {
+    e.tret_instances += [d];
+  }
+}
+
+// port: control.rs promote_monomorph_vector_return — the copy of each vector PARAMETER the
+// body hands back (`yields_var`) into one `___ret_copy_N` of the instance's own,
+// `OpReplaceVector(copy, p, <the append's element row>)` where it is answered, and of each other
+// vector local answered there; the tail blocks typed as the owned vector.  The borrowed-parameter
+// verdict (`return_ownership`) and the rebind of a `T`-typed local (`rewrite_generic_vector_binds`)
+// are not carried.
+pub fn promote_monomorph_vector_return(e: el::El, d: integer) {
+  code = el::def(e, d).code[0] ?? ir::NdNull;
+  bl = match code {
+    NdBlock { block } => block[0],
+    _ => {
+      return;
+    }
+  };
+  vars = el_vars::load(el::def(e, d).variables);
+  yielded: vector<integer> = [];
+  for a in el::def(e, d).attributes {
+    ai = a#index;
+    if !a.hidden && ai < len(vars.vars) && vars.vars[ai].argument && el_types::base(el_vars::tp(vars, ai)) is TyVector && yields_var(bl.operators, ai) {
+      yielded += [ai];
+    }
+  }
+  if len(yielded) == 0 {
+    return;
+  }
+  elm = match el_types::base(el_vars::tp(vars, yielded[0]!)) { TyVector { inner } => inner, _ => ir::TyVoid };
+  owned = ir::TyVector { inner: elm, dep: [] };
+  ctx = e.context;
+  e.context = d;
+  copy = el_vars::create_unique(vars, "__ret_copy", owned);
+  el_vars::set_defined(vars, copy);
+  rec = el_ex_vector::append_row(e, elm);
+  ops: vector<ir::Node> = [for o0 in bl.operators { o0 }];
+  for p in yielded {
+    ops = copy_pass(e, vars, ops, p, yielded, copy, rec, false, owned);
+  }
+  ops = copy_pass(e, vars, ops, -1, yielded, copy, rec, true, owned);
+  bl.operators = [el_ir::v_set(copy, ir::NdNull)] + ops;
+  bl.result = [owned];
+  e.context = ctx;
+  e.b.data.definitions[d].code = [ir::NdBlock { block: [bl] }];
+  e.b.data.definitions[d].variables = el_vars::stored(vars);
+}
+
+// One pass over the body's ops (each not at the tail), then the last op again as the tail.
+fn copy_pass(e: el::El, vars: el_vars::Vars, ops: vector<ir::Node>, x: integer, params: vector<integer>, copy: integer, rec: integer, other: boolean, owned: ir::TypeT) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for o in ops {
+    out += [copy_returned_into(e, vars, o, x, params, copy, rec, false, other, owned)];
+  }
+  if len(out) > 0 {
+    last = copy_returned_into(e, vars, out[len(out) - 1]!, x, params, copy, rec, true, other, owned);
+    out = out[0..len(out) - 1] + [last];
+  }
+  out
+}
+
+// `yields_var`: is `x` answered at a tail position of `ops` (a `return x`, or `x` last)?
+pub fn yields_var(ops: vector<ir::Node>, x: integer) -> boolean {
+  for o in ops {
+    if yields_leaf(o, x, o#index == len(ops) - 1) {
+      return true;
+    }
+  }
+  false
+}
+
+fn yields_leaf(n: ir::Node, x: integer, tail: boolean) -> boolean {
+  match el_ir::unspan(n) {
+    NdReturn { inner } => yields_leaf(inner, x, true),
+    NdVar { n: y } => tail && y == x,
+    NdIf { cond: _, t, f } => yields_leaf(t, x, tail) || yields_leaf(f, x, tail),
+    NdBlock { block } => { for o in block[0].operators { if yields_leaf(o, x, tail && o#index == len(block[0].operators) - 1) { return true; } } false },
+    NdLoop { block } => { for o in block[0].operators { if yields_leaf(o, x, tail && o#index == len(block[0].operators) - 1) { return true; } } false },
+    NdInsert { items } => { for o in items { if yields_leaf(o, x, tail && o#index == len(items) - 1) { return true; } } false },
+    _ => false
+  }
+}
+
+// `copy_returned_var_into` (`other` false: the parameter `x`) and `copy_other_returned_locals`
+// (`other` true: any vector local but the copy, the yielded parameters and the arguments).
+fn copy_returned_into(e: el::El, vars: el_vars::Vars, n: ir::Node, x: integer, params: vector<integer>, copy: integer, rec: integer, tail: boolean, other: boolean, owned: ir::TypeT) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: copy_returned_into(e, vars, inner, x, params, copy, rec, tail, other, owned) },
+    NdReturn { inner } => {
+      y = match el_ir::unspan(inner) { NdVar { n: yv } => yv, _ => -1 };
+      if y >= 0 && returned_hit(vars, y, x, params, copy, other) {
+        return ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: copy }, ir::NdVar { n: y }, ir::NdInt { n: rec }]), ir::NdReturn { inner: ir::NdVar { n: copy } }] };
+      }
+      ir::NdReturn { inner: copy_returned_into(e, vars, inner, x, params, copy, rec, true, other, owned) }
+    },
+    NdVar { n: y } => {
+      if tail && returned_hit(vars, y, x, params, copy, other) {
+        return ir::NdInsert { items: [el_ir::cl(e, "OpReplaceVector", [ir::NdVar { n: copy }, ir::NdVar { n: y }, ir::NdInt { n: rec }]), ir::NdVar { n: copy }] };
+      }
+      n
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: copy_returned_into(e, vars, t, x, params, copy, rec, tail, other, owned), f: copy_returned_into(e, vars, f, x, params, copy, rec, tail, other, owned) },
+    NdBlock { block } => {
+      b = block[0]!;
+      bo: vector<ir::Node> = [];
+      for o in block[0].operators {
+        bo += [copy_returned_into(e, vars, o, x, params, copy, rec, tail && o#index == len(block[0].operators) - 1, other, owned)];
+      }
+      b.operators = bo;
+      if tail && !other {
+        b.result = [owned];
+      }
+      ir::NdBlock { block: [b] }
+    },
+    NdLoop { block } => {
+      b = block[0]!;
+      lo: vector<ir::Node> = [];
+      for o in block[0].operators {
+        lo += [copy_returned_into(e, vars, o, x, params, copy, rec, tail && o#index == len(block[0].operators) - 1, other, owned)];
+      }
+      b.operators = lo;
+      if tail && !other {
+        b.result = [owned];
+      }
+      ir::NdLoop { block: [b] }
+    },
+    NdInsert { items } => {
+      out: vector<ir::Node> = [];
+      for o in items {
+        out += [copy_returned_into(e, vars, o, x, params, copy, rec, tail && o#index == len(items) - 1, other, owned)];
+      }
+      ir::NdInsert { items: out }
+    },
+    _ => n
+  }
+}
+
+fn returned_hit(vars: el_vars::Vars, y: integer, x: integer, params: vector<integer>, copy: integer, other: boolean) -> boolean {
+  if !other {
+    return y == x;
+  }
+  y != copy && !params.contains(y) && y < len(vars.vars) && !vars.vars[y].argument && el_types::base(el_vars::tp(vars, y)) is TyVector
 }
 
 // port: control.rs early_text_return_orphans
@@ -1958,6 +2106,15 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
         continue;
       }
     }
+    // (…and so is a variable viewing a `vector<E?>` element slot, a `for e in v` loop
+    // variable: `enum_slot_view`'s variable branch, the slot's null test then the pointer.)
+    if !e.first_pass && at is TyOptional && pt is TyOptional && el_types::struct_enum_def(at) >= 0 && el_types::struct_enum_def(at) == el_types::struct_enum_def(pt) && el_ir::unspan(arg) is NdVar {
+      sr = el_ex_into::enum_slot_read(e, arg, at, vars);
+      if sr != arg {
+        conv += [sr];
+        continue;
+      }
+    }
     // `convert`'s tagged arm (`@FR-L-Null-Tag`, loft#1138): a `__nullable<S>` slot handed to an
     // `S?` parameter is read through its tag, so absence arrives as the reference null.
     if is_nullable_wrapper(e, at) && pt is TyOptional && struct_ref(e, el_types::base(pt)) == el_ex_into::nullable_payload(e, el_types::struct_enum_def(at)) {
@@ -2180,10 +2337,6 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   for i in el_types::deps(el_types::base(ret)) {
     if i < visible && !e.first_pass {
       pborrow = true;
-      if !(i < len(list) && el_ir::unspan(list[i]!) is NdVar) {
-        el::refuse(e, "a call whose vector result borrows a parameter");
-        return null;
-      }
     }
   }
   nm = el_types::elem_name(e, inner);
@@ -2195,6 +2348,11 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   }
   buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
   el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
+  // (`add_defaults` registers the content's `vector<T>` / `main_vector<T>` with the buffer, where
+  // no earlier site made them: at the lexer's position, the token after the call's `)` read.)
+  if e.at >= 0 && el_schema::wants_vector_def(e, nm) {
+    el_schema::make_vector_def(e, inner, nm, el::pos_at(e, el::past_call(e, e.at)), true);
+  }
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
   // (`call_dependencies` on the first pass: a callee whose result borrows a parameter there —
@@ -2205,7 +2363,21 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
       if pi >= 0 && pi < visible && pi < len(list) {
         match el_ir::unspan(list[pi]!) {
           NdVar { n: pv } => { if !p1.contains(pv) { p1 += [pv]; } },
-          _ => {}
+          // (A temporary handed in borrows what it is built in — a literal's own store,
+          // `s: vector<integer>["__vdb_1"]?` — else the buffer handed alongside it.)
+          _ => {
+            if !e.first_pass {
+              tds = match el_ir::unspan(list[pi]!) { NdBlock { block: tab } => el_types::deps(tab[0].result[0] ?? ir::TyVoid), _ => [] };
+              if len(tds) == 0 {
+                tds = [buf];
+              }
+              for td in tds {
+                if !p1.contains(td) {
+                  p1 += [td];
+                }
+              }
+            }
+          }
         }
       } else if pi >= 0 && pi < len(el::def(e, d).attributes) && el::def(e, d).attributes[pi]!.hidden && !p1.contains(buf) {
         // (…and a callee whose result names its own buffer there answers a borrow of the one
@@ -2596,7 +2768,24 @@ pub fn plain_fmt() -> Fmt {
 pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> Fmt? {
   f = plain_fmt();
   i = from;
+  // (`@FR-F-Spec-Fill`, loft#2428: the spec is read character by character — a two-character
+  // token the lexer pairs (`=>`, `->`, `>>`) is a fill and a flag, or two flags, never one fill.)
   if i < to {
+    sp2 = lex::spell(e.p.src[i]!);
+    if len(sp2) == 2 && !(sp2[0] >= 'a' && sp2[0] <= 'z') && !(sp2[0] >= '0' && sp2[0] <= '9') && sp2 != "}}" {
+      c0 = sp2[0];
+      c1 = sp2[1];
+      if !spec_flag(f, c0) {
+        f.pad = c0 as integer;
+      }
+      if !spec_flag(f, c1) {
+        el::refuse(e, "a format spec this port does not read: a width written as an expression");
+        return null;
+      }
+      i += 1;
+    }
+  }
+  if i < to && i == from {
     c = pad_char(e.p.src[i]!);
     if c >= 0 {
       f.pad = c;
@@ -2607,25 +2796,15 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
       i += 1;
     }
   }
+  // (Flags are read by their spelling: the lexer's split of a paired token, `>>`, is no `Gt`.)
   while i < to {
-    t = e.p.src[i]!;
-    if t is Lt {
-      f.dir = -1;
-    } else if t is Caret {
-      f.dir = 0;
-    } else if t is Gt {
-      f.dir = 1;
-    } else if t is Plus {
-      f.plus = true;
-    } else if t is Hash {
-      f.note = true;
-    } else if t is Dot {
-      f.float = true;
-    } else {
+    fsp = lex::spell(e.p.src[i]!);
+    if len(fsp) != 1 || !spec_flag(f, fsp[0]) {
       break;
     }
     i += 1;
   }
+  wstart = i;
   if i < to {
     match e.p.src[i]! {
       Int { v, zero } => {
@@ -2643,7 +2822,9 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
         i += 1;
       },
       Ident { name } => {
-        if radix_for(name) == null {
+        // (A name the width expression goes on past is read there, once.)
+        whole = i + 1 >= to || match e.p.src[i + 1]! { Ident { name: rn0 } => radix_for(rn0) != null, _ => false };
+        if radix_for(name) == null && whole {
           f.width = el_ex_name::name_expression(e, vars, name, "", false).code;
           i += 1;
         }
@@ -2663,11 +2844,138 @@ pub fn hole_spec(e: el::El, vars: el_vars::Vars, from: integer, to: integer) -> 
       _ => {}
     }
   }
+  // (A width written as an expression, `{vr:<2+3}` / `{vr:>w*2}`: Rust parses it as an integer
+  // expression, unfolded — `OpAddInt(2i32, 3i32)`.  Read here over the hole's tokens, a closing
+  // radix letter kept apart.)
+  if i < to {
+    wend = to;
+    match e.p.src[to - 1]! {
+      Ident { name: rn } => { if radix_for(rn) != null && to - 1 > i { wend = to - 1; } },
+      _ => {}
+    }
+    restart = i;
+    i = wstart;
+    wp = WidthParse { at: i, end: wend, ok: true };
+    wx = width_sum(e, vars, wp);
+    if wp.ok && wp.at == wend && wx != null {
+      f.width = wx!;
+      i = wend;
+      if i < to {
+        match e.p.src[i]! { Ident { name: rn2 } => { f.radix = radix_for(rn2) ?? f.radix; i += 1; }, _ => {} }
+      }
+    } else {
+      i = restart;
+    }
+  }
   if i < to {
     el::refuse(e, "a format spec this port does not read: a width written as an expression");
     return null;
   }
   f
+}
+
+// A width expression's cursor over the hole's tokens.
+struct WidthParse { at: integer, end: integer, ok: boolean }
+
+fn width_sum(e: el::El, vars: el_vars::Vars, w: WidthParse) -> ir::Node? {
+  l: ir::Node? = width_product(e, vars, w);
+  while l != null && w.ok && w.at < w.end {
+    op = lex::spell(e.p.src[w.at]!);
+    if op != "+" && op != "-" {
+      break;
+    }
+    w.at += 1;
+    r = width_product(e, vars, w);
+    if r == null {
+      w.ok = false;
+      return null;
+    }
+    lv = l!;
+    rv = r!;
+    nm = if op == "+" { "OpAddInt" } else { "OpMinInt" };
+    l = el_ir::cl(e, nm, [lv, rv]);
+  }
+  l
+}
+
+fn width_product(e: el::El, vars: el_vars::Vars, w: WidthParse) -> ir::Node? {
+  l: ir::Node? = width_atom(e, vars, w);
+  while l != null && w.ok && w.at < w.end {
+    op = lex::spell(e.p.src[w.at]!);
+    if op != "*" && op != "/" && op != "%" {
+      break;
+    }
+    w.at += 1;
+    r = width_atom(e, vars, w);
+    if r == null {
+      w.ok = false;
+      return null;
+    }
+    lv = l!;
+    rv = r!;
+    nm = if op == "*" { "OpMulInt" } else if op == "/" { "OpDivInt" } else { "OpRemInt" };
+    l = el_ir::cl(e, nm, [lv, rv]);
+  }
+  l
+}
+
+fn width_atom(e: el::El, vars: el_vars::Vars, w: WidthParse) -> ir::Node? {
+  if w.at >= w.end {
+    w.ok = false;
+    return null;
+  }
+  t = e.p.src[w.at]!;
+  match t {
+    Int { v } => { w.at += 1; return ir::NdInt { n: v }; },
+    Ident { name } => {
+      nx = el_ex_name::name_expression(e, vars, name, "", false);
+      if !(el_types::base(nx.tp) is TyInteger) && !el_types::is_unknown(nx.tp) {
+        w.ok = false;
+        return null;
+      }
+      w.at += 1;
+      // (Copied out of the call's answer before it is returned.)
+      nc: ir::Node = ir::NdVar { n: match el_ir::unspan(nx.code) { NdVar { n: nvn } => nvn, _ => -1 } };
+      if match el_ir::unspan(nx.code) { NdVar { n: _ } => false, _ => true } {
+        w.ok = false;
+        return null;
+      }
+      return nc;
+    },
+    _ => {}
+  }
+  if lex::spell(t) == "(" {
+    w.at += 1;
+    inner = width_sum(e, vars, w);
+    if inner == null || w.at >= w.end || lex::spell(e.p.src[w.at]!) != ")" {
+      w.ok = false;
+      return null;
+    }
+    w.at += 1;
+    return inner;
+  }
+  w.ok = false;
+  null
+}
+
+// A spec flag character applied to `f` — `<` `^` `>` the alignment, `+`, `#`, `.` — or false.
+fn spec_flag(f: Fmt, c: character) -> boolean {
+  if c == '<' {
+    f.dir = -1;
+  } else if c == '^' {
+    f.dir = 0;
+  } else if c == '>' {
+    f.dir = 1;
+  } else if c == '+' {
+    f.plus = true;
+  } else if c == '#' {
+    f.note = true;
+  } else if c == '.' {
+    f.float = true;
+  } else {
+    return false;
+  }
+  true
 }
 
 // The punctuation token that opens a spec pads the hole with its first byte — any but `SKIP_TOKEN`
@@ -2791,14 +3099,28 @@ pub fn append_data(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: 
 }
 
 // `append_data` under a spec; `stack`: a `&text` accumulator (a promoted return buffer) takes the
-// `OpFormatStack…` ops.  A width on a value that renders through no padded op (a character, a
-// record, a vector, an enum: `append_data`'s scratch-text composition) is refused by name.
+// `OpFormatStack…` ops.
 pub fn append_spec(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, var: integer, val: ir::Node, tp: ir::TypeT, stack: boolean, f: Fmt) {
   start = if stack { "OpFormatStack" } else { "OpFormat" };
   w = ir::NdVar { n: var };
   b = el_types::base(tp);
-  if f.width != ir::NdInt { n: 0 } && (b is TyCharacter || b is TyVector || b is TyReference || b is TyEnum) {
+  // `@FR-F-Spec` composed with `@FR-F-Render`: a width on a value that renders through no padded
+  // op (a character, a record, a vector, an enum) renders into a scratch work text with the
+  // padding removed, then that text is formatted with it — the second pass's composition.
+  // (A type variable's value is the instance's to compose — it pads at its bound type: refused.)
+  if f.width != ir::NdInt { n: 0 } && el_types::type_var(e, b) >= 0 {
     el::refuse(e, "a padded value of this type: {type_kind(b)}");
+    return;
+  }
+  if !e.first_pass && f.width != ir::NdInt { n: 0 } && (b is TyCharacter || b is TyVector || b is TyReference || b is TyEnum) {
+    wv = el_vars::work_text(vars);
+    inner = f;
+    inner.width = ir::NdInt { n: 0 };
+    inner.dir = plain_fmt().dir;
+    inner.pad = plain_fmt().pad;
+    list += [el_ir::v_set(wv, ir::NdText { s: "" })];
+    append_spec(e, vars, list, wv, val, tp, false, inner);
+    list += [format_text_as(e, start, w, ir::NdVar { n: wv }, f)];
     return;
   }
   db = (if f.note { 1 } else { 0 }) + (if f.radix < 0 { 2 } else { 0 });
@@ -3180,19 +3502,46 @@ pub fn statement_proofs(e: el::El, vars: el_vars::Vars, code: ir::Node) {
         if !p.then {
           push_nonzero(vars, p.v);
         }
+        sp = math_sign_proof(e, cond);
+        if !sp.then {
+          push_sign(vars, sp);
+        }
         push_bounds(vars, guard_pairs_negated(e, cond));
       }
     },
     NdCall { def_nr, args } => {
       if el::def(e, def_nr).name == "n_assert" && len(args) > 0 {
-        p = divisor_proof(e, args[0]);
-        if p.then {
-          push_nonzero(vars, p.v);
+        assert_proofs(e, vars, args[0]!);
+      }
+    },
+    // (The `"assert"` block a non-literal message lowers to: `if <test> <pass> else <fail>`.)
+    NdBlock { block } => {
+      if block[0].name == "assert" && len(block[0].operators) == 1 {
+        match el_ir::unspan(block[0].operators[0]!) {
+          NdIf { cond: ac } => { assert_proofs(e, vars, ac); },
+          _ => {}
         }
-        push_bounds(vars, guard_pairs(e, args[0]));
       }
     },
     _ => {}
+  }
+}
+
+// `@FR-N-Guard`: an `assert` proves its condition on the fall-through — a divisor non-zero, an
+// index in bounds, and a local present (`narrowings_from_condition`, where it holds).
+fn assert_proofs(e: el::El, vars: el_vars::Vars, test: ir::Node) {
+  p = divisor_proof(e, test);
+  if p.then {
+    push_nonzero(vars, p.v);
+  }
+  sp = math_sign_proof(e, test);
+  if sp.then {
+    push_sign(vars, sp);
+  }
+  push_bounds(vars, guard_pairs(e, test));
+  pp = presence_proof(e, vars, test);
+  if pp.then {
+    push_present(vars, pp.v);
   }
 }
 
@@ -3416,6 +3765,51 @@ pub fn push_present(vars: el_vars::Vars, v: integer) {
   }
 }
 
+// `Parser::math_sign_proof_from_condition`: `0 < x` / `0 <= x` proves `x` positive / non-negative
+// where it holds; `x < 0` / `x <= 0` proves non-negative / positive where it fails.
+pub struct SignProof { pub v: integer, pub sign: integer, pub then: boolean }
+
+pub fn math_sign_proof(e: el::El, test: ir::Node) -> SignProof {
+  none = SignProof { v: -1, sign: 0, then: false };
+  match el_ir::unspan(test) {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      strict = starts_with(nm, "OpLt");
+      if !(strict || starts_with(nm, "OpLe")) || len(args) != 2 {
+        return none;
+      }
+      a0 = el_ir::unspan(args[0]);
+      a1 = el_ir::unspan(args[1] ?? ir::NdNull);
+      match a1 {
+        NdVar { n } => { if sign_zero(a0) { return SignProof { v: n, sign: if strict { el_ex_base::SIGN_POS } else { el_ex_base::SIGN_NONNEG }, then: true }; } },
+        _ => {}
+      }
+      match a0 {
+        NdVar { n } => { if sign_zero(a1) { return SignProof { v: n, sign: if strict { el_ex_base::SIGN_NONNEG } else { el_ex_base::SIGN_POS }, then: false }; } },
+        _ => {}
+      }
+      none
+    },
+    _ => none
+  }
+}
+
+// (The math proof's zero: an integer, a float or a single `0`.)
+fn sign_zero(n: ir::Node) -> boolean {
+  match n {
+    NdFloat { f } => f == 0.0,
+    NdSingle { f } => f == 0.0f,
+    _ => is_zero(n)
+  }
+}
+
+pub fn push_sign(vars: el_vars::Vars, p: SignProof) {
+  if p.v >= 0 && !vars.sign_vars.contains(p.v) {
+    vars.sign_vars += [p.v];
+    vars.sign_vals += [p.sign];
+  }
+}
+
 pub fn push_nonzero(vars: el_vars::Vars, v: integer) {
   if v >= 0 && !vars.nonzero.contains(v) {
     vars.nonzero += [v];
@@ -3423,7 +3817,7 @@ pub fn push_nonzero(vars: el_vars::Vars, v: integer) {
 }
 
 pub fn fact_mark(vars: el_vars::Vars) -> FactMark {
-  FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven), bounded: len(vars.bounded) }
+  FactMark { nonzero: len(vars.nonzero), present: len(vars.present), present_exprs: len(vars.present_exprs), proven: len(vars.proven), bounded: len(vars.bounded), signs: len(vars.sign_vars) }
 }
 
 // `Parser::assume_condition` (`@FR-N-Guard`): what `test` proves on its `side` (true: where it
@@ -3434,6 +3828,10 @@ pub fn assume_condition(e: el::El, vars: el_vars::Vars, test: ir::Node, side: bo
   dv = divisor_proof(e, test);
   if dv.then == side {
     push_nonzero(vars, dv.v);
+  }
+  sgp = math_sign_proof(e, test);
+  if sgp.then == side {
+    push_sign(vars, sgp);
   }
   pp = presence_proof(e, vars, test);
   if pp.then == side {
@@ -4042,7 +4440,10 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       el_ex_base::nullable_arith(e, plain, true)
     };
     absent = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [hv, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
-    return ex(el_ir::v_block([el_ir::v_set(ph, read), el_ir::v_if(el_ir::cl(e, "OpNot", [absent]), hv, d.code)], pt, "ncc"), pt);
+    // The join VIEWS the slot's root, so a call default gets its home in this frame
+    // (`join-arm-owner`, the call's own buffer reused: `materialise_owned_call`), a bind's too.
+    pdc = el_ex_null::own_join_arm(e, vars, d.code, pt);
+    return ex(el_ir::v_block([el_ir::v_set(ph, read), el_ir::v_if(el_ir::cl(e, "OpNot", [absent]), hv, pdc)], pt, "ncc"), pt);
   }
   if !match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
     el::refuse(e, "a struct-enum `??` on something other than a local or a loft call: {node_kind(e, x.code)}");

@@ -1,0 +1,545 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/compact.rs` transcribed: `@FR-R-Compact`, a vector rebuilt from a contiguous
+// run of its own elements is compacted in place behind an in-range guard
+// (`OpKeepVectorRange`), and `t += g; t += V; V = t` is one `OpPrependVector`.  The loop matcher
+// is `scope_byte_copy::match_loop` (Rust's `compact::match_loop`).  Run by `check` on the
+// settled body, after `copy_view`, as Rust's is.
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+use scope_byte_copy;
+
+struct Ops {
+  database: integer,
+  get_field: integer,
+  set_int4: integer,
+  pre_alloc: integer,
+  new_record: integer,
+  copy_record: integer,
+  finish_record: integer,
+  get_vector_nullable: integer,
+  conv_bool_from_ref: integer,
+  conv_bool_from_int: integer,
+  append_vector: integer,
+  clear_vector: integer,
+  free_ref: integer,
+  le_int: integer,
+  vector_len: integer,
+  length_vector: integer,
+  keep_range: integer,
+  prepend: integer,
+  not: integer,
+  loop_ops: scope_byte_copy::Ops
+}
+
+fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    set_int4: scope_fn::def_nr(b, "OpSetInt4"),
+    pre_alloc: scope_fn::def_nr(b, "OpPreAllocVector"),
+    new_record: scope_fn::def_nr(b, "OpNewRecord"),
+    copy_record: scope_fn::def_nr(b, "OpCopyRecord"),
+    finish_record: scope_fn::def_nr(b, "OpFinishRecord"),
+    get_vector_nullable: scope_fn::def_nr(b, "OpGetVectorNullable"),
+    conv_bool_from_ref: scope_fn::def_nr(b, "OpConvBoolFromRef"),
+    conv_bool_from_int: scope_fn::def_nr(b, "OpConvBoolFromInt"),
+    append_vector: scope_fn::def_nr(b, "OpAppendVector"),
+    clear_vector: scope_fn::def_nr(b, "OpClearVector"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    le_int: scope_fn::def_nr(b, "OpLeInt"),
+    vector_len: scope_fn::def_nr(b, "t_6vector_len"),
+    length_vector: scope_fn::def_nr(b, "OpLengthVector"),
+    keep_range: scope_fn::def_nr(b, "OpKeepVectorRange"),
+    prepend: scope_fn::def_nr(b, "OpPrependVector"),
+    not: scope_fn::def_nr(b, "OpNot"),
+    loop_ops: scope_byte_copy::ops_of(b)
+  }
+}
+
+// port: compact.rs fn rewrite — every admitted rebuild of a settled body.
+pub fn rewrite(b: ir::Bundle, code: ir::Node) -> ir::Node {
+  if env_variable("LOFT_NO_COMPACT") != null {
+    return code;
+  }
+  o = ops_of(b);
+  if o.append_vector < 0 || !any_call(code, o.append_vector) {
+    return code;
+  }
+  visit(code, o, code)
+}
+
+fn any_call(n: ir::Node, op: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == op { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if any_call(c, op) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: compact.rs fn visit
+fn visit(v: ir::Node, o: Ops, whole: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => {
+      u = scope_fn::unspan(inner);
+      if u is NdBlock || u is NdLoop || u is NdInsert {
+        return ir::NdSpan { pos: pos, inner: visit(inner, o, whole) };
+      }
+    },
+    NdBlock { block } => return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, visit_list(block[0]!.operators, o, whole))] },
+    NdLoop { block } => return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, visit_list(block[0]!.operators, o, whole))] },
+    NdInsert { items } => return ir::NdInsert { items: visit_list(items, o, whole) },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for c in kids { visit(c, o, whole) }])
+}
+
+// One significant statement: its index in the list and the statement.
+struct Sig {
+  at: integer,
+  v: ir::Node
+}
+
+// port: compact.rs fn significant — the statements but the line marks and nulls.
+fn significant(ls: vector<ir::Node>, from: integer) -> vector<Sig> {
+  out: vector<Sig> = [];
+  for i in from..len(ls) {
+    u = scope_fn::unspan(ls[i]!);
+    if !(u is NdLine) && !(u is NdNull) {
+      out += [Sig { at: i - from, v: ls[i]! }];
+    }
+  }
+  out
+}
+
+// What one rebuild consists of, once matched.
+struct Rebuild {
+  span: integer,
+  deferred_free: integer,
+  pre: ir::Node?,
+  place: ir::Node,
+  elem_tp: integer,
+  keep: boolean,
+  lo: ir::Node,
+  hi: ir::Node,
+  g: ir::Node,
+  t: integer
+}
+
+// port: compact.rs fn visit_list
+fn visit_list(start: vector<ir::Node>, o: Ops, whole: ir::Node) -> vector<ir::Node> {
+  ls: vector<ir::Node> = [for x in start { x }];
+  i = 0;
+  while i < len(ls) {
+    sig = significant(ls, i);
+    r: Rebuild? = null;
+    if len(sig) > 0 && sig[0].at == 0 {
+      r = match_rebuild(sig, o, whole);
+      if r == null {
+        r = match_prepend(sig, o, whole);
+      }
+    }
+    if r != null {
+      end = i + sig[r!.span - 1].at + 1;
+      later = -1;
+      declined = false;
+      if r!.deferred_free >= 0 {
+        rhs = r!.deferred_free;
+        at = -1;
+        for j in end..len(ls) {
+          fr = call(ls[j]!, o.free_ref);
+          if fr != null && len(fr!) > 0 && var(fr![0]!) == rhs {
+            at = j;
+            break;
+          }
+        }
+        if at >= 0 && mentions(whole, rhs) == 4 {
+          later = at;
+        } else {
+          declined = true;
+        }
+      }
+      if declined {
+        ls[i] = visit(ls[i]!, o, whole);
+        i += 1;
+        continue;
+      }
+      taken: vector<ir::Node> = [for k in i..end { ls[k]! }];
+      if later >= 0 {
+        taken += [ls[later]!];
+      }
+      g = guarded(r!, taken, o);
+      out: vector<ir::Node> = [for k in 0..i { ls[k]! }];
+      if r!.pre != null {
+        out += [r!.pre!];
+      }
+      out += [g];
+      next = len(out);
+      for k in end..len(ls) {
+        if k != later {
+          out += [ls[k]!];
+        }
+      }
+      ls = out;
+      i = next;
+      continue;
+    }
+    ls[i] = visit(ls[i]!, o, whole);
+    i += 1;
+  }
+  ls
+}
+
+// port: compact.rs fn guarded — `if 0 <= lo && lo <= hi && hi <= len(V) { keep } else { the
+// statements as written }`, or the prepend.
+fn guarded(r: Rebuild, original: vector<ir::Node>, o: Ops) -> ir::Node {
+  if !r.keep {
+    done = ir::NdCall { def_nr: o.prepend, args: [r.place, r.g, ir::NdInt { n: r.elem_tp }] };
+    return ir::NdIf { cond: ir::NdCall { def_nr: o.not, args: [done] }, t: ir::NdInsert { items: original }, f: ir::NdNull };
+  }
+  ln = ir::NdCall { def_nr: o.length_vector, args: [r.place] };
+  tests: vector<ir::Node> = [];
+  if scope_fn::unspan(r.lo) is NdVar {
+    tests += [ir::NdCall { def_nr: o.conv_bool_from_int, args: [r.lo] }];
+  }
+  if scope_fn::unspan(r.hi) is NdVar {
+    tests += [ir::NdCall { def_nr: o.conv_bool_from_int, args: [r.hi] }];
+  }
+  tests += [ir::NdCall { def_nr: o.le_int, args: [ir::NdInt { n: 0 }, r.lo] }];
+  tests += [ir::NdCall { def_nr: o.le_int, args: [r.lo, r.hi] }];
+  tests += [ir::NdCall { def_nr: o.le_int, args: [r.hi, ln] }];
+  cond = tests[len(tests) - 1]!;
+  k = len(tests) - 2;
+  while k >= 0 {
+    cond = ir::NdIf { cond: tests[k]!, t: cond, f: ir::NdBoolean { b: false } };
+    k -= 1;
+  }
+  keep = ir::NdCall { def_nr: o.keep_range, args: [r.place, ir::NdInt { n: r.elem_tp }, r.lo, r.hi] };
+  ir::NdIf { cond: cond, t: ir::NdInsert { items: [keep] }, f: ir::NdInsert { items: original } }
+}
+
+// ── the matcher ──
+
+fn call(v: ir::Node, op: integer) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr == op && op >= 0 { args } else { null },
+    _ => null
+  }
+}
+
+fn var(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) { NdVar { n } => n, _ => -1 }
+}
+
+fn int(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) { NdInt { n } => n, _ => null }
+}
+
+fn arg(a: vector<ir::Node>?, i: integer) -> ir::Node {
+  if a == null || i >= len(a!) { ir::NdNull } else { a![i]! }
+}
+
+fn block_ops(v: ir::Node, name: text) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => if block[0]!.name == name { block[0]!.operators } else { null },
+    _ => null
+  }
+}
+
+// port: compact.rs fn is_place — a local, or a field chain over one.
+fn is_place(v: ir::Node, o: Ops) -> boolean {
+  match scope_fn::unspan(v) {
+    NdVar => true,
+    NdCall { def_nr, args } => def_nr == o.get_field && len(args) == 3 && int(args[1]!) != null && int(args[2]!) != null && is_place(args[0]!, o),
+    _ => false
+  }
+}
+
+fn same(a: ir::Node, b: ir::Node) -> boolean {
+  "{scope_fn::unspan(a)}" == "{scope_fn::unspan(b)}"
+}
+
+struct Decl {
+  t: integer,
+  vdb: integer
+}
+
+// port: compact.rs fn match_decl — `OpDatabase(vdb, _); t = OpGetField(vdb, 0, _);
+// OpSetInt4(vdb, 0, 0)`.
+fn match_decl(s: vector<Sig>, o: Ops) -> Decl? {
+  if len(s) < 3 {
+    return null;
+  }
+  mint = call(s[0]!.v, o.database);
+  if mint == null || len(mint!) == 0 {
+    return null;
+  }
+  vdb = var(mint![0]!);
+  if vdb < 0 {
+    return null;
+  }
+  target = -1;
+  match scope_fn::unspan(s[1]!.v) {
+    NdSet { var: x, inner } => {
+      fld = call(inner, o.get_field);
+      if fld == null || len(fld!) < 2 || var(fld![0]!) != vdb || int(fld![1]!) != 0 {
+        return null;
+      }
+      target = x;
+    },
+    _ => { return null; }
+  }
+  zero = call(s[2]!.v, o.set_int4);
+  if zero == null || len(zero!) < 3 || var(zero![0]!) != vdb || int(zero![1]!) != 0 || int(zero![2]!) != 0 {
+    return null;
+  }
+  Decl { t: target, vdb: vdb }
+}
+
+// port: compact.rs fn is_bound
+fn is_bound(v: ir::Node, place: ir::Node, forbidden: vector<integer>, o: Ops) -> boolean {
+  match scope_fn::unspan(v) {
+    NdInt => true,
+    NdVar { n: x } => !scope_fn::has(forbidden, x),
+    NdCall { def_nr, args } => (def_nr == o.vector_len || def_nr == o.length_vector) && len(args) == 1 && same(args[0]!, place),
+    _ => false
+  }
+}
+
+// port: compact.rs fn match_record_append — the body `t += [V[i]?]` of a record element: `V`.
+fn match_record_append(stmts: vector<ir::Node>, target: integer, index: integer, o: Ops) -> ir::Node? {
+  if len(stmts) != 4 {
+    return null;
+  }
+  pre = call(stmts[0]!, o.pre_alloc);
+  if pre == null || var(arg(pre, 0)) != target {
+    return null;
+  }
+  elm = -1;
+  mint = ir::NdNull;
+  match scope_fn::unspan(stmts[1]!) {
+    NdSet { var: e, inner } => { elm = e; mint = inner; },
+    _ => { return null; }
+  }
+  nr = call(mint, o.new_record);
+  if nr == null || var(arg(nr, 0)) != target {
+    return null;
+  }
+  ptp = int(arg(nr, 1));
+  if ptp == null {
+    return null;
+  }
+  copy = call(stmts[2]!, o.copy_record);
+  if copy == null || var(arg(copy, 1)) != elm {
+    return null;
+  }
+  fin = call(stmts[3]!, o.finish_record);
+  if fin == null || var(arg(fin, 0)) != target || var(arg(fin, 1)) != elm || int(arg(fin, 2)) != ptp! {
+    return null;
+  }
+  ncc = block_ops(arg(copy, 0), "ncc");
+  if ncc == null || len(ncc!) != 2 {
+    return null;
+  }
+  read_var = -1;
+  read = ir::NdNull;
+  match scope_fn::unspan(ncc![0]!) {
+    NdSet { var: x, inner } => { read_var = x; read = inner; },
+    _ => { return null; }
+  }
+  get = call(read, o.get_vector_nullable);
+  if get == null || len(get!) != 3 || var(get![2]!) != index || !is_place(get![0]!, o) {
+    return null;
+  }
+  match scope_fn::unspan(ncc![1]!) {
+    NdIf { cond, t: then, f: absent } => {
+      test = call(cond, o.conv_bool_from_ref);
+      if test == null || var(arg(test, 0)) != read_var || var(then) != read_var || block_ops(absent, "Object") == null {
+        return null;
+      }
+    },
+    _ => { return null; }
+  }
+  scope_fn::unspan(get![0]!)
+}
+
+struct Rebind {
+  n: integer,
+  elem_tp: integer,
+  deferred: integer,
+  pre: ir::Node?
+}
+
+// port: compact.rs fn match_rebind — the rebind `V = t` in its field, direct field or local form.
+fn match_rebind(s: vector<Sig>, t: integer, place: ir::Node, o: Ops) -> Rebind? {
+  if len(s) == 0 {
+    return null;
+  }
+  // Field form.
+  if len(s) >= 4 {
+    rhs = -1;
+    match scope_fn::unspan(s[0]!.v) {
+      NdSet { var: x, inner } => if scope_fn::unspan(inner) is NdNull { rhs = x; },
+      _ => {}
+    }
+    if rhs >= 0 {
+      a1 = call(s[1]!.v, o.append_vector);
+      cl = call(s[2]!.v, o.clear_vector);
+      a2 = call(s[3]!.v, o.append_vector);
+      if a1 != null && var(arg(a1, 0)) == rhs && var(arg(a1, 1)) == t && cl != null && same(arg(cl, 0), place) && a2 != null && same(arg(a2, 0), place) && var(arg(a2, 1)) == rhs {
+        et = int(arg(a1, 2));
+        e2 = int(arg(a2, 2));
+        if et != null && et! > 0 && e2 != null && e2! == et! {
+          freed_here = len(s) > 4 && call(s[4]!.v, o.free_ref) != null && var(arg(call(s[4]!.v, o.free_ref), 0)) == rhs;
+          return if freed_here { Rebind { n: 5, elem_tp: et!, deferred: -1, pre: null } } else { Rebind { n: 4, elem_tp: et!, deferred: rhs, pre: null } };
+        }
+      }
+    }
+  }
+  // Direct field form: `OpClearVector(V); OpAppendVector(V, t, tp)`.
+  if len(s) >= 2 {
+    cl = call(s[0]!.v, o.clear_vector);
+    a = call(s[1]!.v, o.append_vector);
+    if cl != null && same(arg(cl, 0), place) && a != null && same(arg(a, 0), place) && var(arg(a, 1)) == t {
+      et = int(arg(a, 2));
+      if et != null && et! > 0 {
+        return Rebind { n: 2, elem_tp: et!, deferred: -1, pre: null };
+      }
+    }
+  }
+  // Local form.
+  v = var(place);
+  if v < 0 {
+    return null;
+  }
+  init = -1;
+  match scope_fn::unspan(s[0]!.v) {
+    NdSet { var: x, inner } => if scope_fn::unspan(inner) is NdNull { init = x; },
+    _ => {}
+  }
+  rest = if init >= 0 { s[1..] } else { s };
+  d = match_decl(rest, o);
+  if d == null || d!.t != v || (init >= 0 && init != d!.vdb) {
+    return null;
+  }
+  if len(rest) < 4 {
+    return null;
+  }
+  a = call(rest[3]!.v, o.append_vector);
+  if a == null || var(arg(a, 0)) != v || var(arg(a, 1)) != t {
+    return null;
+  }
+  et = int(arg(a, 2));
+  if et == null || et! <= 0 {
+    return null;
+  }
+  pre: ir::Node? = if init >= 0 { ir::NdSet { var: init, inner: ir::NdNull } } else { null };
+  Rebind { n: 4 + if init >= 0 { 1 } else { 0 }, elem_tp: et!, deferred: -1, pre: pre }
+}
+
+// port: compact.rs fn mentions — every spelling that names `x`.
+fn mentions(n: ir::Node, x: integer) -> integer {
+  if n is NdSpan {
+    return mentions(scope_fn::unspan(n), x);
+  }
+  k = match n {
+    NdVar { n: y } => if y == x { 1 } else { 0 },
+    NdSet { var: y } => if y == x { 1 } else { 0 },
+    NdIter { var: y } => if y == x { 1 } else { 0 },
+    NdTupleGet { var: y } => if y == x { 1 } else { 0 },
+    NdTuplePut { var: y } => if y == x { 1 } else { 0 },
+    NdCallRef { var: y } => if y == x { 1 } else { 0 },
+    NdFnRefDnr { n: y } => if y == x { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(n) {
+    k += mentions(c, x);
+  }
+  k
+}
+
+fn inside(s: vector<Sig>, span: integer, t: integer) -> integer {
+  k = 0;
+  for q in 0..span {
+    k += mentions(s[q]!.v, t);
+  }
+  k
+}
+
+// port: compact.rs fn match_rebuild
+fn match_rebuild(s: vector<Sig>, o: Ops, whole: ir::Node) -> Rebuild? {
+  d = match_decl(s, o);
+  if d == null || len(s) < 4 {
+    return null;
+  }
+  lp = scope_byte_copy::match_loop(s[3]!.v, o.loop_ops);
+  if lp == null {
+    return null;
+  }
+  place = match_record_append(lp!.body, d!.t, lp!.i, o);
+  if place == null {
+    return null;
+  }
+  rb = match_rebind(s[4..], d!.t, place!, o);
+  if rb == null {
+    return null;
+  }
+  span = 4 + rb!.n;
+  forbidden = [d!.t, d!.vdb, lp!.i];
+  if !is_bound(lp!.lo, place!, forbidden, o) || !is_bound(lp!.hi, place!, forbidden, o) {
+    return null;
+  }
+  if mentions(whole, d!.t) != inside(s, span, d!.t) {
+    return null;
+  }
+  Rebuild { span: span, deferred_free: rb!.deferred, pre: rb!.pre, place: place!, elem_tp: rb!.elem_tp, keep: true, lo: lp!.lo, hi: lp!.hi, g: ir::NdNull, t: d!.t }
+}
+
+// port: compact.rs fn match_prepend
+fn match_prepend(s: vector<Sig>, o: Ops, whole: ir::Node) -> Rebuild? {
+  d = match_decl(s, o);
+  if d == null || len(s) < 5 {
+    return null;
+  }
+  t = d!.t;
+  first = call(s[3]!.v, o.append_vector);
+  second = call(s[4]!.v, o.append_vector);
+  if first == null || second == null || var(arg(first, 0)) != t || var(arg(second, 0)) != t {
+    return null;
+  }
+  g = var(arg(first, 1));
+  if g < 0 {
+    return null;
+  }
+  place = scope_fn::unspan(arg(second, 1));
+  tp = int(arg(first, 2));
+  tp2 = int(arg(second, 2));
+  if tp == null || g == t || g == d!.vdb || !is_place(place, o) || tp2 == null || tp2! != tp! || tp! <= 0 {
+    return null;
+  }
+  if mentions(place, t) > 0 || (mentions(place, g) > 0 && var(place) != g) {
+    return null;
+  }
+  rb = match_rebind(s[5..], t, place, o);
+  if rb == null || rb!.elem_tp != tp! {
+    return null;
+  }
+  span = 5 + rb!.n;
+  if mentions(whole, t) != inside(s, span, t) {
+    return null;
+  }
+  Rebuild { span: span, deferred_free: rb!.deferred, pre: rb!.pre, place: place, elem_tp: rb!.elem_tp, keep: false, lo: ir::NdNull, hi: ir::NdNull, g: ir::NdVar { n: g }, t: t }
+}

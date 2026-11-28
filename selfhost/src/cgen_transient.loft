@@ -24,7 +24,7 @@ use cgen_types;
 use el_ir;
 use binds;
 use types;
-use cgen::(Cx);
+use cgen::(Cx, type_ident);
 use opt_transient;
 use cgen_tables;
 use cgen_ref;
@@ -141,8 +141,8 @@ fn members_of(x: Cx, g: integer) -> vector<opt_transient::TrMember> {
   out
 }
 
-fn member_ctype(e: opt_transient::TrMember) -> text {
-  if e.m == opt_transient::M_INT { "int64_t" } else if e.m == opt_transient::M_BOOL || e.m == opt_transient::M_ENUM { "uint8_t" } else if e.m == opt_transient::M_TEXT { "loft_str" } else if e.m == opt_transient::M_VECTOR { "loft_ta_vec" } else { "lt_{e.r}" }
+fn member_ctype(x: Cx, e: opt_transient::TrMember) -> text {
+  if e.m == opt_transient::M_INT { "int64_t" } else if e.m == opt_transient::M_BOOL || e.m == opt_transient::M_ENUM { "uint8_t" } else if e.m == opt_transient::M_TEXT { "loft_str" } else if e.m == opt_transient::M_VECTOR { "loft_ta_vec" } else { "lt_{type_ident(x, e.r)}" }
 }
 
 fn emit_struct(x: Cx, g: integer, done: vector<boolean>, out: &text) {
@@ -156,12 +156,12 @@ fn emit_struct(x: Cx, g: integer, done: vector<boolean>, out: &text) {
       emit_struct(x, e.r, done, out);
     }
   }
-  out += "struct lt_{g} {{\n";
+  out += "struct lt_{type_ident(x, g)} {{\n";
   if len(ms) == 0 {
     out += "    char lt_none;\n";
   }
   for e in ms {
-    out += "    {member_ctype(e)} {member_name(e.m, e.off, e.r)};\n";
+    out += "    {member_ctype(x, e)} {member_name(e.m, e.off, e.r)};\n";
   }
   out += "}};\n";
 }
@@ -180,7 +180,8 @@ pub fn typedefs(x: Cx) -> text {
   out = "";
   for a in all {
     if a {
-      out += "typedef struct lt_{a#index} lt_{a#index};\n";
+      gi = type_ident(x, a#index);
+      out += "typedef struct lt_{gi} lt_{gi};\n";
     }
   }
   done: vector<boolean> = [for _ in all { false }];
@@ -213,7 +214,7 @@ pub fn typedefs(x: Cx) -> text {
         parts += ["memset(&(s)->{nm}, 0, sizeof((s)->{nm}));"];
       }
     }
-    out += "#define LT_ZERO_{zg}_{zoff}(s) do {{ {parts.join(" ")} }} while (0)\n";
+    out += "#define LT_ZERO_{type_ident(x, zg)}_{zoff}(s) do {{ {parts.join(" ")} }} while (0)\n";
   }
   // A sealed copy's nested records are sealed with it.
   sealed: vector<boolean> = [for _ in x.tr.seals { false }];
@@ -240,7 +241,8 @@ pub fn typedefs(x: Cx) -> text {
   }
   for s in sealed {
     if s {
-      out += "static inline void lt_seal_{s#index}(lt_{s#index} *s);\n";
+      gi = type_ident(x, s#index);
+      out += "static inline void lt_seal_{gi}(loft_cx *cx, lt_{gi} *s);\n";
     }
   }
   for s in sealed {
@@ -251,10 +253,11 @@ pub fn typedefs(x: Cx) -> text {
           nm = member_name(e.m, e.off, e.r);
           body += ["s->{nm}.cap = s->{nm}.n;"];
         } else if e.m == opt_transient::M_RECORD {
-          body += ["lt_seal_{e.r}(&s->{member_name(e.m, e.off, e.r)});"];
+          body += ["lt_seal_{type_ident(x, e.r)}(cx, &s->{member_name(e.m, e.off, e.r)});"];
         }
       }
-      out += "static inline void lt_seal_{s#index}(lt_{s#index} *s) {{ (void) s; {body.join(" ")} }}\n";
+      gi = type_ident(x, s#index);
+      out += "static inline void lt_seal_{gi}(loft_cx *cx, lt_{gi} *s) {{ (void) s; {body.join(" ")} }}\n";
     }
   }
   out
@@ -1098,7 +1101,7 @@ fn write_twin(x: Cx, d: integer, params: integer, result: boolean, name: text, w
         names += [var_name(def.variables.variables[a]!.name, a)];
       }
     }
-    call = "{inner_name}({names.join(", ")})";
+    call = "{inner_name}({cx_args(names)})";
     wrapper = if rtype == "void" { "    LOFT_HOLD_MARK(hm);\n    {call};\n    LOFT_HOLD_BACK(hm);\n" } else { "    LOFT_HOLD_MARK(hm);\n    {rtype} r = {call};\n    LOFT_HOLD_BACK(hm);\n    return r;\n" };
     out.inner = "static {rtype} {inner_name}({written.list})";
     out.body = "{wrapper}}}\n\n{out.inner} {{\n{body}";
@@ -1118,9 +1121,10 @@ pub fn has_roots(tf: TrFn) -> boolean {
   false
 }
 
-// `lean`: a twin or a site, which the store-plan rewrites leave alone.
+// `lean`: a twin or a site, which the store-plan rewrites leave alone — and a producer or
+// consumer twin of `@FR-R-DecodeView`'s structure clause (`ps_lean`), whose loops build nothing.
 pub fn lean(w: W) -> boolean {
-  w.tr.any
+  w.tr.any || w.ps.mode != PS_NONE
 }
 
 // Is shape `s` a transient one (`CType::Tr`, `CType::TrVec`)?
@@ -1257,8 +1261,8 @@ pub fn place(x: Cx, w: W, v: ir::Node, ind: integer) -> Place {
       }
       g = group(x, tp);
       tmp = "trp{len(w.decls) + 1}";
-      w.decls += ["lt_{g} *{tmp} = 0;"];
-      zero_line = "{tmp} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));";
+      w.decls += ["lt_{type_ident(x, g)} *{tmp} = 0;"];
+      zero_line = "{tmp} = (lt_{type_ident(x, g)} *) loft_ta_zero(cx, sizeof(lt_{type_ident(x, g)}));";
       test = as_cond(w, cgen_fn::expr(x, w, cond, ind));
       line(w, ind, "if ({bare(test)}) {{");
       if first {
@@ -1430,7 +1434,7 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
   if (name == "OpFreeRef" || name == "OpFreeRefIfDistinct" || name == "OpClear" || name == "OpFreeRecordIn") && dead_or_tr(w, first) {
     done = true;
     if name != "OpClear" && (w.tr.roots[first] ?? false) {
-      line(w, ind, "loft_ta_back(loft_tmf);");
+      line(w, ind, "loft_ta_back(cx, loft_tmf);");
     }
     return void_e();
   }
@@ -1493,7 +1497,7 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     }
     // A vector's own record (`main_vector<T>`, its field 0 the vector): the arena vector itself.
     if w.tr.kind[first]! == 2 {
-      line(w, ind, "{w.names[first]!} = (loft_ta_vec *) loft_ta_alloc(sizeof(loft_ta_vec));");
+      line(w, ind, "{w.names[first]!} = (loft_ta_vec *) loft_ta_alloc(cx, sizeof(loft_ta_vec));");
       return void_e();
     }
     if !zero_default(x, tp) {
@@ -1501,7 +1505,7 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       return none();
     }
     g = group(x, tp);
-    line(w, ind, "{w.names[first]!} = (lt_{g} *) loft_ta_alloc(sizeof(lt_{g}));");
+    line(w, ind, "{w.names[first]!} = (lt_{type_ident(x, g)} *) loft_ta_alloc(cx, sizeof(lt_{type_ident(x, g)}));");
     return void_e();
   }
   if (name == "OpGetInt" || name == "OpGetBoolean" || name == "OpGetEnum" || name == "OpGetText") && root_arg(x, w, args) {
@@ -1585,13 +1589,13 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
         return none();
       }
       zero(x, p.g, off);
-      line(w, ind, "LT_ZERO_{p.g}_{off}(&{p.lv});");
+      line(w, ind, "LT_ZERO_{type_ident(x, p.g)}_{off}(&{p.lv});");
       return void_e();
     }
     m = if name == "OpSetInt" { opt_transient::M_INT } else if name == "OpSetBoolean" { opt_transient::M_BOOL } else if name == "OpSetEnum" { opt_transient::M_ENUM } else { opt_transient::M_TEXT };
     member(x, p.g, off, m, -1);
     e = cgen_fn::expr(x, w, args[2]!, ind);
-    val = if m == opt_transient::M_INT { as_int(w, e) } else if m == opt_transient::M_BOOL { as_bool(w, e) } else if m == opt_transient::M_ENUM { as_enum(w, e) } else { "loft_ta_str({as_view(w, e)})" };
+    val = if m == opt_transient::M_INT { as_int(w, e) } else if m == opt_transient::M_BOOL { as_bool(w, e) } else if m == opt_transient::M_ENUM { as_enum(w, e) } else { "loft_ta_str(cx, {as_view(w, e)})" };
     line(w, ind, "{p.lv}.{member_name(m, off, -1)} = {val};");
     flush(w, ind);
     return void_e();
@@ -1624,7 +1628,7 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     }
     // The copy shares its vectors' elements with the source: sealed, a push into it moves it.
     seal(x, p.g);
-    line(w, ind, "{p.lv} = *{s}; lt_seal_{p.g}(&{p.lv});");
+    line(w, ind, "{p.lv} = *{s}; lt_seal_{type_ident(x, p.g)}(cx, &{p.lv});");
     return void_e();
   }
   if name == "OpMoveVector" && root_arg(x, w, args) {
@@ -1685,7 +1689,7 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
       return none();
     }
     s = as_ref(w, cgen_fn::expr(x, w, args[1]!, ind));
-    line(w, ind, "loft_ta_vec_copy(&{dp.lv}, {s}, {dp.elem});");
+    line(w, ind, "loft_ta_vec_copy(cx, &{dp.lv}, {s}, {dp.elem});");
     flush(w, ind);
     return void_e();
   }
@@ -1731,7 +1735,7 @@ pub fn tr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     fe = as_ref(w, cgen_fn::arg(x, w, trio, 0, ind));
     le = as_int(w, cgen_fn::arg(x, w, trio, 1, ind));
     he = as_int(w, cgen_fn::arg(x, w, trio, 2, ind));
-    line(w, ind, "loft_ta_vec_copy_range(&{dp.lv}, {fe}, {le}, {he}, {dp.elem});");
+    line(w, ind, "loft_ta_vec_copy_range(cx, &{dp.lv}, {fe}, {le}, {he}, {dp.elem});");
     flush(w, ind);
     return void_e();
   }
@@ -1846,7 +1850,7 @@ pub fn set(x: Cx, w: W, var: integer, v: ir::Node, ind: integer) -> boolean {
         return true;
       }
       idx = as_int(w, cgen_fn::expr(x, w, cargs[2]!, ind));
-      line(w, ind, "{lhs} = (lt_{g} *) loft_ta_vec_at(&{p.lv}, {idx}, sizeof(lt_{g}));");
+      line(w, ind, "{lhs} = (lt_{type_ident(x, g)} *) loft_ta_vec_at(cx, &{p.lv}, {idx}, sizeof(lt_{type_ident(x, g)}));");
       w.tr.nullable[var] = true;
     } else if opn == "OpNewRecord" && kind == 1 {
       if !w.tr.builds {
@@ -1860,13 +1864,13 @@ pub fn set(x: Cx, w: W, var: integer, v: ir::Node, ind: integer) -> boolean {
       if w.why != "" {
         return true;
       }
-      line(w, ind, "{lhs} = (lt_{g} *) loft_ta_vec_push(&{lv}, sizeof(lt_{g}));");
+      line(w, ind, "{lhs} = (lt_{type_ident(x, g)} *) loft_ta_vec_push(cx, &{lv}, sizeof(lt_{type_ident(x, g)}));");
     } else if opn == "OpPlaceRecord" && kind == 1 {
       if !w.tr.builds {
         refuse(w, "a site that places into a transient value");
         return true;
       }
-      line(w, ind, "{lhs} = (lt_{g} *) loft_ta_alloc(sizeof(lt_{g}));");
+      line(w, ind, "{lhs} = (lt_{type_ident(x, g)} *) loft_ta_alloc(cx, sizeof(lt_{type_ident(x, g)}));");
     } else {
       refuse(w, "a transient local bound from {opn}");
     }
@@ -1875,7 +1879,7 @@ pub fn set(x: Cx, w: W, var: integer, v: ir::Node, ind: integer) -> boolean {
   if callee >= 0 {
     // The frame's arena back to its entry: nothing transient is left to read.
     if w.tr.roots[var]! {
-      line(w, ind, "loft_ta_back(loft_tmf);");
+      line(w, ind, "loft_ta_back(cx, loft_tmf);");
     }
     pv = ptr(x, w, v, ind);
     line(w, ind, "{lhs} = {pv};");
@@ -1919,7 +1923,7 @@ fn set_arm(x: Cx, w: W, var: integer, arm: ir::Node, ind: integer) {
   tp = default_object(x, arm);
   if tp >= 0 {
     g = group(x, tp);
-    line(w, ind, "{w.names[var]!} = (lt_{g} *) loft_ta_zero(sizeof(lt_{g}));");
+    line(w, ind, "{w.names[var]!} = (lt_{type_ident(x, g)} *) loft_ta_zero(cx, sizeof(lt_{type_ident(x, g)}));");
     return;
   }
   if !set(x, w, var, arm, ind) {

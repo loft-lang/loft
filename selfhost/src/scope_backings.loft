@@ -41,6 +41,21 @@ pub fn construction_work_ref(rhs: ir::Node, f: ir::Function) -> integer {
   if v >= 0 && work_ref_name(f, v) { v } else { -1 }
 }
 
+// A `return` anywhere in `n` that answers something other than the variable `returned`.
+fn other_return(n: ir::Node, returned: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdReturn { inner } => if !(match scope_fn::unspan(inner) { NdVar { n: x } => x == returned, _ => false }) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if other_return(c, returned) {
+      return true;
+    }
+  }
+  false
+}
+
 // port: backings.rs fn delivered_work_ref — -1 for none.
 pub fn delivered_work_ref(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> integer {
   c = construction_work_ref(rhs, f);
@@ -103,6 +118,12 @@ pub fn delivered_work_ref(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> inte
   }
   returned = match body { NdVar { n } => n, _ => -1 };
   if returned < 0 {
+    return -1;
+  }
+  // loft#2674 — and EVERY return hands that parameter back: a callee that leaves earlier with a
+  // record of its own answers the construction on some runs only.
+  // `LOFT_NO_DELIVERED_EVERY_RETURN=1` reads the tail alone again.
+  if env_variable("LOFT_NO_DELIVERED_EVERY_RETURN") == null && other_return(def!.code[0] ?? ir::NdNull, returned) {
     return -1;
   }
   for k in scope_fn::depend(def!.returned[0] ?? ir::TyVoid) {
@@ -229,6 +250,30 @@ fn is_backing_name(f: ir::Function, bv: integer) -> boolean {
 // port: backings.rs fn outer_collection_backing — the backing of vector local `v` that lives in
 // a scope other than the ones being left (`exited`), -1 for none.  `on_this_path` is the backing
 // the latest bind on this path filled (`bind_backing`), -1 for none.
+// port: backings.rs fn member_backing — the backing a tuple member's value lives in, where that
+// is one `__vdb_N` or `__ref_N`: named in the member's type, or through the compiler temp a
+// whole-tuple bind copied a vector member into (`_tupcopy_N`, loft#1361); -1 for none.
+pub fn member_backing(f: ir::Function, member: ir::TypeT) -> integer {
+  deps = scope_fn::depend(member);
+  if len(deps) != 1 {
+    return -1;
+  }
+  bk = deps[0]!;
+  n = scope_fn::name(f, bk);
+  if n.starts_with("__vdb_") || n.starts_with("__ref_") {
+    return bk;
+  }
+  if scope_fn::is_compiler_generated(f, bk) && scope_fn::base(scope_fn::tp(f, bk)) is TyVector {
+    inner = scope_fn::deps(f, bk);
+    if len(inner) != 1 {
+      return -1;
+    }
+    n2 = scope_fn::name(f, inner[0]!);
+    return if n2.starts_with("__vdb_") || n2.starts_with("__ref_") { inner[0]! } else { -1 };
+  }
+  -1
+}
+
 pub fn outer_collection_backing(f: ir::Function, v: integer, exited: vector<integer>, on_this_path: integer) -> integer {
   if !(scope_fn::base(scope_fn::tp(f, v)) is TyVector) || scope_fn::is_compiler_generated(f, v) {
     return -1;

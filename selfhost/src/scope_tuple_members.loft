@@ -1,0 +1,513 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/tuple_members.rs` transcribed: tuple MEMBERS that own their element — the
+// frees a tuple local owes per member, which members a call minted (`tuple_call_mint`), the
+// claimant work-refs a member's assignments make, and a member assignment over an element the
+// tuple owns alone.  Facts keyed by member are kept as `t * 65536 + i` (`scope_scan::TMap`).
+
+use ir;
+use scope_fn;
+use scope_scan;
+use scope_args;
+use scope_backings;
+use binds;
+use own;
+use opt_names;
+
+// port: tuple_members.rs struct MemberFacts — what the scan knows about a tuple's members when
+// it releases them; all empty is `MemberFacts::NONE`, the bare release.
+pub struct Facts {
+  pub mints: vector<scope_scan::TMap>,
+  pub handed: vector<integer>,
+  pub moved: vector<scope_scan::TMap>,
+  pub claimants: vector<scope_scan::VarList>
+}
+
+pub fn no_facts() -> Facts {
+  Facts { mints: [], handed: [], moved: [], claimants: [] }
+}
+
+// The scan's facts for tuple `v`.
+pub fn facts_of(s: scope_scan::Scopes, v: integer) -> Facts {
+  at = scope_scan::tmap_at(s.tuple_call_mint, v);
+  Facts {
+    mints: if at >= 0 { [s.tuple_call_mint[at]!] } else { [] },
+    handed: s.drop_transferred,
+    moved: s.tuple_moved,
+    claimants: s.tuple_claimants
+  }
+}
+
+fn key(t: integer, i: integer) -> integer {
+  t * 65536 + i
+}
+
+fn sentinel(b: ir::Bundle) -> ir::Node {
+  ir::NdCall { def_nr: scope_fn::def_nr(b, "OpNullRefSentinel"), args: [] }
+}
+
+fn carries_text(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyText => true,
+    TyTuple { elems } => {
+      for e in elems {
+        if carries_text(e) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: variables/mod.rs fn tuple_owns_text — a tuple local the author named (or a parameter's
+// promoted copy, `__tp_<name>`) owns its text members.
+pub fn tuple_owns_text(f: ir::Function, v: integer) -> boolean {
+  v < scope_fn::count(f) && !scope_fn::is_argument(f, v)
+    && (!scope_fn::is_compiler_generated(f, v) || scope_fn::name(f, v).starts_with("__tp_"))
+    && scope_fn::base(scope_fn::tp(f, v)) is TyTuple
+}
+
+// port: tuple_members.rs fn tuple_text_member_frees — `@FR-T-Record`: one
+// `OpFreeText(TupleGet(v, i))` per member that is text or a tuple carrying text, in reverse.
+pub fn tuple_text_member_frees(b: ir::Bundle, elems: vector<ir::TypeT>, v: integer, f: ir::Function) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  if !tuple_owns_text(f, v) || scope_fn::is_skip_free(f, v) {
+    return out;
+  }
+  free_text = scope_fn::def_nr(b, "OpFreeText");
+  i = len(elems) - 1;
+  while i >= 0 {
+    if carries_text(elems[i]!) {
+      out += [ir::NdCall { def_nr: free_text, args: [ir::NdTupleGet { var: v, idx: i }] }];
+    }
+    i -= 1;
+  }
+  out
+}
+
+// port: data.rs fn owned_elements — the members that are store-backed or text, by index.
+fn owned_elements(elems: vector<ir::TypeT>) -> vector<integer> {
+  out: vector<integer> = [];
+  for e in elems {
+    bt = scope_fn::base(e);
+    if scope_fn::is_dbref(bt) || bt is TyText {
+      out += [e#index];
+    }
+  }
+  out
+}
+
+// port: tuple_members.rs fn tuple_owned_elem_frees — the scope-exit / pre-reassignment frees of
+// a TUPLE local's owned elements, in reverse index order (`only` >= 0: that member alone).
+pub fn tuple_owned_elem_frees(b: ir::Bundle, elems: vector<ir::TypeT>, v: integer, f: ir::Function, facts: Facts, only: integer) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  owned = owned_elements(elems);
+  free_ref = scope_fn::def_nr(b, "OpFreeRef");
+  k = len(owned) - 1;
+  while k >= 0 {
+    idx = owned[k]!;
+    k -= 1;
+    if only >= 0 && only != idx {
+      continue;
+    }
+    deps = scope_fn::depend(elems[idx]!);
+    claim = if len(facts.mints) > 0 { scope_scan::tmap_get(facts.mints, v, idx) } else { -2 };
+    minted = claim != -2 && (claim == -1 || !scope_fn::has(deps, claim));
+    if scope_fn::is_skip_free(f, v) || (!minted && len(deps) > 0) || scope_fn::base(elems[idx]!) is TyText {
+      continue;
+    }
+    elem = ir::NdTupleGet { var: v, idx: idx };
+    if claim != -2 {
+      // loft#1511 / `(H-Drop)` — a member its own call minted runs the type's cascade before
+      // the free, then the call's buffer is disarmed.
+      handed_off = claim >= 0 && scope_fn::has(facts.handed, claim);
+      d = own::heap_def_nr(scope_fn::base(elems[idx]!));
+      if !handed_off && d != null {
+        cascade = opt_names::drop_cascade_nr(b, d!);
+        if cascade != opt_names::NONE {
+          hook = ir::NdIf { cond: ir::NdCall { def_nr: scope_fn::def_nr(b, "OpConvBoolFromRef"), args: [elem] }, t: ir::NdCall { def_nr: cascade, args: [elem] }, f: ir::NdNull };
+          flag = scope_scan::tmap_get(facts.moved, 0, key(v, idx));
+          out += [if flag >= 0 { ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: hook } } else { hook }];
+        }
+      }
+      out += claimant_disarms(b, facts.claimants, v, idx, claim);
+      out += [ir::NdCall { def_nr: free_ref, args: [elem] }];
+      if claim >= 0 {
+        out += [scope_fn::v_set(claim, sentinel(b))];
+      }
+      continue;
+    }
+    out += claimant_disarms(b, facts.claimants, v, idx, -1);
+    out += [ir::NdCall { def_nr: free_ref, args: [elem] }];
+  }
+  out
+}
+
+// port: tuple_members.rs fn claimant_disarms — each claimant work-ref of member `idx` of `v` but
+// `except`, set to the sentinel where it names the store the member's free releases.
+fn claimant_disarms(b: ir::Bundle, claimants: vector<scope_scan::VarList>, v: integer, idx: integer, except: integer) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  if env_variable("LOFT_NO_CLAIMANT_DISARM") != null {
+    return out;
+  }
+  for w in scope_scan::list_of(claimants, key(v, idx)) {
+    if w == except {
+      continue;
+    }
+    out += [ir::NdIf {
+      cond: ir::NdCall { def_nr: scope_fn::def_nr(b, "OpDistinctStore"), args: [ir::NdVar { n: w }, ir::NdTupleGet { var: v, idx: idx }] },
+      t: ir::NdNull,
+      f: scope_fn::v_set(w, sentinel(b))
+    }];
+  }
+  out
+}
+
+fn claimants_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<scope_scan::VarList>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => if scope_fn::base(scope_fn::tp(f, t)) is TyTuple {
+      mints = tuple_call_mints(b, inner, f);
+      if mints != null {
+        m = mints!;
+        for idx in m.keys {
+          w = m.vals[idx#index]!;
+          if w >= 0 {
+            scope_scan::list_add(out, key(t, idx), w);
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    claimants_walk(b, c, f, out);
+  }
+}
+
+// port: tuple_members.rs fn tuple_claimants_in — every `(tuple, member) → work-refs` claim the
+// assignments in `code` make.
+pub fn tuple_claimants_in(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<scope_scan::VarList> {
+  out: vector<scope_scan::VarList> = [];
+  claimants_walk(b, code, f, out);
+  out
+}
+
+// port: data.rs fn holds_dbref
+fn holds_dbref(t: ir::TypeT) -> boolean {
+  bt = scope_fn::base(t);
+  if scope_fn::is_dbref(bt) {
+    return true;
+  }
+  match bt {
+    TyTuple { elems } => {
+      for e in elems {
+        if holds_dbref(e) {
+          return true;
+        }
+      }
+      false
+    },
+    _ => false
+  }
+}
+
+// port: coroutine_layout.rs fn yield_handed_over
+fn yield_handed_over(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyTuple { elems } => {
+      any = false;
+      for e in elems {
+        if holds_dbref(e) {
+          any = true;
+          if !handed_member(e) {
+            return false;
+          }
+        }
+      }
+      any
+    },
+    _ => handed_member(t)
+  }
+}
+
+fn handed_member(e: ir::TypeT) -> boolean {
+  match scope_fn::base(e) {
+    TyReference => true,
+    TyEnum { is_ref } => is_ref,
+    TyVector => true,
+    _ => false
+  }
+}
+
+// port: tuple_members.rs fn tuple_call_mints — the members of a tuple-literal RHS minted by
+// their own initializing call: member → claimant (-1 for a sole owner).  Null for any other RHS.
+pub fn tuple_call_mints(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> scope_scan::TMap? {
+  u = scope_fn::unspan(rhs);
+  match u {
+    NdCall { def_nr, args } => if def_nr == scope_fn::def_nr(b, "OpCoroutineNext") && len(args) > 0 {
+      g = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+      if g >= 0 {
+        match scope_fn::base(scope_fn::tp(f, g)) {
+          TyIterator { step } => match scope_fn::base(step) {
+            TyTuple { elems } => if yield_handed_over(step) {
+              return scope_scan::TMap { t: 0, keys: [for e in elems { e#index }], vals: [for e in elems { -1 }] };
+            },
+            _ => {}
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  members: vector<ir::Node> = match u {
+    NdTuple { items } => items,
+    _ => return null
+  };
+  out = scope_scan::TMap { t: 0, keys: [], vals: [] };
+  for m in members {
+    c = member_mint(b, m, f);
+    if c != -3 {
+      out.keys += [m#index];
+      out.vals += [if c == -1 { -1 } else { c }];
+    }
+  }
+  out
+}
+
+fn tails(n: ir::Node, out: vector<ir::Node>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdIf { t, f } => {
+      tails(t, out);
+      tails(f, out);
+    },
+    NdBlock { block } => {
+      k = len(block[0]!.operators);
+      if k > 0 {
+        tails(block[0]!.operators[k - 1]!, out);
+      } else {
+        out += [n];
+      }
+    },
+    _ => { out += [n]; }
+  }
+}
+
+// A tuple-literal end whose member `idx` is null.
+fn null_member(b: ir::Bundle, end: ir::Node, idx: integer, sentinel_nr: integer) -> boolean {
+  if env_variable("LOFT_NO_NULL_ARM_TUPLE_JOIN") != null {
+    return false;
+  }
+  match scope_fn::unspan(end) {
+    NdTuple { items } => {
+      m = items[idx];
+      m != null && match scope_fn::unspan(m!) {
+        NdNull => true,
+        NdCall { def_nr, args } => len(args) == 0 && def_nr == sentinel_nr,
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// What `branch_tuple_call_mints` answers: the joined mints and the claimants to disarm.
+pub struct BranchMints {
+  pub mints: scope_scan::TMap,
+  pub disarms: vector<ir::Node>
+}
+
+// port: tuple_members.rs fn branch_tuple_call_mints — loft#1645: `tuple_call_mints` for a value
+// BRANCH whose every tail is a tuple literal.  Null when a tail is not a literal.
+pub fn branch_tuple_call_mints(b: ir::Bundle, rhs: ir::Node, f: ir::Function, sentinel_nr: integer) -> BranchMints? {
+  ends: vector<ir::Node> = [];
+  tails(rhs, ends);
+  maps: vector<scope_scan::TMap> = [];
+  for e in ends {
+    m = tuple_call_mints(b, e, f);
+    if m == null {
+      return null;
+    }
+    maps += [m!];
+  }
+  indices: vector<integer> = [];
+  for m in maps {
+    for k in m.keys {
+      if !indices.contains(k) {
+        indices += [k];
+      }
+    }
+  }
+  indices = sorted_ints(indices);
+  out = scope_scan::TMap { t: 0, keys: [], vals: [] };
+  claimants: vector<integer> = [];
+  for idx in indices {
+    // Each arm's claim, -3 for an arm whose member is null.
+    claims: vector<integer> = [];
+    complete = true;
+    for m in maps {
+      c = scope_scan::tmap_get([m], 0, idx);
+      if c != -2 {
+        claims += [c];
+      } else if null_member(b, ends[m#index]!, idx, sentinel_nr) {
+        claims += [-3];
+      } else {
+        complete = false;
+        break;
+      }
+    }
+    if !complete {
+      continue;
+    }
+    present: vector<integer> = [for c in claims if c != -3 { c }];
+    if len(present) == 0 {
+      continue;
+    }
+    first = present[0]!;
+    same = true;
+    for c in present {
+      if c != first {
+        same = false;
+      }
+    }
+    out.keys += [idx];
+    if len(present) == len(claims) && same {
+      out.vals += [first];
+    } else {
+      out.vals += [-1];
+      for c in present {
+        if c >= 0 && !claimants.contains(c) {
+          claimants += [c];
+        }
+      }
+    }
+  }
+  claimants = sorted_ints(claimants);
+  BranchMints { mints: out, disarms: [for w in claimants { scope_fn::v_set(w, ir::NdCall { def_nr: sentinel_nr, args: [] }) }] }
+}
+
+pub fn sorted_ints(v: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in v {
+    at = len(out);
+    for y in out {
+      if x < y && at == len(out) {
+        at = y#index;
+      }
+    }
+    out.insert(at, x);
+  }
+  out
+}
+
+// port: tuple_members.rs fn member_mint — one member's mint: a claimant work-ref (>= 0), -1
+// for a call that adopts a fresh store (the member is the record's only name), -3 for none.
+fn member_mint(b: ir::Bundle, m: ir::Node, f: ir::Function) -> integer {
+  w = scope_backings::delivered_work_ref(b, m, f);
+  if w >= 0 {
+    return w;
+  }
+  u = scope_fn::unspan(m);
+  if u is NdBlock && env_variable("LOFT_NO_NULL_MEMBER_OWNED") == null {
+    t = scope_backings::block_tail_var(m);
+    if t >= 0 && binds::owns_literal_backing_store(scope_fn::name(f, t)) && !scope_fn::is_skip_free(f, t) {
+      return t;
+    }
+  }
+  match u {
+    NdVar { n: x } => if binds::owns_literal_backing_store(scope_fn::name(f, x)) && scope_fn::is_skip_free(f, x) {
+      return -1;
+    },
+    _ => {}
+  }
+  fn_nr = -1;
+  args: vector<ir::Node> = [];
+  match u {
+    NdCall { def_nr, args: a } => {
+      fn_nr = def_nr;
+      args = a;
+    },
+    _ => return -3
+  }
+  def = b.data.definitions[fn_nr]!;
+  if !binds::is_loft_defined(def) {
+    return -3;
+  }
+  hb = binds::hidden_return_buffer_attr(def);
+  if hb != null {
+    a = args[hb!];
+    if a != null {
+      match scope_fn::unspan(a!) {
+        NdVar { n: vr } => if binds::is_caller_hidden_buf(f, vr) {
+          return vr;
+        },
+        _ => {}
+      }
+    }
+    return -3;
+  }
+  rt = def.returned[0] ?? ir::TyVoid;
+  if binds::return_adopts_fresh_store(def) && (own::heap_def_nr(scope_fn::base(rt)) != null || (binds::owns_keyed_store(rt) && env_variable("LOFT_NO_NULL_MEMBER_OWNED") == null)) {
+    return -1;
+  }
+  -3
+}
+
+fn written_walk(n: ir::Node, out: vector<integer>) {
+  match n {
+    NdTuplePut { var: t, idx } => if !out.contains(key(t, idx)) {
+      out += [key(t, idx)];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    written_walk(c, out);
+  }
+}
+
+// port: tuple_members.rs fn written_tuple_members_in — loft#1532: every `(tuple, member)` a
+// member assignment writes, keyed `t * 65536 + i`.
+pub fn written_tuple_members_in(code: ir::Node) -> vector<integer> {
+  out: vector<integer> = [];
+  written_walk(code, out);
+  out
+}
+
+// port: tuple_members.rs fn Scopes::member_write — loft#1532: a member assignment over an
+// element the tuple owns ALONE releases what it displaces and disarms the claimant of the value
+// written; anything else keeps the plain put.
+pub fn member_write(s: scope_scan::Scopes, b: ir::Bundle, v: integer, idx: integer, value: ir::Node, f: ir::Function) -> ir::Node {
+  put = ir::NdTuplePut { var: v, idx: idx, inner: value };
+  if scope_scan::tmap_get(s.tuple_call_mint, v, idx) != -1 {
+    return put;
+  }
+  elems: vector<ir::TypeT> = match scope_fn::base(scope_fn::tp(f, v)) {
+    TyTuple { elems } => elems,
+    _ => return put
+  };
+  release = tuple_owned_elem_frees(b, elems, v, f, no_facts(), idx);
+  if len(release) == 0 {
+    return put;
+  }
+  claim = member_mint(b, value, f);
+  ops: vector<ir::Node> = [];
+  if !scope_fn::names_var(value, v) {
+    ops += release;
+  }
+  ops += [put];
+  flag = scope_scan::tmap_get(s.tuple_moved, 0, key(v, idx));
+  if flag >= 0 {
+    ops += [scope_fn::v_set(flag, ir::NdBoolean { b: false })];
+  }
+  if claim >= 0 {
+    ops += [scope_fn::v_set(claim, sentinel(b))];
+  } else if claim == -3 {
+    scope_scan::tmap_unput(s.tuple_call_mint, v, idx);
+  }
+  ir::NdInsert { items: ops }
+}

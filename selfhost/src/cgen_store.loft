@@ -127,7 +127,7 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     }
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-    return E { code: "(uint8_t) loft_image_write(loft_types, loft_ntypes, {r}, {path}, {sc})", kind: K_BOOL };
+    return E { code: "(uint8_t) loft_image_write(cx, loft_types, loft_ntypes, {r}, {path}, {sc})", kind: K_BOOL };
   }
   if (route == "n_store_load" || route == "n_store_load_untrusted") && len(args) == 2 {
     // The gate reads the layout of the store's root type, the value's static type.
@@ -148,11 +148,11 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     }
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-    return E { code: "(uint8_t) loft_image_load({r}, {path}, {sc}, {if route == "n_store_load_untrusted" { 1 } else { 0 }})", kind: K_BOOL };
+    return E { code: "(uint8_t) loft_image_load(cx, {r}, {path}, {sc}, {if route == "n_store_load_untrusted" { 1 } else { 0 }})", kind: K_BOOL };
   }
   // `load_url`: a whole image over `http(s)://` — the gate as `store_load`'s, and the
   // expected digest of a load that checks one before the sidecar.
-  if (route == "n_store_load_url" && len(args) == 3) || (route == "n_store_load_url_trusted" && len(args) == 2) {
+  if (route == "n_store_load_url" && len(args) >= 3) || (route == "n_store_load_url_trusted" && len(args) == 2) {
     tp = root_of(x, w, args[0]!, "a loaded value whose store type is not known here");
     if tp < 0 {
       return none();
@@ -168,8 +168,13 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     }
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     url = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-    sha = if len(args) == 3 { "{as_view(w, cgen_fn::arg(x, w, args, 2, ind))}, " } else { "" };
-    return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}({r}, {url}, {sha}{sc})", kind: K_BOOL };
+    // `store_load_url`'s image pin and its sidecar pin (`schema_sha256`, "" when left out); the
+    // trusted twin takes neither.
+    sha = "";
+    for i in 2..len(args) {
+      sha += "{as_view(w, cgen_fn::arg(x, w, args, i, ind))}, ";
+    }
+    return E { code: "{if route == "n_store_load_url" { "loft_store_load_url" } else { "loft_store_load_url_trusted" }}(cx, {r}, {url}, {sha}{sc})", kind: K_BOOL };
   }
   if route == "n_store_verify" && len(args) == 1 {
     // The walk reads the store's own type: every type the value reaches is described.
@@ -180,7 +185,7 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     cgen_tables::name_types(x);
     cgen_tables::describe_type(x, tp);
     r = as_ref(w, cgen_fn::expr(x, w, args[0]!, ind));
-    return E { code: "loft_store_verify(loft_types, loft_ntypes, {r})", kind: K_BOOL };
+    return E { code: "loft_store_verify(cx, loft_types, loft_ntypes, {r})", kind: K_BOOL };
   }
   // `rx[lo..hi, …]` on a spatial index: the slice of the records inside the box.
   if route == "n_spatial_range" && len(args) == 10 {
@@ -196,7 +201,7 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     for k in 1..9 {
       ints += [as_int(w, cgen_fn::arg(x, w, all, k, ind))];
     }
-    return E { code: "loft_spatial_range({r}, {keys}, {nk}, {ints.join(", ")})", kind: K_REF };
+    return E { code: "loft_spatial_range(cx, {r}, {keys}, {nk}, {ints.join(", ")})", kind: K_REF };
   }
   // `t[prefix]` on a trie: the slice of the records whose key starts with the prefix.
   if route == "n_trie_prefix" && len(args) == 4 {
@@ -206,7 +211,7 @@ pub fn store_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integ
     r = as_ref(w, cgen_fn::arg(x, w, three, 0, ind));
     pre = as_view(w, cgen_fn::arg(x, w, three, 1, ind));
     limit = as_int(w, cgen_fn::arg(x, w, three, 2, ind));
-    return E { code: "loft_trie_prefix({r}, {keys}, {pre}, {limit})", kind: K_REF };
+    return E { code: "loft_trie_prefix(cx, {r}, {keys}, {pre}, {limit})", kind: K_REF };
   }
   lazy = lazy_native(x, w, route, args, ind, done);
   if done {
@@ -284,26 +289,26 @@ fn paged_load(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer) ->
   path = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
   head = "loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
   if route == "n_store_load_key" && len(args) >= 3 {
-    return E { code: "(uint8_t) (loft_pg_load_keys({head}, {plan.kind}, (loft_kv[]) {{ loft_kv_int({as_int(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
+    return E { code: "(uint8_t) (loft_pg_load_keys(cx, {head}, {plan.kind}, (loft_kv[]) {{ loft_kv_int(cx, {as_int(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
   }
   if route == "n_store_load_key_text" && len(args) >= 3 {
-    return E { code: "(uint8_t) (loft_pg_load_keys({head}, {plan.kind}, (loft_kv[]) {{ loft_kv_text({as_view(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
+    return E { code: "(uint8_t) (loft_pg_load_keys(cx, {head}, {plan.kind}, (loft_kv[]) {{ loft_kv_text(cx, {as_view(w, cgen_fn::arg(x, w, args, 2, ind))}) }}, 1) > 0)", kind: K_BOOL };
   }
   if (route == "n_store_load_keys" || route == "n_store_load_keys_text") && len(args) >= 3 {
-    return E { code: "loft_pg_load_key_list({head}, {plan.kind}, {as_ref(w, cgen_fn::arg(x, w, args, 2, ind))}, {if route == "n_store_load_keys_text" { 1 } else { 0 }})", kind: K_INT };
+    return E { code: "loft_pg_load_key_list(cx, {head}, {plan.kind}, {as_ref(w, cgen_fn::arg(x, w, args, 2, ind))}, {if route == "n_store_load_keys_text" { 1 } else { 0 }})", kind: K_INT };
   }
   if route == "n_store_load_prefix" && len(args) >= 4 {
     pre = as_view(w, cgen_fn::arg(x, w, args, 2, ind));
-    return E { code: "loft_pg_load_prefix({head}, {pre}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
+    return E { code: "loft_pg_load_prefix(cx, {head}, {pre}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
   }
   if route == "n_store_load_box" && len(args) >= 5 {
     from = as_ref(w, cgen_fn::arg(x, w, args, 2, ind));
     till = as_ref(w, cgen_fn::arg(x, w, args, 3, ind));
-    return E { code: "loft_pg_load_box({head}, {from}, {till}, {as_int(w, cgen_fn::arg(x, w, args, 4, ind))}, {plan.coll_name})", kind: K_INT };
+    return E { code: "loft_pg_load_box(cx, {head}, {from}, {till}, {as_int(w, cgen_fn::arg(x, w, args, 4, ind))}, {plan.coll_name})", kind: K_INT };
   }
   if route == "n_store_load_range" && len(args) >= 4 {
     lo = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
-    return E { code: "loft_pg_load_range(loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {lo}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
+    return E { code: "loft_pg_load_range(cx, loft_types, {local}, {path}, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {lo}, {as_int(w, cgen_fn::arg(x, w, args, 3, ind))})", kind: K_INT };
   }
   refuse(w, "{route} without its operands");
   none()
@@ -402,31 +407,31 @@ fn lazy_native(x: Cx, w: W, route: text, args: vector<ir::Node>, ind: integer, d
     return bind_lazy(x, w, args, ind);
   }
   if route == "n_store_lazy_error" && len(args) == 1 {
-    return E { code: "loft_lazy_error({as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_VIEW };
+    return E { code: "loft_lazy_error(cx, {as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_VIEW };
   }
   if route == "n_store_lazy_faults" && len(args) == 1 {
-    return E { code: "loft_lazy_faults({as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_INT };
+    return E { code: "loft_lazy_faults(cx, {as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_INT };
   }
   if route == "n_store_lazy_clear" && len(args) == 1 {
-    return E { code: "loft_lazy_clear({as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_BOOL };
+    return E { code: "loft_lazy_clear(cx, {as_ref(w, cgen_fn::expr(x, w, args[0]!, ind))})", kind: K_BOOL };
   }
   if route == "n_store_lazy_fail" && len(args) == 2 {
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     why = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-    return E { code: "loft_lazy_fail({r}, {why})", kind: K_VOID };
+    return E { code: "loft_lazy_fail(cx, {r}, {why})", kind: K_VOID };
   }
   // A database's explicit fetches (`lazy_query`, `lazy_range`), run by the runtime's sqlite
   // source.
   if route == "n_store_lazy_query" && len(args) == 2 {
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     c = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-    return E { code: "loft_lazy_query({r}, {c})", kind: K_INT };
+    return E { code: "loft_lazy_query(cx, {r}, {c})", kind: K_INT };
   }
   if route == "n_store_lazy_range" && len(args) == 3 {
     r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
     lo = as_int(w, cgen_fn::arg(x, w, args, 1, ind));
     hi = as_int(w, cgen_fn::arg(x, w, args, 2, ind));
-    return E { code: "loft_lazy_range({r}, {lo}, {hi})", kind: K_INT };
+    return E { code: "loft_lazy_range(cx, {r}, {lo}, {hi})", kind: K_INT };
   }
   done = false;
   none()
@@ -521,12 +526,12 @@ fn bind_lazy(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
     x.lazy_fetchers = k + 1;
     head = "loft_types, coll, path, {plan.sc}, {plan.refusal}, {plan.content}, {plan.keys}, {plan.nk}";
     load = if radix {
-      "n > 0 ? loft_pg_load_box_kv({head}, key, n, key, n, -1, {plan.coll_name}) : 0"
+      "n > 0 ? loft_pg_load_box_kv(cx, {head}, key, n, key, n, -1, {plan.coll_name}, 0) : 0"
     } else {
-      "n == 1 ? loft_pg_load_keys({head}, {plan.kind}, key, 1) : 0"
+      "n == 1 ? loft_pg_load_keys_as(cx, {head}, {plan.kind}, key, 1, 0) : 0"
     };
     f = "loft_lazy_fetch{k}";
-    sig = "static int64_t {f}(loft_ref coll, loft_str path, const loft_kv *key, int n)";
+    sig = "static int64_t {f}(loft_cx *cx, loft_ref coll, loft_str path, const loft_kv *key, int n)";
     x.gen_decls += "{sig};\n";
     x.gen_bodies += "\n{sig} {{\n    return {load};\n}}\n";
     fetch = f;
@@ -539,7 +544,7 @@ fn bind_lazy(x: Cx, w: W, args: vector<ir::Node>, ind: integer) -> E {
   }
   r = as_ref(w, cgen_fn::arg(x, w, args, 0, ind));
   source = as_view(w, cgen_fn::arg(x, w, args, 1, ind));
-  E { code: "loft_lazy_bind_coll({r}, {source}, {fetch}, {element}, {unservable}, {plan_ref})", kind: K_BOOL }
+  E { code: "loft_lazy_bind_coll(cx, {r}, {source}, {fetch}, {element}, {unservable}, {plan_ref})", kind: K_BOOL }
 }
 
 // `sql_plan`: a `sqlite:` source's plan for keyed collection type `tp` (`loft_sql_plan`) — the

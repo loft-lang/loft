@@ -802,7 +802,9 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
     return null;
   }
   r = rows!;
-  ev = el_vars::create_unique(vars, "elm", ir::TyReference { n: el::def_nr(e, nm), dep: [rv] });
+  // (A narrow element's temp is typed as Rust's `ref(integer)`: the width names no definition.)
+  enr = if match vt_inner { TyInteger { spec: nsp2 } => el_types::narrow_width(nsp2) > 0, _ => false } { el::def_nr(e, "integer") } else { el::def_nr(e, nm) };
+  ev = el_vars::create_unique(vars, "elm", ir::TyReference { n: enr, dep: [rv] });
   // A record element is a view of the subject's element (`Vector Index`'s dep on the vector).
   record = proj == null && (sed >= 0 || psd >= 0);
   fv = el_vars::create_unique(vars, "slice_elm", if record { el_types::with_deps(elm, [sv]) } else { vt_inner });
@@ -813,7 +815,7 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
   if !in_buffer {
     el_vars::depend(vars, rv, db);
   }
-  el_vars::set_var_type(vars, ev, ir::TyReference { n: el::def_nr(e, nm), dep: [if in_buffer { rv } else { db }] });
+  el_vars::set_var_type(vars, ev, ir::TyReference { n: enr, dep: [if in_buffer { rv } else { db }] });
   w = ir::NdVar { n: ev };
   body = [
     el_ir::v_set(fv, read),
@@ -822,6 +824,9 @@ pub fn slice_vector(e: el::El, vars: el_vars::Vars, sv: integer, elm: ir::TypeT,
     if record {
       place = if psd >= 0 { el::def(e, psd).known_type } else { element_place_type(e, elm) };
       el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: fv }, el_ir::cl(e, "OpGetField", [w, ir::NdInt { n: 0 }, ir::NdInt { n: place }]), ir::NdInt { n: place }])
+    } else if match vt_inner { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0, _ => false } {
+      // (A narrow element is written with its width's setter at its range's start.)
+      elem_write(e, vt_inner, w, ir::NdVar { n: fv })
     } else {
       el_ir::cl(e, el_ex_object::tuple_set_op(vt_inner), [w, ir::NdInt { n: 0 }, ir::NdVar { n: fv }])
     },
@@ -869,8 +874,12 @@ pub fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn
             // `field_pattern_rename`: `field: name` with a binding name binds the field as `name`.
             bname = if pat == null { fname } else { rename_of(e, pat!) };
             if bname != "" {
-              // A text field binds a text of its own, typed as the field (`s#1 = OpGetText(b, 8)`).
-              if !el_convert::plain_scalar(el_types::base(ft)) && !(el_types::base(ft) is TyText) {
+              // A text field binds a text of its own, typed as the field (`s#1 = OpGetText(b, 8)`);
+              // a vector field a view of the subject's (`v#1: vector<integer>["b"]`).
+              if el_types::base(ft) is TyVector && !(ft is TyOptional) {
+                vsrc = el_ex_match::match_borrow_source(e, vars, x.code);
+                ft = el_types::with_deps(el_types::without_deps(ft), if vsrc >= 0 { [vsrc] } else { [] });
+              } else if !el_convert::plain_scalar(el_types::base(ft)) && !(el_types::base(ft) is TyText) {
                 el::refuse(e, "a struct pattern binding of this type: {type_kind(ft)}");
                 return null;
               }
@@ -880,6 +889,10 @@ pub fn struct_alternative(e: el::El, vars: el_vars::Vars, x: Ex, pd: integer, pn
               }
               bv = el_vars::loop_variable(vars, id, ft);
               el_vars::set_defined(vars, bv);
+              // (A vector field's binding is a view: it frees nothing, `mark_field_capture_view`.)
+              if el_types::base(ft) is TyVector {
+                el_vars::set_skip_free(vars, bv, "mark_field_capture_view");
+              }
               r.binds += [el_ir::v_set(bv, read!)];
               slot = -1;
               for s0 in shared {
@@ -1050,6 +1063,48 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                 if plain_variant_ord(e, pat!, pft) >= 0 {
                   pen = match el_types::base(pft) { TyEnum { n: fen } => fen, _ => -1 };
                   fcx = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [pread!]), el_ir::cl(e, "OpConvIntFromEnum", [ir::NdEnum { ord: plain_variant_ord(e, pat!, pft), tp: pen }])]);
+                } else if el_types::struct_enum_def(pft) >= 0 && !(pft is TyOptional) && e.p.nodes[pat!] is PName {
+                  // A struct enum's field matched by a variant pattern (`Rs { i: Sp { x }, k }`):
+                  // that pattern asked of the field's record — its bindings joining this
+                  // pattern's, in field order, its tag test the guard's (`OpGetEnum` of the read).
+                  // (Inside an alternation, a nested capture of a name an earlier pattern bound is
+                  // bound apart, `_mv_<n>_2`, and copied into that pattern's slot.)
+                  prior: vector<el_vars::VarName> = [for pal in r.aliases { el_vars::VarName { name: pal.name, nr: el_vars::var(vars, pal.name) } }];
+                  sarm = variant_arm(e, vars, [pat!], el_types::struct_enum_def(pft), pread!);
+                  if sarm == null {
+                    return null;
+                  }
+                  if len(sarm!.alts) > 0 {
+                    el::refuse(e, "a field pattern with a sub-pattern that lists binding alternatives");
+                    return null;
+                  }
+                  ab += sarm!.binds;
+                  for sal in sarm!.aliases {
+                    pv = -1;
+                    for pr in prior {
+                      if pr.name == sal.name {
+                        pv = pr.nr;
+                      }
+                    }
+                    if pv >= 0 {
+                      nv = el_vars::var(vars, sal.name);
+                      if !el_types::is_equal(e, el_vars::tp(vars, pv), el_vars::tp(vars, nv)) {
+                        el::refuse(e, "a binding the listed patterns type differently: {sal.name}");
+                        return null;
+                      }
+                      ab += [el_ir::v_set(pv, ir::NdVar { n: nv })];
+                      el_vars::set_name(vars, sal.name, pv);
+                    } else {
+                      r.aliases += [sal];
+                    }
+                    anames += [sal.name];
+                  }
+                  // (Its own field tests are asked before its tag test.)
+                  if sarm!.cond != null {
+                    fcx = if sarm!.fcond == null { sarm!.cond } else { el_ir::v_if(sarm!.fcond!, sarm!.cond!, ir::NdBoolean { b: false }) };
+                  } else {
+                    fcx = sarm!.fcond;
+                  }
                 } else if !(e.p.nodes[pat!] is PWild) {
                   if !el_convert::plain_scalar(el_types::base(pft)) && !(el_types::base(pft) is TyText) {
                     el::refuse(e, "a field pattern with a sub-pattern of this type: {type_kind(pft)}");
@@ -1082,7 +1137,19 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               // (So does a struct enum's, `_mv_inner_1: ref(In)["o"]`.)
               // (A nullable vector field is stored as the vector it holds, and binds as one's view.)
               opt_vec = match ft { TyOptional { inner: ovf } => el_types::base(ovf) is TyVector, _ => false };
-              if ft is TyVector || opt_vec || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
+              // (A nullable record field `p: Pt?` is a tagged `__nullable<Pt>` slot: bound through
+              // its tag, `ref(Pt)["w"]?` — the payload where present, else the null sentinel.)
+              nwrap = if ft is TyOptional && struct_ref(e, el_types::base(ft)) >= 0 { el::def_nr(e, "__nullable<{el::def(e, struct_ref(e, el_types::base(ft))).name}>") } else { -1 };
+              // (On the second pass the field's type IS the wrapper.)
+              if nwrap < 0 && is_nullable_wrapper(e, ft) {
+                nwrap = match ft { TyEnum { n: nwn } => nwn, _ => -1 };
+              }
+              // (The wrapper is made late on the first pass: the field is admitted there, read raw.)
+              nfirst = e.first_pass && ft is TyOptional && struct_ref(e, el_types::base(ft)) >= 0;
+              if nwrap >= 0 || nfirst {
+                nsroot = el_ex_match::match_borrow_source(e, vars, subj);
+                ft = el_types::with_deps(ft, if nsroot >= 0 { [nsroot] } else { [] });
+              } else if ft is TyVector || opt_vec || (ft is TyReference && struct_ref(e, ft) >= 0) || el_schema::out_of_line(e, vd, fa) || (el_types::struct_enum_def(ft) >= 0 && !(ft is TyOptional)) {
                 // `@FR-P-Cap-View`: the capture borrows the subject's source variable — a place's
                 // root where the subject is read in place (`match_borrow_source`).
                 sroot = el_ex_match::match_borrow_source(e, vars, subj);
@@ -1096,6 +1163,14 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
               read = field_get(e, vd, fa, subj);
               if read == null {
                 return null;
+              }
+              if nwrap >= 0 && !e.first_pass {
+                rtag = el_ex_into::read_through_tag(e, vars, ex(read!, ir::TyEnum { n: nwrap, is_ref: true, dep: el_types::deps(ft) }));
+                if rtag == null {
+                  return null;
+                }
+                read = rtag!.code;
+                ft = rtag!.tp;
               }
               mv = -1;
               if split {
@@ -1619,12 +1694,14 @@ pub fn while_expr(e: el::El, vars: el_vars::Vars, cond: integer, body: integer?)
     return ex(ir::NdNull, ir::TyVoid);
   }
   vars.whiles += 1;
+  vars.while_marks += [len(vars.active_loops)];
   // `parse_while`: the body runs only where the condition holds, so a non-null proof in it
   // narrows its variable there as an `if`'s does (`(N-Chain)`); a write drops it.
   facts = el_ex_call::assume_condition(e, vars, c.code, true);
   b = el_ex_assign::parse_block(e, vars, body!, "while", ir::TyVoid);
   forget_facts(vars, facts);
   vars.whiles -= 1;
+  vars.while_marks = vars.while_marks[0..len(vars.while_marks) - 1];
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -2149,6 +2226,10 @@ pub fn elem_write(e: el::El, t: ir::TypeT, at: ir::Node, x: ir::Node) -> ir::Nod
       if el_types::narrow_width(spec) == 2 {
         return el_ir::cl(e, "OpSetShortRaw", [at, ir::NdInt { n: 0 }, ir::NdInt { n: spec.min }, x]);
       }
+      // (…and a one-byte one's `OpSetByte`.)
+      if el_types::narrow_width(spec) == 1 {
+        return el_ir::cl(e, "OpSetByte", [at, ir::NdInt { n: 0 }, ir::NdInt { n: spec.min }, x]);
+      }
       if el_types::uint4(spec) {
         return el_ir::cl(e, "OpSetInt4Raw", [at, ir::NdInt { n: 0 }, x]);
       }
@@ -2583,6 +2664,33 @@ fn appended_literal(e: el::El, n: integer) -> boolean {
     }
   }
   false
+}
+
+// `Parser::type_placeholder_element`: the element of a literal no context typed (a `for`
+// source, a format hole), minted with the placeholder `ref(boolean)` before its first item was
+// read, takes the items' type once they are known — a struct's record, a struct-enum's record as
+// its enum, a vector element as that vector — keeping the borrows it was minted with.
+// `scopes::appends_to_element` reads that type (`@FR-H-Move`): a unit variant copied into an
+// element typed by the placeholder kept its own release and ran its hook twice.  Any other
+// element keeps its variable as it is.
+fn type_placeholder_element(e: el::El, vars: el_vars::Vars, elm: integer, in_t: ir::TypeT) {
+  pd: vector<integer> = [];
+  match el_vars::tp(vars, elm) {
+    TyReference { n: pn, dep } => {
+      if pn != 0 {
+        return;
+      }
+      pd = dep;
+    },
+    _ => return
+  }
+  typed = match el_types::base(in_t) {
+    TyReference { n: d } => if d != 0 && !el::def(e, d).name.starts_with("__nullable<") { ir::TyReference { n: d, dep: pd } } else { return },
+    TyEnum { n: en, is_ref } => if is_ref { ir::TyEnum { n: en, is_ref: true, dep: pd } } else { return },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: pd },
+    _ => return
+  };
+  el_vars::set_var_type(vars, elm, typed);
 }
 
 pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, declared: ir::TypeT, append: boolean = false, value: boolean = false, hinted: boolean = true, at_close: boolean = false, borrows: vector<integer> = [], typed: boolean = false, elm_made: integer = -1) -> Built {
@@ -3085,8 +3193,19 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // A literal with items has its element's `vector<…>` row made here; an empty one, declared
   // or not (`g: vector<single> = []`), numbers nothing yet: its rows come at its store's mint,
   // `main_vector<T>` before `vector<T>`, after the structs.
-  if len(xs) > 0 {
+  // (On the second pass a record element whose wrapper no pass laid out yet — declared below
+  // the literal, unknown to the first — has its row made by that wrapper's layout, at the
+  // store's mint: Rust's `vector_db` runs before the items, `main_vector<T>` before `vector<T>`.)
+  lwn = el_types::elem_name(e, in_t);
+  late_wrapper = !e.first_pass && in_t is TyReference && lwn != "" && (el::def_nr(e, "main_vector<{lwn}>") < 0 || el::def(e, el::def_nr(e, "main_vector<{lwn}>")).known_type == el_schema::NO_TYPE);
+  if len(xs) > 0 && !late_wrapper {
     vector_of(e, in_t);
+  }
+  // `Parser::type_placeholder_element` (`@FR-H-Move`): an element minted before any item was
+  // read, against a container whose content was unknown (`ref(boolean)`, definition 0), is
+  // typed once the items are known, as a hinted literal's element is.
+  if elm >= 0 {
+    type_placeholder_element(e, vars, elm, in_t);
   }
   rows = vector_rows(e, in_t, n, !el_types::is_unknown(declared) && !at_close, appended: append);
   // (A record element is not laid out on the first pass, so it has no rows yet: the literal
@@ -3095,8 +3214,9 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // receiver: `vector<vector<integer>>` — and a scalar one whose rows the schema lays out after
   // the pass (`[1.5, -1.0]`, `['a', 'b']`, `[true, false]`: a `for` over it walks its items,
   // `literal_walk`, on this pass as on the second), a plain enum's among them (`[Hue.Blue]`
-  // handed to a generic's `vector<U>` binds `U` to `Hue`, as Rust's `parse_vector` types it).
-  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t) || el_types::base(in_t) is TyEnum))) {
+  // handed to a generic's `vector<U>` binds `U` to `Hue`, as Rust's `parse_vector` types it),
+  // and a tuple's (`[(1, "a")]` handed to `vector<T>` binds `T` to `(integer, text)`).
+  if rows == null && e.first_pass && (struct_ref(e, el_types::base(in_t)) >= 0 || el_convert::struct_enum(el_types::base(in_t)) || (value && (el_types::base(in_t) is TyVector || walkable_scalar(in_t) || el_types::base(in_t) is TyEnum || el_types::base(in_t) is TyTuple))) {
     rcodes: vector<ir::Node> = [];
     for x in xs {
       rcodes += [x.code];
@@ -3279,7 +3399,14 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
         if mixed_enum >= 0 {
           // A value of the enum is copied whole into the fresh element.
           mx = xs[it#index]!;
-          if el_types::struct_enum_def(mx.tp) != mixed_enum || mx.tp is TyOptional {
+          // (A `null` item of a `vector<E?>` copies the null sentinel into its element.)
+          mxn = mx.tp is TyNull || el_ir::unspan(mx.code) is NdNull || match el_ir::unspan(mx.code) { NdCall { def_nr: mnd, args: mna } => len(mna) == 0 && el::def(e, mnd).name == "OpNullRefSentinel", _ => false };
+          if mxn && !e.first_pass {
+            ls += [el_ir::cl(e, "OpCopyRecord", [el_ir::cl(e, "OpNullRefSentinel", []), at, ir::NdInt { n: el::def(e, mixed_enum).known_type + 16384 }])];
+            ls += [el_ir::cl(e, "OpFinishRecord", [w, at, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])];
+            continue;
+          }
+          if !mxn && (el_types::struct_enum_def(mx.tp) != mixed_enum || mx.tp is TyOptional) {
             el::refuse(e, "a vector literal mixing variant literals with a value that is no plain value of their enum: {type_kind(mx.tp)}");
             return refused_build();
           }
@@ -3687,7 +3814,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
   if e.first_pass && lit >= 0 {
     lnm = el_types::elem_name(e, inner);
     ltok = match e.p.nodes[lit] { SVecLit { at } => at, _ => -1 };
-    if lnm != "" && ltok >= 0 && el_schema::wants_vector_def(e, lnm) && struct_ref(e, el_types::base(inner)) >= 0 {
+    if lnm != "" && ltok >= 0 && el_schema::wants_vector_def(e, lnm) && (struct_ref(e, el_types::base(inner)) >= 0 || el_types::base(inner) is TyEnum) {
       el_schema::make_vector_def(e, inner, lnm, el::pos_at(e, closing_bracket(e, ltok)), true);
     }
   }

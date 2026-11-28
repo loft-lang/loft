@@ -3,9 +3,9 @@
 # Pinned by `LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts -- --ignored`;
 # read by tests/frontend_counts.rs, which fails when a pinned count GROWS.  Pin what the RUNNER
 # reads: a program's count on a local box can be 13 lower (the same delta on every size).
-linux-debug	medium	665343
-linux-debug	stdlib	220433
-linux-debug	tiny	12801
-linux-release	medium	665343
-linux-release	stdlib	220433
-linux-release	tiny	12801
+linux-debug	medium	668734
+linux-debug	stdlib	220225
+linux-debug	tiny	12658
+linux-release	medium	668734
+linux-release	stdlib	220225
+linux-release	tiny	12658

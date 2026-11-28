@@ -12,6 +12,9 @@
 // handle or `&` binding refuses the function by name; a fn-ref takes the generic legs.
 
 use ir;
+use scope_inline_returns;
+use opt_names;
+use ir_pass_tree;
 use own;
 use binds;
 use scope_fn;
@@ -23,6 +26,8 @@ use scope_capture_builds;
 use scope_drops;
 use scope_witness;
 use scope_buffers;
+use scope_handles;
+use scope_tuple_members;
 
 // port: scan_set.rs fn scan_set
 pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::Node, f: ir::Function) -> ir::Node {
@@ -54,9 +59,14 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   // (`fnref_call_rebind`) and `get_free_vars`'.
   // A vector binding (step 4) takes the record legs with its own: the backing its bind fills
   // (`bind_backing`), the call-buffer pairing of a vector-shaped first bind.
-  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) {
-    // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox, the
-    // keyed materialise copies, the generator handle frees.
+  // A keyed binding (step 6) takes the collection legs: its clear on a rebind to `[]` (@P302),
+  // its scope-end release through its self-dep; the generator walk of a keyed type whose records
+  // hold a handle refuses.  A `&` to a record or a vector (step 8) takes the record and vector
+  // legs, its `&`-ness carried as `publishes_through_ref`.  A generator handle binding takes
+  // its frame release on a rebind (@FR-G-Hold); a handle view of a member and one of its own
+  // (`handle_views`) refuses in the phase.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !heap_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) && !scope_fn::is_keyed(t) && !(scope_fn::base(t) is TyIterator) && !(scope_fn::base(t) is TyTuple) {
+    // The rest of `scan_set` for this binding asks the passes of its kind.
     scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
     if !scope_scan::in_scope(s, v) {
       scope_scan::register_binding(s, v, f);
@@ -69,6 +79,14 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   if copy != null {
     return scope_scan::scan(s, b, copy!, f);
   }
+  // `@FR-B-View` — a tuple local bound ONCE from a record's unbox (`tuple_unbox`) borrows the
+  // record its work-ref holds.  `LOFT_NO_UNBOX_MEMBER_DEPS=1` keeps it owning.
+  if !scope_fn::has(s.multi_assigned, ov) && env_variable("LOFT_NO_UNBOX_MEMBER_DEPS") == null && scope_fn::base(scope_fn::tp(f, v)) is TyTuple && len(scope_fn::deps(f, v)) == 0 {
+    uw = unbox_work_ref(value);
+    if uw >= 0 && uw != v {
+      set_deps(f, v, [uw]);
+    }
+  }
   // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value branch is
   // written out per arm (`sink_set_into_arms`).  The droppable-owning first bind is refused by
   // the phase (`drops::drop_hook`).
@@ -76,12 +94,40 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     && scope_args::is_value_branch(value)
     && !(t is TyRefVar)
     && scope_fn::is_record(t);
-  if writes_out {
-    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch");
+  if writes_out && sink_set_into_arms(b, v, ov, value, f, true) != null {
+    s.written_out_v += [ov];
+    s.written_out_t += ["{value}"];
+  }
+  sunk = if writes_out { sink_set_into_arms(b, v, ov, value, f, false) } else { null };
+  // A reassignment kept in its value form beside the written-out rule is carried, but where the
+  // binding is the frame's promoted return buffer (its arms' construction work-refs are the
+  // buffer's) or an arm is a `??` chain (whose arms' ownership decides the sink): those read
+  // facts this transcription does not yet settle.
+  if writes_out && sunk == null && (scope_fn::is_argument(f, ov) || has_ncc_arm(value)) {
+    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch kept in its value form (a promoted buffer, a `??` arm)");
+  }
+  if sunk != null {
+    for src in branch_tail_vars(value) {
+      // The identity arm hands nothing over, and the binding does not view itself.
+      if src == v || src == ov {
+        scope_fn::make_independent(f, v, src);
+        continue;
+      }
+      // `per_path_stops` answers only for a record with a drop cascade, which the phase
+      // refuses where it is bound.
+      rec = own::heap_def_nr(scope_fn::tp(f, v));
+      if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE && !scope_fn::is_argument(f, src) {
+        scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a written-out arm that moves a drop (handoff::per_path_stops)");
+      }
+    }
+    return scope_scan::scan(s, b, sunk!, f);
   }
   // #316 — capture BEFORE put_scope below: an ownership-transition free only applies to a
   // REassignment.
   was_in_scope = scope_scan::in_scope(s, v);
+  // Read before the retirement below clears it: a generator handle moved into a container
+  // (loft#1585) is the container's, and its rebind must not free it.
+  handle_moved = scope_fn::has(s.drop_transferred, v);
   value_null = value is NdNull;
   displaced = scope_drops::no_pre_post();
   // `displaced_drop` answers none for a value with no record (`heap_def_nr`), so the oracle
@@ -94,14 +140,37 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   if was_in_scope && !value_null && scope_scan::get(s.var_scope, v) == s.scope && !scope_fn::has(s.arm_lift_temps, v) {
     scope_scan::set_remove(s.drop_transferred, v);
   }
-  // A redundant re-init `Set(v, Null)` for an already-in-scope var is elided (a keyed
-  // collection's `Set(s, Null)` is a CLEAR, but keyed bindings refuse above).
-  if was_in_scope && value_null {
+  // A redundant re-init `Set(v, Null)` for an already-in-scope var is elided.  EXCEPTION (@P302):
+  // a keyed collection's `Set(s, Null)` on a rebind is a CLEAR, emitted as it stands.
+  if was_in_scope && value_null && !scope_fn::is_keyed(t) {
     return ir::NdInsert { items: [] };
   }
   transition_free: ir::Node? = null;
-  // The TUPLE transition, the keyed generator walk and the generator HANDLE's frame release
-  // are reached only for those kinds, which refuse above.
+  // The same transition for a TUPLE: its previous turn's owned elements are released before
+  // the new elements land, and the move flags of its members reset.
+  if was_in_scope && !scope_fn::names_var(value, v) && !scope_fn::names_var(value, ov) {
+    match scope_fn::base(scope_fn::tp(f, v)) {
+      TyTuple { elems } => {
+        frees = scope_tuple_members::tuple_owned_elem_frees(b, elems, v, f, scope_tuple_members::facts_of(s, v), -1);
+        frees += scope_handles::tuple_handle_frees(b, s.owned_handle_members, v, f);
+        resets: vector<integer> = [];
+        if len(s.tuple_moved) > 0 {
+          for k in s.tuple_moved[0]!.keys {
+            if k / 65536 == v {
+              resets += [(k % 65536) * 65536 + s.tuple_moved[0]!.vals[k#index]!];
+            }
+          }
+        }
+        for r in scope_tuple_members::sorted_ints(resets) {
+          frees += [scope_fn::v_set(r % 65536, ir::NdBoolean { b: false })];
+        }
+        if len(frees) > 0 {
+          transition_free = ir::NdInsert { items: frees };
+        }
+      },
+      _ => {}
+    }
+  }
   // loft#1126 / @FR-O-Latest — `v = f(…, v, …)` with `v` at `f`'s hidden buffer position, where
   // `f` mints a store of its own.  `Function::entry_witness` is minted only for a hidden return
   // buffer, which the phase refuses.
@@ -112,8 +181,35 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     && binds::entry_witness(f, v) == null {
     transition_free = scope_drops::free_ref(s, v);
   }
+  // loft#1601, @FR-G-Hold — a keyed collection rebound releases the generator frames its records
+  // hold through its type's walk (`keyed_frames_name`), not transcribed.
+  if transition_free == null && was_in_scope && scope_drops::keyed_holds_generator(b, t) && !scope_fn::names_var(value, v) && !scope_fn::names_var(value, ov) {
+    self_only = true;
+    for d in scope_fn::deps(f, v) {
+      if d != v && d != ov {
+        self_only = false;
+      }
+    }
+    if self_only {
+      scope_scan::refuse(s, "scan_set: a keyed collection whose records hold a generator, rebound (keyed_frames_name)");
+    }
+  }
+  // A generator HANDLE owns its frame (@FR-G-Hold), so reassigning one releases the frame it
+  // held, as its scope end would have (loft#835) — not for a view of a member (`skip_free`),
+  // nor a handle moved into a container, nor where the right-hand side reads the handle it
+  // replaces.  One moved in a branch arm, or a view (`handle_views`), is released on the paths
+  // where its flag says it owns.
+  if transition_free == null && was_in_scope && scope_fn::base(scope_fn::tp(f, v)) is TyIterator && !scope_fn::is_skip_free(f, v) && !handle_moved && !scope_fn::names_var(value, v) && !scope_fn::names_var(value, ov) {
+    gfree = scope_drops::free_ref(s, v);
+    hv = scope_scan::get(s.handed_off, v);
+    transition_free = if hv >= 0 { ir::NdIf { cond: ir::NdVar { n: hv }, t: ir::NdNull, f: gfree } } else { gfree };
+  }
   // A `??` hoist that OWNS its subject is re-bound on every pass of a loop.
-  if transition_free == null && was_in_scope && scope_fn::name(f, v).starts_with("__ncc_") && scope_fn::is_record(t) && scope_fn::proxy_says_owned(f, v) {
+  // `@FR-O-Buffer`, loft#2673 — not where the hoist was promoted onto the return buffer: the
+  // rebind's own free, guarded by the entry witness, is the one home for the displaced store.
+  // `LOFT_NO_NCC_ENTRY_GUARD=1` takes the plain free again.
+  if transition_free == null && was_in_scope && scope_fn::name(f, v).starts_with("__ncc_") && scope_fn::is_record(t) && scope_fn::proxy_says_owned(f, v)
+    && (binds::entry_witness(f, v) == null || env_variable("LOFT_NO_NCC_ENTRY_GUARD") != null) {
     transition_free = scope_drops::free_ref(s, v);
   }
   // loft#1128 — the PATH-SENSITIVE half: the transition free GUARDED on the return buffer's
@@ -190,7 +286,79 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
       scope_scan::put(s.view_backing, v, pr);
     }
   }
-  // The tuple member backings and call mints are a tuple's, which refuses above.
+  // loft#1588 — which backing each vector member of this value lives in, where the assignment
+  // runs in the variable's own scope.
+  if scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    now = tuple_member_backings_of(value, f);
+    vs = scope_scan::get(s.var_scope, v);
+    if now != null && (vs < 0 || vs == s.scope) {
+      n = now!;
+      scope_scan::tmap_set(s.tuple_member_now, scope_scan::TMap { t: v, keys: n.keys, vals: n.vals });
+    } else {
+      scope_scan::tmap_drop(s.tuple_member_now, v);
+    }
+  }
+  // loft#1511 — the elements of a tuple-literal RHS minted by their own call, for the element
+  // frees at reassignment and scope exit.
+  if scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    joined: scope_tuple_members::BranchMints? = null;
+    if scope_fn::unspan(value) is NdIf || (env_variable("LOFT_NO_MATCH_TUPLE_JOIN") == null && ends_in_branch(value)) {
+      joined = scope_tuple_members::branch_tuple_call_mints(b, value, f, s.ops.null_ref_sentinel);
+    } else {
+      plain = scope_tuple_members::tuple_call_mints(b, value, f);
+      if plain != null {
+        joined = scope_tuple_members::BranchMints { mints: plain!, disarms: [] };
+      }
+    }
+    if joined != null {
+      handoff_disarm += joined!.disarms;
+      m = joined!.mints;
+      // `@FR-H-FreeTwice` — a `null` member a later member write fills is the tuple's alone.
+      match scope_fn::unspan(value) {
+        NdTuple { items } => if env_variable("LOFT_NO_NULL_MEMBER_OWNED") == null {
+          for member in items {
+            idx = member#index;
+            is_null = match scope_fn::unspan(member) {
+              NdNull => true,
+              NdCall { def_nr, args } => len(args) == 0 && def_nr == s.ops.null_ref_sentinel,
+              _ => false
+            };
+            if is_null && scope_fn::has(s.written_tuple_members, ov * 65536 + idx) && !m.keys.contains(idx) {
+              m.keys += [idx];
+              m.vals += [-1];
+            }
+          }
+        },
+        _ => {}
+      }
+      // loft#1532 — an element a later member assignment writes is handed to the tuple ALONE.
+      match scope_fn::base(scope_fn::tp(f, v)) {
+        TyTuple { elems } => for idx in scope_tuple_members::sorted_ints([for k in m.keys { k }]) {
+          owned = len(scope_tuple_members::tuple_owned_elem_frees(b, elems, v, f, scope_tuple_members::no_facts(), idx)) > 0;
+          if owned && scope_fn::has(s.written_tuple_members, ov * 65536 + idx) {
+            for k in m.keys {
+              if k == idx && m.vals[k#index]! >= 0 {
+                handoff_disarm += [scope_fn::v_set(m.vals[k#index]!, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+                m.vals[k#index] = -1;
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+      // The members this statement minted are the tuple's own.
+      if scope_scan::get(s.var_scope, v) == s.scope {
+        for mw in m.vals {
+          if mw >= 0 {
+            scope_scan::set_remove(s.drop_transferred, mw);
+          }
+        }
+      }
+      scope_scan::tmap_set(s.tuple_call_mint, scope_scan::TMap { t: v, keys: m.keys, vals: m.vals });
+    } else {
+      scope_scan::tmap_drop(s.tuple_call_mint, v);
+    }
+  }
   // remember the scope of the variable
   depend: vector<integer> = [];
   pending = scope_fn::deps(f, v);
@@ -205,13 +373,8 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     if d >= scope_fn::count(f) {
       continue;
     }
-    // A `par` loop's result variable (`_r_par<N>`) is a loop variable: unregistered.
-    if !scope_scan::in_scope(s, d) && !scope_fn::name(f, d).starts_with("_r_par") {
-      // `function.was_loop_var(d)` is not in the image: a dep that is not a text temp may be a
-      // loop's variable, which Rust leaves unregistered.
-      if !scope_fn::is_text(scope_fn::tp(f, d)) || !scope_fn::is_compiler_generated(f, d) {
-        scope_scan::refuse(s, "scan_set: a dep that may be a loop variable (variables::was_loop_var, not in the image)");
-      }
+    // loft#1135 — a loop variable reserves its own slot, in its own scope.
+    if !scope_scan::in_scope(s, d) && !scope_fn::was_loop_var(f, d) {
       depend += [d];
       scope_scan::put_scope(s, d);
       s.var_order += [d];
@@ -219,6 +382,9 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     }
   }
   first_binding = !scope_scan::in_scope(s, v);
+  if first_binding && scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    scope_scan::put(s.tuple_depth, v, len(s.loops));
+  }
   if first_binding {
     scope_scan::register_binding(s, v, f);
   }
@@ -290,10 +456,12 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
       adopts_fresh_store = binds::return_adopts_fresh_store(callee);
       scope_scan::oracle_guard(s, unspanned);
       adopts_minted = binds::adopts_minted_at_bind(b, s.own_ops, f, v, unspanned);
-      // @PLN85 `local_source` — `displaced_owned_slots` names a slot whose OWNED store a later
-      // borrow or join displaces; it needs a second bind of the slot.
-      if record_shaped && !publishes_through_ref && len(scope_fn::deps(f, v)) > 0 && !scope_fn::is_skip_free(f, v) && scope_fn::has(s.multi_assigned, ov) {
-        scope_scan::refuse(s, "use_analysis::displaced_owned_slots: a record slot bound again (Ownership::reassign_sites_of)");
+      // @PLN85 `local_source` — `v` holds an OWNED store (this adopts-fresh call) a later
+      // borrow or join reassignment displaces: its deps are stripped so it owns it everywhere.
+      if record_shaped && !publishes_through_ref && scope_fn::has(s.displaced_owned, ov) && len(scope_fn::deps(f, v)) > 0 && !scope_fn::is_skip_free(f, v) {
+        for d in scope_fn::deps(f, v) {
+          scope_fn::make_independent(f, v, d);
+        }
       }
       if record_shaped && !adopts_fresh_store && !publishes_through_ref {
         if view_elision_candidate(s, b, f, v, unspanned) {
@@ -373,8 +541,15 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     _ => false
   };
   s.first_set = if was_in_scope { scope_fn::NONE } else { v };
-  if scope_args::is_value_branch(value) || local_tail {
-    scope_args::arm_tails_need_binding(s, b, value, v, f);
+  // `@FR-O-Complete` — each path of a value branch gets a binding of its own, the temps living
+  // where the BINDING lives.
+  if (scope_args::is_value_branch(value) || local_tail) && scope_args::arm_tails_need_binding(s, b, value, v, f) {
+    home = scope_scan::get(s.var_scope, v);
+    if home < 0 {
+      home = s.scope;
+    }
+    value = scope_args::lift_join_arm_tails(s, b, value, home, v, f);
+    unspanned = scope_fn::unspan(value);
   }
   s.first_set = scope_fn::NONE;
   // A branch JOIN hands over each arm's construction.
@@ -427,6 +602,24 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     k = len(s.binding_now);
     s.binding_now = s.binding_now[0..k - 1];
   }
+  // loft#1588 — the backings a tuple's vector members live in take the TUPLE's turn in the
+  // sweep, just ahead of it.
+  if scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    now = tuple_member_backings_of(value, f);
+    if now != null {
+      for bk in scope_tuple_members::sorted_ints(now!.vals) {
+        bpos = scope_scan::position(s.var_order, bk);
+        if bpos >= 0 {
+          scope_scan::remove_at(s.var_order, bpos);
+          at = scope_scan::position(s.var_order, v);
+          if at < 0 {
+            at = bpos;
+          }
+          s.var_order.insert(at, bk);
+        }
+      }
+    }
+  }
   delivered = scope_backings::delivered_work_ref(b, value, f) >= 0;
   if !delivered {
     match scanned {
@@ -448,8 +641,8 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   match scanned {
     NdInsert { items } => {
       if len(items) >= 2 {
-        ls = [for x in items[0..len(items) - 1] { x }];
         set_value = items[len(items) - 1]!;
+        ls = [for x in items[0..len(items) - 1] { x }];
       }
     },
     _ => {}
@@ -554,6 +747,54 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   ir::NdInsert { items: all }
 }
 
+// port: scan_set.rs fn unbox_work_ref — the work-ref a `tuple_unbox` block binds first, -1 for none.
+fn unbox_work_ref(value: ir::Node) -> integer {
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0]!.name == "tuple_unbox" && len(block[0]!.operators) > 0 {
+      match scope_fn::unspan(block[0]!.operators[0]!) {
+        NdSet { var: w } => w,
+        _ => -1
+      }
+    } else { -1 },
+    _ => -1
+  }
+}
+
+// port: scan_set.rs fn ends_in_branch
+fn ends_in_branch(value: ir::Node) -> boolean {
+  match scope_fn::unspan(value) {
+    NdIf => true,
+    NdBlock { block } => {
+      k = len(block[0]!.operators);
+      k > 0 && ends_in_branch(block[0]!.operators[k - 1]!)
+    },
+    _ => false
+  }
+}
+
+// port: scan_set.rs fn tuple_member_backings_of — the backing each VECTOR member of a tuple
+// literal lives in, by member index; null where `rhs` is not a tuple literal.
+fn tuple_member_backings_of(rhs: ir::Node, f: ir::Function) -> scope_scan::TMap? {
+  items: vector<ir::Node> = match scope_fn::unspan(rhs) {
+    NdTuple { items } => items,
+    _ => return null
+  };
+  out = scope_scan::TMap { t: 0, keys: [], vals: [] };
+  for m in items {
+    match scope_fn::unspan(m) {
+      NdBlock { block } => if scope_fn::base(block[0]!.result[0] ?? ir::TyVoid) is TyVector {
+        bk = scope_backings::member_backing(f, block[0]!.result[0]!);
+        if bk >= 0 {
+          out.keys += [m#index];
+          out.vals += [bk];
+        }
+      },
+      _ => {}
+    }
+  }
+  out
+}
+
 // port: scan_set.rs fn delivers_into_buffer — `v` at the callee's buffer position and the
 // callee fills the buffer it is handed.
 fn delivers_into_buffer(b: ir::Bundle, value: ir::Node, v: integer, ov: integer) -> boolean {
@@ -586,17 +827,8 @@ fn scope_of(s: scope_scan::Scopes, v: integer) -> integer {
 
 // `function.depend(v, dep)` — the dep list replaced.
 fn set_deps(f: ir::Function, v: integer, deps: vector<integer>) {
-  f.variables[v].type_def = [with_deps(scope_fn::tp(f, v), deps)];
-}
-
-fn with_deps(t: ir::TypeT, d: vector<integer>) -> ir::TypeT {
-  match t {
-    TyReference { n } => ir::TyReference { n: n, dep: d },
-    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: d },
-    TyVector { inner } => ir::TyVector { inner: inner, dep: d },
-    TyOptional { inner } => ir::TyOptional { inner: with_deps(inner, d) },
-    _ => t
-  }
+  t = scope_inline_returns::with_deps(scope_fn::tp(f, v), deps);
+  f.variables[v].type_def = [t];
 }
 
 // `def.attributes().iter().any(|a| a.hidden && a.name == nm)`
@@ -969,7 +1201,7 @@ fn kept_displaced_free(s: scope_scan::Scopes, b: ir::Bundle, v: integer, was_in_
 }
 
 // port: scan_set.rs fn note_lift_viewers
-fn note_lift_viewers(s: scope_scan::Scopes, v: integer, lifts: vector<integer>) {
+pub fn note_lift_viewers(s: scope_scan::Scopes, v: integer, lifts: vector<integer>) {
   if len(lifts) == 0 {
     return;
   }
@@ -1019,6 +1251,186 @@ fn ends_in_if(v: ir::Node) -> boolean {
   }
 }
 
+// Does an arm tail of the value branch `n` end in a `??` chain's block?
+fn has_ncc_arm(n: ir::Node) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf { t, f } => has_ncc_arm(t) || has_ncc_arm(f),
+    NdBlock { block } => {
+      bl = block[0]!;
+      k = len(bl.operators);
+      bl.name == "ncc" || (k > 0 && has_ncc_arm(bl.operators[k - 1]!))
+    },
+    NdInsert { items } => len(items) > 0 && has_ncc_arm(items[len(items) - 1]!),
+    _ => false
+  }
+}
+
+// port: arm_lift.rs fn sink_set_into_arms — the statement form of `Set(v, <value branch>)`:
+// every arm tail `t` becomes `Set(ov, t)`, or null where an arm tail is not one a plain bind can
+// take as it is.
+pub fn sink_set_into_arms(b: ir::Bundle, v: integer, ov: integer, value: ir::Node, f: ir::Function, beside_any: boolean) -> ir::Node? {
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0]!.name == "ncc" || block[0]!.name == "Object" { return null; },
+    _ => {}
+  }
+  if !sinkable(b, value, v, ov, f) || (!beside_any && !owners_beside_locals_only(value)) {
+    return null;
+  }
+  sink(value, v, ov)
+}
+
+fn sinkable(b: ir::Bundle, tail: ir::Node, v: integer, ov: integer, f: ir::Function) -> boolean {
+  match scope_fn::unspan(tail) {
+    NdVar { n: x } => x == v || x == ov || (x < scope_fn::count(f) && !scope_fn::is_compiler_generated(f, x)),
+    NdNull => true,
+    NdCall => true,
+    NdCallRef => true,
+    NdIf { t, f: e } => sinkable(b, t, v, ov, f) && sinkable(b, e, v, ov, f),
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "join-arm-owner" {
+        return owner_block_call(bl) != null;
+      }
+      if bl.name == "Object" {
+        return scope_backings::construction_work_ref(tail, f) >= 0;
+      }
+      if bl.name == "ncc" {
+        return env_variable("LOFT_NO_CHAIN_ARM_SINK") == null && scope_inline_returns::ncc_arms_are_all_owned(b, bl.operators);
+      }
+      r = bl.result[0] ?? ir::TyVoid;
+      k = len(bl.operators);
+      !(r is TyVoid) && !(r is TyNull) && k > 0 && sinkable(b, bl.operators[k - 1]!, v, ov, f)
+    },
+    NdInsert { items } => len(items) > 0 && sinkable(b, items[len(items) - 1]!, v, ov, f),
+    _ => false
+  }
+}
+
+// port: arm_lift.rs fn owner_block_call — the call `{ buf = call; buf }` binds, or null.
+fn owner_block_call(bl: ir::Block) -> ir::Node? {
+  if len(bl.operators) != 2 {
+    return null;
+  }
+  match scope_fn::unspan(bl.operators[0]!) {
+    NdSet { var: buf, inner } => match scope_fn::unspan(bl.operators[1]!) {
+      NdVar { n: t } => if buf == t { inner } else { null },
+      _ => null
+    },
+    _ => null
+  }
+}
+
+// An arm that is no block or `if` of its own is wrapped in a `sunk arm` block.
+fn block_arm(arm: ir::Node) -> ir::Node {
+  u = scope_fn::unspan(arm);
+  if u is NdBlock || u is NdIf {
+    return arm;
+  }
+  ir::NdBlock { block: [ir::Block { name: "sunk arm", operators: [arm], result: [ir::TyVoid], scope: 0, var_size: 0 }] }
+}
+
+fn owners_beside_locals_only(n: ir::Node) -> boolean {
+  st = [false, false];  // owner, other
+  owners_walk(n, st);
+  !st[0] || !st[1]
+}
+
+fn owners_walk(n: ir::Node, st: vector<boolean>) {
+  match scope_fn::unspan(n) {
+    NdVar => {},
+    NdNull => {},
+    NdIf { t, f } => {
+      owners_walk(t, st);
+      owners_walk(f, st);
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "join-arm-owner" {
+        st[0] = true;
+      } else if len(bl.operators) > 0 {
+        owners_walk(bl.operators[len(bl.operators) - 1]!, st);
+      }
+    },
+    NdInsert { items } => if len(items) > 0 { owners_walk(items[len(items) - 1]!, st); },
+    _ => { st[1] = true; }
+  }
+}
+
+// `sink`: every arm tail written out as `Set(ov, tail)`.
+fn sink(n: ir::Node, v: integer, ov: integer) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => if x == v || x == ov { return ir::NdInsert { items: [] }; },
+    _ => {}
+  }
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if bl.name == "join-arm-owner" {
+        c = owner_block_call(bl);
+        if c != null {
+          return scope_fn::v_set(ov, c!);
+        }
+      }
+      if bl.name == "Object" || bl.name == "ncc" {
+        return scope_fn::v_set(ov, n);
+      }
+      k = len(bl.operators);
+      ops: vector<ir::Node> = [for i in 0..k { bl.operators[i]! }];
+      if k > 0 {
+        ops[k - 1] = sink(bl.operators[k - 1]!, v, ov);
+      }
+      return ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] };
+    },
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: sink(inner, v, ov) },
+    NdIf { cond, t, f } => return ir::NdIf { cond: cond, t: block_arm(sink(t, v, ov)), f: block_arm(sink(f, v, ov)) },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return n;
+      }
+      ops: vector<ir::Node> = [for i in 0..k - 1 { items[i]! }];
+      ops += [sink(items[k - 1]!, v, ov)];
+      return ir::NdInsert { items: ops };
+    },
+    _ => {}
+  }
+  scope_fn::v_set(ov, n)
+}
+
+// port: join_rewrite.rs fn rewrite_written_out — each reassignment the scan wrote out, written
+// out in the body the analyses before the scan read (keyed by its binding and its value's text).
+pub fn rewrite_written_out(b: ir::Bundle, code: ir::Node, f: ir::Function, wv: vector<integer>, wt: vector<text>, hit: vector<boolean>) -> ir::Node {
+  kids = scope_fn::children(code);
+  n = code;
+  if len(kids) > 0 {
+    n = ir_pass_tree::with_children(code, [for c in kids { rewrite_written_out(b, c, f, wv, wt, hit) }]);
+  }
+  match n {
+    NdSet { var: t, inner: val } => {
+      found = false;
+      for i in 0..len(wv) {
+        if wv[i] == t && !found && wt[i] == "{val}" {
+          found = true;
+        }
+      }
+      if found {
+        stmt = sink_set_into_arms(b, t, t, val, f, true);
+        if stmt != null {
+          for src in branch_tail_vars(val) {
+            if var_copy_owns(b, f, t, src) {
+              scope_fn::make_independent(f, t, src);
+            }
+          }
+          hit[0] = true;
+          return stmt!;
+        }
+      }
+    },
+    _ => {}
+  }
+  n
+}
+
 // port: join_rewrite.rs fn branch_tail_vars
 pub fn branch_tail_vars(n: ir::Node) -> vector<integer> {
   out: vector<integer> = [];
@@ -1041,5 +1453,14 @@ fn tail_walk(n: ir::Node, out: vector<integer>) {
     },
     NdInsert { items } => if len(items) > 0 { tail_walk(items[len(items) - 1]!, out); },
     _ => {}
+  }
+}
+
+// A `&` to a record or a vector: a set THROUGH it publishes the value into the caller's slot
+// (`publishes_through_ref`), which the record and vector legs below carry.
+fn heap_link(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyRefVar { inner } => scope_fn::is_record(inner) || scope_fn::base(inner) is TyVector,
+    _ => false
   }
 }

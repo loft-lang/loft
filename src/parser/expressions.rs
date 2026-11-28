@@ -951,8 +951,16 @@ impl Parser {
                 // @FR-O-Proxy asks alloc — the same null-init question as above, for the
                 // inline-ref temporaries, placed at each temp's first use rather than in the
                 // preamble.  It chooses where an init lands, never whether a store is freed.
+                // A temp this body names NOWHERE takes no init either: pass 1 minted it at a site
+                // pass 2 builds another way (`e = b.items` through an `_elm_N` alias on pass 1
+                // only), so it is no variable of this body (`@FR-O-Borrow-Final`): an init for
+                // it would land after a tail match and make the match a statement, so the
+                // function would answer null on C.
                 for r in &inline_refs {
-                    if !self.vars.is_argument(*r) && self.vars.tp(*r).depend().is_empty() {
+                    if !self.vars.is_argument(*r)
+                        && self.vars.tp(*r).depend().is_empty()
+                        && ls.iter().any(|stmt| stmt.reads_var(*r))
+                    {
                         let pos = ls
                             .iter()
                             .position(|stmt| inline_ref_set_in(stmt, *r))

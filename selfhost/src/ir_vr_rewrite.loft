@@ -669,8 +669,17 @@ fn ex_value(b: ir::Bundle, e: Ex, n: ir::Node) -> ir::Node {
   match u {
     NdTuple => return n,
     NdNull => return respan(n, null_tuple(e.l, ops)),
-    NdReturn { inner } => return respan(n, ir::NdReturn { inner: ex_value(b, e, inner) }),
-    NdIf { cond, t, f } => return respan(n, ir::NdIf { cond: cond, t: ex_value(b, e, t), f: ex_value(b, e, f) }),
+    // (Each answer bound to a local before the node is built: built in place, the answers of
+    // these recursive calls leaked their records on both backends, loft#2660's class.)
+    NdReturn { inner } => {
+      ni = ex_value(b, e, inner);
+      return respan(n, ir::NdReturn { inner: ni });
+    },
+    NdIf { cond, t, f } => {
+      nt = ex_value(b, e, t);
+      nf = ex_value(b, e, f);
+      return respan(n, ir::NdIf { cond: cond, t: nt, f: nf });
+    },
     NdVar { n: v } => {
       if v != buf && !scope_fn::has(e.c.delivered, v) && !scope_fn::has(e.c.forwards, v) {
         x = b.data.definitions[e.d]!.variables.variables[v]!;

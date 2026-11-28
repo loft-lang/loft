@@ -174,7 +174,12 @@ off any other parameter (`h.link`) names the record that slot holds, a store of 
 the holder's: a callee answering it beside a fresh store answers `JoinSlot`, and the caller
 reads the answer as what its records know that slot of the argument holds — so a join whose
 witness is the holder adopts the record, and the two holders' frees are one store's
-(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
+(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  A callee that answers
+its hidden buffer on one path and an argument on another (`if … { return P { … }; } p`)
+answers `BufArg`: where the call hands the buffer null, the argument's store, borrowed, or a fresh
+store the answer owns, so a dropped answer the callee minted is a leak the records see; handed a
+live buffer it is not followed (loft#2677; `LOFT_RECORDS_NO_BUF_ARG=1` reads it as unknown <!-- doc-lint: ok -->
+everywhere).  Inside
 the callee such a record is judged only where it is answered: who owns a field's value is not
 one fact here (a record a stored reference names, a generator a hand-off flag guards).
 A fn-ref a callee hands
@@ -194,7 +199,9 @@ a new one; a write inside a branch joins the written and the kept state
 (`LOFT_RECORDS_NO_CALL_WRITE_BACK=1`, `LOFT_RECORDS_NO_BRANCH_WRITE_BACK=1`).  A read through a name
 that may still point into a store ended on every path is a use after its end
 (`LOFT_RECORDS_NO_STALE_READS=1`); the value `OpSetDbRef` writes into a slot is handed over, not
-read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).
+read (`LOFT_RECORDS_SET_DBREF_VALUE_USE=1`).  A call argument that is a value block answering a
+variable (a null check's `{#ncr …; x}`, how a nullable local is read) reads that variable as the
+bare spelling does (`LOFT_RECORDS_NO_TAIL_USE=1` counts the bare spelling only).
 **The drop lease (`@PLN228` P9; `LOFT_RECORDS_NO_LEASE=1` turns it off).**  A type that owns a
 droppable has a LEASE per value: its hook runs once.  The records follow, per path, the stores a
 hook ran on (may and must), a hook guarded by `OpDistinctStore(v, w)` (settled except where `v` is
@@ -223,7 +230,13 @@ A record built inside another variable's store (`r = OpPlaceRecord(h, …)`, `@F
 gone when that store is re-minted (`OpDatabase(h)` on a live store re-initialises it in place):
 `r` names an ended generation from there, and writing it into a field is a use after its end —
 every later read of that field finds the wiped record
-(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).
+(`LOFT_RECORDS_NO_REMINT_ENDS_PLACED=1` leaves such a record live).  The same re-mint ends the
+record for every other name that may hold the store `h` alone holds (`@FR-O-Detach`): a binding
+left naming a construction temporary's record, read after the temporary's next `OpDatabase`, reads
+the cleared record (`LOFT_RECORDS_NO_REMINT_ENDS_ALIASES=1` leaves such a name live).  A store key
+that joins a live generation of its site with an ended one is correlated with the names its live
+part holds, so an alias of one of those reads the live record and an alias of any other name reads
+the end.
 A bind that joins at run time, first or a reassignment, copies what lies in its witness's
 store and adopts the rest, so a store the value names while another variable holds it (a branch arm's call that
 answered into the frame's buffer) has both as holders, and a free through each is a second
@@ -237,6 +250,10 @@ reads only a projection's root).
 A native is read by its declaration: `-> T[p]` answers a view of parameter `p`, and a public
 native none of whose parameters holds a store answers a store of its own; any other native's
 answer is not followed (`LOFT_RECORDS_NO_NATIVE_ANSWERS=1` follows none).
+A `par` row (`n_parallel_buf_get_ref`) of a worker answering its element (summary `Arg(0)`) is a
+record of the vector the loop's `n_parallel_queue_ref` names, until `n_parallel_buf_drop_ref`: a
+free of the row ends that vector.  A row of a worker answering a store of its own lives in the
+par buffer, which the records do not follow, and stays unknown.
 A write through a `&fn` parameter hands the closure on, and outside a loop a later read of the
 link names it (`LOFT_RECORDS_NO_LINK_READS_WRITE=1`), so `OpFnRefDetachShared(old, new)` nulls
 `old` where both name that one store (`LOFT_RECORDS_NO_DETACH_SHARED=1`); a second write through

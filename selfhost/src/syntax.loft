@@ -982,6 +982,9 @@ fn stmt(p: Syntax) -> integer? {
   match p {
     [Semi] => add(p, SStmt { at: at, e: null, semi: true, orelse: null }),
     [e: loop_like, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: void_block, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: void_match, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: void_if, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: if_no_else, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: expr, (o: store_else)?, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: o }),
     _ => null
@@ -1005,6 +1008,173 @@ fn loop_like(p: Syntax) -> integer? {
     [e: parallel_expr] => e,
     _ => null
   }
+}
+
+// A block at the start of a statement that answers nothing — empty, or its last statement
+// ended by `;` — ends the statement too: `{ x = 7; }` then `-1;` are two statements (the Rust
+// parser's void left operand, read off the block's type; here off its spelling).
+fn void_block(p: Syntax) -> integer? {
+  match p {
+    [_v: void_ahead, b: block] => b,
+    _ => null
+  }
+}
+
+// …and so does a `match` every arm of which is such a block (`=> { return v; }`, `_ => {}`).
+fn void_match(p: Syntax) -> integer? {
+  match p {
+    [_v: void_match_ahead, m: match_expr] => m,
+    _ => null
+  }
+}
+
+// …and an `if` … `else` whose every arm is such a block (`{ return 0.0; } else { k = 1; }`): a
+// `(` on the next line starts the next statement, no call of the `if`.
+fn void_if(p: Syntax) -> integer? {
+  match p {
+    [_v: void_if_ahead, x: if_expr] => x,
+    _ => null
+  }
+}
+
+// Zero-width: the `if` here has an `else`, and each of its arms — through `else if` — is a block
+// that closes nothing or whose last token before its `}` is a `;`.
+fn void_if_ahead(p: Syntax) -> integer? {
+  i = p.pos;
+  if !(p.src[i] is KwIf) {
+    return null;
+  }
+  while i < len(p.src) && p.src[i] is KwIf {
+    // (The condition: up to the `{` at bracket depth 0.)
+    i += 1;
+    depth = 0;
+    while i < len(p.src) && !(depth == 0 && p.src[i] is LBrace) {
+      if p.src[i] is LParen || p.src[i] is LBracket {
+        depth += 1;
+      } else if p.src[i] is RParen || p.src[i] is RBracket {
+        depth -= 1;
+      }
+      i += 1;
+    }
+    if i >= len(p.src) {
+      return null;
+    }
+    j = void_block_end(p, i);
+    if j < 0 {
+      return null;
+    }
+    i = j + 1;
+    if i >= len(p.src) || !(p.src[i] is KwElse) {
+      return null;
+    }
+    i += 1;
+    if i < len(p.src) && p.src[i] is LBrace {
+      return if void_block_end(p, i) >= 0 { p.pos } else { null };
+    }
+  }
+  null
+}
+
+// The `}` closing the void block opened at `i`, or -1 where it is no void block.
+fn void_block_end(p: Syntax, i: integer) -> integer {
+  bd = 0;
+  j = i;
+  while j < len(p.src) {
+    if p.src[j] is LBrace {
+      bd += 1;
+    } else if p.src[j] is RBrace {
+      bd -= 1;
+      if bd == 0 {
+        return if j == i + 1 || p.src[j - 1] is Semi { j } else { -1 };
+      }
+    }
+    j += 1;
+  }
+  -1
+}
+
+// Zero-width: the `match` here has arms, and at its own depth every `=>` is followed by a block
+// that closes nothing or whose last token before its `}` is a `;`.
+fn void_match_ahead(p: Syntax) -> integer? {
+  if !(p.src[p.pos] is KwMatch) {
+    return null;
+  }
+  i = p.pos + 1;
+  // (The subject: up to the `{` at depth 0 that opens the arms.)
+  depth = 0;
+  while i < len(p.src) && !(depth == 0 && p.src[i] is LBrace) {
+    if p.src[i] is LParen || p.src[i] is LBracket {
+      depth += 1;
+    } else if p.src[i] is RParen || p.src[i] is RBracket {
+      depth -= 1;
+    }
+    i += 1;
+  }
+  if i >= len(p.src) {
+    return null;
+  }
+  i += 1;
+  arms = 0;
+  depth = 0;
+  while i < len(p.src) {
+    t = p.src[i];
+    if depth == 0 && t is RBrace {
+      return if arms > 0 { p.pos } else { null };
+    }
+    if depth == 0 && t is FatArrow {
+      if !(p.src[i + 1] is LBrace) {
+        return null;
+      }
+      // The arm's block: its matching `}`.
+      j = i + 1;
+      bd = 0;
+      while j < len(p.src) {
+        if p.src[j] is LBrace {
+          bd += 1;
+        } else if p.src[j] is RBrace {
+          bd -= 1;
+          if bd == 0 {
+            break;
+          }
+        }
+        j += 1;
+      }
+      if j >= len(p.src) || !(j == i + 2 || p.src[j - 1] is Semi) {
+        return null;
+      }
+      arms += 1;
+      i = j + 1;
+      continue;
+    }
+    if t is LBrace || t is LParen || t is LBracket {
+      depth += 1;
+    } else if t is RBrace || t is RParen || t is RBracket {
+      depth -= 1;
+    }
+    i += 1;
+  }
+  null
+}
+
+// Zero-width: the `{` here opens a block whose matching `}` closes nothing or follows a `;`.
+fn void_ahead(p: Syntax) -> integer? {
+  if !(p.src[p.pos] is LBrace) {
+    return null;
+  }
+  depth = 0;
+  i = p.pos;
+  while i < len(p.src) {
+    if p.src[i] is LBrace {
+      depth += 1;
+    } else if p.src[i] is RBrace {
+      depth -= 1;
+      if depth == 0 {
+        return if i == p.pos + 1 || p.src[i - 1] is Semi { p.pos } else { null };
+      }
+    }
+    i += 1;
+  }
+  null
 }
 
 // An `if` with no `else` at the start of a statement answers nothing either.

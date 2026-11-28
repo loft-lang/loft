@@ -1,0 +1,293 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// A page's delivery (src/c/deliver.rs `deliver_page`, src/database/descriptor.rs): on a page
+// (`LOFT_BROWSER`) `deliver` and `expose` hand the value to the page with its layout descriptor
+// as JSON, which the page reads the value through.  The descriptor is the unit's
+// (`loft_dlvd<tp>`, written here at compile time); only its `flat` map is the run's: every keyed
+// collection the value holds is materialised to the element array its walk yields
+// (`loft_dlk<tp>`), and the map names each one's record.
+
+use ir;
+use cgen::(Cx, c_string);
+use cgen_tables;
+
+// `Stores::layout_closure`: every type the types of `roots` reach, per type number.
+fn closure(b: ir::Bundle, root: integer) -> vector<boolean> {
+  seen: vector<boolean> = [for _ in b.types { false }];
+  stack = [root];
+  while len(stack) > 0 {
+    kt = stack[len(stack) - 1]!;
+    stack = stack[0..len(stack) - 1];
+    if kt < 0 || kt >= len(b.types) || seen[kt]! {
+      continue;
+    }
+    seen[kt] = true;
+    for r in reached(b, kt) {
+      if r >= 0 && r < len(b.types) && !seen[r]! {
+        stack += [r];
+      }
+    }
+  }
+  seen
+}
+
+// The types type `kt` names directly (`layout_closure`'s `refs`).
+fn reached(b: ir::Bundle, kt: integer) -> vector<integer> {
+  match (b.types[kt]!.parts[0] ?? ir::PtBase) {
+    PtStruct { fields } => [for f in fields { f.content }],
+    PtEnumValue { value: _, fields } => [for f in fields { f.content }],
+    PtVector { content } => [content],
+    PtArray { content } => [content],
+    PtSorted { content, keys: _ } => [content],
+    PtOrdered { content, keys: _ } => [content],
+    PtHash { content, fields: _ } => [content],
+    PtIndex { content, keys: _ } => [content],
+    PtRadix { content, fields: _ } => [content],
+    PtTrie { content, key: _ } => [content],
+    PtChildRec { content } => [content],
+    // A plain variant keeps no type; only data-carrying variants reach one.
+    PtEnum { values } => [for v in values { if v.nr == 65535 { -1 } else { v.nr } }],
+    _ => [],
+  }
+}
+
+// `LayoutField::is_data`: the enum discriminant, an absent field and a `#` synthetic are not
+// data.
+fn is_data(f: ir::DbField) -> boolean {
+  f.name != "enum" && f.position != 65535 && !f.name.starts_with("#")
+}
+
+// The data fields of record type `kt`, none for another.
+fn record_fields(b: ir::Bundle, kt: integer) -> vector<ir::DbField> {
+  match (b.types[kt]!.parts[0] ?? ir::PtBase) {
+    PtStruct { fields } => fields,
+    PtEnumValue { value: _, fields } => fields,
+    _ => [],
+  }
+}
+
+// `holds_keyed`: does `id` hold a keyed collection a delivery flattens — itself, or a field or an
+// element below it?  `seen` cuts a recursive type.
+fn holds_keyed(b: ir::Bundle, inside: vector<boolean>, id: integer, seen: vector<boolean>) -> boolean {
+  if id < 0 || id >= len(b.types) || !inside[id]! || seen[id]! {
+    return false;
+  }
+  seen[id] = true;
+  match (b.types[id]!.parts[0] ?? ir::PtBase) {
+    PtHash { content: _, fields: _ } => true,
+    PtIndex { content: _, keys: _ } => true,
+    PtRadix { content: _, fields: _ } => true,
+    PtTrie { content: _, key: _ } => true,
+    PtStruct { fields } => {
+      for f in fields {
+        if is_data(f) && holds_keyed(b, inside, f.content, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    PtEnumValue { value: _, fields } => {
+      for f in fields {
+        if is_data(f) && holds_keyed(b, inside, f.content, seen) {
+          return true;
+        }
+      }
+      false
+    },
+    PtVector { content } => holds_keyed(b, inside, content, seen),
+    PtArray { content } => holds_keyed(b, inside, content, seen),
+    _ => false,
+  }
+}
+
+fn holds(b: ir::Bundle, inside: vector<boolean>, id: integer) -> boolean {
+  holds_keyed(b, inside, id, [for _ in b.types { false }])
+}
+
+// `flatten_body`: the flatten walker of type `id` (`Stores::collect_keyed`): a keyed collection
+// is materialised and named in the `flat` map under its `(rec, pos)`; a record descends into its
+// fields, a vector or an array into its elements, each only where a keyed collection can be
+// found below.
+fn flatten_body(x: Cx, inside: vector<boolean>, id: integer) -> text {
+  match (x.b.types[id]!.parts[0] ?? ir::PtBase) {
+    PtHash { content: _, fields: _ } => "    loft_dlv_flat_add(cx, f, at, loft_hash_sorted(cx, at, {cgen_tables::keys_of(x, id)}));\n",
+    PtRadix { content: _, fields: _ } => "    loft_dlv_flat_add(cx, f, at, loft_radix_sorted(cx, at));\n",
+    PtTrie { content: _, key: _ } => "    loft_dlv_flat_add(cx, f, at, loft_radix_sorted(cx, at));\n",
+    PtIndex { content: _, keys: _ } => "    loft_dlv_flat_add(cx, f, at, loft_dlv_index(cx, at));\n",
+    PtStruct { fields: _ } => fields_walk(x, inside, id),
+    PtEnumValue { value: _, fields: _ } => fields_walk(x, inside, id),
+    PtVector { content } => elem_walk(content, "v, 8 + {x.b.types[content]!.size} * i"),
+    PtArray { content } => elem_walk(content, "loft_u32(cx, loft_store_of(cx, at), v, 8 + 4 * i), 8"),
+    _ => "",
+  }
+}
+
+fn fields_walk(x: Cx, inside: vector<boolean>, id: integer) -> text {
+  s = "";
+  for fl in record_fields(x.b, id) {
+    if is_data(fl) && holds(x.b, inside, fl.content) {
+      s += "    loft_dlk{fl.content}(cx, f, loft_field(cx, at, {fl.position}));\n";
+    }
+  }
+  s
+}
+
+fn elem_walk(e: integer, at: text) -> text {
+  "    uint32_t v = loft_u32(cx, loft_store_of(cx, at), at.rec, at.pos);\n    uint32_t n = v ? loft_u32(cx, loft_store_of(cx, at), v, 4) : 0;\n    for (uint32_t i = 0; i < n; i++) {{\n        loft_ref x = {{ at.store_nr, {at}, 0 }};\n        loft_dlk{e}(cx, f, x);\n    }}\n"
+}
+
+// `json_escape`: the JSON-significant characters of a descriptor name escaped.
+fn json_escape(s: text) -> text {
+  out = "";
+  for c in s {
+    code = c as integer;
+    if c == '"' {
+      out += "\\\"";
+    } else if c == '\\' {
+      out += "\\\\";
+    } else if c == '\n' {
+      out += "\\n";
+    } else if c == '\r' {
+      out += "\\r";
+    } else if c == '\t' {
+      out += "\\t";
+    } else if code < 32 {
+      out += "\\u{code:04x}";
+    } else {
+      out += "{c}";
+    }
+  }
+  out
+}
+
+fn fields_json(fields: vector<ir::DbField>) -> text {
+  [for f in fields { "{{\"name\":\"{json_escape(f.name)}\",\"pos\":{f.position},\"content\":{f.content}}}" }].join(",")
+}
+
+fn narrow_json(kind: text, start: integer, nullable: boolean) -> text {
+  "{{\"kind\":\"{kind}\",\"start\":{start},\"nullable\":{nullable}}}"
+}
+
+// `node_json` of type `kt` as `rewrite_iterated` leaves it: a hash, radix, trie or index a
+// `flatarray`, a sorted collection a `vector`.
+fn node_json(b: ir::Bundle, kt: integer) -> text {
+  match (b.types[kt]!.parts[0] ?? ir::PtBase) {
+    PtBase => "{{\"kind\":\"base\",\"base\":\"{base_wire(kt)}\"}}",
+    PtStruct { fields } => "{{\"kind\":\"record\",\"fields\":[{fields_json(fields)}]}}",
+    PtEnumValue { value, fields } => "{{\"kind\":\"enumvalue\",\"tag\":{value},\"fields\":[{fields_json(fields)}]}}",
+    PtEnum { values } => "{{\"kind\":\"enum\",\"variants\":[{[for v in values { "{{\"disc\":{v#index},\"id\":{v.nr},\"name\":\"{json_escape(v.name)}\"}}" }].join(",")}]}}",
+    PtByte { start, nullable } => narrow_json("byte", start, nullable),
+    PtShort { start, nullable } => narrow_json("short", start, nullable),
+    PtInt { start, nullable } => narrow_json("int", start, nullable),
+    PtShortRaw { start, nullable } => narrow_json("shortraw", start, nullable),
+    PtIntRaw { start, nullable } => narrow_json("int4raw", start, nullable),
+    PtVector { content } => "{{\"kind\":\"vector\",\"elem\":{content}}}",
+    PtArray { content } => "{{\"kind\":\"array\",\"elem\":{content}}}",
+    PtSorted { content, keys: _ } => "{{\"kind\":\"vector\",\"elem\":{content}}}",
+    PtOrdered { content, keys: _ } => "{{\"kind\":\"iterated\",\"sub\":\"ordered\",\"elem\":{content}}}",
+    PtHash { content, fields: _ } => "{{\"kind\":\"flatarray\",\"elem\":{content},\"stride\":8}}",
+    PtIndex { content, keys: _ } => "{{\"kind\":\"flatarray\",\"elem\":{content},\"stride\":4}}",
+    PtRadix { content, fields: _ } => "{{\"kind\":\"flatarray\",\"elem\":{content},\"stride\":4}}",
+    PtTrie { content, key: _ } => "{{\"kind\":\"flatarray\",\"elem\":{content},\"stride\":4}}",
+    PtDbRef => "{{\"kind\":\"ref\"}}",
+    PtChildRec { content } => "{{\"kind\":\"childrec\",\"elem\":{content}}}",
+  }
+}
+
+// `BaseKind::wire` of base type `kt` (`from_type_id`, an integer for any other).
+fn base_wire(kt: integer) -> text {
+  if kt == 1 { "long" } else if kt == 2 { "single" } else if kt == 3 { "float" } else if kt == 4 { "boolean" } else if kt == 5 { "text" } else if kt == 6 { "character" } else { "integer" }
+}
+
+// `LayoutDesc::to_json` of type `tp`'s closure, without its closing brace (the run appends the
+// `flat` map): the nodes, the names — a stored reference's target too, outside the closure —
+// and the sizes, each by type number.
+fn descriptor_json(b: ir::Bundle, inside: vector<boolean>) -> text {
+  named: vector<boolean> = [for i in inside { i }];
+  for t in inside {
+    if t {
+      for f in record_fields(b, t#index) {
+        if f.target != 65535 && f.target >= 0 && f.target < len(b.types) {
+          named[f.target] = true;
+        }
+      }
+    }
+  }
+  nodes: vector<text> = [];
+  sizes: vector<text> = [];
+  for t in inside {
+    if t {
+      nodes += ["\"{t#index}\":{node_json(b, t#index)}"];
+      sizes += ["\"{t#index}\":{b.types[t#index]!.size}"];
+    }
+  }
+  names: vector<text> = [];
+  for n in named {
+    if n {
+      names += ["\"{n#index}\":\"{json_escape(b.types[n#index]!.name)}\""];
+    }
+  }
+  "{{\"nodes\":{{{nodes.join(",")}}},\"names\":{{{names.join(",")}}},\"sizes\":{{{sizes.join(",")}}}"
+}
+
+// `deliver_page`: a page's delivery of type `tp` — its descriptor (`loft_dlvd<tp>`) and the
+// walker that flattens its keyed collections (`loft_dlk<tp>`, or `0` when it holds none),
+// registered for the unit.  The key tables the walkers name are registered here, while the
+// unit's tables are still open.
+pub fn deliver_page(x: Cx, tp: integer) -> vector<text> {
+  inside = closure(x.b, tp);
+  for t in inside {
+    if t && holds(x.b, inside, t#index) && !x.dlv_flat[t#index]! {
+      x.dlv_flat[t#index] = true;
+      x.dlv_flats[t#index] = flatten_body(x, inside, t#index);
+    }
+  }
+  collect = if holds(x.b, inside, tp) { "loft_dlk{tp}" } else { "0" };
+  if x.dlv_descs[tp]! == "" {
+    x.dlv_descs[tp] = descriptor_json(x.b, inside);
+  }
+  ["loft_dlvd{tp}", collect]
+}
+
+// `deliver_page_code`: the descriptors and flatten walkers a page's deliveries use, for the
+// browser build only; off a page the loopback host reads neither.
+pub fn page_code(x: Cx) -> text {
+  any = false;
+  for d in x.dlv_descs {
+    if d != "" {
+      any = true;
+    }
+  }
+  if !any {
+    return "";
+  }
+  out = "#if defined(LOFT_BROWSER)\n";
+  for d in x.dlv_descs {
+    if d != "" {
+      out += "static const char loft_dlvd{d#index}[] = {c_string(d)};\n";
+    }
+  }
+  for f in x.dlv_flat {
+    if f {
+      out += "static void loft_dlk{f#index}(loft_cx *cx, loft_dlv_flat *f, loft_ref at);\n";
+    }
+  }
+  for f in x.dlv_flat {
+    if f {
+      out += "static void loft_dlk{f#index}(loft_cx *cx, loft_dlv_flat *f, loft_ref at) {{\n    (void) f;\n{x.dlv_flats[f#index]!}}}\n";
+    }
+  }
+  out += "#else\n";
+  for d in x.dlv_descs {
+    if d != "" {
+      out += "#define loft_dlvd{d#index} 0\n";
+    }
+  }
+  for f in x.dlv_flat {
+    if f {
+      out += "#define loft_dlk{f#index} 0\n";
+    }
+  }
+  out + "#endif\n"
+}

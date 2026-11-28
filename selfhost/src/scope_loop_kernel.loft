@@ -1,0 +1,261 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/loop_kernel_rewrite.rs` transcribed: `(R-BoundedNest)`'s reduction, a loop
+// `{#For end = len(v); idx = -1; loop { i = {#Iter idx = idx + 1; if end <= idx break; idx};
+// { acc = acc + v[i] } } }` over an integer vector, is `acc = vector_sum_int(v, acc)`.  Admitted
+// only when the loop body is that one statement and the loop's own variables are named nowhere
+// else in the function.  Run by `check` on the settled body, after `take_local`.
+
+use ir;
+use scope_fn;
+
+struct Ops {
+  vector_len: integer,
+  length_vector: integer,
+  add_int: integer,
+  le_int: integer,
+  get_int: integer,
+  get_vector: integer,
+  sum_int: integer
+}
+
+fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    vector_len: scope_fn::def_nr(b, "t_6vector_len"),
+    length_vector: scope_fn::def_nr(b, "OpLengthVector"),
+    add_int: scope_fn::def_nr(b, "OpAddInt"),
+    le_int: scope_fn::def_nr(b, "OpLeInt"),
+    get_int: scope_fn::def_nr(b, "OpGetInt"),
+    get_vector: scope_fn::def_nr(b, "OpGetVector"),
+    sum_int: scope_fn::def_nr(b, "n_vector_sum_int")
+  }
+}
+
+// port: loop_kernel_rewrite.rs fn statements — a statement list without its line markers,
+// unwrapped.
+fn statements(list: vector<ir::Node>) -> vector<ir::Node> {
+  [for o in list if !(scope_fn::unspan(o) is NdLine) { scope_fn::unspan(o) }]
+}
+
+fn is_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) { NdVar { n: x } => x == v, _ => false }
+}
+
+// port: loop_kernel_rewrite.rs fn is_counting_step — `{#Iter idx = idx + 1; if end <= idx
+// break; idx}`.
+fn is_counting_step(iter: ir::Node, idx: integer, end: integer, o: Ops) -> boolean {
+  steps: vector<ir::Node> = [];
+  match scope_fn::unspan(iter) {
+    NdBlock { block } => { steps = statements(block[0].operators); },
+    _ => { return false; }
+  }
+  if len(steps) != 3 {
+    return false;
+  }
+  inc_ok = match steps[0]! {
+    NdSet { var: target, inner: sum } => target == idx && match scope_fn::unspan(sum) {
+      NdCall { def_nr, args } => def_nr == o.add_int && len(args) == 2 && is_var(args[0]!, idx) && match scope_fn::unspan(args[1]!) { NdInt { n } => n == 1, _ => false },
+      _ => false
+    },
+    _ => false
+  };
+  test_ok = match steps[1]! {
+    NdIf { cond, t: th, f: other } => match scope_fn::unspan(cond) {
+      NdCall { def_nr, args } => def_nr == o.le_int && len(args) == 2 && is_var(args[0]!, end) && is_var(args[1]!, idx),
+      _ => false
+    } && match scope_fn::unspan(th) { NdBreak { n } => n == 0, _ => false } && scope_fn::unspan(other) is NdNull,
+    _ => false
+  };
+  inc_ok && test_ok && is_var(steps[2]!, idx)
+}
+
+// port: loop_kernel_rewrite.rs fn accumulates — `acc = acc + v[i]` with `v[i]` an 8-byte
+// integer element: the accumulator, -1 for none.
+fn accumulates(add: ir::Node, vector: integer, index: integer, o: Ops) -> integer {
+  match add {
+    NdSet { var: acc, inner: sum } => {
+      match scope_fn::unspan(sum) {
+        NdCall { def_nr: op, args } => {
+          if op != o.add_int || len(args) != 2 || !is_var(args[0]!, acc) {
+            return -1;
+          }
+          match scope_fn::unspan(args[1]!) {
+            NdCall { def_nr: get, args: ga } => {
+              if get != o.get_int || len(ga) != 2 || !match ga[1]! { NdInt { n } => n == 0, _ => false } {
+                return -1;
+              }
+              match scope_fn::unspan(ga[0]!) {
+                NdCall { def_nr: gv, args: va } => {
+                  ok = gv == o.get_vector && len(va) == 3 && is_var(va[0]!, vector) && match va[1]! { NdInt { n } => n == 8, _ => false } && is_var(va[2]!, index);
+                  if ok && acc != vector && acc != index { acc } else { -1 }
+                },
+                _ => -1
+              }
+            },
+            _ => -1
+          }
+        },
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// `ir_shape::names_var`: does node `n` itself name variable `v`?
+fn names_var(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => x == v,
+    NdSet { var } => var == v,
+    NdCallRef { var } => var == v,
+    NdIter { var } => var == v,
+    NdTupleGet { var } => var == v,
+    NdTuplePut { var } => var == v,
+    NdFnRef { var } => var == v,
+    NdFnRefDnr { n: x } => x == v,
+    _ => false
+  }
+}
+
+// port: loop_kernel_rewrite.rs fn count — how many nodes of `n` name `v`, in any spelling.
+fn count(n: ir::Node, v: integer) -> integer {
+  c = if names_var(n, v) { 1 } else { 0 };
+  for x in scope_fn::children(n) {
+    c += count(x, v);
+  }
+  c
+}
+
+// port: loop_kernel_rewrite.rs fn reduction — the kernel call that answers the loop `n`, or
+// null.
+fn reduction(n: ir::Node, whole: ir::Node, o: Ops) -> ir::Node? {
+  stmts: vector<ir::Node> = [];
+  match scope_fn::unspan(n) {
+    NdBlock { block } => { stmts = statements(block[0].operators); },
+    _ => { return null; }
+  }
+  if len(stmts) != 3 {
+    return null;
+  }
+  end = -1;
+  v = -1;
+  match stmts[0]! {
+    NdSet { var, inner } => {
+      end = var;
+      match scope_fn::unspan(inner) {
+        NdCall { def_nr, args } => {
+          if (def_nr != o.vector_len && def_nr != o.length_vector) || len(args) != 1 {
+            return null;
+          }
+          match scope_fn::unspan(args[0]!) { NdVar { n: x } => { v = x; }, _ => { return null; } }
+        },
+        _ => { return null; }
+      }
+    },
+    _ => { return null; }
+  }
+  idx = -1;
+  match stmts[1]! {
+    NdSet { var, inner } => {
+      if !match scope_fn::unspan(inner) { NdInt { n: k } => k == -1, _ => false } {
+        return null;
+      }
+      idx = var;
+    },
+    _ => { return null; }
+  }
+  loop_stmts: vector<ir::Node> = [];
+  match stmts[2]! {
+    NdLoop { block } => { loop_stmts = statements(block[0].operators); },
+    _ => { return null; }
+  }
+  if len(loop_stmts) != 2 {
+    return null;
+  }
+  i = -1;
+  match loop_stmts[0]! {
+    NdSet { var, inner } => {
+      if !is_counting_step(inner, idx, end, o) {
+        return null;
+      }
+      i = var;
+    },
+    _ => { return null; }
+  }
+  body: vector<ir::Node> = [];
+  match loop_stmts[1]! {
+    NdBlock { block } => { body = statements(block[0].operators); },
+    _ => { return null; }
+  }
+  if len(body) != 1 {
+    return null;
+  }
+  acc = accumulates(body[0]!, v, i, o);
+  if acc < 0 {
+    return null;
+  }
+  // The loop's own variables live and die inside it.
+  for own in [end, idx, i] {
+    if own == acc || own == v || count(whole, own) != count(n, own) {
+      return null;
+    }
+  }
+  scope_fn::v_set(acc, ir::NdCall { def_nr: o.sum_int, args: [ir::NdVar { n: v }, ir::NdVar { n: acc }] })
+}
+
+fn contains_reduction(n: ir::Node, whole: ir::Node, o: Ops) -> boolean {
+  if reduction(n, whole, o) != null {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if contains_reduction(c, whole, o) {
+      return true;
+    }
+  }
+  false
+}
+
+fn replace_loops(n: ir::Node, whole: ir::Node, o: Ops) -> ir::Node {
+  r = reduction(n, whole, o);
+  if r != null {
+    return r!;
+  }
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_loops(inner, whole, o) },
+    NdBlock { block: bl } => {
+      b0 = bl[0];
+      ir::NdBlock { block: [ir::Block { name: b0.name, operators: [for x in b0.operators { replace_loops(x, whole, o) }], result: [for t in b0.result { t }], scope: b0.scope, var_size: b0.var_size }] }
+    },
+    NdLoop { block: bl } => {
+      b0 = bl[0];
+      ir::NdLoop { block: [ir::Block { name: b0.name, operators: [for x in b0.operators { replace_loops(x, whole, o) }], result: [for t in b0.result { t }], scope: b0.scope, var_size: b0.var_size }] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { replace_loops(x, whole, o) }] },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { replace_loops(x, whole, o) }] },
+    NdCallRef { var: r2, args } => ir::NdCallRef { var: r2, args: [for x in args { replace_loops(x, whole, o) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { replace_loops(x, whole, o) }] },
+    NdSet { var: x, inner } => ir::NdSet { var: x, inner: replace_loops(inner, whole, o) },
+    NdReturn { inner } => ir::NdReturn { inner: replace_loops(inner, whole, o) },
+    NdDrop { inner } => ir::NdDrop { inner: replace_loops(inner, whole, o) },
+    NdYield { inner } => ir::NdYield { inner: replace_loops(inner, whole, o) },
+    NdIf { cond, t, f } => ir::NdIf { cond: replace_loops(cond, whole, o), t: replace_loops(t, whole, o), f: replace_loops(f, whole, o) },
+    NdIter { var: x, create, next, init } => ir::NdIter { var: x, create: replace_loops(create, whole, o), next: replace_loops(next, whole, o), init: replace_loops(init, whole, o) },
+    NdTuplePut { var: x, idx, inner } => ir::NdTuplePut { var: x, idx: idx, inner: replace_loops(inner, whole, o) },
+    NdParallel { arms } => ir::NdParallel { arms: [for x in arms { replace_loops(x, whole, o) }] },
+    _ => n
+  }
+}
+
+// port: loop_kernel_rewrite.rs fn rewrite — every admitted reduction loop of a settled body.
+pub fn rewrite(b: ir::Bundle, code: ir::Node) -> ir::Node {
+  if (env_variable("LOFT_NO_LOOP_KERNELS") ?? "0") != "0" {
+    return code;
+  }
+  o = ops_of(b);
+  if o.sum_int < 0 || !contains_reduction(code, code, o) {
+    return code;
+  }
+  replace_loops(code, code, o)
+}

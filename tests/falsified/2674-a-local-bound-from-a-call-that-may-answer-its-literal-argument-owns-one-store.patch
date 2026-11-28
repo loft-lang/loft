@@ -1,0 +1,87 @@
+diff --git a/src/keys.rs b/src/keys.rs
+index 2e7d80e650..bf9fcca7a9 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -3341,24 +3341,6 @@ pub fn arm_frees_param_deps() -> bool {
+     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+ }
+ 
+-/// `LOFT_NO_DELIVERED_EVERY_RETURN=1` — a callee whose TAIL hands its parameter back counts as
+-/// delivering the construction it was handed even where an earlier `return` answers a record of
+-/// its own, as before loft#2674.
+-#[must_use]
+-pub fn delivered_every_return() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_EVERY_RETURN"))
+-}
+-
+-/// `LOFT_NO_DELIVERED_FIRST_ADOPT=1` — a first bind of a call that delivers its construction
+-/// hoists the construction out and copies the answer, as before loft#2674, while the
+-/// construction's buffer is still paired with the binding as its adopter: the buffer leaks.
+-#[must_use]
+-pub fn delivered_first_adopt() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_FIRST_ADOPT"))
+-}
+-
+ /// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local
+ /// the body assigns copies even where the source IS that buffer, as before loft#2673: the
+ /// re-mint clears the record and the copy reads the cleared record back.
+diff --git a/src/scopes/backings.rs b/src/scopes/backings.rs
+index 4e86da5986..ad09f8fdbd 100644
+--- a/src/scopes/backings.rs
++++ b/src/scopes/backings.rs
+@@ -252,26 +252,6 @@ pub(super) fn delivered_work_ref(rhs: &Value, function: &Function, data: &Data)
+         let Value::Var(returned) = body else {
+             return None;
+         };
+-        // loft#2674 — and EVERY return hands that parameter back.  A callee whose tail does but
+-        // which leaves earlier with a record of its own (`if p.v > 3 { return P { … }; } p`)
+-        // answers the construction on some runs only, so the binding cannot adopt the
+-        // construction's store: read as delivered, the bind stayed the plain adopt, the run
+-        // that answered the fresh record left the construction's store to nobody, and the
+-        // interpreter read the other run's answer out of a released store (`0`).
+-        // `LOFT_NO_DELIVERED_EVERY_RETURN=1` reads the tail alone again.
+-        if crate::keys::delivered_every_return() {
+-            let mut other_return = false;
+-            def.code.walk(&mut |n| {
+-                if let Value::Return(r) = n
+-                    && !matches!(r.unspan(), Value::Var(x) if x == returned)
+-                {
+-                    other_return = true;
+-                }
+-            });
+-            if other_return {
+-                return None;
+-            }
+-        }
+         // The argument is the construction itself while the scan reads it — its block, whose
+         // tail is the work-ref — or, once lifted, that work-ref by name.
+         def.returned.depend().iter().find_map(|&k| {
+diff --git a/src/scopes/scan.rs b/src/scopes/scan.rs
+index 9a19baef3c..5e4d5b619c 100644
+--- a/src/scopes/scan.rs
++++ b/src/scopes/scan.rs
+@@ -310,14 +310,6 @@ impl Scopes<'_> {
+                 let first = !self
+                     .var_scope
+                     .contains_key(self.var_mapping.get(ov).unwrap_or(ov));
+-                // loft#2674 — …except where the call DELIVERS the construction it was handed
+-                // (`delivered_work_ref`, loft#1575's `s = me(Bx { … })`): the binding adopts that
+-                // store at a rebind, and the construction's buffer is paired with the binding as
+-                // its adopter.  Hoisted, the first bind copied the answer instead, the pairing
+-                // still took the buffer's free, and the construction leaked once per first bind.
+-                // `LOFT_NO_DELIVERED_FIRST_ADOPT=1` hoists it again.
+-                let delivered = crate::keys::delivered_first_adopt()
+-                    && super::backings::delivered_work_ref(value, function, data).is_some();
+                 let set = self.scan_set(*ov, value, function, data);
+                 // A FIRST bind of a call whose arguments were hoisted (`{ INSERT <literals>; f(…) }`, `scan_args`)
+                 // is bound as the call itself, its preamble run first: the bind arm reads the
+@@ -331,7 +323,6 @@ impl Scopes<'_> {
+                 let set = match set {
+                     Value::Set(v, val)
+                         if first
+-                            && !delivered
+                             && !crate::env_once!(
+                                 std::env::var_os("LOFT_NO_SET_PREAMBLE_HOIST").is_some()
+                             )

@@ -115,6 +115,48 @@ fn bodied_callees(b: ir::Bundle, d: integer) -> vector<integer> {
   out
 }
 
+// `direct_callees`: every function `d`'s body calls by name.  A missed call could hide a cycle
+// and leave a recursive body forced inline, so the walk visits every node; a callee with no
+// body has no calls of its own.
+fn direct_callees(b: ir::Bundle, d: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  def = b.data.definitions[d]!;
+  if len(def.code) > 0 {
+    opt_non_sentinel::walk(def.code[0]!, fn(n: ir::Node) {
+      match n {
+        NdCall { def_nr, args: _ } => {
+          if def_nr >= 0 && def_nr < len(b.data.definitions) && !out.contains(def_nr) {
+            out += [def_nr];
+          }
+        },
+        _ => {},
+      }
+    });
+  }
+  out
+}
+
+// `on_call_cycle`: do `d`'s calls reach `d` again — directly, or through other functions with a
+// body?  (A function is on a cycle when its strongly connected component holds another function,
+// or it calls itself: either way, it reaches itself.)
+pub fn reaches_itself(b: ir::Bundle, d: integer) -> boolean {
+  seen: vector<boolean> = [for _ in 0..len(b.data.definitions) { false }];
+  todo = direct_callees(b, d);
+  while len(todo) > 0 {
+    f = todo[len(todo) - 1];
+    todo = todo[0..len(todo) - 1];
+    if f == d {
+      return true;
+    }
+    if seen[f]! {
+      continue;
+    }
+    seen[f] = true;
+    todo += direct_callees(b, f);
+  }
+  false
+}
+
 // `is_guard_free`: is nothing that registers a function-value buffer reachable from this
 // definition, over the closure of its call graph?  Then its frame carries no guard.
 pub fn is_guard_free(b: ir::Bundle, g: GuardFree, d: integer) -> boolean {

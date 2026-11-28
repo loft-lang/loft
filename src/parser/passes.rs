@@ -214,25 +214,25 @@ impl Parser {
             crate::diagnostics::set_first_pass(false);
             self.reverse_iterator = false;
             self.iterable_context = false;
-            self.applied_imports.clear();
-            self.deferred_unknown.clear();
-            self.deferred_import_misses.clear();
-            self.resolutions.clear();
-            self.data.reset();
-            if !default {
-                self.data.source = crate::data::MAIN_SOURCE;
-            }
-            self.lambda_counters.clear();
-            self.fn_lambdas.clear();
-            self.store_handoffs.clear();
-            Self::load_main_file(&mut self.lexer, filename, content);
-            self.parse_file();
-            self.resolve_deferred_unknowns();
+            self.reparse_main(filename, content, default);
             // @PLN35 PC3 — reject a left-recursive sub-rule grammar (a cycle in the invocation
             // graph) at compile time, before it can hang at runtime.  Post-parse over pass-2 edges.
             self.check_subrule_wellformedness();
             self.assert_pass2_def_attr_stable(&pass1_attr_counts);
             self.after_pass2();
+            // `LOFT_PASS2_REPEAT=1` (a measurement for @PLN233): pass 2 once more, so every
+            // caller reads the returns pass 2 settled; reports whether they are then stable.
+            if std::env::var_os("LOFT_PASS2_REPEAT").is_some() {
+                let before: Vec<Vec<u16>> = (0..self.data.definitions())
+                    .map(|d| self.data.def(d).returned().depend())
+                    .collect();
+                self.reparse_main(filename, content, default);
+                self.after_pass2();
+                let changed = (0..before.len().min(self.data.definitions() as usize))
+                    .filter(|&d| self.data.def(d as u32).returned().depend() != before[d])
+                    .count();
+                eprintln!("pass2-repeat: {changed} return(s) changed on the repeat");
+            }
         }
         self.backfill_native_symbol_crates();
         // Plan-07 phase 4h — emit `not null` field-reminder hints
@@ -251,6 +251,26 @@ impl Parser {
         }
         self.diagnostics.fill(self.lexer.diagnostics());
         self.diagnostics.is_empty()
+    }
+
+    /// Parse the main file once more over the definitions the pass before left (`data.reset()`
+    /// keeps them, so def numbers hold): pass 2, and the @PLN233 phase-2a repeat of it.  The
+    /// per-parse tables are cleared here and nowhere else, so the two cannot drift apart.
+    fn reparse_main(&mut self, filename: &str, content: Option<&str>, default: bool) {
+        self.applied_imports.clear();
+        self.deferred_unknown.clear();
+        self.deferred_import_misses.clear();
+        self.resolutions.clear();
+        self.data.reset();
+        if !default {
+            self.data.source = crate::data::MAIN_SOURCE;
+        }
+        self.lambda_counters.clear();
+        self.fn_lambdas.clear();
+        self.store_handoffs.clear();
+        Self::load_main_file(&mut self.lexer, filename, content);
+        self.parse_file();
+        self.resolve_deferred_unknowns();
     }
 
     /// Point the lexer at the parse's own entry — the file at `filename`, or
@@ -540,6 +560,48 @@ impl Parser {
         // After the promotion: a store instance clones its function's FINAL signature, and a
         // call it retargets already carries any buffer the promotion added.
         self.mint_store_text_instances();
+        self.report_return_drift();
+    }
+
+    /// `LOFT_RETURN_DRIFT=1` — each function whose return dependencies differ between pass 1 and
+    /// pass 2, one line on stderr:
+    /// `return-drift <name> <file>:<line> pass1=[…] pass2=[…] harmful|benign`.  HARMFUL is pass 1
+    /// recording a borrow of a VISIBLE parameter that pass 2 dropped: a caller pass 2 reads
+    /// BEFORE the callee's own pass-2 body (a callee declared below it) still types the call
+    /// with pass 1's borrow, reads its owned result as a view, and never frees it (loft#2660's
+    /// class; `@FR-O-Borrow-Final` keeps no list across the passes, and settling the return
+    /// itself is @PLN233's).
+    fn report_return_drift(&mut self) {
+        if self.pass1_returns.is_empty() {
+            return;
+        }
+        let snapshot = std::mem::take(&mut self.pass1_returns);
+        for (d, before) in snapshot.iter().enumerate() {
+            let d = d as u32;
+            if d >= self.data.definitions() || !matches!(self.data.def_type(d), DefType::Function) {
+                continue;
+            }
+            let after = self.data.def(d).returned().depend();
+            if *before == after {
+                continue;
+            }
+            let attrs = self.data.attributes(d);
+            let harmful = before.iter().any(|&j| {
+                (j as usize) < attrs
+                    && !self.data.attr_name(d, j as usize).starts_with("__")
+                    && !after.contains(&j)
+            });
+            let def = self.data.def(d);
+            eprintln!(
+                "return-drift\t{}\t{}:{}\tpass1={:?}\tpass2={:?}\t{}",
+                def.original_name(),
+                def.position.file,
+                def.position.line,
+                before,
+                after,
+                if harmful { "harmful" } else { "benign" }
+            );
+        }
     }
 
     /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
@@ -578,6 +640,11 @@ impl Parser {
         // Last: every definition pass 1 parsed now exists, and those numbered from here on
         // first exist on pass 2 (`text_return`'s pass-2 promotion gate reads it).
         self.pass1_defs = self.data.definitions.len() as u32;
+        if crate::keys::return_drift_enabled() {
+            self.pass1_returns = (0..self.pass1_defs)
+                .map(|d| self.data.def(d).returned().depend())
+                .collect();
+        }
     }
 
     /// `@FR-N-Join` — an inferred local is the join of every value bound to it, optional iff

@@ -1,0 +1,324 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// `@FR-R-CTable` (src/c/reltable.rs): a parted function's runs of releases are written as data.
+//
+// A function `(R-CSplit)` writes in parts keeps its locals in a frame struct (`loft_fr`), and
+// each exit of a part releases what the function still owns, one statement per variable.  This
+// pass reads a function's finished parts and writes each run of `MIN_RUN` or more such statements
+// as one call, `loft_release_run(cx, loft_fr, <alphabet>, <run>, n)`: the alphabet holds each
+// distinct release once, and a run is the list of its statements' indices, a run that ends
+// another run reusing that run's tail.  The loop runs the statements the run held, in their
+// order, so the pass changes where a release is written, never which releases run.
+// `LOFT_NO_C_RELTABLE=1` turns it off.
+
+// The shortest run written as a table: below it the statements cost less than the loop.
+MIN_RUN = 8;
+
+// One release, as the alphabet holds it: the kind (`loft_release_run`'s switch), the field it
+// releases, and the witness field (the distinct form) or the parking slot (a work text).
+struct Release {
+  kind: integer,
+  field: text,
+  other: text,
+}
+
+// A run of releases and the line it starts at.
+struct Run {
+  start: integer,
+  rels: vector<Release>,
+}
+
+// A run's place in the run store.
+struct Placed {
+  at: integer,
+  n: integer,
+}
+
+fn is_ident(s: text) -> boolean {
+  if s == "" {
+    return false;
+  }
+  for c in s {
+    if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_') {
+      return false;
+    }
+  }
+  true
+}
+
+// A frame field `loft_fr->NAME` as `NAME`, else null.
+fn field_of(s: text) -> text? {
+  t = s.trim();
+  if !t.starts_with("loft_fr->") {
+    return null;
+  }
+  name = t[9..t.size()];
+  if is_ident(name) { name } else { null }
+}
+
+// The address of a frame field `&loft_fr->NAME` as `NAME`, else null.
+fn addr_of(s: text) -> text? {
+  t = s.trim();
+  if !t.starts_with("&") {
+    return null;
+  }
+  field_of(t[1..t.size()])
+}
+
+// A static's address `&NAME` as `NAME`, else null.
+fn slot_of(s: text) -> text? {
+  t = s.trim();
+  if !t.starts_with("&") {
+    return null;
+  }
+  name = t[1..t.size()];
+  if is_ident(name) { name } else { null }
+}
+
+// The release statement on `line`, in one of the four forms the writer emits over frame fields;
+// null for any other line, which ends a run.
+fn release(line: text) -> Release? {
+  t = line.trim();
+  if !t.ends_with(");") {
+    return null;
+  }
+  kind = -1;
+  args = "";
+  for head in ["loft_free_var(", "loft_free_var_distinct(", "loft_wpark_put(", "loft_text_free("] {
+    if kind < 0 && t.starts_with(head) {
+      kind = head#index;
+      args = t[head.size()..t.size() - 2];
+    }
+  }
+  if kind < 0 {
+    return null;
+  }
+  // The arguments are frame fields, a slot or the context: none holds a comma.
+  parts: vector<text> = [for p in args.split(',') { p.trim() }];
+  if (parts[0] ?? "") != "loft_fr->cx" {
+    return null;
+  }
+  n = len(parts);
+  if (kind == 0 || kind == 3) && n == 2 {
+    f = addr_of(parts[1]!) ?? return null;
+    return Release { kind: kind, field: f, other: "" };
+  }
+  if kind == 1 && n == 3 {
+    f = addr_of(parts[1]!) ?? return null;
+    o = field_of(parts[2]!) ?? return null;
+    return Release { kind: kind, field: f, other: o };
+  }
+  if kind == 2 && n == 3 {
+    f = addr_of(parts[2]!) ?? return null;
+    o = slot_of(parts[1]!) ?? return null;
+    return Release { kind: kind, field: f, other: o };
+  }
+  null
+}
+
+// The runs of `MIN_RUN` or more release statements in `lines`: the first line of each and its
+// releases, in order.
+fn find_runs(lines: vector<text>) -> vector<Run> {
+  runs: vector<Run> = [];
+  i = 0;
+  while i < len(lines) {
+    start = i;
+    run: vector<Release> = [];
+    for _ in 0..len(lines) {
+      if i >= len(lines) {
+        break;
+      }
+      r = release(lines[i]!) ?? break;
+      run += [r];
+      i += 1;
+    }
+    if len(run) >= MIN_RUN {
+      runs += [Run { start: start, rels: run }];
+    }
+    if i == start {
+      i += 1;
+    }
+  }
+  runs
+}
+
+fn same_release(a: Release, b: Release) -> boolean {
+  a.kind == b.kind && a.field == b.field && a.other == b.other
+}
+
+// Does `store[at..at + n]` hold `run`?
+fn holds(store: vector<integer>, at: integer, run: vector<integer>) -> boolean {
+  for v in run {
+    if store[at + v#index]! != v {
+      return false;
+    }
+  }
+  true
+}
+
+// The run store for `coded` (each run as alphabet indices): the longest runs first — a stable
+// order, as `sort_by_key` keeps it — and a run that ends one already stored is that one's tail.
+// The store goes into `store`; the answer is each run's place.
+fn place_runs(coded: vector<vector<integer>>, store: &vector<integer>) -> vector<Placed> {
+  order: vector<integer> = [];
+  for c in coded {
+    k = c#index;
+    at = len(order);
+    for o in order {
+      if len(coded[o]!) < len(c) {
+        at = o#index;
+        break;
+      }
+    }
+    next: vector<integer> = [];
+    for o in order {
+      if o#index == at {
+        next += [k];
+      }
+      next += [o];
+    }
+    if at == len(order) {
+      next += [k];
+    }
+    order = next;
+  }
+  placed: vector<Placed> = [for _ in coded { Placed { at: 0, n: 0 } }];
+  starts: vector<Placed> = [];
+  for k in order {
+    run = coded[k]!;
+    found = -1;
+    for s in starts {
+      if found < 0 && s.n >= len(run) && holds(store, s.at + s.n - len(run), run) {
+        found = s.at + s.n - len(run);
+      }
+    }
+    if found < 0 {
+      found = len(store);
+      store += run;
+      starts += [Placed { at: found, n: len(run) }];
+    }
+    placed[k] = Placed { at: found, n: len(run) };
+  }
+  placed
+}
+
+// The C of function `fr`'s two tables: the alphabet and the run store.
+fn tables_text(fr: text, alphabet: vector<Release>, store: vector<integer>) -> text {
+  out = "static const loft_rel loft_rels_{fr}[] = {{";
+  for r in alphabet {
+    sep = if r#index % 4 == 0 { "\n    " } else { " " };
+    other = if r.kind == 1 { "offsetof(struct {fr}__frame, {r.other}), 0" } else if r.kind == 2 { "0, &{r.other}" } else { "0, 0" };
+    out += "{sep}{{ {r.kind}, offsetof(struct {fr}__frame, {r.field}), {other} }},";
+  }
+  out += "\n}};\nstatic const uint16_t loft_relrun_{fr}[] = {{";
+  for v in store {
+    sep = if v#index % 24 == 0 { "\n    " } else { "" };
+    out += "{sep}{v},";
+  }
+  out + "\n}};\n"
+}
+
+// `s` without its trailing blanks and line end.
+fn trim_end(s: text) -> text {
+  e = s.size();
+  while e > 0 && (s[e - 1..e] == "\n" || s[e - 1..e] == " " || s[e - 1..e] == "\t" || s[e - 1..e] == "\r") {
+    e -= 1;
+  }
+  s[0..e]
+}
+
+// `parts` — the text `(R-CSplit)` wrote for function `fr` (its frame struct `<fr>__frame`) — with
+// every run of `MIN_RUN` or more releases written as one `loft_release_run` call over tables
+// placed after the frame struct.  `parts` as it is when the pass is off, finds no run, or cannot
+// place its tables.
+pub fn tables(fr: text, parts: text) -> text {
+  if (env_variable("LOFT_NO_C_RELTABLE") ?? "") != "" {
+    return parts;
+  }
+  frame = "struct {fr}__frame {{";
+  // The lines, each with its line end (`split_inclusive`).
+  lines: vector<text> = [];
+  from = 0;
+  for c in parts {
+    if c == '\n' {
+      lines += [parts[from..c#index + 1]];
+      from = c#index + 1;
+    }
+  }
+  if from < parts.size() {
+    lines += [parts[from..parts.size()]];
+  }
+  open = -1;
+  for l in lines {
+    if open < 0 && trim_end(l) == frame {
+      open = l#index;
+    }
+  }
+  if open < 0 {
+    return parts;
+  }
+  after_struct = -1;
+  for i in open..len(lines) {
+    if after_struct < 0 && trim_end(lines[i]!) == "}};" {
+      after_struct = i;
+    }
+  }
+  if after_struct < 0 {
+    return parts;
+  }
+  runs = find_runs(lines);
+  if len(runs) == 0 {
+    return parts;
+  }
+  alphabet: vector<Release> = [];
+  coded: vector<vector<integer>> = [];
+  for run in runs {
+    codes: vector<integer> = [];
+    for r in run.rels {
+      at = -1;
+      for a in alphabet {
+        if at < 0 && same_release(a, r) {
+          at = a#index;
+        }
+      }
+      if at < 0 {
+        alphabet += [r];
+        at = len(alphabet) - 1;
+      }
+      codes += [at];
+    }
+    coded += [codes];
+  }
+  if len(alphabet) > 65535 {
+    return parts;
+  }
+  store: vector<integer> = [];
+  placed = place_runs(coded, store);
+  table = tables_text(fr, alphabet, store);
+  out = "";
+  next = 0;
+  i = 0;
+  while i < len(lines) {
+    if next < len(runs) && runs[next].start == i {
+      line = lines[i]!;
+      indent = "";
+      for c in line {
+        if c != ' ' && c != '\t' {
+          break;
+        }
+        indent += "{c}";
+      }
+      out += "{indent}loft_release_run(loft_fr->cx, loft_fr, loft_rels_{fr}, loft_relrun_{fr} + {placed[next].at}, {placed[next].n});\n";
+      i += len(runs[next].rels);
+      next += 1;
+      continue;
+    }
+    out += lines[i]!;
+    if i == after_struct {
+      out += table;
+    }
+    i += 1;
+  }
+  out
+}

@@ -94,6 +94,36 @@ pub fn replaces_walked_source(e: el::El, vars: el_vars::Vars, root: integer) -> 
   false
 }
 
+// Does a write to the place `pl` replace a vector an open loop walks — `pl` the walked read
+// itself or a container on its access path (`d`, `d.src` for a walk over `d.src`)?
+pub fn place_replaces_walk(e: el::El, vars: el_vars::Vars, pl: ir::Node) -> boolean {
+  up = el_ir::unspan(pl);
+  for av in vars.active_values {
+    if el_ir::is_null(av) || !(el_types::base(el_ex_vector::linked_vector(place_type(e, vars, av))) is TyVector) {
+      continue;
+    }
+    cur = el_ir::unspan(av);
+    more = true;
+    while more {
+      if cur == up {
+        return true;
+      }
+      more = false;
+      match cur {
+        NdCall { def_nr: cd, args: ca } => {
+          cn = el::def(e, cd).name;
+          if len(ca) > 0 && (cn == "OpGetField" || cn == "OpGetVector" || cn == "OpGetVectorNullable" || cn == "OpVectorRef") {
+            cur = el_ir::unspan(ca[0]!);
+            more = true;
+          }
+        },
+        _ => {}
+      }
+    }
+  }
+  false
+}
+
 // Does `n` write variable `x` — a `Set` of it, or a `&` argument naming it (`OpCreateStack`)?
 fn writes_var(e: el::El, n: ir::Node, x: integer) -> boolean {
   match el_ir::unspan(n) {
@@ -280,7 +310,11 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     el::refuse(e, "a compound write to a narrow field of a keyed record");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) {
+  // (Rust's walk takes its copy where anything under the walked root but a vector ELEMENT is
+  // written whole — a sibling vector field's too; an element, `d.out[0] = T { … }` over a walk of
+  // `d.src`, is built in place, and the walk reads its view, unless it is the walk's own path.)
+  elem_place = match el_ir::unspan(p.code) { NdCall { def_nr: epd } => el::def(e, epd).name == "OpGetVector" || el::def(e, epd).name == "OpGetVectorNullable", _ => false };
+  if op == "=" && replaces_walked_source(e, vars, place_root(e, el_ir::unspan(p.code))) && (place_replaces_walk(e, vars, p.code) || !elem_place) {
     el::refuse(e, "a write that replaces a vector a loop walks (the walk takes a copy)");
     return ex(ir::NdNull, ir::TyVoid);
   }
@@ -907,7 +941,13 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
     return ex(ir::NdNull, ir::TyVoid);
   }
-  v = stored(e, vars, x, pt);
+  // (`null` into a dense plain-scalar place stores the type's own null — `v[1] = null` is
+  // `OpSetInt(…, OpConvIntFromNull())`; a narrow one, whose null is range-checked, is not carried.)
+  nullw: ir::Node? = null;
+  if x.tp is TyNull && op == "=" && el_convert::plain_scalar(pt) && !(pt is TyOptional) && !(match pt { TyInteger { spec: nsp } => el_types::narrow_width(nsp) > 0 || nsp.forced_size != 0, _ => false }) {
+    nullw = el_convert::null_of(e, pt);
+  }
+  v = if nullw != null { nullw } else { stored(e, vars, x, pt) };
   if v == null {
     refuse_known(e, x.tp, "a place assignment its type converts: {type_kind(x.tp)} to {type_kind(pt)}");
     return ex(ir::NdNull, ir::TyVoid);
@@ -1316,7 +1356,13 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // A vector field is written in place like any other (its handle zeroed, the value appended).
   for a in el::def(e, rd).attributes {
     at = a.typedef[0] ?? ir::TyVoid;
-    if !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) && !el_schema::out_of_line(e, rd, a#index) {
+    // (A method the struct carries, `get_pixel`, is an attribute of type routine: no field.)
+    if at is TyRoutine {
+      continue;
+    }
+    // (…and a nullable scalar or text, `opt: integer?`, `ot: text?`, is written as its dense twin.)
+    nscal = at is TyOptional && (el_convert::plain_scalar(el_types::base(at)) || el_types::base(at) is TyText);
+    if !nscal && !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) && !el_schema::out_of_line(e, rd, a#index) {
       el::refuse(e, "a record literal written into a field or an element: a field that is no plain scalar");
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -1329,6 +1375,11 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // an item reads the place itself (`v: [len(b.inner.v)]`): any other field place is built in
   // place.  An element place (`vs.els[i] = …`) is still built apart.
   apart = false;
+  // (Built apart from a field of a LOCAL, a comprehension field, a formatted item and an item
+  // indexing the place stay refused: Rust parses the literal twice there — the abandoned
+  // attempt's loop names (`x`, `_comp_1`), its work texts and the snapshot `_build_src_N` (a
+  // second-pass variable) are not carried.)
+  apart_hard = false;
   aroot = place_root(e, place);
   // (A shared capture's record, `OpGetDbRef(__closure, pos)`, is rooted at the closure record.)
   if aroot < 0 {
@@ -1352,8 +1403,17 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
         // and so does a comprehension field's build: both built apart, as record items are.)
         fmt_item = match e.p.nodes[fe ?? 0] { SVecLit { items: fits } => fe != null && len([for fi2 in fits if match e.p.nodes[fi2] { SString { parts } => len(parts) > 1, _ => false } { fi2 }]) > 0, _ => false };
         comp_field = fe != null && e.p.nodes[fe!] is SComprehension;
-        if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field) {
+        // (…and a collection field given a local that views the place — `data: d2` where both
+        // `d2` and the place's root are parameters, which the caller may have handed one store,
+        // `store_viewers`: the primed field would read the headers it just zeroed.)
+        vfa = attr_nr(el::def(e, rd), match e.p.nodes[fi] { SFieldInit { name: vfn } => vfn, _ => "" });
+        vcoll = vfa >= 0 && match el_types::base(el::def(e, rd).attributes[vfa]!.typedef[0] ?? ir::TyVoid) { TyVector { inner: _ } => true, TyHash { n: _ } => true, TyIndex { n: _ } => true, TySorted { n: _ } => true, _ => false };
+        view_field = vcoll && fe != null && aroot >= 0 && match e.p.nodes[fe!] { SName { name: vsn, member: vsm } => vsm == "" && el_vars::var(vars, vsn) >= 0 && el_ex_copy::store_viewers(vars, aroot).contains(el_vars::var(vars, vsn)), _ => false };
+        if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field || view_field) {
           apart = true;
+          if comp_field || fmt_item || (aroot >= 0 && e.p.nodes[fe!] is SVecLit && el_ex_into::indexes_name(e, fe!, el_vars::name_of(vars, aroot))) {
+            apart_hard = true;
+          }
           // (`snapshot_read_destination`: an item INDEXING the destination's vector —
           // `v: [len(b.inner.v), b.inner.v[0]]` — has Rust copy it first, `_build_src_N` and the
           // store it is built in, the copy borrowing that store, before the build takes this road.)
@@ -1402,16 +1462,18 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   }
   coll_decline = coll_decline || (apart && local_elem);
   apart = apart || coll_decline;
-  // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
-  // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
+  if apart_hard && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) && !calls(e, place, "OpGetVector") {
+    el::refuse(e, "a record literal written into a field or an element: a vector literal field of a place in a local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // (Carried where the place is reached through a parameter, and from a field of a local where
+  // the items read the place without indexing it — the abandoned attempt's `_elm_N` an inline
+  // ref, `unique_elm_var`.)
   // (Built apart from a place in a local, a scalar or text field reading the place is staged
   // first, as in place — `k: v[1].k + 1` into a `__ref_N` ahead of the record's writes.  The
   // ELEMENT form only: a field place keeps the refusal, Rust's head lists its unused `_elm_N` by
   // when it was registered.)
-  if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) && !calls(e, place, "OpGetVector") {
-    el::refuse(e, "a record literal written into a field or an element: a vector literal field of a place in a local");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
+
   if apart {
     if e.first_pass {
       el_ex_pattern::first_pass_fields(e, vars, rd, fields);
@@ -1454,8 +1516,14 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
           _ => {}
         }
       }
-      fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
-      el_vars::register_work_ref(vars, fe);
+      // (Only where the literal has a vector-literal field: a viewing local, `data: d2`, made no
+      // first-pass element.)
+      if len([for vlf in fields if match e.p.nodes[vlf] { SFieldInit { e: vle } => vle != null && (e.p.nodes[vle!] is SVecLit || e.p.nodes[vle!] is SComprehension), _ => false } { 1 }]) > 0 {
+        fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
+        el_vars::register_work_ref(vars, fe);
+        // (The abandoned in-place attempt's element is an inline ref, `unique_elm_var`.)
+        el_vars::mark_inline(vars, fe, "unique_elm_var");
+      }
     }
     // (Named apart from the `built` below, so a loft without the `@FR-B-Scope` split fix
     // (2e7b305c7) builds this file: the first pass types only the later binding there.)
@@ -2240,7 +2308,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     at = el_ir::cl(e, "OpVarRef", [ir::NdVar { n: v }]);
     return ex(ir::NdInsert { items: [el_ir::v_set(f, el_ir::cl(e, "OpGetText", [at, ir::NdInt { n: 0 }])), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: f }, x.code]), el_ir::cl(e, "OpSetTextReplace", [at, ir::NdInt { n: 0 }, ir::NdVar { n: f }])] }, ir::TyVoid);
   }
-  if stack || (el_types::base(vt) is TyText && !(vt is TyOptional)) {
+  // (A `text?` local appends as a text one does: `OpAppendText`, the local keeping its `?`.)
+  if stack || el_types::base(vt) is TyText {
     if bin != "+" {
       el::refuse(e, "a text compound assignment other than `+=`");
       return ex(ir::NdNull, ir::TyVoid);
@@ -2323,6 +2392,19 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       return ex(ir::NdNull, ir::TyVoid);
     }
     return ex(el_ir::v_set(v, rc.code), ir::TyVoid);
+  }
+  // `keyed_local_fill`: a vector of the collection's records added to a keyed local
+  // (`h += w`) is filed record by record — `OpFillKeyed(h, w, <keyed>, <keyed>, 65535)` in an
+  // `Insert` of its own.  (Rust's `0x8000` give-away bit — `call_gives_away_its_store` — is not
+  // carried: a call answering into this frame's `__ref_N` gives nothing away.)  Pass 1 emits
+  // nothing.
+  if bin == "+" && keyed_kind(vt) && !(vt is TyOptional) && match el_types::base(x.tp) { TyVector { inner: kvi } => struct_ref(e, kvi) >= 0 && struct_ref(e, kvi) == el_types::keyed_elem(el_types::base(vt)), _ => false } && !(el_ir::unspan(x.code) is NdInsert) {
+    el_vars::drop_use(vars, v);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    kkt = el_schema::keyed_type(e, el_types::without_deps(el_types::base(vt)));
+    return ex(ir::NdInsert { items: [el_ir::cl(e, "OpFillKeyed", [ir::NdVar { n: v }, x.code, ir::NdInt { n: kkt }, ir::NdInt { n: kkt }, ir::NdInt { n: 65535 }])] }, ir::TyVoid);
   }
   if !el_ex_call::scalar(sv) || sv is TyVoid {
     el::refuse(e, "a compound assignment to a local of this type: {type_kind(sv)}");
@@ -2670,7 +2752,7 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   }
   if x.code is NdIter {
     vars.bind_starts = v;
-    sb = el_ex_vector::slice_bind(e, vars, v, x);
+    sb = el_ex_vector::slice_bind(e, vars, v, x, rhs ?? -1);
     vars.bind_starts = -1;
     return sb;
   }

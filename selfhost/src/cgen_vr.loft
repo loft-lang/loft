@@ -209,7 +209,7 @@ pub fn vr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
   }
   if name == "OpRefAlias" && storeless(w, first) {
     done = true;
-    return E { code: "loft_ref_null()", kind: K_REF };
+    return E { code: "loft_ref_null(cx)", kind: K_REF };
   }
   if (name == "OpConvBoolFromRef" || name == "OpRefIsNull") && len(args) == 1 {
     if first < 0 {
@@ -285,7 +285,7 @@ pub fn vr_op(x: Cx, w: W, name: text, args: vector<ir::Node>, ind: integer, done
     }
     done = true;
     val = as_shape(w, cgen_fn::expr(x, w, args[2]!, ind), sh);
-    dropped = "loft_write_dropped(loft_ref_null(), {cgen_fn::site(w)})";
+    dropped = "loft_write_dropped(cx, loft_ref_null(cx), {cgen_fn::site(w)})";
     p = presence(x, key, w.names[v]!);
     if p != "" {
       return E { code: "(({p} == 1) ? (void) ({m} = {val}) : {dropped})", kind: K_VOID };
@@ -345,7 +345,7 @@ fn copy(x: Cx, w: W, args: vector<ir::Node>, ind: integer, done: &boolean) -> E 
   s = w.names[root]!;
   p = presence(x, key, s);
   pre = if p == "" { "" } else { "{p} == 1 && " };
-  line(w, ind, "if (LOFT_UNLIKELY({pre}{d}.store_nr == 0xFFFF)) loft_write_dropped({d}, {cgen_fn::site(w)});");
+  line(w, ind, "if (LOFT_UNLIKELY({pre}{d}.store_nr == 0xFFFF)) loft_write_dropped(cx, {d}, {cgen_fn::site(w)});");
   if p != "" {
     raw = match loop_shape::unspan(args[2]!) { NdInt { n } => n, _ => -1 };
     if raw < 0 || raw > 65535 {
@@ -360,7 +360,7 @@ fn copy(x: Cx, w: W, args: vector<ir::Node>, ind: integer, done: &boolean) -> E 
     line(w, ind, "}} else {{");
     null_arm = fresh_null_arm(x, args, d);
     if null_arm == "" {
-      null_arm = "loft_copy_record(loft_types, {tp}, loft_ref_null(), {d}, {flags});";
+      null_arm = "loft_copy_record(cx, loft_types, {tp}, loft_ref_null(cx), {d}, {flags});";
     }
     line(w, ind + 1, null_arm);
     line(w, ind, "}}");
@@ -382,7 +382,7 @@ fn fresh_null_arm(x: Cx, args: vector<ir::Node>, dst: text) -> text {
   if !is_struct || cgen_ref::default_is_zero_registered(x, tp) {
     return "";
   }
-  "loft_fill({dst}, {cgen_tables::default_name(x, tp)}, {x.b.types[tp].size});"
+  "loft_fill(cx, {dst}, {cgen_tables::default_name(x, tp)}, {x.b.types[tp].size});"
 }
 
 // The address, lock flag and offset of the destination where a bound view's address serves it
@@ -422,10 +422,10 @@ fn write_fields(x: Cx, w: W, key: integer, d: text, s: text, base: integer, end:
     }
   }
   if len(sel) >= 2 && !any_view {
-    at = "loft_rec_w({d})";
+    at = "loft_rec_w(cx, {d})";
     if held_at != "" {
       parts = held_at.split('|');
-      at = "({parts[0]!} && !(LOFT_UNLIKELY({parts[1]!}) && loft_locked_write())) ? {parts[0]!} + {parts[2]!} : (uint8_t *) 0";
+      at = "({parts[0]!} && !(LOFT_UNLIKELY({parts[1]!}) && loft_locked_write_on(cx, (uint8_t) {parts[1]!}))) ? {parts[0]!} + {parts[2]!} : (uint8_t *) 0";
     }
     line(w, ind, "{{ uint8_t *loft_w = {at}; if (loft_w) {{");
     for i in sel {
@@ -456,11 +456,11 @@ fn write_fields(x: Cx, w: W, key: integer, d: text, s: text, base: integer, end:
       }
       cgen_tables::copy_type(x, elem);
       add = if x.b.types[elem].linked { "loft_vec_add_array" } else { "loft_vec_add" };
-      line(w, ind, "loft_set_int4({d}, {a}, INT64_C(0));");
-      line(w, ind, "{add}(loft_types, {elem}, loft_field({d}, {a}), {s}.f{i});");
+      line(w, ind, "loft_set_int4(cx, {d}, {a}, INT64_C(0));");
+      line(w, ind, "{add}(cx, loft_types, {elem}, loft_field(cx, {d}, {a}), {s}.f{i});");
       continue;
     }
-    line(w, ind, if rt == "f64" { "loft_set_float({d}, {a}, {s}.f{i});" } else if rt == "f32" { "loft_set_single({d}, {a}, {s}.f{i});" } else if rt == "bool" { "loft_set_byte({d}, {a}, {s}.f{i});" } else { "loft_set_int({d}, {a}, {s}.f{i});" });
+    line(w, ind, if rt == "f64" { "loft_set_float(cx, {d}, {a}, {s}.f{i});" } else if rt == "f32" { "loft_set_single(cx, {d}, {a}, {s}.f{i});" } else if rt == "bool" { "loft_set_byte(cx, {d}, {a}, {s}.f{i});" } else { "loft_set_int(cx, {d}, {a}, {s}.f{i});" });
   }
 }
 
@@ -613,12 +613,12 @@ fn getters(x: Cx, w: W, key: integer, src: ir::Node, target: text, c: text, ind:
   parts2: vector<text> = [];
   for o in t.offs {
     k = t.rts[o#index]!;
-    parts2 += [if opt_vr_layout::is_view_part(k) { "loft_field({rt2}, {o})" } else if k == "f64" { "loft_pa_f64(loft_vp, {o})" } else if k == "f32" { "loft_pa_f32(loft_vp, {o})" } else if k == "bool" { "loft_pa_bool(loft_vp, {o})" } else { "loft_pa_i64(loft_vp, {o})" }];
+    parts2 += [if opt_vr_layout::is_view_part(k) { "loft_field(cx, {rt2}, {o})" } else if k == "f64" { "loft_pa_f64(cx, loft_vp, {o})" } else if k == "f32" { "loft_pa_f32(cx, loft_vp, {o})" } else if k == "bool" { "loft_pa_bool(cx, loft_vp, {o})" } else { "loft_pa_i64(cx, loft_vp, {o})" }];
   }
   if t.nullable {
     parts2 += ["(uint8_t) ({rt2}.rec != 0)"];
   }
-  line(w, ind, "{{ const uint8_t *loft_vp = loft_rec_ptr({rt2}); {target} = ({held(c)}) {{ {parts2.join(", ")} }}; }}");
+  line(w, ind, "{{ const uint8_t *loft_vp = loft_rec_ptr(cx, {rt2}); {target} = ({held(c)}) {{ {parts2.join(", ")} }}; }}");
 }
 
 // `vr_object`: an `Object` leaf — the struct of the block's field writes, each value evaluated in
@@ -698,15 +698,15 @@ fn object(x: Cx, w: W, bl: ir::Block, exit: integer, target: text, c: text, ind:
 // the field of the container's last element.
 fn view_place(x: Cx, w: W, vv: opt_vr_layout::VView, ind: integer) -> text {
   if vv.kind == 0 {
-    return "loft_ref_null()";
+    return "loft_ref_null(cx)";
   }
   if vv.kind == 1 {
     e = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: vv.elem }, ind));
-    return "loft_field({e}, {vv.eoff})";
+    return "loft_field(cx, {e}, {vv.eoff})";
   }
   r = as_ref(w, cgen_fn::expr(x, w, ir::NdVar { n: vv.root_v }, ind));
-  container = if vv.root_f == 4294967295 { r } else { "loft_field({r}, {vv.root_f})" };
-  "loft_field(loft_vec_get({container}, {element_stride(x.b, vv.ptp, vv.fld)}, INT64_C(-1)), {vv.eoff})"
+  container = if vv.root_f == 4294967295 { r } else { "loft_field(cx, {r}, {vv.root_f})" };
+  "loft_field(cx, loft_vec_get(cx, {container}, {element_stride(x.b, vv.ptp, vv.fld)}, INT64_C(-1)), {vv.eoff})"
 }
 
 // `hoist::element_stride`: the size of an element of the container a mint `(parent_tp, fld)` names.
@@ -1039,7 +1039,7 @@ pub fn forward(x: Cx, w: W, call: text, key: integer, buf: integer, ind: integer
   tp = opt_vr_layout::layout_record(key);
   size = cgen_ref::enum_parent_size(x.b, tp);
   cgen_tables::describe_type(x, tp);
-  line(w, ind, "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(&{b}, {size}, {tp});");
+  line(w, ind, "if (!({b}.store_nr != 0xFFFF && {b}.rec != 0)) loft_database_typed(cx, &{b}, {size}, {tp});");
   write_fields(x, w, key, b, t, 0, 9223372036854775807, "", ind);
   E { code: b, kind: K_REF }
 }

@@ -88,6 +88,13 @@ pub struct PendingImport {
   pub public: boolean
 }
 
+pub struct BodyBind {
+  pub ctx: integer,
+  pub ord: integer,
+  pub name: text,
+  pub nr: integer
+}
+
 pub struct El {
   // the definitions and the schema being built
   pub b: ir::Bundle,
@@ -129,10 +136,21 @@ pub struct El {
   // second pass names it as the function starts, so a caller sees it whatever the body's
   // delivery then does — a refused callee included.
   pub owed_buffer: vector<integer>,
+  // The functions whose return buffer the first pass renamed onto a `MaterializeView` work ref
+  // (`view_tail`) rather than a call's own buffer: a mid-body literal there keeps its work ref.
+  pub view_renamed: vector<integer>,
   // The function the second pass is reading hands one of its parameters back from a tail (a
   // bare name in a tail or an arm): Rust's first pass gave its result that borrow, so a call of
   // it inside its own body gives no store away (`call_gives_away_its_store`).
   pub self_view_tail: boolean,
+  // `Data::fn_fields_settled`: set as the drop cascades are made (the parse unit is finished),
+  // to the number of definitions then.  A definition below it answers for what its fn fields'
+  // closure records hold (`owns_droppable`'s `fn_field_record` arm); 0 before.
+  pub fn_fields_settled: integer,
+  // `Parser::declared_fn_names` for the file being read (`fn_words_file`): every word that
+  // follows the word `fn` in its text, as often as it does (`file_has_pending_fn`).
+  pub fn_words_file: text,
+  pub fn_words: vector<text>,
   // `Parser::lambda_counters`: per enclosing function (its root name) the next lambda number,
   // shared with the lambdas its lambdas make; cleared as each pass starts.
   pub lambda_roots: vector<text>,
@@ -152,6 +170,9 @@ pub struct El {
   // `Function::loops` as pass 1 left it, per function (`context * 65536 + count`): pass 2's loop
   // numbers continue after them (`start_loop`).
   pub loops_p1: vector<integer>,
+  // `Function::body_binds` (loft#1145): a body local's own binding per loop, keyed by the loop's
+  // per-pass ordinal and the spelling, per function — pass 2 is handed pass 1's.
+  pub body_binds: vector<BodyBind>,
   // The assignment nodes that first bind a local to `[] as vector<T>` (found on the first
   // pass, read as the typed declaration on both).
   pub cast_decls: vector<integer>,
@@ -173,6 +194,10 @@ pub struct El {
   // `Attribute::lexeme` (@PLN35): the `#lexeme` fields of token-enum variants, `"<def>:<field>"`
   // — parse-time only, as Rust's is (no image carries it).
   pub lexeme_fields: vector<text>,
+  // The generic instances `promote_monomorph_text_return` gave a hidden text buffer: their
+  // callers, built against the shorter signature, are patched after the second pass
+  // (`patch_tret_callers`).
+  pub tret_instances: vector<integer>,
   // `Function::subject_sites` (loft#2520): each match subject temp the first pass minted, by
   // its site (`context * 1048576 + the subject's syntax node`), and the name it took.
   // A `&` link to a child record that is later WRITTEN whole (`cur = cur.next`), by
@@ -284,6 +309,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_in: [],
     unbacked: [],
     owed_buffer: [],
+    view_renamed: [],
     lambda_roots: [],
     declared_lambdas: [],
     lambda_next: [],
@@ -296,6 +322,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     null_widened: [],
     value_structs: [],
     lexeme_fields: [],
+    tret_instances: [],
     slot_links: [],
     subject_sites: [],
     subject_names: [],

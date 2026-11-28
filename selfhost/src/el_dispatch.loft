@@ -257,6 +257,26 @@ fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: i
     el::refuse(e, "an overload set member with a parameter of a type no key spells here");
     return "";
   }
+  // loft#1811: a newcomer whose parameters are the receiver ALONE spells its full key as the
+  // receiver key the incumbent holds (`fn minus(self: W)` after `minus(self: W, o: integer)`).
+  // The incumbent moves to ITS full spelling and the newcomer takes the receiver key; the set
+  // labels the moved incumbent by that full spelling (`admit_overload_set`, `relabel_overload`).
+  label = receiver_spelling(key);
+  if e.first_pass && "t_{len(full)}{full}_{name}" == key && el::def(e, incumbent).name == key {
+    moved = "t_{len(own_full)}{own_full}_{name}";
+    if el::source_nr(e, e.source, moved) < 0 {
+      el::rename_def(e, incumbent, moved);
+      label = own_full;
+      ms = el::source_nr(e, e.source, name);
+      if ms >= 0 {
+        for ma in el::def(e, ms).attributes {
+          if (ma.typedef[0] ?? ir::TyVoid) == ir::TyRoutine { n: incumbent } {
+            e.b.data.definitions[ms].attributes[ma#index].name = own_full;
+          }
+        }
+      }
+    }
+  }
   if e.first_pass {
     set = el::source_nr(e, e.source, name);
     // (`admit_overload_set` looks the name up anywhere, `def_nr`: a set of it the library
@@ -264,7 +284,7 @@ fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: i
     if set < 0 && el::def_nr(e, name) >= 0 && el::def(e, el::def_nr(e, name)).def_type == el::DT_DYNAMIC {
       lib = el::def_nr(e, name);
       if !carries(e, lib, incumbent) {
-        carry(e, lib, receiver_spelling(key), incumbent);
+        carry(e, lib, label, incumbent);
       }
       return "t_{len(full)}{full}_{name}";
     }
@@ -276,7 +296,7 @@ fn method_key(e: el::El, key: text, name: text, types: vector<ir::TypeT>, pos: i
       set = el::add_def(e, name, pos, el::DT_DYNAMIC);
     }
     if !carries(e, set, incumbent) {
-      carry(e, set, receiver_spelling(key), incumbent);
+      carry(e, set, label, incumbent);
     }
     // `@FR-F-Recv` / `@FR-Disp-Applicable`: the receiver's nullability twin is the same
     // receiver's other spelling — the set decides between them only if it carries both.
@@ -649,6 +669,45 @@ fn dispatches_past_receiver(e: el::El, name: text, en: integer) -> boolean {
     seen_r += [rest];
   }
   false
+}
+
+// `Parser::file_has_pending_fn` (loft#2331, `@FR-B-Scope`: a file's declarations hold in any
+// order): does the file being read declare a function `name` that pass 1 has not reached yet —
+// one below this call?  The file's `fn <name>` words are counted by a lexical scan of its text
+// (a word in a comment or a `fn(…)` type counts too: it only defers the call to pass 2) and
+// compared with the functions of that file already registered.  The standard library's own
+// files are never scanned.
+pub fn file_has_pending_fn(e: el::El, name: text) -> boolean {
+  if e.source == el::STD_SOURCE {
+    return false;
+  }
+  if e.fn_words_file != e.file {
+    e.fn_words_file = e.file;
+    e.fn_words = [];
+    after_fn = false;
+    for ln in e.lines {
+      w = "";
+      for c in ln + " " {
+        if c.is_alphanumeric() || c == '_' {
+          w += c;
+          continue;
+        }
+        if w != "" {
+          if after_fn {
+            e.fn_words += [w];
+          }
+          after_fn = w == "fn";
+          w = "";
+        }
+      }
+    }
+  }
+  declared = len([for fw in e.fn_words if fw == name { 1 }]);
+  if declared == 0 {
+    return false;
+  }
+  reached = len([for d in e.b.data.definitions if (d.def_type == el::DT_FUNCTION || d.def_type == el::DT_GENERIC) && d.position.file == e.file && original_name(d.name) == name { 1 }]);
+  declared > reached
 }
 
 // port: data.rs original_name (`source_name_of_key`) — the name a definition key was written as:

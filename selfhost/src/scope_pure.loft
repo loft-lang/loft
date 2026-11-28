@@ -34,7 +34,7 @@ pub fn effect_free(b: ir::Bundle) -> vector<boolean> {
 }
 
 // port: shared_call.rs fn comparison
-fn comparison(nm: text) -> boolean {
+pub fn comparison(nm: text) -> boolean {
   for p in ["OpEq", "OpNe", "OpLt", "OpLe"] {
     if nm.starts_with(p) {
       k = nm[len(p)..];
@@ -68,7 +68,7 @@ fn write_target(nm: text) -> integer {
   -1
 }
 
-fn text_write_target(nm: text) -> integer {
+pub fn text_write_target(nm: text) -> integer {
   for t in ["OpAppendText", "OpAppendStackText", "OpAppendCharacter", "OpAppendStackCharacter", "OpAppendTextBytes", "OpClearText", "OpClearStackText", "OpClearVector", "OpSetTextReplace", "OpFormatText", "OpFormatStackText", "OpFormatInt", "OpFormatStackInt", "OpFormatFloat", "OpFormatStackFloat", "OpFormatSingle", "OpFormatStackSingle", "OpFormatDatabase", "OpFormatStackDatabase", "OpPutRef", "OpPutText", "OpPutInt", "OpPutFloat", "OpPutSingle", "OpPutBool", "OpPutCharacter", "OpPutEnum", "OpPutNarrow"] {
     if nm == t {
       return 0;
@@ -78,7 +78,7 @@ fn text_write_target(nm: text) -> integer {
 }
 
 // port: pure_reuse.rs fn root — -1 for none.
-fn root(b: ir::Bundle, v: ir::Node) -> integer {
+pub fn root(b: ir::Bundle, v: ir::Node) -> integer {
   match scope_fn::unspan(v) {
     NdVar { n } => n,
     NdCall { def_nr, args } => {

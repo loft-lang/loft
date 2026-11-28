@@ -6992,6 +6992,11 @@ impl Parser {
         // (`rebind_lowered`) only once the in-place construction is kept, never by an attempt a
         // retry abandons for a construction built apart.
         let mut param_detached: Option<u16> = None;
+        // The binding a literal rebinds through a construction temporary (`x = S { … }` on a
+        // local that views, built into a `__ref_p2_N` and bound), and that temporary: after
+        // the field loop, a literal that reads the binding takes `(O-Detach)`'s deferred
+        // detach (see the splice before the block is built).
+        let mut rebind_through: Option<(u16, u16)> = None;
         // @FR-R-InPlaceLiteral's staging clause — the variable a field initialiser must be
         // hoisted for, which is NOT `in_place_var`: that one also drives the retry below
         // (`*code = Value::Var(v_nr)`), which is only meaningful for a whole-variable
@@ -7109,10 +7114,17 @@ impl Parser {
             // `@FR-R-InPlaceLiteral` — and only a local no earlier bind left viewing another store
             // (`viewed_by_an_earlier_bind`): its type keeps the last bind's deps alone.
             let viewed_before = self.vars.viewed_by_an_earlier_bind(*v_nr);
+            // `@FR-O-Borrow-Final` — and only a local no LATER bind makes a view either: `owns_store` reads
+            // this pass's list, which has not met `r = b.tp` further down yet, so pass 1's
+            // final list is the lookahead (`viewed_in_pass_one`).  A user local only, as the
+            // fresh-buffer arm below takes user locals only.
+            let viewed_later =
+                self.vars.viewed_in_pass_one(*v_nr) && !self.vars.is_compiler_generated(*v_nr);
             if self.vars.owns_store(*v_nr)
                 && type_matches
                 && !self.vars.rebind_must_mint(*v_nr)
                 && !viewed_before
+                && !viewed_later
             {
                 // #330: remember the in-place target — a field initialiser
                 // that READS it must be hoisted ABOVE the OpDatabase re-init
@@ -7195,6 +7207,7 @@ impl Parser {
             } else if (!type_matches
                 || self.vars.rebind_must_mint(*v_nr)
                 || viewed_before
+                || viewed_later
                 || (!self.vars.is_independent(*v_nr) && !self.vars.is_compiler_generated(*v_nr)))
                 && !self.first_pass
             {
@@ -7205,7 +7218,9 @@ impl Parser {
                 //   as dependent on some other variable (e.g. `x` had `x = bs[i]` in a
                 //   later statement, giving x type `Reference(T, [bs])`), so
                 //   `is_independent` returns false even though `type_matches` is true
-                //   for this struct-literal assignment.  Without this branch, the
+                //   for this struct-literal assignment.  That later statement is a
+                //   LOOKAHEAD only pass 1 has: where pass 2 starts from clean lists
+                //   (`@FR-O-Borrow-Final`), `viewed_in_pass_one` asks pass 1's.  Without this branch, the
                 //   in-place `v_set(x, Null) + OpDatabase` init above was skipped,
                 //   leaving only field-init calls that wrote into uninitialised storage
                 //   — the subsequent codegen then asserted
@@ -7244,6 +7259,8 @@ impl Parser {
                 // leave the OLD caller store unfreed (the pre-P2.2 leak).
                 if matches!(self.vars.tp(*v_nr), Type::RefVar(_)) {
                     self.vars.set_skip_free(w);
+                } else if !self.vars.is_compiler_generated(*v_nr) {
+                    rebind_through = Some((*v_nr, w));
                 }
                 *code = Value::Var(w);
             }
@@ -7543,6 +7560,46 @@ impl Parser {
         // caller's store (`LOFT_REBIND_FLAG_EARLY=1`).
         if let Some(v) = param_detached {
             self.rebind_lowered = v;
+        }
+        // `@FR-O-Detach` — a literal rebinding `x` through its construction temporary `w`
+        // re-inits `w` in place (`OpDatabase`'s reuse arm), which is the release of what `w`
+        // held.  Once the statement has run, `x` names that record — on the next turn of a
+        // loop it is the value `x` HOLDS — and an initialiser reading `x`, or a view of it,
+        // must read it intact (`(B-Scope)`: a rebind of a live binding reads the value it
+        // holds; loft#2667, `x = tests[2]!; while … { x = Pair { c: …, t: x } }`).  So the
+        // detach is DEFERRED past the reads: `w` lets go of its record without releasing it,
+        // builds into a fresh one, and the record it let go of is released once every
+        // initialiser has run —
+        // by store identity, so a `w` that held nothing, or whose record no turn has
+        // displaced, releases nothing.  Every field kind alike: a scalar, a text, an
+        // embedded or out-of-line record and a collection built in its field all read the
+        // old record intact.  A literal that does not read `x` keeps the in-place reuse,
+        // whose record nothing reads; so does one whose binding the innermost loop around it
+        // made — every pass binds it afresh before the literal — and one outside every loop,
+        // where the statement runs once per frame and `w` holds nothing yet.
+        // `LOFT_NO_REBIND_DETACH=1` emits the in-place re-init again (the falsifier of the
+        // guard and of the store records' re-mint clause).
+        if !self.first_pass
+            && new_object
+            && self.vars.loop_depth() > 0
+            && rebind_through.is_some_and(|(dest, _)| !self.vars.created_in_current_loop(dest))
+            && !crate::env_once!(std::env::var_os("LOFT_NO_REBIND_DETACH").is_some())
+            && let Some((dest, w)) = rebind_through
+            && matches!(code, Value::Var(c) if *c == w)
+            && list
+                .iter()
+                .any(|op| self.reads_place(op, dest, crate::use_analysis::ANY_FIELD))
+        {
+            let held = self
+                .vars
+                .work_refs_p2(&self.vars.tp(w).clone(), &mut self.lexer);
+            self.vars.set_skip_free(held);
+            self.vars.mark_inline_ref(held);
+            let alias = self.cl("OpRefAlias", &[Value::Var(w)]);
+            let let_go = self.cl("OpInitRefSentinel", &[Value::Var(w)]);
+            list.insert(0, v_set(held, alias));
+            list.insert(1, let_go);
+            list.push(self.cl("OpFreeRefIfDistinct", &[Value::Var(held), Value::Var(w)]));
         }
         if new_object && let Value::Var(v) = code {
             list.push(Value::Var(*v));

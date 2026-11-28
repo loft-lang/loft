@@ -709,6 +709,11 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t77, "buffer_witnessed", t4);
     db.field(t77, "value_const", t4);
     db.field(t77, "arm_consumed", t4);
+    db.field(t77, "was_loop_var", t4);
+    db.field(t77, "place_buffer", t4);
+    db.field(t77, "ref_home", t4);
+    let vec_viewed = db.vector(t0);
+    db.field(t77, "viewed", vec_viewed);
     db.field(t77, "owner_witness", 0);
     db.field(t77, "rebind_orig", 0);
     db.field(t77, "scope", 0);
@@ -780,6 +785,9 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "no_prefill", t5);
     db.field(t80, "width32", t4);
     db.field(t80, "value_struct", t4);
+    let vec_ref_evacuations = db.vector(t0);
+    db.field(t80, "ref_evacuations", vec_ref_evacuations);
+    db.field(t80, "const_linked", t4);
     let t134 = db.vector(t76);
     let _ = t134; // may be unused
     let t135 = db.vector(t79);

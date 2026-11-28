@@ -1,0 +1,554 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/move_elide.rs` transcribed: `elide_borrows` (a borrow-verdict vector copy
+// inlined as its source) and `move_elide` (a dead-after source built into its destination: the
+// record copy here, the construction copies in `scope_construct_elide`).  Both run by `check`
+// on the parser's bodies, every function in turn, before `value_struct_copy`, as Rust's do.
+//
+// A spanned node is met twice by several of Rust's walks here (the scrutinee is peeled while the
+// recursion walks the original); the transcription keeps that, since it decides answers
+// (`collect_multi_database`, `collect_move_dest`).
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+use scope_use_analysis;
+use scope_construct_elide;
+
+// ── elide_borrows ──
+
+// port: move_elide.rs fn elide_borrows, for one function.
+pub fn elide_borrows(b: ir::Bundle, o: scope_use_analysis::Ops, d_nr: integer) {
+  d = b.data.definitions[d_nr]!;
+  if d.def_type != 1 || len(d.code) == 0 {
+    return;
+  }
+  f = b.data.definitions[d_nr].variables;
+  plans = scope_use_analysis::elision_plans(b, o, d_nr, d.code[0]!, f);
+  if len(plans) == 0 {
+    return;
+  }
+  ev: vector<integer> = [];
+  srcs: vector<ir::Node> = [];
+  evdb: vector<integer> = [];
+  for p in plans {
+    for e in p.borrowers {
+      scope_fn::make_independent(f, e, p.var);
+      depend(f, e, p.source_base);
+    }
+    ev += [p.var];
+    srcs += [p.source];
+    evdb += [p.vdb];
+  }
+  x = ElideOps {
+    op_database: scope_fn::def_nr(b, "OpDatabase"),
+    op_append: scope_fn::def_nr(b, "OpAppendVector"),
+    op_set_int4: scope_fn::def_nr(b, "OpSetInt4"),
+    op_set_int: scope_fn::def_nr(b, "OpSetInt"),
+    op_free: scope_fn::def_nr(b, "OpFreeRef"),
+    ev: ev,
+    srcs: srcs,
+    evdb: evdb
+  };
+  b.data.definitions[d_nr].code = [elide_rewrite(d.code[0]!, x)];
+}
+
+// port: variables/mod.rs fn depend — `v`'s deps become exactly `[on]` (`Type::depending`).
+pub fn depend(f: ir::Function, v: integer, on: integer) {
+  if on < 0 || on == scope_fn::NONE {
+    return;
+  }
+  f.variables[v].type_def = [with_deps(scope_fn::tp(f, v), [on])];
+}
+
+// port: data.rs fn with_deps (shallow; through `Optional`, `RefVar`, `Tuple`).
+pub fn with_deps(t: ir::TypeT, d: vector<integer>) -> ir::TypeT {
+  match t {
+    TyText => ir::TyText { dep: d },
+    TyReference { n } => ir::TyReference { n: n, dep: d },
+    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: d },
+    TyIndex { n, keys } => ir::TyIndex { n: n, keys: keys, dep: d },
+    TyRadix { n, names } => ir::TyRadix { n: n, names: names, dep: d },
+    TyTrie { n, key } => ir::TyTrie { n: n, key: key, dep: d },
+    TyHash { n, names } => ir::TyHash { n: n, names: names, dep: d },
+    TySorted { n, keys } => ir::TySorted { n: n, keys: keys, dep: d },
+    TyVector { inner } => ir::TyVector { inner: inner, dep: d },
+    TyFunction { args, result, consts } => ir::TyFunction { args: args, result: result, dep: d, consts: consts },
+    TyRefVar { inner } => ir::TyRefVar { inner: with_deps(inner, d) },
+    TyOptional { inner } => ir::TyOptional { inner: with_deps(inner, d) },
+    TyTuple { elems } => ir::TyTuple { elems: [for e in elems { with_deps(e, d) }] },
+    _ => t
+  }
+}
+
+struct ElideOps {
+  op_database: integer,
+  op_append: integer,
+  op_set_int4: integer,
+  op_set_int: integer,
+  op_free: integer,
+  ev: vector<integer>,
+  srcs: vector<ir::Node>,
+  evdb: vector<integer>
+}
+
+fn first_var(args: vector<ir::Node>) -> integer {
+  if len(args) == 0 {
+    return -1;
+  }
+  match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 }
+}
+
+// port: move_elide.rs fn idiom_drop
+fn idiom_drop(s: ir::Node, x: ElideOps) -> boolean {
+  match scope_fn::unspan(s) {
+    NdSet { var: v } => scope_fn::has(x.ev, v) || scope_fn::has(x.evdb, v),
+    NdCall { def_nr: d, args } => {
+      t = first_var(args);
+      if d == x.op_database || d == x.op_set_int4 || d == x.op_set_int {
+        t >= 0 && scope_fn::has(x.evdb, t)
+      } else if d == x.op_append {
+        t >= 0 && scope_fn::has(x.ev, t)
+      } else if d == x.op_free {
+        t >= 0 && (scope_fn::has(x.evdb, t) || scope_fn::has(x.ev, t))
+      } else {
+        false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: move_elide.rs fn elide_rewrite
+fn elide_rewrite(n: ir::Node, x: ElideOps) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => for i in 0..len(x.ev) {
+      if x.ev[i] == v {
+        return x.srcs[i]!;
+      }
+    },
+    _ => {}
+  }
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(bl, [for s in bl.operators if !idiom_drop(s, x) { elide_rewrite(s, x) }])] };
+    },
+    NdInsert { items } => return ir::NdInsert { items: [for s in items if !idiom_drop(s, x) { elide_rewrite(s, x) }] },
+    _ => {}
+  }
+  kids = scope_fn::children(n);
+  if len(kids) == 0 {
+    return n;
+  }
+  ir_pass_tree::with_children(n, [for c in kids { elide_rewrite(c, x) }])
+}
+
+// ── move_elide ──
+
+pub struct MoveOps {
+  op_database: integer,
+  op_copy_record: integer,
+  op_free: integer,
+  op_new_record: integer,
+  op_get_field: integer,
+  op_get_vector: integer
+}
+
+pub fn move_ops(b: ir::Bundle) -> MoveOps {
+  MoveOps {
+    op_database: scope_fn::def_nr(b, "OpDatabase"),
+    op_copy_record: scope_fn::def_nr(b, "OpCopyRecord"),
+    op_free: scope_fn::def_nr(b, "OpFreeRef"),
+    op_new_record: scope_fn::def_nr(b, "OpNewRecord"),
+    op_get_field: scope_fn::def_nr(b, "OpGetField"),
+    op_get_vector: scope_fn::def_nr(b, "OpGetVector")
+  }
+}
+
+// A source's destination: the source and the slot expression it is moved into.
+pub struct Dest {
+  src: vector<integer>,
+  slot: vector<ir::Node>
+}
+
+pub fn dest_of(d: Dest, s: integer) -> ir::Node? {
+  for i in 0..len(d.src) {
+    if d.src[i] == s {
+      return d.slot[i]!;
+    }
+  }
+  null
+}
+
+// port: move_elide.rs fn move_elide, for one function — "" when laid out as Rust lays it out,
+// else the refusal of a decision the image cannot take.
+pub fn move_elide(b: ir::Bundle, uo: scope_use_analysis::Ops, d_nr: integer) -> text {
+  if env_variable("LOFT_NO_MOVE_ELIDE") != null {
+    return "";
+  }
+  d = b.data.definitions[d_nr]!;
+  if d.def_type != 1 || len(d.code) == 0 {
+    return "";
+  }
+  mo = move_ops(b);
+  co = scope_construct_elide::construct_ops(b);
+  f = b.data.definitions[d_nr].variables;
+  orig = d.code[0]!;
+  plans = scope_use_analysis::move_plans(b, uo, orig, f);
+  code = orig;
+  skip: vector<integer> = [];
+  bad: vector<integer> = [];
+  collect_element_vars(code, mo, bad);
+  seen: vector<integer> = [];
+  collect_multi_database(code, mo, seen, bad);
+  order_v: vector<integer> = [];
+  order_i: vector<integer> = [];
+  idx = [0];
+  collect_def_order(code, mo, idx, order_v, order_i);
+  // ── RECORD shape (`v[i] = e` / `o.f = src`, OpCopyRecord) ──
+  rec_sources: vector<integer> = [];
+  for p in plans {
+    if !p.construct && !scope_fn::has(rec_sources, p.source) {
+      rec_sources += [p.source];
+    }
+  }
+  if len(rec_sources) > 0 {
+    dest = Dest { src: [], slot: [] };
+    ambiguous: vector<integer> = [];
+    collect_move_dest(code, mo, f, rec_sources, bad, order_v, order_i, dest, ambiguous);
+    disturbed: vector<integer> = [];
+    collect_move_disturbed(code, mo, mo.op_copy_record, 0, dest, disturbed);
+    ready: vector<integer> = [];
+    for s in dest.src {
+      if !scope_fn::has(ambiguous, s) && !scope_fn::has(disturbed, s) {
+        ready += [s];
+      }
+    }
+    if len(ready) > 0 {
+      code = move_rewrite(code, ready, dest, mo);
+      for s in ready {
+        if !scope_fn::has(skip, s) {
+          skip += [s];
+        }
+      }
+    }
+  }
+  why = "";
+  // ── CONSTRUCT shape (`x.field += src` field-append, OpAppendVector) ──
+  con_sources: vector<integer> = [];
+  for p in plans {
+    if p.construct && !scope_fn::has(con_sources, p.source) {
+      con_sources += [p.source];
+    }
+  }
+  if len(con_sources) > 0 {
+    escaping: vector<integer> = [];
+    for s in con_sources {
+      if scope_construct_elide::source_escapes(code, s, co) {
+        escaping += [s];
+      }
+    }
+    moved_src: vector<integer> = [];
+    moved_into: vector<integer> = [];
+    code = scope_construct_elide::construct_move_rewrite(code, con_sources, co, mo, bad, escaping, skip, moved_src, moved_into);
+    // A retargeted source is erased: re-point what viewed it at the container.
+    for i in 0..len(moved_src) {
+      src = moved_src[i];
+      cvar = moved_into[i];
+      for v in 0..scope_fn::count(f) {
+        if v != src && scope_fn::has(scope_fn::deps(f, v), src) {
+          scope_fn::make_independent(f, v, src);
+          depend(f, v, cvar);
+        }
+      }
+    }
+    // B1.3c — fresh construction; `written` off the function's body as it stood.
+    written = scope_use_analysis::written_vars(b, b.data.definitions[d_nr]!, orig, scope_fn::count(f));
+    r = scope_construct_elide::construct_fresh_rewrite(code, con_sources, co, f, written, bad, escaping, skip);
+    code = r.code;
+    if r.why != "" {
+      why = r.why;
+    }
+  }
+  // B1.3d — the `a.field = base` whole-vector replacement, structural.
+  r2 = scope_construct_elide::construct_replace_rewrite(code, co, f, skip);
+  code = r2.code;
+  if why == "" {
+    why = r2.why;
+  }
+  b.data.definitions[d_nr].code = [code];
+  for s in skip {
+    f.variables[s].skip_free = true;
+  }
+  why
+}
+
+// port: move_elide.rs fn collect_move_dest
+fn collect_move_dest(n: ir::Node, mo: MoveOps, f: ir::Function, sources: vector<integer>, bad: vector<integer>, order_v: vector<integer>, order_i: vector<integer>, dest: Dest, ambiguous: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr: d, args } => if d == mo.op_copy_record && len(args) >= 2 {
+      s = first_var(args);
+      if s >= 0 && scope_fn::has(sources, s) {
+        unstable = match scope_fn::unspan(args[1]!) {
+          NdVar => true,
+          _ => {
+            base = base_var_of(args[1]!, mo);
+            if base < 0 {
+              true
+            } else {
+              bd = order_of(order_v, order_i, base);
+              sd = order_of(order_v, order_i, s);
+              scope_fn::has(bad, base) || scope_fn::name(f, base).starts_with("_") || bd < 0 || sd < 0 || bd >= sd
+            }
+          }
+        };
+        if unstable || dest_of(dest, s) != null {
+          if !scope_fn::has(ambiguous, s) {
+            ambiguous += [s];
+          }
+        } else {
+          dest.src += [s];
+          dest.slot += [args[1]!];
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_move_dest(c, mo, f, sources, bad, order_v, order_i, dest, ambiguous);
+  }
+}
+
+fn order_of(order_v: vector<integer>, order_i: vector<integer>, v: integer) -> integer {
+  for i in 0..len(order_v) {
+    if order_v[i] == v {
+      return order_i[i];
+    }
+  }
+  -1
+}
+
+// port: move_elide.rs fn vars_of — the variables `n` reads, in order, each once.
+fn vars_of(n: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    vars_of(c, out);
+  }
+}
+
+// port: move_elide.rs fn mentions_var
+pub fn mentions_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => if x == v { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if mentions_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: move_elide.rs fn touches_var — reads `v` or assigns it.
+fn touches_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdSet { var: x } => if x == v { return true; },
+    _ => {}
+  }
+  if mentions_var(n, v) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if touches_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: move_elide.rs fn collect_move_disturbed — the sources whose retarget would move the
+// destination's write across a statement that touches it.
+pub fn collect_move_disturbed(n: ir::Node, mo: MoveOps, copy_op: integer, src_arg: integer, dest: Dest, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdBlock { block } => disturbed_scan(block[0]!.operators, mo, copy_op, src_arg, dest, out),
+    NdInsert { items } => disturbed_scan(items, mo, copy_op, src_arg, dest, out),
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_move_disturbed(c, mo, copy_op, src_arg, dest, out);
+  }
+}
+
+fn disturbed_scan(ops: vector<ir::Node>, mo: MoveOps, copy_op: integer, src_arg: integer, dest: Dest, out: vector<integer>) {
+  for copy_idx in 0..len(ops) {
+    s = -1;
+    match scope_fn::unspan(ops[copy_idx]!) {
+      NdCall { def_nr: d, args } => if d == copy_op && src_arg < len(args) {
+        match scope_fn::unspan(args[src_arg]!) { NdVar { n: x } => { s = x; }, _ => {} }
+      },
+      _ => {}
+    }
+    if s < 0 {
+      continue;
+    }
+    slot = dest_of(dest, s);
+    if slot == null || base_var_of(slot!, mo) < 0 {
+      continue;
+    }
+    slot_vars: vector<integer> = [];
+    vars_of(slot!, slot_vars);
+    def_idx = 0;
+    for i in 0..len(ops) {
+      hit = match scope_fn::unspan(ops[i]!) {
+        NdSet { var: v } => v == s,
+        NdCall { def_nr: d2, args: a2 } => d2 == mo.op_database && first_var(a2) == s,
+        _ => false
+      };
+      if hit {
+        def_idx = i;
+        break;
+      }
+    }
+    if def_idx >= copy_idx {
+      continue;
+    }
+    for k in def_idx + 1..copy_idx {
+      between = ops[k]!;
+      writes_source = match scope_fn::unspan(between) { NdCall { args: a } => first_var(a) == s, _ => false };
+      if writes_source {
+        continue;
+      }
+      touched = false;
+      for v in slot_vars {
+        if touches_var(between, v) {
+          touched = true;
+        }
+      }
+      if touched {
+        if !scope_fn::has(out, s) {
+          out += [s];
+        }
+        break;
+      }
+    }
+  }
+}
+
+// port: move_elide.rs fn collect_element_vars — the `_elm_N = OpNewRecord(…)` slots.
+fn collect_element_vars(n: ir::Node, mo: MoveOps, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdSet { var: v, inner } => if ir_pass_tree::is_call(inner, mo.op_new_record) && !scope_fn::has(out, v) { out += [v]; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_element_vars(c, mo, out);
+  }
+}
+
+// port: move_elide.rs fn collect_multi_database — vars `OpDatabase`d more than once (a spanned
+// mint is met twice, as Rust's walk meets it).
+fn collect_multi_database(n: ir::Node, mo: MoveOps, seen: vector<integer>, multi: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr: d, args } => if d == mo.op_database {
+      v = first_var(args);
+      if v >= 0 {
+        if scope_fn::has(seen, v) {
+          if !scope_fn::has(multi, v) {
+            multi += [v];
+          }
+        } else {
+          seen += [v];
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    collect_multi_database(c, mo, seen, multi);
+  }
+}
+
+// port: move_elide.rs fn collect_def_order — the first-definition encounter order per var
+// (every node visited counts, a spanned one twice, as Rust's walk counts it).
+fn collect_def_order(n: ir::Node, mo: MoveOps, idx: vector<integer>, order_v: vector<integer>, order_i: vector<integer>) {
+  v = match scope_fn::unspan(n) {
+    NdSet { var } => var,
+    NdCall { def_nr: d, args } => if d == mo.op_database { first_var(args) } else { -1 },
+    _ => -1
+  };
+  if v >= 0 && order_of(order_v, order_i, v) < 0 {
+    order_v += [v];
+    order_i += [idx[0]];
+  }
+  idx[0] = idx[0] + 1;
+  for c in scope_fn::children(n) {
+    collect_def_order(c, mo, idx, order_v, order_i);
+  }
+}
+
+// port: move_elide.rs fn base_var_of — peel `OpGetField` / `OpGetVector` to the leading var.
+pub fn base_var_of(e: ir::Node, mo: MoveOps) -> integer {
+  match scope_fn::unspan(e) {
+    NdVar { n: v } => v,
+    NdCall { def_nr: d, args } => if (d == mo.op_get_field || d == mo.op_get_vector) && len(args) > 0 { base_var_of(args[0]!, mo) } else { -1 },
+    _ => -1
+  }
+}
+
+// port: move_elide.rs fn move_rewrite
+fn move_rewrite(n: ir::Node, ready: vector<integer>, dest: Dest, mo: MoveOps) -> ir::Node {
+  u = scope_fn::unspan(n);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      return respan(n, ir::NdBlock { block: [ir_pass_tree::with_operators(bl, [for s in bl.operators if !move_drop(s, ready, mo) { move_rewrite(s, ready, dest, mo) }])] });
+    },
+    NdInsert { items } => return respan(n, ir::NdInsert { items: [for s in items if !move_drop(s, ready, mo) { move_rewrite(s, ready, dest, mo) }] }),
+    _ => {}
+  }
+  m = n;
+  match n {
+    NdCall { def_nr: d, args } => if d != mo.op_copy_record && d != mo.op_database && d != mo.op_free {
+      s = first_var(args);
+      if s >= 0 && scope_fn::has(ready, s) {
+        dst = dest_of(dest, s);
+        if dst != null {
+          na: vector<ir::Node> = [dst!];
+          for i in 1..len(args) {
+            na += [args[i]!];
+          }
+          m = ir::NdCall { def_nr: d, args: na };
+        }
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { move_rewrite(c, ready, dest, mo) }])
+}
+
+// `n`'s spans kept around `with`.
+pub fn respan(n: ir::Node, with: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: respan(inner, with) },
+    _ => with
+  }
+}
+
+// port: move_elide.rs fn move_drop
+fn move_drop(s: ir::Node, ready: vector<integer>, mo: MoveOps) -> boolean {
+  match scope_fn::unspan(s) {
+    NdCall { def_nr: d, args } => (d == mo.op_database || d == mo.op_copy_record || d == mo.op_free) && first_var(args) >= 0 && scope_fn::has(ready, first_var(args)),
+    _ => false
+  }
+}

@@ -40,6 +40,7 @@ use crt;
 use bgen_image;
 use native_table;
 use front_bundle;
+use report;
 
 fn main() {
   a = arguments();
@@ -123,6 +124,13 @@ fn main() {
       eprintln("unpassed: {r}");
     }
     exit(6);
+  }
+  // `LOFT_FRONT_REPORT=1`: the program's definitions as the loft path leaves them for the
+  // writer, reported as `compare/defs.loft` reports Rust's `--emit-image`, and no run — the
+  // whole path's IR against Rust's, where the per-stage gates each see only Rust's input.
+  if env_variable("LOFT_FRONT_REPORT") == "1" {
+    print(report::defs_report(b, upto));
+    exit(0);
   }
   img!.natives = native_table::of(b);
   st = bgen_image::stream(b, img!.natives);

@@ -71,7 +71,9 @@ pub struct BoundAt {
   pub nr: integer,
   pub block: integer,
   // The loop the binding was made in (its loop variable on this pass), -1 outside every loop.
-  pub in_loop: integer
+  pub in_loop: integer,
+  // (The loop it was first bound in: `Variable::created_in_loop` for the per-loop split.)
+  pub first_loop: integer = -1
 }
 
 // The spellings a block's split bindings took over, restored when it ends.
@@ -84,6 +86,14 @@ pub struct CapSlot {
   pub var: integer,
   pub clos: integer,
   pub pos: integer
+}
+
+// A `for` loop's per-pass ordinal (`Function::loop_ord_of`): `depth` the open loops below it
+// when it began (an open entry), or `lv` its loop variable once it closed.
+pub struct LoopOrd {
+  pub ord: integer,
+  pub depth: integer,
+  pub lv: integer
 }
 
 pub struct LoopSpelling {
@@ -154,6 +164,9 @@ pub struct Vars {
   // The `while` loops open: loops of their own in `#break`'s count, which `active_loops` (the
   // `for` loops) does not hold.
   pub whiles: integer = 0,
+  // Each open `while`'s count of enclosing `for` loops (`active_loops`) where it was entered: a
+  // `x#break` / `x#continue` leaves every `while` opened inside `x`'s loop too.
+  pub while_marks: vector<integer> = [],
   // The body's tail took `classify_reference_delivery`'s `MaterializeView` (the lowering's
   // decision, `el_expressions`), read by the return-promotion classifier (`el_retpromo`).
   pub mv_tail: boolean = false,
@@ -174,6 +187,13 @@ pub struct Vars {
   pub loop_made: vector<integer>,
   // `Function::start_loop`'s count on this pass: the loops begun so far.
   pub loops_started: integer = 0,
+  // The ordinals of the loops begun and not closed, and of each closed `for` by its variable.
+  pub ord_stack: vector<LoopOrd>,
+  // The ended binding the bind being read may split from per loop (loft#1145), or -1.
+  pub loop_split_old: integer = -1,
+  // …and the loop that binding was made in (its loop variable), read before this bind records it.
+  pub loop_split_was: integer = -1,
+  pub lv_ords: vector<LoopOrd>,
   // `ended_spelling`: per open loop, the spelling to give back to its ended binding.
   pub loop_spellings: vector<LoopSpelling>,
   // The subject node of a tuple member an assignment writes (`v[i].1 += 5`): its element is
@@ -197,6 +217,10 @@ pub struct Vars {
   pub loop_binds: hash<LoopCount[name]>,
   // `Parser::divisor_nonzero`: the locals a condition proves non-zero where they are read
   pub nonzero: vector<integer>,
+  // `Parser::math_sign_proven` (`@FR-N-Domain`'s guard licence): the float locals a comparison
+  // against zero proves `> 0` (`sign_vals` SIGN_POS) or `>= 0` (SIGN_NONNEG), latest last.
+  pub sign_vars: vector<integer>,
+  pub sign_vals: vector<integer>,
   // `(N-Guard)`: the record locals a test proves present where they are read
   pub present: vector<integer>,
   // Projections a condition proved present in the arm being read (`narrowed_non_null_exprs`),
@@ -782,6 +806,18 @@ fn change_var_type_core(e: el::El, v: Vars, nr: integer, t: ir::TypeT) -> boolea
   // A local bound again is no longer what a guard (or a loop range) proved of it.
   v.present = [for x in v.present if x != nr { x }];
   v.nonzero = [for x in v.nonzero if x != nr { x }];
+  if v.sign_vars.contains(nr) {
+    ks: vector<integer> = [];
+    kv: vector<integer> = [];
+    for sv in v.sign_vars {
+      if sv != nr {
+        ks += [sv];
+        kv += [v.sign_vals[sv#index]!];
+      }
+    }
+    v.sign_vars = ks;
+    v.sign_vals = kv;
+  }
   cur = tp(v, nr);
   // `_` holds whatever it is given last.
   if name_of(v, nr) == "_" && !el_types::is_unknown(t) {
@@ -941,7 +977,7 @@ fn integer_bytes(s: ir::IntegerSpec) -> integer {
 
 // `Function::variant_join` (`@FR-C-Var`): two different variants of one struct enum — or a
 // variant and the enum — joined to the enum, `?` when either is; null for any other pair.
-fn variant_join(e: el::El, cur: ir::TypeT, t: ir::TypeT) -> ir::TypeT? {
+pub fn variant_join(e: el::El, cur: ir::TypeT, t: ir::TypeT) -> ir::TypeT? {
   cb = el_types::base(cur);
   tb = el_types::base(t);
   ce = variant_enum(e, cb);
@@ -1041,6 +1077,8 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   v.len_locals = [];
   v.loop_binds = [];
   v.nonzero = [];
+  v.sign_vars = [];
+  v.sign_vals = [];
   v.present = [];
   v.bounded = [];
   v.work_ctext = 0;
@@ -1417,6 +1455,18 @@ pub fn stored(v: Vars) -> ir::Function {
       f.variables[c].captured = true;
     }
   }
+  // `Variable::viewed`: the deps each earlier bind ended with (`note_bind`).
+  for x in v.viewed {
+    if x#index < len(f.variables) {
+      f.variables[x#index].viewed = [for d in x { d }];
+    }
+  }
+  // `Variable::was_loop_var`: a variable that has served as a loop's (`loop_var`).
+  for l in v.loop_vars {
+    if l >= 0 && l < len(f.variables) {
+      f.variables[l].was_loop_var = true;
+    }
+  }
   for n in v.names {
     f.names += [ir::NameNr { name: n.name, nr: n.nr }];
   }
@@ -1438,6 +1488,19 @@ pub fn is_unknown(t: ir::TypeT) -> boolean {
 pub fn pop_loop(v: Vars) -> integer {
   lv = v.active_loops[-1] ?? -1;
   v.active_loops = v.active_loops[..-1];
+  // (The closed loop's ordinal is kept by its variable: a later split registers the binding it
+  // splits from under it.)
+  od = len(v.active_loops);
+  oi = -1;
+  for os in v.ord_stack {
+    if os.depth == od {
+      oi = os#index;
+    }
+  }
+  if oi >= 0 {
+    v.lv_ords += [LoopOrd { ord: v.ord_stack[oi]!.ord, depth: od, lv: lv }];
+    v.ord_stack = v.ord_stack[..oi];
+  }
   for ls in v.loop_spellings {
     if ls.lv == lv {
       set_name(v, ls.name, ls.prior);
@@ -1489,7 +1552,40 @@ pub fn record_binding(v: Vars, nr: integer) {
       return;
     }
   }
-  v.bound_in += [BoundAt { nr: nr, block: b, in_loop: l }];
+  v.bound_in += [BoundAt { nr: nr, block: b, in_loop: l, first_loop: l }];
+}
+
+// The loop `nr`'s binding was FIRST recorded in, or -1.
+pub fn first_binding_loop(v: Vars, nr: integer) -> integer {
+  for x in v.bound_in {
+    if x.nr == nr {
+      return x.first_loop;
+    }
+  }
+  -1
+}
+
+// The per-pass ordinal of the innermost open `for` loop, or -1.
+pub fn current_loop_ord(v: Vars) -> integer {
+  d = len(v.active_loops) - 1;
+  r = -1;
+  for os in v.ord_stack {
+    if os.depth == d {
+      r = os.ord;
+    }
+  }
+  r
+}
+
+// The ordinal of the closed loop over `lv`, or -1.
+pub fn loop_ord_of(v: Vars, lv: integer) -> integer {
+  r = -1;
+  for lo in v.lv_ords {
+    if lo.lv == lv {
+      r = lo.ord;
+    }
+  }
+  r
 }
 
 // The innermost open loop (its loop variable), or -1.

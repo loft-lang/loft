@@ -399,12 +399,16 @@ pub fn nullable_scalar_elem(e: el::El, t: ir::TypeT) -> text {
   }
 }
 
-// `Type::without_deps`: the type with no borrows.
+// `Type::without_deps`: the type with no borrows — a vector's element, a tuple's members and what
+// a `&` or a `τ?` holds are emptied too.
 pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
-  if len(deps(t)) == 0 {
-    return t;
+  match t {
+    TyVector { inner } => ir::TyVector { inner: without_deps(inner), dep: [] },
+    TyRefVar { inner } => ir::TyRefVar { inner: without_deps(inner) },
+    TyOptional { inner } => ir::TyOptional { inner: without_deps(inner) },
+    TyTuple { elems } => ir::TyTuple { elems: [for x in elems { without_deps(x) }] },
+    _ => if len(deps(t)) == 0 { t } else { with_deps(t, []) }
   }
-  with_deps(t, [])
 }
 
 // `Type::depend`: the variables a type borrows — through a `&` and a `τ?`, a tuple's the union of
@@ -806,20 +810,24 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
       ir::TyTuple { elems: ts }
     },
     // `fn(T, …) -> R`: the argument types, a `const` one's bit in `consts` (`ConstParams`), and
-    // the result (`void` when none is written).  A `&` argument is refused by name.
+    // the result (`void` when none is written).  A `&T` argument is `Parser::ref_var_type`'s
+    // link to `T`, as a declared `&` parameter is; a `&` tuple argument is refused by name.
     STyFn { at: _, args, ret } => {
       ts: vector<ir::TypeT> = [];
       bits = 0;
       for a in args {
         match e.p.nodes[a] {
           STyArg { amp, fixed, tp } => {
-            if amp {
-              el::refuse(e, "a function type with a `&` argument");
-              return null;
-            }
             at = if tp == null { null } else { parse_type(e, tp!) };
             if at == null {
               return null;
+            }
+            if amp {
+              if at! is TyTuple {
+                el::refuse(e, "a function type with a `&` tuple argument");
+                return null;
+              }
+              at = ir::TyRefVar { inner: at! };
             }
             if fixed && len(ts) < 32 {
               bits += 1 << len(ts);
@@ -1331,6 +1339,11 @@ pub fn owns_hook(e: el::El, t: integer, h: text, path: vector<integer>) -> boole
     if type_owns_hook(e, a.typedef[0] ?? ir::TyVoid, h, path) {
       return true;
     }
+    // (`@FR-L-CapOwn`: once the fn fields are settled, a fn field whose closure record has
+    // something to release makes its struct droppable — `Data::fn_field_record`.)
+    if h == "OpDrop" && e.fn_fields_settled > 0 && t < e.fn_fields_settled && fn_field_record(e, a) >= 0 {
+      return true;
+    }
   }
   for x in e.b.data.definitions {
     if x.def_type == el::DT_ENUM_VALUE && x.parent == t && owns_hook(e, x#index, h, path) {
@@ -1338,6 +1351,21 @@ pub fn owns_hook(e: el::El, t: integer, h: text, path: vector<integer>) -> boole
     }
   }
   false
+}
+
+// `Data::fn_field_record`: the closure record a fn-typed field's assigned lambda is built into,
+// where that record has something to release — a captured store (a `Reference` with deps) or a
+// droppable; -1 otherwise.  One lambda per field (`assigned_lambda_d_nr`).
+pub fn fn_field_record(e: el::El, a: ir::Attribute) -> integer {
+  if !(base(a.typedef[0] ?? ir::TyVoid) is TyFunction) || a.assigned_lambda_d_nr == el::NONE || a.assigned_lambda_d_nr < 0 {
+    return -1;
+  }
+  record = el::def(e, a.assigned_lambda_d_nr).closure_record;
+  if record < 0 || record == el::NONE {
+    return -1;
+  }
+  holds = len([for c in el::def(e, record).attributes if match base(c.typedef[0] ?? ir::TyVoid) { TyReference { n: _, dep } => len(dep) > 0, _ => false } { 1 }]) > 0;
+  if holds || owns_droppable(e, record, []) { record } else { -1 }
 }
 
 // `Data::type_holds_generator`: a value of this type holds a generator's frame — an

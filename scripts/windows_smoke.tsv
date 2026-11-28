@@ -96,6 +96,7 @@ scripts/release-liveness.py	--help
 scripts/repeat-test.sh	--help
 scripts/repro-output.sh	--help
 scripts/repro-verify.sh	--help
+scripts/return_drift.py	--help
 scripts/revalidate_libs_local.sh	--help
 scripts/rule_depth.py	--help
 scripts/rule_phases.py	--help
@@ -144,6 +145,7 @@ selfhost/bench/cgen_one.sh	--help
 selfhost/bench/cgen_run.sh	--help
 selfhost/bench/cgen_survey.py	--help
 selfhost/bench/fill_speed.sh	--help
+selfhost/bench/lil_check.py	--help
 selfhost/bench/measure.py	--help
 selfhost/bench/passes_survey.py	--help
 selfhost/bench/run_image_bytecode.py	--help

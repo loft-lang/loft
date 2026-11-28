@@ -459,8 +459,19 @@ pub(super) fn give_halt_a_value(code: &mut Value, value: Value, tp: &Type) {
 }
 
 /// Does `ops` reach its last operator only past a halt — the value behind it is never read?
+/// A halt is the halting call, and its other spelling, a `return`, `break` or `continue`
+/// statement of this block: a value `if` whose arm returns gets its sibling's null pushed behind
+/// the `return` (`@FR-C-Never`), and counted as an arm that yields null it made the join `τ?`
+/// (loft#2682).
 fn behind_a_halt(data: &crate::data::Data, ops: &[Value]) -> bool {
-    ops.len() > 1 && ops[..ops.len() - 1].iter().any(|o| is_halt_call(data, o))
+    ops.len() > 1
+        && ops[..ops.len() - 1].iter().any(|o| {
+            is_halt_call(data, o)
+                || matches!(
+                    o.unspan(),
+                    Value::Return(_) | Value::Break(_) | Value::Continue(_)
+                )
+        })
 }
 
 /// `@FR-N-Guard` — can the body of a guard clause NOT fall through: it ends in `return`,
@@ -3576,6 +3587,15 @@ impl Parser {
                         } else {
                             delivered
                         };
+                    // `@FR-O-Buffer`: the buffer is the CALLER's store.  A local renamed onto
+                    // it and bound once from a buffer-filling call (`r = other(v)`, the tail a
+                    // join of `r` and another value) must have that call fill the buffer, as
+                    // the single-tail `Rename` delivery's collapse does; left on its own
+                    // `__ref_N`, the call displaced the caller's store and nobody freed it —
+                    // one store per call, both backends (loft#2672).  The arms materialised
+                    // above clear and append, so `r`'s one assignment stays that call.
+                    let collapsed = self.nrvo_collapse_defining_call(l, buf_var);
+                    self.suppress_collapsed_workrefs(l, collapsed);
                     true
                 } else {
                     false
@@ -4887,8 +4907,16 @@ impl Parser {
             return;
         }
 
-        // (1) Tail must be `Var(cv)` or `Return(Var(cv))`, modulo Span.
+        // (1) Tail must be `Var(cv)` or `Return(Var(cv))`, modulo Span.  A join tail whose arms
+        //     answer the ONE local renamed onto the buffer (`if c { r } else { r }`) is the same
+        //     delivery spread over arms: that local's single top-level defining call still
+        //     fills the buffer (loft#2672).  With two renamed locals both calls would write
+        //     the one store, so that declines.
         let Some(cv) = Self::tail_var(&l[last]) else {
+            if let [cv] = ls {
+                let collapsed = self.nrvo_collapse_defining_call(l, *cv);
+                self.suppress_collapsed_workrefs(l, collapsed);
+            }
             return;
         };
         if !ls.contains(&cv) {
@@ -10746,6 +10774,33 @@ impl Parser {
         matches!(tested, Value::Var(t) if t == *x).then_some(*x)
     }
 
+    /// loft#2673, `@FR-F-Ret` — a return copy runs only where its source is not the destination: a bound
+    /// join one arm of which is the local pass 1 renamed onto the buffer (`palt(p) ?? p`, the `??`
+    /// temp) is already where the copy would put it on that run.  Copied anyway, `OpDatabase(w)`
+    /// cleared the record and the copy read the cleared record back: a zeroed `P`, silently.  The
+    /// join's deps are not known yet here, so the fact read is the one `ref_return` has: the
+    /// buffer is a local the body assigns (`ret_copy_may_alias`).
+    fn unless_source_is_buffer(&mut self, source: Option<u16>, w: u16, copy: Value) -> Value {
+        match source {
+            Some(src) => crate::data::v_if(
+                self.cl("OpDistinctStore", &[Value::Var(src), Value::Var(w)]),
+                copy,
+                Value::Var(w),
+            ),
+            None => copy,
+        }
+    }
+
+    /// The source of [`Self::unless_source_is_buffer`]'s guard, where there is one.
+    fn copy_source_may_be_buffer(&self, orig: &Value) -> Option<u16> {
+        match orig.unspan() {
+            Value::Var(src) if self.ret_copy_may_alias && crate::keys::self_copy_guard() => {
+                Some(*src)
+            }
+            _ => None,
+        }
+    }
+
     fn materialize_return_into(&mut self, td: u32, tail: &mut Value, w: u16) {
         let td = self.return_copy_type(td);
         if let Value::Return(inner) = tail {
@@ -10858,6 +10913,7 @@ impl Parser {
             }
             _ => None,
         };
+        let self_source = self.copy_source_may_be_buffer(&orig);
         let copy = crate::data::v_block(
             vec![
                 crate::data::v_set(w, Value::Null),
@@ -10868,6 +10924,7 @@ impl Parser {
             Type::Reference(td, Deps::frame1(w)),
             "materialized_view_return",
         );
+        let copy = self.unless_source_is_buffer(self_source, w, copy);
         let tested = match absent_guard {
             Some(v) => crate::data::v_if(
                 self.cl("OpRefIsNull", &[v]),
@@ -11905,7 +11962,7 @@ impl Parser {
     /// the `ViewOfLocalCall` classification to check whether the value backing a
     /// forward-borrowed param is a LOCAL built in this block.  `None` when the
     /// argument is not a simple var/composite (e.g. a literal or a call).
-    fn arg_root_var(arg: &Value) -> Option<u16> {
+    pub(super) fn arg_root_var(arg: &Value) -> Option<u16> {
         match arg.unspan() {
             Value::Var(v) => Some(*v),
             Value::Block(bl) => bl.operators.last().and_then(Self::arg_root_var),
@@ -14178,6 +14235,10 @@ impl Parser {
                         buf_var,
                         substitute,
                     } => {
+                        // loft#2673 — pass 1 renamed the buffer onto a local the body still
+                        // assigns (a `??` temp): a copy into it may read the buffer itself.
+                        let assigned = self.vars.name(buf_var) != "__retbuf"
+                            && body.iter().any(|op| assigns_var(op, buf_var));
                         if substitute {
                             for op in body.iter_mut() {
                                 Self::substitute_work_ref(op, *v, buf_var);
@@ -14208,7 +14269,10 @@ impl Parser {
                             // forward); a conditional delivery is what would close it.
                             match ret.clone() {
                                 Type::Reference(td, _) | Type::Enum(td, true, _) => {
+                                    let outer =
+                                        std::mem::replace(&mut self.ret_copy_may_alias, assigned);
                                     self.materialize_return_into(td, tail, buf_var);
+                                    self.ret_copy_may_alias = outer;
                                     tail_copied = true;
                                 }
                                 // The CONDITIONAL delivery the note above names as what
@@ -14319,7 +14383,12 @@ impl Parser {
                                         // otherwise (both loft#1337).  Left undelivered, the
                                         // local's own store was answered while the buffer the
                                         // rename gave another local was freed undropped.
+                                        let outer = std::mem::replace(
+                                            &mut self.ret_copy_may_alias,
+                                            assigned,
+                                        );
                                         self.materialize_return_into(*td, tail, buf_var);
+                                        self.ret_copy_may_alias = outer;
                                         tail_copied = true;
                                     }
                                 }
@@ -18457,4 +18526,15 @@ pub(super) fn match_subject_borrows_off() -> bool {
 fn arm_frees_view_deps() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *ON.get_or_init(|| std::env::var("LOFT_ARM_FREES_VIEW_DEPS").is_ok_and(|v| v != "0"))
+}
+
+/// Does `op` assign `v` anywhere inside it (loft#2673)?
+fn assigns_var(op: &Value, v: u16) -> bool {
+    let mut found = false;
+    op.walk(&mut |n| {
+        if matches!(n, Value::Set(x, _) if *x == v) {
+            found = true;
+        }
+    });
+    found
 }

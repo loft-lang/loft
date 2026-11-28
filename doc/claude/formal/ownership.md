@@ -79,6 +79,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
                 carry — that the place it names outlives it — is recorded on the TARGET
                 (`Variable::amp_linked_by`), read by the slot allocator and by nothing else.
                 Two channels, each answering one question.
+  (O-Borrow-Final)  A BORROW LIST IS THE FINAL PASS'S.  The `deps` a local carries name the
+                stores the FINAL pass saw it read; a list left by a pass whose code is
+                discarded names none of them, so pass 2 starts every local (not a parameter:
+                its list is the signature's) from an empty one.  What pass 1 knows ahead — that
+                a LATER bind makes an owner a view — is a lookahead record of its own
+                (`viewed_in_pass_one`), asked where a bind needs it and never read as a borrow.
+                A temp pass 2 re-mints at pass 1's site takes pass 2's list; one pass 2 never
+                names is no variable of the body.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
                 A VIEW owns nothing, so the derivation never frees one: a field hoisted out of a
@@ -828,6 +836,21 @@ analysis directly (the certifier sidesteps it).
   ⚠ Its two interpolated cells are interpolated deliberately: `s += g(vs[0])[1]` and
   `c = g(pick(vs, 0))[1]` are CORRECT on the broken build, so the accumulate and bind
   spellings of the same read score nothing. Statement context is an axis here.
+
+- **A joined local answered on one arm of a join return releases its stores on the other
+  (`O-Complete`, `O-Buffer`, loft#2671)** — `node = if c { f(n) } else { n }` owns nothing: <!-- doc-lint: ok -->
+  its arms' temps own what it holds.  Where a return answers `node` OR another value
+  (`if r != null { r! } else { node }`), each of those temps, and each buffer whose free was
+  guarded against `node`, is released unless it holds the value returned
+  (`scopes/free_vars.rs`, the join leg), so neither the run answering `r` (a leak) nor the
+  run answering an always-fresh arm (a double free) breaks the per-path fact.  Guard
+  `loft-suite/rules/ownership/O-Complete/2671-…`, `@catches: LOFT_NO_JOIN_RETURN_BACKINGS`.
+
+- **A local bound from a call that hands its literal argument back owns one store (`O-Move`,
+  `O-Buffer`, loft#2674)** — `x = id(P { … })` adopts the literal's store at the first bind as <!-- doc-lint: ok -->
+  at every rebind, and only a callee whose EVERY return hands its parameter back is read as
+  delivering it; `if p.v > 3 { return P { … }; } p` copies its answer and the literal keeps its
+  own free.  Guard `loft-suite/rules/ownership/O-Move/2674-…`.
 
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails

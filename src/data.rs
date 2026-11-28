@@ -2380,6 +2380,29 @@ impl Type {
         found
     }
 
+    /// Does [`Self::without_deps`] change this type — does it carry a dependency list anywhere it
+    /// strips one?  The same arms, asked without building the stripped copy, so a caller that
+    /// strips many types (`Function::strip_carried_deps`, every local on every pass 2) allocates
+    /// only for the ones that carry a list.
+    #[must_use]
+    pub fn carries_deps(&self) -> bool {
+        match self {
+            Type::Text(d)
+            | Type::Reference(_, d)
+            | Type::Enum(_, _, d)
+            | Type::Index(_, _, d)
+            | Type::Radix(_, _, d)
+            | Type::Trie(_, _, d)
+            | Type::Hash(_, _, d)
+            | Type::Sorted(_, _, d)
+            | Type::Function(_, _, d, _) => !d.is_empty(),
+            Type::Vector(t, d) => !d.is_empty() || t.carries_deps(),
+            Type::RefVar(t) | Type::Optional(t) => t.carries_deps(),
+            Type::Tuple(elems) => elems.iter().any(Type::carries_deps),
+            _ => false,
+        }
+    }
+
     /// The same type with every dep list emptied — an OWNED reading of the shape.
     ///
     /// For a type used as a HINT (what shape is expected here?) rather than as a
@@ -11082,6 +11105,13 @@ impl Data {
         // reaches `new_record` with the same lookup.  An inferred tuple element is the
         // one shape that arrives unregistered (loft#943).
         self.ensure_tuple_defs(lexer, tp);
+        // The wrapper is GLOBAL (source 0, below), so its field type keeps the element's shape
+        // and none of its deps: a dep is a variable of the frame that asked first
+        // (`[for x in vi { x }]` asks with `x`'s `ref(__tuple<…>)["_vector_1"]`), and in any
+        // other frame that number names nothing or an unrelated local (loft#666's hazard,
+        // `Type::without_deps`).
+        let elm = tp.without_deps();
+        let tp = &elm;
         let fld_tp = Type::Vector(Box::new(tp.clone()), Deps::none());
         let fld = fld_tp.name(self);
         if self.def_nr(&fld) == u32::MAX {

@@ -357,7 +357,7 @@ fn def_known(b: ir::Bundle, n: integer) -> integer {
 // port: data.rs fn vector_element_type — the schema type of a vector ELEMENT whose loft type is
 // `content`, -1 for none.  (The `type_elm` arms carried are the scalars, a record, an enum, a
 // nested vector and a function value; any other element answers none, and the loop stays.)
-fn vector_element_type(b: ir::Bundle, content: ir::TypeT) -> integer {
+pub fn vector_element_type(b: ir::Bundle, content: ir::TypeT) -> integer {
   match content {
     TyInteger { spec } => {
       if (spec.forced_size == 0 && el_types::narrow_width(spec) > 0) || (spec.forced_size > 0 && spec.forced_size < 8) {

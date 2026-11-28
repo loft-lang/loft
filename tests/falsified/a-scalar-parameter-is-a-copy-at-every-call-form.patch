@@ -1,7 +1,8 @@
 diff --git a/src/lexer.rs b/src/lexer.rs
+index f55f1db9df..35ca8ef1eb 100644
 --- a/src/lexer.rs
 +++ b/src/lexer.rs
-@@ -274,12 +274,8 @@
+@@ -349,12 +349,8 @@ struct Recorded {
      /// Where the consumed source ended when the token became the one held.
      prev_end: (u32, u32),
      /// The string-interpolation state the read left: a literal that opens a hole leaves
@@ -16,7 +17,7 @@ diff --git a/src/lexer.rs b/src/lexer.rs
  }
  
  /// The scan cursor over the current source line: the line's own text and a byte offset into
-@@ -1458,7 +1454,7 @@
+@@ -1634,7 +1630,7 @@ impl Lexer {
              res: res.clone(),
              cursor: (self.position.line, self.position.pos),
              prev_end: (self.prev_end.line, self.prev_end.pos),
@@ -25,7 +26,7 @@ diff --git a/src/lexer.rs b/src/lexer.rs
          }
      }
  
-@@ -1466,11 +1462,12 @@
+@@ -1642,11 +1638,12 @@ impl Lexer {
      /// as it would be read, with the cursor and consumed end the scan leaves.
      fn queue(&mut self, res: LexResult) {
          let at = (self.position.line, self.position.pos);
@@ -39,7 +40,7 @@ diff --git a/src/lexer.rs b/src/lexer.rs
          });
      }
  
-@@ -1490,9 +1487,7 @@
+@@ -1666,9 +1663,7 @@ impl Lexer {
          self.position.pos = n.cursor.1;
          self.prev_end.line = n.prev_end.0;
          self.prev_end.pos = n.prev_end.1;
@@ -50,7 +51,7 @@ diff --git a/src/lexer.rs b/src/lexer.rs
          n.res
      }
  
-@@ -2388,15 +2383,7 @@
+@@ -2578,15 +2573,7 @@ impl Lexer {
                      self.ret_number(0, pos, false)
                  };
              }
@@ -68,9 +69,10 @@ diff --git a/src/lexer.rs b/src/lexer.rs
                  // (field access), the current number is a tuple/struct
                  // field index — NEVER a float fragment.  This covers two
 diff --git a/src/opt/value_records/mod.rs b/src/opt/value_records/mod.rs
+index e01f2e17b1..c49e6b1d46 100644
 --- a/src/opt/value_records/mod.rs
 +++ b/src/opt/value_records/mod.rs
-@@ -969,13 +969,8 @@
+@@ -1025,13 +1025,8 @@ pub(crate) fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
              // the oracle reads it through the call as Borrowed of `a`: read as a view the copy
              // was freed by nobody, one record per call on `--native` alone, in a concrete
              // function and an instance alike (Found-via loft#1820).  A parameter is exempt —
@@ -87,9 +89,10 @@ diff --git a/src/opt/value_records/mod.rs b/src/opt/value_records/mod.rs
              }
              // `@FR-N-Road` — the view carries the layout its own TYPE names: a view of `S` the
 diff --git a/src/parser/generics.rs b/src/parser/generics.rs
+index f7d88c016b..20a3e1594f 100644
 --- a/src/parser/generics.rs
 +++ b/src/parser/generics.rs
-@@ -1256,91 +1256,6 @@
+@@ -1439,91 +1439,6 @@ impl Parser {
          code.for_each_child_mut(&mut |c| self.resolve_content_eq(c, bindings));
      }
  
@@ -181,7 +184,7 @@ diff --git a/src/parser/generics.rs b/src/parser/generics.rs
      pub(super) fn fill_monomorph_body(
          &mut self,
          d_nr: u32,
-@@ -1464,8 +1379,6 @@
+@@ -1651,8 +1566,6 @@ impl Parser {
                  }
              }
          }
@@ -191,9 +194,10 @@ diff --git a/src/parser/generics.rs b/src/parser/generics.rs
          self.context = outer_context;
          self.data.definitions[d_nr as usize].code = code;
 diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
+index 6b21977d53..6fbbfdf47f 100644
 --- a/src/scopes/free_vars.rs
 +++ b/src/scopes/free_vars.rs
-@@ -586,19 +586,6 @@
+@@ -645,19 +645,6 @@ impl Scopes<'_> {
          } else {
              HashSet::default()
          };
@@ -213,19 +217,16 @@ diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
          // Kept for the null-arm join leg below, which releases its sources after this sweep.
          let join_arm_dropped = arm_dropped.clone();
          let mut ls = self.get_free_vars(
-@@ -669,10 +656,7 @@
-         // otherwise emit `Return(expr)` with the sources leaking on the null
-         // path (frees suppressed above), and the legacy path would re-open the
+@@ -748,7 +735,7 @@ impl Scopes<'_> {
          // eval-stack UAF.
--        if is_return
--            && !expr_is_terminal
--            && (!null_arm_record_sources.is_empty() || !rebound_sources.is_empty())
--        {
-+        if is_return && !expr_is_terminal && !null_arm_record_sources.is_empty() {
+         if is_return
+             && !expr_is_terminal
+-            && (!null_arm_record_sources.is_empty() || !rebound_sources.is_empty() || view_guarded)
++            && (!null_arm_record_sources.is_empty() || view_guarded)
+         {
              self.ret_temp_counter += 1;
              let name = format!("__ret_{}", self.ret_temp_counter);
-             let tmp = function.add_temp_var(&name, tp);
-@@ -734,18 +718,6 @@
+@@ -843,18 +830,6 @@ impl Scopes<'_> {
                      _ => free,
                  });
              }
@@ -245,9 +246,10 @@ diff --git a/src/scopes/free_vars.rs b/src/scopes/free_vars.rs
              return result;
          }
 diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
+index 663612f046..5d4271e035 100644
 --- a/src/scopes/get_free_vars.rs
 +++ b/src/scopes/get_free_vars.rs
-@@ -1120,15 +1120,6 @@
+@@ -1399,15 +1399,6 @@ impl Scopes<'_> {
          if to_scope == 1 {
              let free_distinct = data.def_nr("OpFreeRefIfDistinct");
              for (param, orig) in function.rebind_params() {
@@ -264,9 +266,10 @@ diff --git a/src/scopes/get_free_vars.rs b/src/scopes/get_free_vars.rs
                      free_distinct,
                      vec![Value::Var(param), Value::Var(orig)],
 diff --git a/src/use_analysis.rs b/src/use_analysis.rs
+index 269c0a01d8..ab0d288111 100644
 --- a/src/use_analysis.rs
 +++ b/src/use_analysis.rs
-@@ -8107,77 +8107,10 @@
+@@ -9466,77 +9466,10 @@ fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
          func.is_argument(v)
              && !matches!(func.tp(v), Type::RefVar(_))
              && !func.name(v).starts_with("__")
@@ -345,9 +348,10 @@ diff --git a/src/use_analysis.rs b/src/use_analysis.rs
  ///
  /// This is the difference between a write that LOSES data and one that merely writes into
 diff --git a/src/variables/mod.rs b/src/variables/mod.rs
+index 95e1c7f96c..3ba57fe2e5 100644
 --- a/src/variables/mod.rs
 +++ b/src/variables/mod.rs
-@@ -4479,12 +4479,6 @@
+@@ -4968,12 +4968,6 @@ impl Function {
      /// @PLN87 P2.1 — record that visible heap parameter `param` is
      /// whole-binding-reassigned in the body and `orig` is its caller-store
      /// witness (see [`Function::rebind_orig`]).  Idempotent — keyed on `param`.

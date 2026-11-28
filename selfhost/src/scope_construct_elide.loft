@@ -1,0 +1,789 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/construct_elide.rs` transcribed: the construction move elisions
+// `move_elide` runs — B1.3b `construct_move_rewrite` (`x.field += src`, the container already
+// built), B1.3c `construct_fresh_rewrite` (`a = Bag { items: base }`, `a`'s build hoisted) and
+// B1.3d `construct_replace_rewrite` (`a.field = base`, the clear moved ahead of the build).
+//
+// `Function::store_viewers` reads every earlier bind's deps (`Variable::viewed`) off the image
+// (`scope_fn::viewers_of`).
+
+use ir;
+use scope_fn;
+use ir_pass_tree;
+use scope_move_elide;
+
+pub struct ConstructOps {
+  op_database: integer,
+  op_free: integer,
+  op_append: integer,
+  op_prealloc: integer,
+  op_set_int4: integer,
+  op_get_field: integer,
+  op_clear: integer,
+  op_new_record: integer,
+  op_finish_record: integer,
+  op_push: vector<integer>
+}
+
+pub fn construct_ops(b: ir::Bundle) -> ConstructOps {
+  push: vector<integer> = [];
+  for n in ["OpPushByte", "OpPushInt", "OpPushInt4", "OpPushFloat", "OpPushSingle", "OpPushBoolean", "OpPushEnum", "OpPushCharacter"] {
+    d = scope_fn::def_nr(b, n);
+    if d >= 0 {
+      push += [d];
+    }
+  }
+  ConstructOps {
+    op_database: scope_fn::def_nr(b, "OpDatabase"),
+    op_free: scope_fn::def_nr(b, "OpFreeRef"),
+    op_append: scope_fn::def_nr(b, "OpAppendVector"),
+    op_prealloc: scope_fn::def_nr(b, "OpPreAllocVector"),
+    op_set_int4: scope_fn::def_nr(b, "OpSetInt4"),
+    op_get_field: scope_fn::def_nr(b, "OpGetField"),
+    op_clear: scope_fn::def_nr(b, "OpClearVector"),
+    op_new_record: scope_fn::def_nr(b, "OpNewRecord"),
+    op_finish_record: scope_fn::def_nr(b, "OpFinishRecord"),
+    op_push: push
+  }
+}
+
+// A rewritten body, and the refusal of a decision the image cannot take ("" for none).
+pub struct Rewritten {
+  code: ir::Node,
+  why: text
+}
+
+fn var_at(args: vector<ir::Node>, i: integer) -> integer {
+  if i >= len(args) {
+    return -1;
+  }
+  match scope_fn::unspan(args[i]!) { NdVar { n } => n, _ => -1 }
+}
+
+fn same(a: ir::Node, b: ir::Node) -> boolean {
+  "{a}" == "{b}"
+}
+
+// port: move_elide.rs fn source_escapes — `src` named anywhere but its own build's first
+// argument and the one append that moves it (a spanned call is met twice, as Rust's walk meets
+// it).
+pub fn source_escapes(n: ir::Node, src: integer, co: ConstructOps) -> boolean {
+  st = [0, 0];  // copies, bad
+  escapes_walk(n, src, co, st);
+  st[1] > 0 || st[0] > 1
+}
+
+fn escapes_walk(n: ir::Node, src: integer, co: ConstructOps, st: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr: d, args } => for i in 0..len(args) {
+      if match scope_fn::unspan(args[i]!) { NdVar { n: v } => v == src, _ => false } {
+        write_arg0 = i == 0 && (d == co.op_prealloc || d == co.op_new_record || d == co.op_finish_record || d == co.op_set_int4 || scope_fn::has(co.op_push, d));
+        copy_arg1 = i == 1 && d == co.op_append;
+        if copy_arg1 {
+          st[0] = st[0] + 1;
+        }
+        if !(write_arg0 || copy_arg1) {
+          st[1] = 1;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    escapes_walk(c, src, co, st);
+  }
+}
+
+// ── B1.3b ──
+
+// What `construct_prescan` gathers, per source (parallel vectors keyed by `src`).
+struct Scan {
+  db_v: vector<integer>,
+  db_order: vector<integer>,
+  db_path: vector<text>,
+  src: vector<integer>,
+  dest: vector<ir::Node>,
+  dest_path: vector<text>,
+  container: vector<integer>,
+  ambiguous: vector<integer>,
+  vdb_s: vector<integer>,
+  vdb_v: vector<integer>,
+  bind_v: vector<integer>,
+  bind_at: vector<integer>,
+  idx: integer,
+  next_region: integer,
+  path: vector<integer>
+}
+
+fn find(v: vector<integer>, x: integer) -> integer {
+  for i in 0..len(v) {
+    if v[i] == x {
+      return i;
+    }
+  }
+  -1
+}
+
+fn path_text(p: vector<integer>) -> text {
+  "{p}"
+}
+
+// port: construct_elide.rs fn construct_prescan (the walk meets a spanned node twice).
+fn prescan(n: ir::Node, co: ConstructOps, con: vector<integer>, sc: Scan) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr: d, args } => {
+      if d == co.op_database {
+        v = var_at(args, 0);
+        if v >= 0 && find(sc.db_v, v) < 0 {
+          sc.db_v += [v];
+          sc.db_order += [sc.idx];
+          sc.db_path += [path_text(sc.path)];
+        }
+        sc.idx += 1;
+      } else if d == co.op_append && len(args) > 0 {
+        s = var_at(args, 1);
+        if s >= 0 && scope_fn::has(con, s) {
+          if find(sc.src, s) >= 0 {
+            if !scope_fn::has(sc.ambiguous, s) {
+              sc.ambiguous += [s];
+            }
+          } else {
+            sc.src += [s];
+            sc.container += [get_field_base(args[0]!, co)];
+            sc.dest += [args[0]!];
+            sc.dest_path += [path_text(sc.path)];
+          }
+        }
+      }
+    },
+    NdSet { var: s, inner } => if scope_fn::has(con, s) {
+      match scope_fn::unspan(inner) {
+        NdCall { def_nr: gd, args: ga } => if gd == co.op_get_field {
+          vd = var_at(ga, 0);
+          if vd >= 0 {
+            k = find(sc.vdb_s, s);
+            if k >= 0 {
+              sc.vdb_v[k] = vd;
+            } else {
+              sc.vdb_s += [s];
+              sc.vdb_v += [vd];
+            }
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  match u {
+    NdSet { var: v } => {
+      k = find(sc.bind_v, v);
+      if k < 0 {
+        sc.bind_v += [v];
+        sc.bind_at += [sc.idx];
+      } else if sc.bind_at[k] < sc.idx {
+        sc.bind_at[k] = sc.idx;
+      }
+    },
+    _ => {}
+  }
+  region = u is NdLoop || u is NdIf || u is NdParallel || u is NdIter;
+  if region {
+    sc.path += [sc.next_region];
+    sc.next_region += 1;
+  }
+  for c in scope_fn::children(n) {
+    prescan(c, co, con, sc);
+  }
+  if region {
+    sc.path.remove(len(sc.path) - 1);
+  }
+}
+
+// port: construct_elide.rs fn get_field_base — `x` of `OpGetField(Var(x), …)`, -1 for none.
+fn get_field_base(e: ir::Node, co: ConstructOps) -> integer {
+  match scope_fn::unspan(e) {
+    NdCall { def_nr: d, args } => if d == co.op_get_field { var_at(args, 0) } else { -1 },
+    _ => -1
+  }
+}
+
+// port: construct_elide.rs fn construct_move_rewrite — `skip` takes the moved backings,
+// `moved_src` / `moved_into` the (source, container) pairs.
+pub fn construct_move_rewrite(code: ir::Node, con: vector<integer>, co: ConstructOps, mo: scope_move_elide::MoveOps, bad: vector<integer>, escaping: vector<integer>, skip: vector<integer>, moved_src: vector<integer>, moved_into: vector<integer>) -> ir::Node {
+  sc = Scan { db_v: [], db_order: [], db_path: [], src: [], dest: [], dest_path: [], container: [], ambiguous: [], vdb_s: [], vdb_v: [], bind_v: [], bind_at: [], idx: 0, next_region: 0, path: [] };
+  prescan(code, co, con, sc);
+  dest = scope_move_elide::Dest { src: sc.src, slot: sc.dest };
+  disturbed: vector<integer> = [];
+  scope_move_elide::collect_move_disturbed(code, mo, co.op_append, 1, dest, disturbed);
+  ready: vector<integer> = [];
+  vdbs: vector<integer> = [];
+  for s in con {
+    if scope_fn::has(sc.ambiguous, s) || scope_fn::has(escaping, s) || scope_fn::has(disturbed, s) {
+      continue;
+    }
+    k = find(sc.src, s);
+    kv = find(sc.vdb_s, s);
+    if k < 0 || kv < 0 {
+      continue;
+    }
+    vdb = sc.vdb_v[kv];
+    if field_is_cleared(code, sc.dest[k]!, co) {
+      continue;
+    }
+    kd = find(sc.db_v, vdb);
+    vpath = if kd >= 0 { sc.db_path[kd] } else { "-" };
+    if vpath != sc.dest_path[k] {
+      continue;
+    }
+    cvar = sc.container[k];
+    if cvar < 0 || scope_fn::has(bad, cvar) {
+      continue;
+    }
+    vorder = if kd >= 0 { sc.db_order[kd] } else { -1 };
+    kb = find(sc.bind_v, cvar);
+    if kb >= 0 && vorder >= 0 && sc.bind_at[kb] > vorder {
+      continue;
+    }
+    kc = find(sc.db_v, cvar);
+    ok = if kc >= 0 && vorder >= 0 { sc.db_order[kc] < vorder } else { kc < 0 && vorder >= 0 };
+    if !ok {
+      continue;
+    }
+    ready += [s];
+    if !scope_fn::has(vdbs, vdb) {
+      vdbs += [vdb];
+    }
+  }
+  if len(ready) == 0 {
+    return code;
+  }
+  out = rewrite_ops(code, ready, vdbs, dest, co);
+  for s in ready {
+    k = find(sc.src, s);
+    moved_src += [s];
+    moved_into += [sc.container[k]];
+  }
+  for v in vdbs {
+    if !scope_fn::has(skip, v) {
+      skip += [v];
+    }
+  }
+  out
+}
+
+// port: construct_elide.rs fn construct_rewrite_ops
+fn rewrite_ops(n: ir::Node, ready: vector<integer>, vdbs: vector<integer>, dest: scope_move_elide::Dest, co: ConstructOps) -> ir::Node {
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(bl, [for s in bl.operators if !construct_drop(s, ready, vdbs, co) { rewrite_ops(s, ready, vdbs, dest, co) }])] };
+    },
+    NdInsert { items } => return ir::NdInsert { items: [for s in items if !construct_drop(s, ready, vdbs, co) { rewrite_ops(s, ready, vdbs, dest, co) }] },
+    _ => {}
+  }
+  m = n;
+  match n {
+    NdCall { def_nr: d, args } => if d != co.op_database && d != co.op_prealloc && d != co.op_append && d != co.op_free && d != co.op_set_int4 {
+      s = var_at(args, 0);
+      if s >= 0 && scope_fn::has(ready, s) {
+        dst = scope_move_elide::dest_of(dest, s);
+        if dst != null {
+          m = with_first(n, dst!);
+        }
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { rewrite_ops(c, ready, vdbs, dest, co) }])
+}
+
+// A call with its first argument replaced.
+fn with_first(n: ir::Node, first: ir::Node) -> ir::Node {
+  match n {
+    NdCall { def_nr: d, args } => {
+      na: vector<ir::Node> = [first];
+      for i in 1..len(args) {
+        na += [args[i]!];
+      }
+      ir::NdCall { def_nr: d, args: na }
+    },
+    _ => n
+  }
+}
+
+// port: construct_elide.rs fn construct_drop
+fn construct_drop(s: ir::Node, ready: vector<integer>, vdbs: vector<integer>, co: ConstructOps) -> boolean {
+  match scope_fn::unspan(s) {
+    NdSet { var: v } => scope_fn::has(ready, v),
+    NdCall { def_nr: d, args } => {
+      a0 = var_at(args, 0);
+      if d == co.op_database || d == co.op_set_int4 || d == co.op_free {
+        a0 >= 0 && scope_fn::has(vdbs, a0)
+      } else if d == co.op_prealloc {
+        a0 >= 0 && scope_fn::has(ready, a0)
+      } else if d == co.op_append {
+        a1 = var_at(args, 1);
+        a1 >= 0 && scope_fn::has(ready, a1)
+      } else {
+        false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: construct_elide.rs fn is_clear_of
+fn is_clear_of(op: ir::Node, field: ir::Node, co: ConstructOps) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr: d, args } => d == co.op_clear && len(args) > 0 && same(scope_fn::unspan(args[0]!), scope_fn::unspan(field)),
+    _ => false
+  }
+}
+
+// port: construct_elide.rs fn field_is_cleared
+fn field_is_cleared(n: ir::Node, field: ir::Node, co: ConstructOps) -> boolean {
+  if is_clear_of(n, field, co) {
+    return true;
+  }
+  for c in scope_fn::children(n) {
+    if field_is_cleared(c, field, co) {
+      return true;
+    }
+  }
+  false
+}
+
+// ── B1.3c ──
+
+// port: construct_elide.rs fn construct_fresh_rewrite — every block, then its children.
+pub fn construct_fresh_rewrite(code: ir::Node, con: vector<integer>, co: ConstructOps, f: ir::Function, written: vector<boolean>, bad: vector<integer>, escaping: vector<integer>, skip: vector<integer>) -> Rewritten {
+  r = Rewritten { code: code, why: "" };
+  r.code = fresh_walk(code, con, co, f, written, bad, escaping, skip, r);
+  r
+}
+
+fn fresh_walk(n: ir::Node, con: vector<integer>, co: ConstructOps, f: ir::Function, written: vector<boolean>, bad: vector<integer>, escaping: vector<integer>, skip: vector<integer>, r: Rewritten) -> ir::Node {
+  m = n;
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops = fresh_block(bl.operators, con, co, f, written, bad, escaping, skip, r);
+      m = ir::NdBlock { block: [ir_pass_tree::with_operators(bl, ops)] };
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { fresh_walk(c, con, co, f, written, bad, escaping, skip, r) }])
+}
+
+// port: construct_elide.rs fn fresh_rewrite_block
+fn fresh_block(start: vector<ir::Node>, con: vector<integer>, co: ConstructOps, f: ir::Function, written: vector<boolean>, bad: vector<integer>, escaping: vector<integer>, skip: vector<integer>, r: Rewritten) -> vector<ir::Node> {
+  ops = start;
+  failed: vector<integer> = [];
+  while true {
+    best = -1;
+    best_ci = -1;
+    for s in con {
+      if scope_fn::has(failed, s) {
+        continue;
+      }
+      for i in 0..len(ops) {
+        if append_copy_of(ops[i]!, s, co) != null {
+          if best_ci < 0 || i < best_ci {
+            best_ci = i;
+            best = s;
+          }
+          break;
+        }
+      }
+    }
+    if best < 0 {
+      break;
+    }
+    t = try_fresh_one(ops, best, co, f, written, bad, escaping, skip, r);
+    if t == null {
+      failed += [best];
+    } else {
+      ops = t!;
+    }
+  }
+  ops
+}
+
+// port: construct_elide.rs fn try_fresh_one — the new statement list, or null for a decline.
+fn try_fresh_one(ops: vector<ir::Node>, src: integer, co: ConstructOps, f: ir::Function, written: vector<boolean>, bad: vector<integer>, escaping: vector<integer>, skip: vector<integer>, r: Rewritten) -> vector<ir::Node>? {
+  if scope_fn::has(escaping, src) {
+    return null;
+  }
+  ci = -1;
+  dest = ir::NdNull;
+  for i in 0..len(ops) {
+    dd = append_copy_of(ops[i]!, src, co);
+    if dd != null {
+      ci = i;
+      dest = dd!;
+      break;
+    }
+  }
+  if ci < 0 {
+    return null;
+  }
+  a = get_field_base(dest, co);
+  if a < 0 || scope_fn::has(bad, a) {
+    return null;
+  }
+  vdb = -1;
+  for op in ops {
+    match scope_fn::unspan(op) {
+      NdSet { var: s, inner } => if s == src {
+        match scope_fn::unspan(inner) {
+          NdCall { def_nr: gd, args: ga } => if gd == co.op_get_field && var_at(ga, 0) >= 0 { vdb = var_at(ga, 0); },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  if vdb < 0 {
+    return null;
+  }
+  ps = ci;
+  while ps > 0 && stmt_targets_var(ops[ps - 1]!, a) {
+    ps -= 1;
+  }
+  has_db = false;
+  for i in ps..ci {
+    if call_is(ops[i]!, co.op_database, a) {
+      has_db = true;
+    }
+    if !run_var_ok(ops[i]!, a, f, written) {
+      return null;
+    }
+  }
+  if !has_db {
+    return null;
+  }
+  vi = -1;
+  for i in 0..len(ops) {
+    if call_is(ops[i]!, co.op_database, vdb) {
+      vi = i;
+      break;
+    }
+  }
+  if vi < 0 || vi >= ps {
+    return null;
+  }
+  // `@FR-O-Detach` — nothing the run is hoisted across names `a`, a view of its store, or
+  // binds `a`.
+  if touches_region(ops, 0, ps, [], a, f) {
+    return null;
+  }
+  out: vector<ir::Node> = [for i in ps..ci { ops[i]! }];
+  for i in 0..len(ops) {
+    if i >= ps && i <= ci {
+      continue;
+    }
+    if fresh_drop(ops[i]!, src, vdb, co) {
+      continue;
+    }
+    out += [fresh_retarget(ops[i]!, src, dest, co)];
+  }
+  if !scope_fn::has(skip, vdb) {
+    skip += [vdb];
+  }
+  out
+}
+
+// port: construct_elide.rs fn append_copy_of — `dest` of `OpAppendVector(dest, Var(src), …)`.
+fn append_copy_of(op: ir::Node, src: integer, co: ConstructOps) -> ir::Node? {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr: d, args } => if d == co.op_append && var_at(args, 1) == src && len(args) > 0 { args[0]! } else { null },
+    _ => null
+  }
+}
+
+// port: construct_elide.rs fn stmt_targets_var
+fn stmt_targets_var(s: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(s) {
+    NdSet { var } => var == v,
+    NdCall { args } => var_at(args, 0) == v,
+    _ => false
+  }
+}
+
+// port: construct_elide.rs fn call_is
+fn call_is(s: ir::Node, op: integer, v: integer) -> boolean {
+  match scope_fn::unspan(s) {
+    NdCall { def_nr: d, args } => d == op && var_at(args, 0) == v,
+    _ => false
+  }
+}
+
+// port: construct_elide.rs fn run_var_ok — every `Var` is `a` or a never-written parameter.
+fn run_var_ok(n: ir::Node, a: integer, f: ir::Function, written: vector<boolean>) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => if !(v == a || (scope_fn::is_argument(f, v) && !(written[v] ?? false))) { return false; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if !run_var_ok(c, a, f, written) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: construct_elide.rs fn fresh_drop
+fn fresh_drop(s: ir::Node, src: integer, vdb: integer, co: ConstructOps) -> boolean {
+  match scope_fn::unspan(s) {
+    NdSet { var } => var == src,
+    NdCall { def_nr: d, args } => (d == co.op_database || d == co.op_set_int4 || d == co.op_free) && var_at(args, 0) == vdb,
+    _ => false
+  }
+}
+
+// port: construct_elide.rs fn fresh_retarget
+fn fresh_retarget(n: ir::Node, src: integer, dest: ir::Node, co: ConstructOps) -> ir::Node {
+  m = n;
+  match n {
+    NdCall { def_nr: d, args } => if d != co.op_database && d != co.op_append && d != co.op_free && d != co.op_set_int4 && d != co.op_get_field && var_at(args, 0) == src {
+      m = with_first(n, dest);
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { fresh_retarget(c, src, dest, co) }])
+}
+
+// ── store viewers and touches_store ──
+
+// port: construct_elide.rs fn refs_var
+fn refs_var(n: ir::Node, v: integer) -> boolean {
+  scope_move_elide::mentions_var(n, v)
+}
+
+// port: construct_elide.rs fn binds_var
+fn binds_var(n: ir::Node, v: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdSet { var } => if var == v { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if binds_var(c, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: construct_elide.rs fn touches_store
+fn touches_store(op: ir::Node, a: integer, viewers: vector<integer>) -> boolean {
+  if refs_var(op, a) || binds_var(op, a) {
+    return true;
+  }
+  for w in viewers {
+    if refs_var(op, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// `touches_store` over `ops[from..to]` (but the indexes in `except`).
+fn touches_region(ops: vector<ir::Node>, from: integer, to: integer, except: vector<integer>, a: integer, f: ir::Function) -> boolean {
+  viewers = scope_fn::viewers_of(f, a, true);
+  for i in from..to {
+    if !scope_fn::has(except, i) && touches_store(ops[i]!, a, viewers) {
+      return true;
+    }
+  }
+  false
+}
+
+// ── B1.3d ──
+
+// port: construct_elide.rs fn construct_replace_rewrite — every block, then its children.
+pub fn construct_replace_rewrite(code: ir::Node, co: ConstructOps, f: ir::Function, skip: vector<integer>) -> Rewritten {
+  r = Rewritten { code: code, why: "" };
+  r.code = replace_walk(code, co, f, skip, r);
+  r
+}
+
+fn replace_walk(n: ir::Node, co: ConstructOps, f: ir::Function, skip: vector<integer>, r: Rewritten) -> ir::Node {
+  m = n;
+  match n {
+    NdBlock { block } => {
+      bl = block[0]!;
+      m = ir::NdBlock { block: [ir_pass_tree::with_operators(bl, replace_block(bl.operators, co, f, skip, r))] };
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { replace_walk(c, co, f, skip, r) }])
+}
+
+// port: construct_elide.rs fn replace_rewrite_block
+fn replace_block(start: vector<ir::Node>, co: ConstructOps, f: ir::Function, skip: vector<integer>, r: Rewritten) -> vector<ir::Node> {
+  ops = start;
+  failed: vector<integer> = [];
+  while true {
+    hit = -1;
+    field = ir::NdNull;
+    rhs = -1;
+    base = -1;
+    for c2 in 2..len(ops) {
+      if scope_fn::has(failed, c2) {
+        continue;
+      }
+      ft = append_field_temp(ops[c2]!, co);
+      if ft == null {
+        continue;
+      }
+      if !is_clear_of(ops[c2 - 1]!, ft!.field, co) {
+        continue;
+      }
+      bs = append_temp_src(ops[c2 - 2]!, ft!.rhs, co);
+      if bs < 0 {
+        continue;
+      }
+      hit = c2;
+      field = ft!.field;
+      rhs = ft!.rhs;
+      base = bs;
+      break;
+    }
+    if hit < 0 {
+      break;
+    }
+    t = try_replace_one(ops, hit, field, rhs, base, co, f, skip, r);
+    if t == null {
+      failed += [hit];
+    } else {
+      ops = t!;
+    }
+  }
+  ops
+}
+
+struct FieldTemp {
+  field: ir::Node,
+  rhs: integer
+}
+
+// port: construct_elide.rs fn append_field_temp
+fn append_field_temp(op: ir::Node, co: ConstructOps) -> FieldTemp? {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr: d, args } => if d == co.op_append && len(args) > 1 && get_field_base(args[0]!, co) >= 0 && var_at(args, 1) >= 0 {
+      FieldTemp { field: args[0]!, rhs: var_at(args, 1) }
+    } else {
+      null
+    },
+    _ => null
+  }
+}
+
+// port: construct_elide.rs fn append_temp_src — `base` of `OpAppendVector(Var(rhs), Var(base))`.
+fn append_temp_src(op: ir::Node, rhs: integer, co: ConstructOps) -> integer {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr: d, args } => if d == co.op_append && var_at(args, 0) == rhs { var_at(args, 1) } else { -1 },
+    _ => -1
+  }
+}
+
+// port: construct_elide.rs fn try_replace_one — the new statement list, or null.
+fn try_replace_one(ops: vector<ir::Node>, c2: integer, field: ir::Node, rhs: integer, base: integer, co: ConstructOps, f: ir::Function, skip: vector<integer>, r: Rewritten) -> vector<ir::Node>? {
+  a = get_field_base(field, co);
+  if a < 0 {
+    return null;
+  }
+  vdb = -1;
+  rhs_set = -1;
+  for i in 0..len(ops) {
+    match scope_fn::unspan(ops[i]!) {
+      NdSet { var: s, inner } => {
+        if s == base {
+          match scope_fn::unspan(inner) {
+            NdCall { def_nr: gd, args: ga } => if gd == co.op_get_field && var_at(ga, 0) >= 0 { vdb = var_at(ga, 0); },
+            _ => {}
+          }
+        } else if s == rhs {
+          rhs_set = i;
+        }
+      },
+      _ => {}
+    }
+  }
+  if vdb < 0 || rhs_set < 0 {
+    return null;
+  }
+  if a == base || a == vdb {
+    return null;
+  }
+  for i in c2 + 1..len(ops) {
+    if refs_var(ops[i]!, base) {
+      return null;
+    }
+  }
+  bs = -1;
+  for i in 0..len(ops) {
+    if fresh_drop(ops[i]!, base, vdb, co) || refs_var(ops[i]!, base) {
+      bs = i;
+      break;
+    }
+  }
+  if bs < 0 || bs >= c2 - 2 {
+    return null;
+  }
+  for i in 0..len(ops) {
+    if call_is(ops[i]!, co.op_database, a) {
+      if i >= bs {
+        return null;
+      }
+      break;
+    }
+  }
+  chain = [rhs_set, c2 - 2, c2 - 1, c2];
+  if touches_region(ops, bs, c2, chain, a, f) {
+    return null;
+  }
+  clear = ops[c2 - 1]!;
+  out: vector<ir::Node> = [];
+  for i in 0..len(ops) {
+    if i == bs {
+      out += [clear];
+    }
+    if i < bs {
+      out += [ops[i]!];
+      continue;
+    }
+    if scope_fn::has(chain, i) || fresh_drop(ops[i]!, base, vdb, co) {
+      continue;
+    }
+    out += [fresh_retarget(ops[i]!, base, field, co)];
+  }
+  if !scope_fn::has(skip, vdb) {
+    skip += [vdb];
+  }
+  if !scope_fn::has(skip, rhs) {
+    skip += [rhs];
+  }
+  out
+}

@@ -66,6 +66,16 @@ the source is ZEROED so the next turn's clear and the callee's refill find an em
 tmp`) a deep copy — with it off, `y` is given up to `x`, the stores exchanged.  It is the first
 bisect step for a wrong or emptied vector after such a rebind; `LOFT_TRACE_PLACE=1` names each
 decision (`[take-local]`).
+**`LOFT_NO_REBIND_DETACH=1`** (`@FR-O-Detach`, parse time, BOTH backends) re-initialises a
+record literal's construction temporary in place again when the literal rebinds a local that
+views (`x = v[i]` before it, `x = S { …, f: x }` in a loop the local was bound outside of) —
+with it off, the temporary lets go
+of its record (`OpRefAlias` + `OpInitRefSentinel`), builds in a fresh one and releases the old one
+after the last initialiser (`OpFreeRefIfDistinct`), so every read of `x` in the literal sees the
+value `x` holds.  The bisect step for a field that reads null, zero or empty after such a rebind
+ran twice; it is a correctness switch, the falsifier of
+`rules/ownership/O-Detach/2667-a-literal-rebinding-a-view-in-a-loop-reads-what-it-holds.loft` and
+of the store records' re-mint clause (STORE_RECORDS.md).
 **`LOFT_NO_KEYED_FIELD_RETURN_COPY=1`** (`@FR-F-Ret`, parse time, BOTH backends) returns a keyed
 collection that is a field of a local record as the place it is — with it off
 (`Parser::keyed_local_field_copy_out`), the field is copied into a local that owns its store
@@ -280,6 +290,29 @@ borrows that temp and the temp releases it (`@FR-O-Complete`, `Scopes::lift_join
 A literal built in a buffer the local adopts is freed only where the local moved off it
 (`OpFreeRefIfDistinct(buffer, local)`, ahead of the local's own free, `@FR-O-Buffer`);
 **`LOFT_NO_LITERAL_BUFFER_PAIR=1`** keeps both plain frees — a re-free per evaluation.
+Where such a local is one answer of a join return (`if r != null { r! } else { node }`), the
+temps it views and the buffers guarded against it are released unless they hold the value
+returned (`@FR-O-Complete`, loft#2671); **`LOFT_NO_JOIN_RETURN_BACKINGS=1`** keeps them, keyed <!-- doc-lint: ok -->
+on the local — a leak on the run answering the other arm, a double free where an always-fresh
+arm's buffer is the answer.  Guards `loft-suite/rules/ownership/O-Complete/`.
+A `??` tail (`palt(p) ?? p`) whose temp pass 1 renamed onto the return buffer is copied into
+that buffer only where the joined value is a different store (`@FR-F-Ret`, loft#2673): <!-- doc-lint: ok -->
+**`LOFT_NO_SELF_COPY_GUARD=1`** copies it onto itself — the re-mint clears the record first,
+so the call's answer comes back zeroed.  That temp's rebind leaves the store the caller handed
+in to the rebind's entry-witnessed free (`@FR-O-Buffer`); **`LOFT_NO_NCC_ENTRY_GUARD=1`** frees
+it plainly, and the caller frees it a second time.  Guards `loft-suite/rules/calls/F-Ret/`.
+A call that hands its literal argument back (`x = id(P { … })`) delivers that construction to
+the binding, which adopts its store at a first bind as at a rebind (`@FR-O-Move`, loft#2674); <!-- doc-lint: ok -->
+**`LOFT_NO_DELIVERED_FIRST_ADOPT=1`** copies at the first bind while the literal's buffer stays
+paired with the binding — one leaked record per first bind.  Only a callee whose EVERY return
+hands the parameter back delivers it; **`LOFT_NO_DELIVERED_EVERY_RETURN=1`** reads the tail
+alone, so a rebind from `if p.v > 3 { return P { … }; } p` adopts plainly and the run answering
+the fresh record leaves the literal to nobody.  Guards `loft-suite/rules/ownership/O-Move/`.
+A discarded call whose result owns a store is bound to a temporary the scope frees, also where
+an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
+the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->
+span in place, and the record the callee minted is owned by nobody, one per evaluation.
+Guards `loft-suite/rules/ownership/O-Derived/`.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a

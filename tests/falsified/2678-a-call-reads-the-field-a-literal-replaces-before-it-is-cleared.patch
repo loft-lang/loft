@@ -1,0 +1,57 @@
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 9344fa695a..4f9fdd0056 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -5862,15 +5862,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+     ///   the destination (loft#2397);
+     /// * the destination's own root reached through an element step that may be the same
+     ///   element — another index variable, or an index the statement cannot name
+-    ///   (`f.vars[j].tp`, `f.vars[i * 1].tp` for the destination `f.vars[i].tp`);
+-    /// * under `=`, a PREFIX of the destination's place handed to a loft function — `tp(f, 0)`,
+-    ///   `g(f.vars)`, `h(f.vars[j])` for the destination `f.vars[i].tp` — through which the
+-    ///   callee reads the destination under its parameter's name (loft#2678).  The prefix is
+-    ///   compared as the element steps are, so an index the statement cannot name
+-    ///   (`f.vars[p.i].tp`) is a prefix of every element.  Only `=` detaches the field before
+-    ///   the build (`@FR-O-Detach`); a `+=` keeps it, and its record literal's field values
+-    ///   are staged ahead of the mint (`stage_append_fields`).  A primitive is the
+-    ///   construction's own machinery (`keyed_entry_ints` writes the entry), not a read.
++    ///   (`f.vars[j].tp`, `f.vars[i * 1].tp` for the destination `f.vars[i].tp`).
+     ///
+     /// A construction slot (an inline-ref element) is the build's own record, not a read.
+     /// Over-wide costs a temp or a buffer, never a wrong answer: a sibling element read
+@@ -5914,35 +5906,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         };
+         let exact =
+             |s: &[Option<PlaceStep>]| s == steps.as_slice() && s.iter().all(Option::is_some);
+-        let loft_fn = |d: u32| {
+-            let def = self.data.def(d);
+-            !def.name().starts_with("Op")
+-                && (!matches!(def.code(), Value::Null) || def.rust().is_empty())
+-        };
+-        // A function argument naming a place that may hold the destination: a prefix of it.
+-        // An EXACT prefix of a destination named in full, inside a part that is itself a
+-        // loft call answering a scalar or a record, is the read `snapshot_read_destination`
+-        // stages that part for (`reads_through`), so it is left to that.
+-        let replaces = self.assign_replaces;
+-        let named = steps.iter().all(Option::is_some);
+-        let staged_elem = !matches!(in_t.base(), Type::Vector(_, _));
+-        let prefix = |a: &Value, staged: bool| {
+-            replaces
+-                && self.loose_place(a).is_some_and(|(r, s)| {
+-                    r == root
+-                        && s.len() < steps.len()
+-                        && s.iter().zip(&steps).all(|(a, b)| compatible(a, b))
+-                        && !(staged && named && s.iter().zip(&steps).all(|(a, b)| a == b))
+-                })
+-        };
+         parts.iter().any(|p| {
+-            let staged = staged_elem && matches!(p.unspan(), Value::Call(d, _) if loft_fn(*d));
+             p.any_node(&mut |n| match n {
+                 Value::Var(x) | Value::TupleGet(x, _) => aliases.contains(x),
+-                Value::Call(d, args) if loft_fn(*d) && args.iter().any(|a| prefix(a, staged)) => {
+-                    true
+-                }
+-                Value::CallRef(_, args) if args.iter().any(|a| prefix(a, staged)) => true,
+                 _ => self.loose_place(n).is_some_and(|(r, s)| {
+                     r == root
+                         && s.len() == steps.len()

@@ -1,0 +1,519 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/host_store.rs` transcribed: `@FR-R-HostStore`, a recursion that writes its
+// result back into the field it came from builds that result in the field's own store.  The
+// write-back clause (`t.left = insert_rec(t.left, k)`, a `write_back_call` block) hands the
+// callee `OpStoreBuf(t)` and the field adopts the answer by number (`OpAdoptChildRec`); the
+// literal clause does the same for a record literal's field filled from a call's answer.
+// Decided after every body is settled, on the callee's final IR, in definition order, as
+// Rust's `rewrite_program` is.  A callee this pass refused has no settled body here: a site
+// whose decision reads one refuses its function by name.  `host_result`'s clause, which Rust
+// runs at the end of this one, is not transcribed (`scope_check` refuses where it may fire).
+
+use ir;
+use scope_fn;
+use scope_args;
+use ir_pass_tree;
+
+struct Ids {
+  free_ref: integer,
+  free_distinct: integer,
+  set_child: integer,
+  adopt: integer,
+  store_buf: integer,
+  get_field: integer,
+  from_child: integer
+}
+
+// The function being rewritten, its body as it was before the rewrite, the functions settled
+// so far, and whether a decision read a body this pass refused.
+struct Me {
+  d_nr: integer,
+  code: ir::Node,
+  settled: vector<boolean>,
+  stale: boolean = false
+}
+
+// port: host_store.rs fn rewrite_program — every admitted write-back in the settled functions;
+// the functions refused because a decision read a refused callee's body.
+pub fn rewrite_program(b: ir::Bundle, settled: vector<boolean>) -> vector<integer> {
+  refused: vector<integer> = [];
+  if (env_variable("LOFT_NO_HOST_STORE") ?? "0") != "0" {
+    return refused;
+  }
+  ids = Ids {
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    set_child: scope_fn::def_nr(b, "OpSetChildRec"),
+    adopt: scope_fn::def_nr(b, "OpAdoptChildRec"),
+    store_buf: scope_fn::def_nr(b, "OpStoreBuf"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    from_child: scope_fn::def_nr(b, "OpRefFromChildRec")
+  };
+  if ids.adopt < 0 || ids.store_buf < 0 {
+    return refused;
+  }
+  for d in b.data.definitions {
+    d_nr = d#index;
+    if d.source == 0 || !(settled[d_nr] ?? false) || d.def_type != 1 || len(d.code) == 0 || !calls(d.code[0]!, ids.set_child) {
+      continue;
+    }
+    me = Me { d_nr: d_nr, code: d.code[0]!, settled: settled };
+    code = rewrite(b, d.code[0]!, ids, me);
+    if me.stale {
+      refused += [d_nr];
+      continue;
+    }
+    b.data.definitions[d_nr].code = [code];
+  }
+  refused
+}
+
+// port: host_store.rs fn calls
+fn calls(n: ir::Node, op: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr } => if def_nr == op { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if calls(c, op) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: host_store.rs fn code_of — null where the callee's settled body is not here (a function
+// this pass refused), which marks the decision stale.
+fn code_of(b: ir::Bundle, me: Me, f: integer) -> ir::Node? {
+  if f == me.d_nr {
+    return me.code;
+  }
+  d = b.data.definitions[f]!;
+  if d.source != 0 && !(me.settled[f] ?? false) {
+    me.stale = true;
+    return null;
+  }
+  d.code[0] ?? ir::NdNull
+}
+
+// port: host_store.rs fn same
+fn same(a: ir::Node, c: ir::Node) -> boolean {
+  match scope_fn::unspan(a) {
+    NdVar { n: x } => match scope_fn::unspan(c) { NdVar { n: y } => x == y, _ => false },
+    NdInt { n: x } => match scope_fn::unspan(c) { NdInt { n: y } => x == y, _ => false },
+    NdCall { def_nr: f, args: xs } => match scope_fn::unspan(c) {
+      NdCall { def_nr: g, args: ys } => {
+        if f != g || len(xs) != len(ys) {
+          return false;
+        }
+        for x in xs {
+          if !same(x, ys[x#index]!) {
+            return false;
+          }
+        }
+        true
+      },
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// port: host_store.rs fn rewrite
+fn rewrite(b: ir::Bundle, n: ir::Node, ids: Ids, me: Me) -> ir::Node {
+  m = n;
+  match scope_fn::unspan(n) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      ops = [for o in bl.operators { o }];
+      changed = false;
+      if bl.name == "write_back_call" && len(ops) >= 2 {
+        plan = admit(b, ops, ids, me);
+        if plan != null {
+          ops[0] = replace_bound_arg(ops[0]!, plan!.buf_at, ir::NdCall { def_nr: ids.store_buf, args: [ir::NdVar { n: plan!.host }] });
+          ops[1] = with_op(ops[1]!, ids.adopt, false);
+          changed = true;
+        }
+      }
+      if literal_clause(b, ops, ids, me) {
+        changed = true;
+      }
+      if changed {
+        m = rebuilt(n, ir_pass_tree::with_operators(bl, ops));
+      }
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { rewrite(b, c, ids, me) }])
+}
+
+// `n` (a block, spanned or not) with its block replaced.
+fn rebuilt(n: ir::Node, bl: ir::Block) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rebuilt(inner, bl) },
+    _ => ir::NdBlock { block: [bl] }
+  }
+}
+
+// `Set(_, Call(_, args))` with `args[at]` replaced, through spans.
+fn replace_bound_arg(n: ir::Node, at: integer, v: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_bound_arg(inner, at, v) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: replace_arg(inner, at, v) },
+    _ => n
+  }
+}
+
+fn replace_arg(n: ir::Node, at: integer, v: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_arg(inner, at, v) },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == at { v } else { a } }] },
+    _ => n
+  }
+}
+
+// `Call(op, args)` made a call of `to`, through spans; `mask_tp`: its third argument, an
+// integer type, masked with `COPY_TP_MASK` (0x3FFF).
+fn with_op(n: ir::Node, to: integer, mask_tp: boolean) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_op(inner, to, mask_tp) },
+    NdCall { def_nr: _, args } => ir::NdCall { def_nr: to, args: [for a in args {
+      if mask_tp && a#index == 2 {
+        match a { NdInt { n: tp } => ir::NdInt { n: ((tp % 16384) + 16384) % 16384 }, _ => a }
+      } else {
+        a
+      }
+    }] },
+    _ => n
+  }
+}
+
+// The admitted site's lift, host and buffer position.
+struct Site { lift: integer, host: integer, buf_at: integer }
+
+// port: host_store.rs fn literal_clause — true where a site was admitted.
+fn literal_clause(b: ir::Bundle, ops: vector<ir::Node>, ids: Ids, me: Me) -> boolean {
+  admitted = 0;
+  next = 0;
+  while next + 1 < len(ops) {
+    i = next;
+    next += 1;
+    site = literal_site(b, ops[i]!, ops[i + 1]!, ids, me);
+    if site == null {
+      continue;
+    }
+    lift = site!.lift;
+    host = site!.host;
+    vars = b.data.definitions[me.d_nr]!.variables;
+    here = 0;
+    for o in ops {
+      here += uses(o, lift);
+    }
+    if !scope_fn::is_compiler_generated(vars, lift) || here != uses(me.code, lift) || !lift_only_freed(ops, lift, i, ids) {
+      continue;
+    }
+    ops[i] = replace_bound_arg(ops[i]!, site!.buf_at, ir::NdCall { def_nr: ids.store_buf, args: [ir::NdVar { n: host }] });
+    lift_freed = false;
+    for op in ops {
+      if is_free_of(op, ids.free_ref, lift) {
+        lift_freed = true;
+      }
+    }
+    ops[i + 1] = with_op(ops[i + 1]!, ids.adopt, true);
+    if !lift_freed {
+      rest = [for o in ops if o#index >= i + 2 { o }];
+      kept = [for o in ops if o#index < i + 2 { o }];
+      ops.clear();
+      ops += kept;
+      ops += [ir::NdCall { def_nr: ids.free_distinct, args: [ir::NdVar { n: lift }, ir::NdVar { n: host }] }];
+      ops += rest;
+    }
+    for k in 0..len(ops) {
+      if is_free_of(ops[k]!, ids.free_ref, lift) {
+        ops[k] = distinct_free(ops[k]!, ids.free_distinct, host);
+      }
+    }
+    admitted += 1;
+  }
+  admitted > 0
+}
+
+// `OpFreeRef(Var(lift), …)`, the op read through its span.
+fn is_free_of(op: ir::Node, free_ref: integer, lift: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => def_nr == free_ref && len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == lift, _ => false },
+    _ => false
+  }
+}
+
+// `OpFreeRef(lift, …)` made `OpFreeRefIfDistinct(lift, …, host)`, through spans.
+fn distinct_free(op: ir::Node, free_distinct: integer, host: integer) -> ir::Node {
+  match op {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: distinct_free(inner, free_distinct, host) },
+    NdCall { def_nr: _, args } => {
+      a = [for x in args { x }];
+      a += [ir::NdVar { n: host }];
+      ir::NdCall { def_nr: free_distinct, args: a }
+    },
+    _ => op
+  }
+}
+
+// port: host_store.rs fn literal_site — `lift = f(…)` then `OpSetChildRec(OpGetField(host, …),
+// lift, …)` with `f` answering only its buffer.
+fn literal_site(b: ir::Bundle, bind: ir::Node, write: ir::Node, ids: Ids, me: Me) -> Site? {
+  lift = -1;
+  call = ir::NdNull;
+  match scope_fn::unspan(bind) {
+    NdSet { var, inner } => {
+      lift = var;
+      call = inner;
+    },
+    _ => return null
+  }
+  f = match scope_fn::unspan(call) { NdCall { def_nr } => def_nr, _ => return null };
+  sargs = match scope_fn::unspan(write) { NdCall { def_nr: sc, args } => if sc == ids.set_child { args } else { return null }, _ => return null };
+  if len(sargs) < 2 || !(match scope_fn::unspan(sargs[1]!) { NdVar { n: x } => x == lift, _ => false }) {
+    return null;
+  }
+  gf = -1;
+  host = -1;
+  match scope_fn::unspan(sargs[0]!) {
+    NdCall { def_nr, args: ga } => {
+      gf = def_nr;
+      host = if len(ga) > 0 { match scope_fn::unspan(ga[0]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };
+    },
+    _ => return null
+  }
+  if host < 0 {
+    return null;
+  }
+  fd = b.data.definitions[f]!;
+  if gf != ids.get_field || fd.def_type != 1 {
+    return null;
+  }
+  buf_at = hidden_return_buffer_at(fd);
+  if buf_at < 0 {
+    return null;
+  }
+  code = code_of(b, me, f);
+  if code == null {
+    return null;
+  }
+  if answers_only(b, code!, 65535, buf_at) { Site { lift: lift, host: host, buf_at: buf_at } } else { null }
+}
+
+// `Definition::hidden_return_buffer_attr`, -1 for none.
+fn hidden_return_buffer_at(d: ir::Definition) -> integer {
+  for a in d.attributes {
+    if !a.hidden || a.work_buffer {
+      continue;
+    }
+    heap = match a.typedef[0] ?? ir::TyVoid {
+      TyReference => true,
+      TyVector => true,
+      TyEnum { is_ref } => is_ref,
+      _ => false
+    };
+    if heap {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// port: host_store.rs fn lift_only_freed
+fn lift_only_freed(ops: vector<ir::Node>, lift: integer, at: integer, ids: Ids) -> boolean {
+  for op in ops {
+    j = op#index;
+    if j == at || j == at + 1 {
+      continue;
+    }
+    u = scope_fn::unspan(op);
+    ok = match u {
+      NdSet { var: x, inner } => if x == lift { scope_fn::unspan(inner) is NdNull } else { !mentions(u, lift) },
+      _ => is_free_of(u, ids.free_ref, lift) || (!names_var_here(u, lift) && !mentions(u, lift))
+    };
+    if !ok {
+      return false;
+    }
+  }
+  true
+}
+
+// `Value::names_var_here`
+fn names_var_here(n: ir::Node, v: integer) -> boolean {
+  match n {
+    NdVar { n: x } => x == v,
+    NdSet { var: x } => x == v,
+    NdTupleGet { var: x } => x == v,
+    NdTuplePut { var: x } => x == v,
+    NdFnRefDnr { n: x } => x == v,
+    NdCallRef { var: x } => x == v,
+    NdIter { var: x } => x == v,
+    NdFnRef { var: x } => x == v,
+    _ => false
+  }
+}
+
+// port: host_store.rs fn uses — the non-null mentions of `var`: its reads and non-null sets.
+fn uses(n: ir::Node, var: integer) -> integer {
+  u = scope_fn::unspan(n);
+  count = match u {
+    NdVar { n: x } => if x == var { 1 } else { 0 },
+    NdSet { var: x, inner } => if x == var && !(scope_fn::unspan(inner) is NdNull) { 1 } else { 0 },
+    _ => 0
+  };
+  for c in scope_fn::children(u) {
+    count += uses(c, var);
+  }
+  count
+}
+
+// port: host_store.rs fn mentions
+fn mentions(n: ir::Node, x: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  hit = match u {
+    NdVar { n: y } => y == x,
+    NdSet { var: y } => y == x,
+    _ => false
+  };
+  if hit {
+    return true;
+  }
+  for c in scope_fn::children(u) {
+    if mentions(c, x) {
+      return true;
+    }
+  }
+  false
+}
+
+struct Plan { host: integer, buf_at: integer }
+
+// port: host_store.rs fn admit — the host variable and the buffer's argument position of an
+// admitted write-back.
+fn admit(b: ir::Bundle, ops: vector<ir::Node>, ids: Ids, me: Me) -> Plan? {
+  r = -1;
+  call = ir::NdNull;
+  match scope_fn::unspan(ops[0]!) {
+    NdSet { var, inner } => {
+      r = var;
+      call = inner;
+    },
+    _ => return null
+  }
+  f = -1;
+  args: vector<ir::Node> = [];
+  match scope_fn::unspan(call) {
+    NdCall { def_nr, args: a } => {
+      f = def_nr;
+      args = a;
+    },
+    _ => return null
+  }
+  sargs = match scope_fn::unspan(ops[1]!) { NdCall { def_nr: sc, args } => if sc == ids.set_child { args } else { return null }, _ => return null };
+  if len(sargs) < 2 || !(match scope_fn::unspan(sargs[1]!) { NdVar { n: x } => x == r, _ => false }) {
+    return null;
+  }
+  field = sargs[0]!;
+  gf = -1;
+  host = -1;
+  match scope_fn::unspan(field) {
+    NdCall { def_nr, args: ga } => {
+      gf = def_nr;
+      host = if len(ga) > 0 { match scope_fn::unspan(ga[0]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };
+    },
+    _ => return null
+  }
+  if host < 0 || gf != ids.get_field {
+    return null;
+  }
+  buf_at = hidden_return_buffer_at(b.data.definitions[f]!);
+  if buf_at < 0 {
+    return null;
+  }
+  child = ir::NdCall { def_nr: ids.from_child, args: [field] };
+  arg_at = -1;
+  for a in args {
+    if arg_at < 0 && same(a, child) {
+      arg_at = a#index;
+    }
+  }
+  if arg_at < 0 {
+    return null;
+  }
+  code = code_of(b, me, f);
+  if code == null {
+    return null;
+  }
+  if answers_only(b, code!, arg_at, buf_at) { Plan { host: host, buf_at: buf_at } } else { null }
+}
+
+// The value a node answers: a block's last operator, read through.
+fn tail(v: ir::Node) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => {
+      n = len(block[0]!.operators);
+      if n == 0 { v } else { tail(block[0]!.operators[n - 1]!) }
+    },
+    _ => scope_fn::unspan(v)
+  }
+}
+
+struct Answers { ok: boolean = true, answers: integer = 0 }
+
+// port: host_store.rs fn answers_only — does every answer of the callee name its argument `arg`
+// or its buffer `buf`, and does the body use `buf` only as a buffer is used?
+fn answers_only(b: ir::Bundle, code: ir::Node, arg: integer, buf: integer) -> boolean {
+  st = Answers { };
+  answers_walk(b, code, arg, buf, st);
+  st.ok && st.answers > 0
+}
+
+fn answers_walk(b: ir::Bundle, n: ir::Node, arg: integer, buf: integer, st: Answers) {
+  if !st.ok {
+    return;
+  }
+  u = scope_fn::unspan(n);
+  match u {
+    NdReturn { inner } => {
+      st.answers += 1;
+      if !(match tail(inner) { NdVar { n: x } => x == arg || x == buf, _ => false }) {
+        st.ok = false;
+      }
+    },
+    NdCall { def_nr, args } => {
+      nm = scope_args::def_name(b, def_nr);
+      for x in args {
+        if !(match scope_fn::unspan(x) { NdVar { n: y } => y == buf, _ => false }) {
+          continue;
+        }
+        i = x#index;
+        fine = if nm == "OpDatabase" || nm == "OpGetField" || nm == "OpRefIsNull" || nm == "OpConvBoolFromRef" || nm == "OpStoreBuf" {
+          i == 0
+        } else if nm == "OpFreeRefIfDistinct" {
+          i == 1
+        } else {
+          nm.starts_with("OpSet") && i == 0
+        };
+        if !fine {
+          st.ok = false;
+        }
+      }
+    },
+    NdSet { var: x } => if x == buf {
+      st.ok = false;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    answers_walk(b, c, arg, buf, st);
+  }
+}

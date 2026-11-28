@@ -1090,6 +1090,9 @@ pub struct Parser {
     /// may not grow its signature; one at or above it (a generic instance, a lazy wrapper, a
     /// bound stub) first exists on pass 2, which is its only parse.  `u32::MAX` during pass 1.
     pub(crate) pass1_defs: u32,
+    /// Each pass-1 definition's return dependencies (@PLN233), snapshotted as pass 1 ends, so `after_pass2` can report a function whose return protocol pass 2 changed
+    /// (`LOFT_RETURN_DRIFT=1`).  Empty unless that switch is set.
+    pub(crate) pass1_returns: Vec<Vec<u16>>,
     /// `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet
     /// declared, `(function, local, callee, line)`: its return type was unknown there, so a `τ?`
     /// answer did not widen the local.  `widen_late_call_joins` widens it between the passes,
@@ -1227,6 +1230,10 @@ pub struct Parser {
     /// the present arm of a discharge (`if OpConvBoolFromRef(x) x else …`) copies `x` with
     /// no absence test of its own (`materialize_return_into`).
     ret_proven_present: Option<u16>,
+    /// loft#2673 — set while a return is copied into a buffer that pass 1 renamed onto a local
+    /// the body still assigns: the copy's source may be that very store
+    /// (`materialize_return_into`).
+    ret_copy_may_alias: bool,
     /// D-key-1: true only while parsing the *iterable* of a `for`/comprehension (set with
     /// save/restore around the iterable expression in `parse_in_range`).  A keyed range /
     /// partial-key subscript produces a `for`-only iterator (`Value::Iter`); `parse_key`
@@ -2297,6 +2304,7 @@ impl Parser {
             par_replay_body: None,
             late_text_tails: Vec::new(),
             pass1_defs: u32::MAX,
+            pass1_returns: Vec::new(),
             late_call_joins: Vec::new(),
             tuple_param_seeds: Vec::new(),
             last_forward_call: None,
@@ -2322,6 +2330,7 @@ impl Parser {
             source_refused: false,
             unordered_iterator: false,
             ret_proven_present: None,
+            ret_copy_may_alias: false,
             iterable_context: false,
             last_range_from: None,
             literal_walk: None,

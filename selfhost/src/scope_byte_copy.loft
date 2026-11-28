@@ -1,0 +1,552 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/byte_copy.rs` transcribed: `@FR-R-ByteCopy`, a text copied into a byte vector
+// one byte at a time is ONE append.  A counted loop whose body is the one push of `t`'s byte at
+// the loop index (masked with 255 or not) into a raw-byte vector becomes `if 0 <= lo && lo <=
+// hi && hi <= size(t) { OpAppendTextBytes(buf, t, lo, hi) } else { the loop as written }`.  The
+// vector clause (`v[off + i] ?? d` as the source) needs the store registry's element type
+// (`vec_copy::shared_element_type`) and runs `text_run::rewrite` after it: refused by name.
+// The loop matcher is `compact::match_loop`'s.  Run by `check` on the settled body.
+
+use ir;
+use scope_fn;
+
+pub struct Ops {
+  pre_alloc: integer,
+  conv_bool_from_int: integer,
+  conv_int_from_null: integer,
+  add_int: integer,
+  le_int: integer,
+  push_byte: integer,
+  byte_at: integer,
+  land_int: integer,
+  size_text: integer,
+  append: integer,
+  get_byte: integer,
+  get_nullable: integer
+}
+
+pub fn ops_of(b: ir::Bundle) -> Ops {
+  Ops {
+    pre_alloc: scope_fn::def_nr(b, "OpPreAllocVector"),
+    conv_bool_from_int: scope_fn::def_nr(b, "OpConvBoolFromInt"),
+    conv_int_from_null: scope_fn::def_nr(b, "OpConvIntFromNull"),
+    add_int: scope_fn::def_nr(b, "OpAddInt"),
+    le_int: scope_fn::def_nr(b, "OpLeInt"),
+    push_byte: scope_fn::def_nr(b, "OpPushByte"),
+    byte_at: scope_fn::def_nr(b, "t_4text_byte_at"),
+    land_int: scope_fn::def_nr(b, "OpLandInt"),
+    size_text: scope_fn::def_nr(b, "t_4text_size"),
+    append: scope_fn::def_nr(b, "OpAppendTextBytes"),
+    get_byte: scope_fn::def_nr(b, "OpGetByte"),
+    get_nullable: scope_fn::def_nr(b, "OpGetVectorNullable")
+  }
+}
+
+// ── compact.rs's helpers ──
+
+// port: compact.rs fn call — the arguments of a call of `op`, or null.
+fn call(v: ir::Node, op: integer) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr == op && op >= 0 { args } else { null },
+    _ => null
+  }
+}
+
+// port: compact.rs fn var
+fn var(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) { NdVar { n } => n, _ => -1 }
+}
+
+// port: compact.rs fn int
+fn int(v: ir::Node) -> integer? {
+  match scope_fn::unspan(v) { NdInt { n } => n, _ => null }
+}
+
+fn is_int(v: ir::Node, k: integer) -> boolean {
+  match scope_fn::unspan(v) { NdInt { n } => n == k, _ => false }
+}
+
+// port: compact.rs fn block — the operators of a block named `name`, or null.
+fn block(v: ir::Node, name: text) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdBlock { block: bl } => if bl[0].name == name { bl[0].operators } else { null },
+    _ => null
+  }
+}
+
+// port: compact.rs fn significant — the statements but the line marks and nulls.
+fn significant(ls: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for v in ls {
+    u = scope_fn::unspan(v);
+    if !(u is NdLine) && !(u is NdNull) {
+      out += [v];
+    }
+  }
+  out
+}
+
+fn is_break(v: ir::Node) -> boolean {
+  scope_fn::unspan(v) is NdBreak
+}
+
+fn is_null(v: ir::Node) -> boolean {
+  scope_fn::unspan(v) is NdNull
+}
+
+// A counted loop: its index, bounds and body.
+pub struct Counted {
+  i: integer,
+  lo: ir::Node,
+  hi: ir::Node,
+  body: vector<ir::Node>
+}
+
+// The loop of `lp` with two operators: `Set(i, <Iter range>)` and the body block.
+fn loop_parts(lp: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(lp) {
+    NdLoop { block: bl } => if len(bl[0].operators) == 2 { bl[0].operators } else { null },
+    _ => null
+  }
+}
+
+fn body_of(v: ir::Node) -> vector<ir::Node>? {
+  match scope_fn::unspan(v) {
+    NdBlock { block: bl } => bl[0].operators,
+    _ => null
+  }
+}
+
+// port: compact.rs fn match_loop — a counted `for` over `lo..hi` in either range prelude.
+pub fn match_loop(v: ir::Node, o: Ops) -> Counted? {
+  bl = block(v, "For block");
+  if bl == null {
+    return null;
+  }
+  // `(I-RangeNull)`'s guard block is left out of the prelude's shape.
+  s: vector<ir::Node> = [];
+  for op in bl! {
+    if block(op, "Range null guard") == null {
+      s += [op];
+    }
+  }
+  // Literal start: `[_range_end = hi;] i#index = start - 1; loop { … }`.
+  end = -1;
+  hi = ir::NdNull;
+  rest = s;
+  if len(s) == 3 {
+    match scope_fn::unspan(s[0]!) {
+      NdSet { var: e, inner } => {
+        end = e;
+        hi = scope_fn::unspan(inner);
+        rest = s[1..];
+      },
+      _ => { return null; }
+    }
+  }
+  if len(s) == 2 || len(s) == 3 {
+    r = literal_start(rest, end, hi, o);
+    if r != null {
+      return r;
+    }
+  }
+  // Computed start: `_range_start = lo; _range_end = hi; _next = _range_start; i#index =
+  // null; loop { … }`.
+  if len(s) == 5 {
+    return computed_start(s, o);
+  }
+  null
+}
+
+fn literal_start(rest: vector<ir::Node>, end: integer, hi0: ir::Node, o: Ops) -> Counted? {
+  index = -1;
+  start = 0;
+  match scope_fn::unspan(rest[0]!) {
+    NdSet { var: x, inner } => {
+      k = int(inner);
+      if k == null {
+        return null;
+      }
+      index = x;
+      start = k!;
+    },
+    _ => { return null; }
+  }
+  lp = loop_parts(rest[1]!);
+  if lp == null {
+    return null;
+  }
+  i = -1;
+  it: vector<ir::Node> = [];
+  match scope_fn::unspan(lp![0]!) {
+    NdSet { var: x, inner } => {
+      ib = block(inner, "Iter range");
+      if ib == null || len(ib!) != 3 {
+        return null;
+      }
+      i = x;
+      it = ib!;
+    },
+    _ => { return null; }
+  }
+  // The step `index = index + 1`.
+  step: vector<ir::Node>? = null;
+  match scope_fn::unspan(it[0]!) {
+    NdSet { var: x, inner } => if x == index { step = call(inner, o.add_int); },
+    _ => {}
+  }
+  if step == null || var(step![0]!) != index || !is_int(step![1]!, 1) {
+    return null;
+  }
+  cmp: vector<ir::Node>? = null;
+  match scope_fn::unspan(it[1]!) {
+    NdIf { cond, t: brk, f: no } => if is_break(brk) && is_null(no) { cmp = call(cond, o.le_int); },
+    _ => {}
+  }
+  if cmp == null || var(cmp![1]!) != index || var(it[2]!) != index {
+    return null;
+  }
+  body = body_of(lp![1]!);
+  if body == null {
+    return null;
+  }
+  hi = ir::NdNull;
+  if end >= 0 {
+    if var(cmp![0]!) != end {
+      return null;
+    }
+    hi = hi0;
+  } else {
+    if int(cmp![0]!) == null {
+      return null;
+    }
+    hi = scope_fn::unspan(cmp![0]!);
+  }
+  Counted { i: i, lo: ir::NdInt { n: start + 1 }, hi: hi, body: body! }
+}
+
+fn computed_start(s: vector<ir::Node>, o: Ops) -> Counted? {
+  start = -1;
+  lo = ir::NdNull;
+  end = -1;
+  hi = ir::NdNull;
+  next = -1;
+  index = -1;
+  match scope_fn::unspan(s[0]!) { NdSet { var: x, inner } => { start = x; lo = scope_fn::unspan(inner); }, _ => { return null; } }
+  match scope_fn::unspan(s[1]!) { NdSet { var: x, inner } => { end = x; hi = scope_fn::unspan(inner); }, _ => { return null; } }
+  match scope_fn::unspan(s[2]!) { NdSet { var: x, inner } => { if var(inner) != start { return null; } next = x; }, _ => { return null; } }
+  match scope_fn::unspan(s[3]!) { NdSet { var: x, inner } => { if call(inner, o.conv_int_from_null) == null { return null; } index = x; }, _ => { return null; } }
+  lp = loop_parts(s[4]!);
+  if lp == null {
+    return null;
+  }
+  i = -1;
+  it: vector<ir::Node> = [];
+  match scope_fn::unspan(lp![0]!) {
+    NdSet { var: x, inner } => {
+      ib = block(inner, "Iter range");
+      if ib == null || len(ib!) != 4 {
+        return null;
+      }
+      i = x;
+      it = ib!;
+    },
+    _ => { return null; }
+  }
+  cmp: vector<ir::Node>? = null;
+  match scope_fn::unspan(it[0]!) {
+    NdIf { cond, t: brk, f: no } => if is_break(brk) && is_null(no) { cmp = call(cond, o.le_int); },
+    _ => {}
+  }
+  if cmp == null || var(cmp![0]!) != end || var(cmp![1]!) != next {
+    return null;
+  }
+  match scope_fn::unspan(it[1]!) { NdSet { var: x, inner } => { if x != index || var(inner) != next { return null; } }, _ => { return null; } }
+  match scope_fn::unspan(it[2]!) {
+    NdSet { var: x, inner } => {
+      add = call(inner, o.add_int);
+      if x != next || add == null || var(add![0]!) != next || !is_int(add![1]!, 1) {
+        return null;
+      }
+    },
+    _ => { return null; }
+  }
+  if var(it[3]!) != index {
+    return null;
+  }
+  body = body_of(lp![1]!);
+  if body == null {
+    return null;
+  }
+  Counted { i: i, lo: lo, hi: hi, body: body! }
+}
+
+// ── byte_copy.rs ──
+
+// One admitted copy: the byte vector, the source text (-1 for a vector source), the bounds.
+struct Copy {
+  buf: integer,
+  text: integer,
+  lo: ir::Node,
+  hi: ir::Node
+}
+
+// port: byte_copy.rs fn pure_bound — a literal, a variable, or `size(t)`.
+fn pure_bound(v: ir::Node, o: Ops) -> boolean {
+  u = scope_fn::unspan(v);
+  if u is NdInt || u is NdVar {
+    return true;
+  }
+  a = call(v, o.size_text);
+  a != null && len(a!) == 1 && var(a![0]!) >= 0
+}
+
+// port: byte_copy.rs fn match_copy
+fn match_copy(v: ir::Node, o: Ops) -> Copy? {
+  lp = match_loop(v, o);
+  if lp == null {
+    return null;
+  }
+  stmts = significant(lp!.body);
+  push = ir::NdNull;
+  if len(stmts) == 1 {
+    push = stmts[0]!;
+  } else if len(stmts) == 2 && call(stmts[0]!, o.pre_alloc) != null {
+    push = stmts[1]!;
+  } else {
+    return null;
+  }
+  args = call(push, o.push_byte);
+  if args == null || len(args!) != 3 {
+    return null;
+  }
+  buf = var(args![0]!);
+  if buf < 0 || !is_int(args![1]!, 0) {
+    return null;
+  }
+  i = lp!.i;
+  text = -1;
+  if is_vector_read(args![2]!, i, o) {
+    text = -1;
+  } else {
+    read = args![2]!;
+    m = call(read, o.land_int);
+    if m != null {
+      if len(m!) != 2 || !is_int(m![1]!, 255) {
+        return null;
+      }
+      read = m![0]!;
+    }
+    ba = call(read, o.byte_at);
+    if ba == null || len(ba!) != 2 || var(ba![1]!) != i {
+      return null;
+    }
+    text = var(ba![0]!);
+    if text < 0 {
+      return null;
+    }
+  }
+  if !pure_bound(lp!.lo, o) || !pure_bound(lp!.hi, o) {
+    return null;
+  }
+  Copy { buf: buf, text: text, lo: lp!.lo, hi: lp!.hi }
+}
+
+// port: byte_copy.rs fn block_ops — the significant statements of a block named `name`.
+fn block_ops(v: ir::Node, name: text) -> vector<ir::Node>? {
+  ops = block(v, name);
+  if ops == null {
+    return null;
+  }
+  [for x in significant(ops!) { scope_fn::unspan(x) }]
+}
+
+// port: byte_copy.rs fn vector_read, as a question: a raw byte element of a vector variable at
+// the loop index, discharged with a literal.
+fn is_vector_read(v: ir::Node, i: integer, o: Ops) -> boolean {
+  ncc = block_ops(v, "ncc");
+  if ncc == null || len(ncc!) != 2 {
+    return false;
+  }
+  nv = -1;
+  checked = ir::NdNull;
+  match ncc![0]! { NdSet { var: x, inner } => { nv = x; checked = inner; }, _ => { return false; } }
+  match ncc![1]! {
+    NdIf { cond, t: th, f: els } => {
+      t = call(cond, o.conv_bool_from_int);
+      if t == null || len(t!) == 0 || var(t![0]!) != nv || var(th) != nv || int(els) == null {
+        return false;
+      }
+    },
+    _ => { return false; }
+  }
+  dn4 = block_ops(checked, "dn4cast");
+  if dn4 == null || len(dn4!) != 2 {
+    return false;
+  }
+  dv = -1;
+  get = ir::NdNull;
+  match dn4![0]! { NdSet { var: x, inner } => { dv = x; get = inner; }, _ => { return false; } }
+  match dn4![1]! {
+    NdIf { cond: lo_ok, t: inner, f: null_a } => {
+      lo = call(lo_ok, o.le_int);
+      if lo == null {
+        return false;
+      }
+      match scope_fn::unspan(inner) {
+        NdIf { cond: hi_ok, t: keep, f: null_b } => {
+          hi = call(hi_ok, o.le_int);
+          if hi == null || !is_int(lo![0]!, 0) || var(lo![1]!) != dv || var(hi![0]!) != dv || !is_int(hi![1]!, 255)
+            || var(keep) != dv || call(null_a, o.conv_int_from_null) == null || call(null_b, o.conv_int_from_null) == null {
+            return false;
+          }
+        },
+        _ => { return false; }
+      }
+    },
+    _ => { return false; }
+  }
+  gb = call(get, o.get_byte);
+  if gb == null || len(gb!) != 3 || !is_int(gb![1]!, 0) || !is_int(gb![2]!, 0) {
+    return false;
+  }
+  elm = call(gb![0]!, o.get_nullable);
+  if elm == null || len(elm!) != 3 || !is_int(elm![1]!, 1) {
+    return false;
+  }
+  src = var(elm![0]!);
+  if src < 0 || src == i {
+    return false;
+  }
+  if var(elm![2]!) == i {
+    return true;
+  }
+  add = call(elm![2]!, o.add_int);
+  if add == null {
+    return false;
+  }
+  (var(add![1]!) == i && pure_off(add![0]!, i, src)) || (var(add![0]!) == i && pure_off(add![1]!, i, src))
+}
+
+fn pure_off(v: ir::Node, i: integer, src: integer) -> boolean {
+  match scope_fn::unspan(v) {
+    NdInt => true,
+    NdVar { n: x } => x != i && x != src,
+    _ => false
+  }
+}
+
+// port: byte_copy.rs fn guarded, the text clause.
+fn guarded(c: Copy, original: ir::Node, o: Ops) -> ir::Node {
+  tests: vector<ir::Node> = [];
+  if scope_fn::unspan(c.lo) is NdVar {
+    tests += [ir::NdCall { def_nr: o.conv_bool_from_int, args: [c.lo] }];
+  }
+  if scope_fn::unspan(c.hi) is NdVar {
+    tests += [ir::NdCall { def_nr: o.conv_bool_from_int, args: [c.hi] }];
+  }
+  tests += [ir::NdCall { def_nr: o.le_int, args: [ir::NdInt { n: 0 }, c.lo] }];
+  tests += [ir::NdCall { def_nr: o.le_int, args: [c.lo, c.hi] }];
+  tests += [ir::NdCall { def_nr: o.le_int, args: [c.hi, ir::NdCall { def_nr: o.size_text, args: [ir::NdVar { n: c.text }] }] }];
+  // `if t0 { if t1 { … tN } else false } else false` — the tests folded from the last.
+  cond = tests[len(tests) - 1]!;
+  k = len(tests) - 2;
+  while k >= 0 {
+    cond = ir::NdIf { cond: tests[k]!, t: cond, f: ir::NdBoolean { b: false } };
+    k -= 1;
+  }
+  append = ir::NdCall { def_nr: o.append, args: [ir::NdVar { n: c.buf }, ir::NdVar { n: c.text }, c.lo, c.hi] };
+  ir::NdIf { cond: cond, t: ir::NdInsert { items: [append] }, f: ir::NdInsert { items: [original] } }
+}
+
+// port: byte_copy.rs fn visit
+fn visit(v: ir::Node, o: Ops) -> ir::Node {
+  c = match_copy(v, o);
+  if c != null {
+    return guarded(c!, v, o);
+  }
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: visit(inner, o) },
+    NdBlock { block: bl } => {
+      b0 = bl[0];
+      ir::NdBlock { block: [ir::Block { name: b0.name, operators: [for x in b0.operators { visit(x, o) }], result: [for t in b0.result { t }], scope: b0.scope, var_size: b0.var_size }] }
+    },
+    NdLoop { block: bl } => {
+      b0 = bl[0];
+      ir::NdLoop { block: [ir::Block { name: b0.name, operators: [for x in b0.operators { visit(x, o) }], result: [for t in b0.result { t }], scope: b0.scope, var_size: b0.var_size }] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for x in items { visit(x, o) }] },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for x in args { visit(x, o) }] },
+    NdCallRef { var: r, args } => ir::NdCallRef { var: r, args: [for x in args { visit(x, o) }] },
+    NdTuple { items } => ir::NdTuple { items: [for x in items { visit(x, o) }] },
+    NdSet { var: x, inner } => ir::NdSet { var: x, inner: visit(inner, o) },
+    NdReturn { inner } => ir::NdReturn { inner: visit(inner, o) },
+    NdDrop { inner } => ir::NdDrop { inner: visit(inner, o) },
+    NdYield { inner } => ir::NdYield { inner: visit(inner, o) },
+    NdIf { cond, t, f } => ir::NdIf { cond: visit(cond, o), t: visit(t, o), f: visit(f, o) },
+    NdIter { var: x, create, next, init } => ir::NdIter { var: x, create: visit(create, o), next: visit(next, o), init: visit(init, o) },
+    NdTuplePut { var: x, idx, inner } => ir::NdTuplePut { var: x, idx: idx, inner: visit(inner, o) },
+    NdParallel { arms } => ir::NdParallel { arms: [for x in arms { visit(x, o) }] },
+    _ => v
+  }
+}
+
+// Does `n` push a byte?
+fn pushes_byte(n: ir::Node, op: integer) -> boolean {
+  match n {
+    NdCall { def_nr } => if def_nr == op { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if pushes_byte(c, op) {
+      return true;
+    }
+  }
+  false
+}
+
+// A copy whose source is a byte vector: its clause needs the store registry's element type
+// and `text_run` after it, neither transcribed.
+fn has_vector_copy(n: ir::Node, o: Ops) -> boolean {
+  c = match_copy(n, o);
+  if c != null {
+    return c!.text < 0;
+  }
+  for x in scope_fn::children(n) {
+    if has_vector_copy(x, o) {
+      return true;
+    }
+  }
+  false
+}
+
+// The refusal of a body this rewrite cannot carry, "" for none.
+pub fn refusal(b: ir::Bundle, code: ir::Node) -> text {
+  if (env_variable("LOFT_NO_BYTE_COPY") ?? "") != "" {
+    return "";
+  }
+  o = ops_of(b);
+  if o.push_byte < 0 || !pushes_byte(code, o.push_byte) {
+    return "";
+  }
+  if has_vector_copy(code, o) {
+    return "byte_copy::rewrite: a byte vector copied one element at a time (vec_copy::shared_element_type, text_run)";
+  }
+  ""
+}
+
+// port: byte_copy.rs fn rewrite, the text clause — every admitted byte-wise copy of a settled
+// body.
+pub fn rewrite(b: ir::Bundle, code: ir::Node) -> ir::Node {
+  if (env_variable("LOFT_NO_BYTE_COPY") ?? "") != "" {
+    return code;
+  }
+  o = ops_of(b);
+  if o.push_byte < 0 || !pushes_byte(code, o.push_byte) {
+    return code;
+  }
+  visit(code, o)
+}
