@@ -308,6 +308,11 @@ paired with the binding — one leaked record per first bind.  Only a callee who
 hands the parameter back delivers it; **`LOFT_NO_DELIVERED_EVERY_RETURN=1`** reads the tail
 alone, so a rebind from `if p.v > 3 { return P { … }; } p` adopts plainly and the run answering
 the fresh record leaves the literal to nobody.  Guards `loft-suite/rules/ownership/O-Move/`.
+Where that binding is a WITNESSED local (another bind mixes its ownership: `x = alt(x) ?? x`),
+its owner witness takes the delivered store, so the store moves and the literal's buffer is
+reset to null behind the bind (`@FR-O-Witness`, loft#2689);
+**`LOFT_NO_WITNESS_DELIVERED_MOVE=1`** leaves the buffer its exit free, and the buffer and the
+witness both release the literal's store.  Guards `loft-suite/rules/ownership/O-Witness/2689-…`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
 the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->

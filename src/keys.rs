@@ -3376,6 +3376,15 @@ pub fn arm_frees_param_deps() -> bool {
     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
 }
 
+/// `LOFT_NO_WITNESS_DELIVERED_MOVE=1` — a witnessed local that adopts the store a call delivers
+/// (`x = id(P { … })`, the callee handing its literal argument back) leaves the literal's buffer
+/// its exit free, as before loft#2689: the witness took the store too, and both released it.
+#[must_use]
+pub fn witness_delivered_move() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_WITNESS_DELIVERED_MOVE"))
+}
+
 /// `LOFT_NO_SPLIT_JOIN_STATEMENT_SCOPE=1` — a join written out per arm that starts a NEW binding
 /// of a name whose earlier binding has ended is recorded for the rescan's rewrite and declared by
 /// its arms again, as before loft#2687: the rescan split the name inside each arm, and the read

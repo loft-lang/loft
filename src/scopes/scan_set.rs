@@ -206,6 +206,41 @@ impl Scopes<'_> {
                 if per_path_stops(function, data, v, *src) == Some(v))
     }
 
+    /// `@FR-O-Witness` — what a bind of witnessed local `v` (written `ov`) does to its witness:
+    /// [`witness_set_kind`] with this function's ownership oracle, computed once per function.
+    fn witness_kind(
+        &mut self,
+        value: &Value,
+        v: u16,
+        ov: u16,
+        function: &Function,
+        data: &Data,
+    ) -> WitnessSet {
+        let d_nr = self.d_nr;
+        let defs = self
+            .fn_defs
+            .get_or_insert_with(|| crate::use_analysis::function_defs(data, d_nr));
+        witness_set_kind(value, v, ov, function, data, d_nr, &mut |val| {
+            crate::use_analysis::ownership_of_with(data, d_nr, val, defs)
+        })
+    }
+
+    /// Does a bind of witnessed local `v` hand its witness the store it delivers — a MINT, the
+    /// arm of [`witness_kind`] that points the witness at the new store?
+    fn witness_takes(
+        &mut self,
+        value: &Value,
+        v: u16,
+        ov: u16,
+        function: &Function,
+        data: &Data,
+    ) -> bool {
+        matches!(
+            self.witness_kind(value, v, ov, function, data),
+            WitnessSet::Mint | WitnessSet::MintReading
+        )
+    }
+
     /// `@FR-O-Owner`, `@FR-O-Witness` — a witnessed local that MINTS by reading a field of a
     /// call's result (`pv = mkw(i).x`) holds a view into the store the scan lifted that call
     /// into, and its witness adopts that store.  The lift then owns nothing: its scope-exit
@@ -1550,6 +1585,23 @@ impl Scopes<'_> {
                 if av == v || v_scope == u16::MAX {
                     continue;
                 }
+                // loft#2689, `@FR-O-Witness` — a WITNESSED local releases its stores through its
+                // owner witness alone (the local itself frees nothing, so no pairing with the
+                // buffer can apply).  Where this bind is a MINT the witness takes the store the
+                // call delivers (`x = id(P { … })` hands the literal's buffer back), and the
+                // buffer releasing it at exit as well freed it twice.  So the store MOVES, as
+                // loft#2594's does: the buffer is reset to null behind the bind and the witness
+                // is its one owner.  A bind the witness does not take keeps the buffer's free.
+                // `LOFT_NO_WITNESS_DELIVERED_MOVE=1` leaves the buffer its free.
+                if self.owner_witness.contains_key(&v)
+                    && crate::keys::witness_delivered_move()
+                    && construction_work_ref(unspanned_value, function).is_none()
+                    && delivered_work_ref(unspanned_value, function, data) == Some(av)
+                    && self.witness_takes(unspanned_value, v, ov, function, data)
+                {
+                    self.moved_buffer = Some((ov, av));
+                    continue;
+                }
                 // The witness must outlive the buffer, or native's `let` for it has fallen
                 // out of scope by the time the buffer's free runs — the same condition the
                 // call-shaped pairing above states at length.
@@ -2541,15 +2593,7 @@ impl Scopes<'_> {
             }
         }
         if let Some(&w) = self.owner_witness.get(&v) {
-            let kind = {
-                let d_nr = self.d_nr;
-                let defs = self
-                    .fn_defs
-                    .get_or_insert_with(|| crate::use_analysis::function_defs(data, d_nr));
-                witness_set_kind(value, v, ov, function, data, d_nr, &mut |val| {
-                    crate::use_analysis::ownership_of_with(data, d_nr, val, defs)
-                })
-            };
+            let kind = self.witness_kind(value, v, ov, function, data);
             let guarded_release = v_if(
                 Value::Call(
                     data.def_nr("OpDistinctStore"),
