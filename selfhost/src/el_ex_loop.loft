@@ -2510,7 +2510,9 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   if fc != null {
     head += [fc!];
   }
-  app = if stack { "OpAppendStackText" } else { "OpAppendText" };
+  // (`format_iterator` spells the brackets and the separator `OpAppendText` whatever the
+  // accumulator is — a `&text` one too; only the element's rendering follows it.)
+  app = "OpAppendText";
   it = el_ir::v_block(head + [b.code], vt, "Iter For");
   steps: vector<ir::Node> = [el_ir::v_set(val, it), el_ir::v_if(el_ir::cl(e, "OpLtInt", [ir::NdInt { n: 0 }, ir::NdVar { n: cnt }]), el_ir::cl(e, app, [ir::NdVar { n: w }, ir::NdText { s: "," }]), ir::NdNull), el_ir::v_set(cnt, el_ir::cl(e, "OpAddInt", [ir::NdVar { n: cnt }, ir::NdInt { n: 1 }]))];
   el_ex_call::append_spec(e, vars, steps, w, ir::NdVar { n: val }, vt, stack, f);
