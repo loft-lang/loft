@@ -187,6 +187,12 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   apart from Rust's (probes th12–th14).  Minting the hook's work text on the second pass only
   fixes th12–th14 but breaks th5 and adds pass-1 rows: Rust mints it on the first pass in some
   shapes — read `try_bound_to_text_call`'s pass condition before the next attempt.
+- `fn nt(q: (vector<integer>, integer)) -> vector<integer>? { if q.1 > 0 { q.0 } else { null } }`
+  (F-Ret/a-nullable-return-hands-out-a-fresh-owned-value-…, probe nt2): Rust copies `__tp_q.0`
+  into the buffer in the then arm, both arms typed `["__tp_q"]`, and takes `Bind` on `__tp_q` on
+  the FIRST pass (the result names `__retbuf` there).  A pass-2 branch is in the c035ae98
+  scratchpad (held-tuple-shadow-vector-tail.patch); its pass-1 half does not fire — the first
+  pass's tail is not the `__tp_` shadow read — and the program then goes refused → DIFF: held.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
