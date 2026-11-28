@@ -595,7 +595,9 @@ impl Scopes<'_> {
             // (loft#2687).
             if new_binding {
                 self.register_binding(v, function);
-                let init = if matches!(function.tp(v), Type::Text(_)) {
+                let init = if !function.tp(v).is_optional()
+                    && matches!(function.tp(v).base(), Type::Text(_))
+                {
                     Value::Text(String::new())
                 } else {
                     Value::Null
@@ -3042,8 +3044,7 @@ impl Scopes<'_> {
             self.walk_pre_arm_loop(&copy, stripped_to_owner, function, data);
             return;
         }
-        if !matches!(function.tp(v), Type::RefVar(_))
-            && Self::is_value_branch(unspanned)
+        if Self::is_value_branch(unspanned)
             && matches!(
                 function.tp(v).base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)

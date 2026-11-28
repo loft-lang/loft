@@ -1,9 +1,8 @@
 diff --git a/src/keys.rs b/src/keys.rs
-index 2ccf73ae6..c9c2825cf 100644
 --- a/src/keys.rs
 +++ b/src/keys.rs
-@@ -3368,15 +3368,6 @@ pub fn arm_frees_param_deps() -> bool {
-     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+@@ -3386,15 +3386,6 @@ pub fn move_per_binding() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_MOVE_PER_BINDING"))
  }
  
 -/// `LOFT_NO_WITNESS_DELIVERED_MOVE=1` — a witnessed local that adopts the store a call delivers
@@ -19,7 +18,6 @@ index 2ccf73ae6..c9c2825cf 100644
  /// of a name whose earlier binding has ended is recorded for the rescan's rewrite and declared by
  /// its arms again, as before loft#2687: the rescan split the name inside each arm, and the read
 diff --git a/src/scopes/scan_set.rs b/src/scopes/scan_set.rs
-index b9afa52d9..058a7e1ab 100644
 --- a/src/scopes/scan_set.rs
 +++ b/src/scopes/scan_set.rs
 @@ -206,41 +206,6 @@ impl Scopes<'_> {
@@ -64,31 +62,7 @@ index b9afa52d9..058a7e1ab 100644
      /// `@FR-O-Owner`, `@FR-O-Witness` — a witnessed local that MINTS by reading a field of a
      /// call's result (`pv = mkw(i).x`) holds a view into the store the scan lifted that call
      /// into, and its witness adopts that store.  The lift then owns nothing: its scope-exit
-@@ -1585,23 +1550,6 @@ impl Scopes<'_> {
-                 if av == v || v_scope == u16::MAX {
-                     continue;
-                 }
--                // loft#2689, `@FR-O-Witness` — a WITNESSED local releases its stores through its
--                // owner witness alone (the local itself frees nothing, so no pairing with the
--                // buffer can apply).  Where this bind is a MINT the witness takes the store the
--                // call delivers (`x = id(P { … })` hands the literal's buffer back), and the
--                // buffer releasing it at exit as well freed it twice.  So the store MOVES, as
--                // loft#2594's does: the buffer is reset to null behind the bind and the witness
--                // is its one owner.  A bind the witness does not take keeps the buffer's free.
--                // `LOFT_NO_WITNESS_DELIVERED_MOVE=1` leaves the buffer its free.
--                if self.owner_witness.contains_key(&v)
--                    && crate::keys::witness_delivered_move()
--                    && construction_work_ref(unspanned_value, function).is_none()
--                    && delivered_work_ref(unspanned_value, function, data) == Some(av)
--                    && self.witness_takes(unspanned_value, v, ov, function, data)
--                {
--                    self.moved_buffer = Some((ov, av));
--                    continue;
--                }
-                 // The witness must outlive the buffer, or native's `let` for it has fallen
-                 // out of scope by the time the buffer's free runs — the same condition the
-                 // call-shaped pairing above states at length.
-@@ -2572,7 +2520,15 @@ impl Scopes<'_> {
+@@ -2556,7 +2521,15 @@ impl Scopes<'_> {
              }
          }
          if let Some(&w) = self.owner_witness.get(&v) {
@@ -105,3 +79,29 @@ index b9afa52d9..058a7e1ab 100644
              let guarded_release = v_if(
                  Value::Call(
                      data.def_nr("OpDistinctStore"),
+@@ -3184,25 +3157,6 @@ impl Scopes<'_> {
+             if av == v {
+                 continue;
+             }
+-            // loft#2689, `@FR-O-Witness` — a WITNESSED local releases its stores through its
+-            // owner witness alone (the local itself frees nothing, so no pairing with the
+-            // buffer can apply).  Where this bind is a MINT the witness takes the store the
+-            // call delivers (`x = id(P { … })` hands the literal's buffer back), and the
+-            // buffer releasing it at exit as well freed it twice.  So the store MOVES, as
+-            // loft#2594's does: the buffer is reset to null behind the bind and the witness
+-            // is its one owner.  A bind the witness does not take keeps the buffer's free.
+-            // `LOFT_NO_WITNESS_DELIVERED_MOVE=1` leaves the buffer its free.
+-            if self.owner_witness.contains_key(&v)
+-                && crate::keys::witness_delivered_move()
+-                && construction_work_ref(unspanned, function).is_none()
+-                && delivered_work_ref(unspanned, function, data) == Some(av)
+-                && self.witness_takes(unspanned, v, ov, function, data)
+-            {
+-                if at_bind {
+-                    self.moved_buffer = Some((ov, av));
+-                }
+-                continue;
+-            }
+             let Some(&av_scope) = self
+                 .var_scope
+                 .get(&av)

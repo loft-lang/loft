@@ -7941,14 +7941,12 @@ use a separate collection or add after the loop"
         // a `τ?` (it was widened by `(N-Join)`'s nullable arm, as a WRITE of the source would
         // be, and `len(c)` then warned about a null `c` that cannot be).  The element type
         // still comes from the source, where pass 1 left it to decide.
-        let append_source = if preserve_append_backing
-            && let Type::Optional(inner) = &s_type
-            && matches!(inner.as_ref(), Type::Vector(_, _))
-        {
-            (**inner).clone()
-        } else {
-            s_type.clone()
-        };
+        let append_source =
+            if preserve_append_backing && matches!(s_type.base(), Type::Vector(_, _)) {
+                s_type.base().clone()
+            } else {
+                s_type.clone()
+            };
         if !compound_keeps_place && !text_appends_rendering && !leaves_untyped {
             self.change_var(to, &append_source);
         }

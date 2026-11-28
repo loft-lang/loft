@@ -13185,7 +13185,16 @@ impl Parser {
         } else {
             None
         };
-        let may_be_buffer = src.is_some_and(|s| s != w);
+        let single_literal_backing = |s: u16| {
+            !self.vars.is_argument(s) && self.vars.save_mentions(s).1 == 1 && {
+                let deps = self.vars.tp(s).depend();
+                !deps.is_empty()
+                    && deps
+                        .iter()
+                        .all(|&d| self.vars.exists(d) && self.vars.name(d).starts_with("__vdb"))
+            }
+        };
+        let may_be_buffer = src.is_some_and(|s| s != w && !single_literal_backing(s));
         let clear = self.cl("OpClearVector", &[Value::Var(w)]);
         let append = self.cl("OpAppendVector", &[Value::Var(w), orig, Value::Int(rec_tp)]);
         let copy = if may_be_buffer && let Some(s) = src {
