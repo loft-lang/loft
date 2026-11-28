@@ -598,6 +598,161 @@ fn parse_args_annotation(s: &str, ann: &mut Annotations) {
     }
 }
 
+/// Maximum number of error-peeling rounds per file (loft#1242).
+const MAX_PEEL: u32 = 8;
+
+/// The 1-based line number a diagnostic points at when its path ends with `file_name`.
+fn diag_line_in_file(d: &str, file_name: &str) -> Option<usize> {
+    let (_, at) = d.rsplit_once(" at ")?;
+    let mut parts = at.trim().rsplitn(3, ':');
+    let _col = parts.next()?;
+    let line = parts.next()?.parse().ok()?;
+    parts
+        .next()
+        .filter(|p| p.ends_with(file_name))
+        .map(|_| line)
+}
+
+/// Top-level `fn NAME(…) { … }` spans as `(name, first_line, last_line, runnable_assert)`,
+/// 1-based inclusive, or `None` if brace matching is ambiguous (loft#1242).
+fn top_level_fn_spans_full(src: &str) -> Option<Vec<(String, usize, usize, bool)>> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut spans = Vec::new();
+    let mut start_idx = 0usize;
+    while start_idx < lines.len() {
+        let trimmed = lines[start_idx].trim_start();
+        let is_fn = trimmed.starts_with("fn ") || trimmed.starts_with("pub fn ");
+        if !is_fn {
+            start_idx += 1;
+            continue;
+        }
+        let name: String = trimmed
+            .trim_start_matches("pub ")
+            .trim_start_matches("fn ")
+            .chars()
+            .take_while(|ch| ch.is_alphanumeric() || *ch == '_')
+            .collect();
+        let mut depth = 0i32;
+        let mut opened = false;
+        let mut end_idx = start_idx;
+        while end_idx < lines.len() {
+            let mut in_str = false;
+            let mut prev_backslash = false;
+            let chars: Vec<char> = lines[end_idx].chars().collect();
+            let mut col_idx = 0usize;
+            while col_idx < chars.len() {
+                let ch = chars[col_idx];
+                if in_str {
+                    if ch == '\\' && !prev_backslash {
+                        prev_backslash = true;
+                        col_idx += 1;
+                        continue;
+                    }
+                    if ch == '"' && !prev_backslash {
+                        in_str = false;
+                    }
+                    prev_backslash = false;
+                } else if ch == '"' {
+                    in_str = true;
+                } else if ch == '/' && col_idx + 1 < chars.len() && chars[col_idx + 1] == '/' {
+                    break;
+                } else if ch == '{' {
+                    depth += 1;
+                    opened = true;
+                } else if ch == '}' {
+                    depth -= 1;
+                    if depth < 0 {
+                        return None;
+                    }
+                }
+                col_idx += 1;
+            }
+            if opened && depth == 0 {
+                let zero_param = lines[start_idx].contains(&format!("{name}()"));
+                let asserts = lines[start_idx..=end_idx]
+                    .iter()
+                    .any(|line| line.contains("assert("));
+                spans.push((name, start_idx + 1, end_idx + 1, zero_param && asserts));
+                break;
+            }
+            end_idx += 1;
+        }
+        if !(opened && depth == 0) {
+            return None;
+        }
+        start_idx = end_idx + 1;
+    }
+    Some(spans)
+}
+
+/// Blank out every top-level function in `src` that `round_errors` points into so a subsequent
+/// parse round can unmask pass-2 diagnostics and run surviving cells (loft#1242).
+fn peel_failing_fns(
+    src: &str,
+    round_errors: &[String],
+    file_name: &str,
+    ann: &Annotations,
+) -> Option<(String, Vec<String>)> {
+    if round_errors.is_empty() || (ann.expect_errors.is_empty() && ann.expect_errors_fn.is_empty())
+    {
+        return None;
+    }
+    let full = top_level_fn_spans_full(src)?;
+    if full.iter().any(|(n, _, _, _)| n == "main") {
+        return None;
+    }
+    let mut failing: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
+    for d in round_errors {
+        let l = diag_line_in_file(d, file_name)?;
+        let idx = full.iter().position(|(_, a, b, _)| l >= *a && l <= *b)?;
+        failing.insert(idx);
+    }
+    if failing.len() == full.len() {
+        return None;
+    }
+    let has_worthwhile_survivor = full.iter().enumerate().any(|(i, (name, _, _, runnable))| {
+        !failing.contains(&i)
+            && (*runnable
+                || ann.expect_errors_fn.contains_key(name)
+                || ann.expect_warnings_fn.contains_key(name)
+                || !ann.expect_errors.is_empty()
+                || !ann.expect_warnings.is_empty())
+    });
+    if !has_worthwhile_survivor {
+        return None;
+    }
+    let survivor_text: String = src
+        .lines()
+        .enumerate()
+        .filter(|(i, _)| {
+            let line = i + 1;
+            !failing
+                .iter()
+                .any(|idx| line >= full[*idx].1 && line <= full[*idx].2)
+        })
+        .map(|(_, l)| l)
+        .collect::<Vec<_>>()
+        .join("\n");
+    for idx in &failing {
+        let called = format!("{}(", full[*idx].0);
+        if survivor_text.contains(&called) {
+            return None;
+        }
+    }
+    let mut out: Vec<String> = src.lines().map(str::to_string).collect();
+    let mut names = Vec::new();
+    for idx in &failing {
+        let (name, a, b, _) = &full[*idx];
+        names.push(name.clone());
+        for l in *a..=*b {
+            if l >= 1 && l <= out.len() {
+                out[l - 1] = String::new();
+            }
+        }
+    }
+    Some((out.join("\n"), names))
+}
+
 /// Run all zero-parameter functions in `.loft` files under `root_dir` as tests.
 /// Supports `@ARGS`, `@EXPECT_ERROR`, and `@EXPECT_FAIL` file annotations.
 /// Returns 0 if all pass, 1 if any fail.
@@ -840,17 +995,10 @@ pub(crate) fn run_tests(
         spans: &std::collections::BTreeMap<String, (usize, usize)>,
         file_name: &str,
     ) -> Vec<(Option<&'a str>, &'a str)> {
-        let line_of = |d: &str| -> Option<usize> {
-            let (_, at) = d.rsplit_once(" at ")?;
-            let mut parts = at.trim().rsplitn(3, ':');
-            let _col = parts.next()?;
-            let line = parts.next()?.parse().ok()?;
-            parts
-                .next()
-                .filter(|p| p.ends_with(file_name))
-                .map(|_| line)
-        };
-        let lines: Vec<Option<usize>> = diagnostics.iter().map(|d| line_of(d)).collect();
+        let lines: Vec<Option<usize>> = diagnostics
+            .iter()
+            .map(|d| diag_line_in_file(d, file_name))
+            .collect();
         let mut order: Vec<usize> = (0..claims.len()).collect();
         order.sort_by_key(|&i| std::cmp::Reverse(claims[i].1.len()));
         let mut taken = vec![false; diagnostics.len()];
@@ -1085,239 +1233,217 @@ pub(crate) fn run_tests(
             }
             let has_expect_error = !ann.expect_errors.is_empty();
 
-            // Build parser with CLI lib_dirs + @ARGS lib dirs.
-            let mut p = Parser::new();
-            p.lib_dirs = lib_dirs.to_vec();
-            // `@C173` — a `--lib` given to `loft test` outranks a pin, as in a run.
-            p.flag_lib_dirs = flag_lib_dirs.to_vec();
-            if let Some(ref pl) = project_lib {
-                p.lib_dirs.insert(0, pl.clone());
-            }
-            for extra in &ann.extra_lib_dirs {
-                p.lib_dirs.push(extra.clone());
-            }
-            if let Some(ref proj) = ann.project {
-                p.lib_dirs.insert(
-                    0,
-                    std::path::Path::new(proj)
-                        .join("lib")
-                        .to_str()
-                        .unwrap_or("")
-                        .to_string(),
-                );
-            }
-            // @PLN86 / #631 — apply the package's `[sandbox]` policy so admission runs
-            // here too.  It used to engage only on the run path and `loft sandbox-check`,
-            // so a suite stayed green with a deliberate capability violation injected —
-            // the same silence-reads-as-coverage shape as the backend scope below.
-            // Designation must be set BEFORE parsing: `def_sandbox` forms during the
-            // parse, and admission reads what the parse recorded.
-            let sandboxed = if let Some(policy) = sandbox_policy_for(&abs_file) {
-                sandbox_policy_seen = true;
-                p.set_sandbox_config(policy);
-                true
-            } else {
-                false
-            };
-            // loft#925 — start from the group's shared parse of stdlib + libraries
-            // when there is one.  Skipped under a `[sandbox]` policy: admission reads
-            // what the PARSE recorded about designated functions, and those side maps
-            // belong to the parse that produced them, so a shared base would quietly
-            // stop checking the library — the one failure mode worse than the 31 s.
-            let mut base_diagnostics: Vec<String> = Vec::new();
-            let mut seeded: Option<u32> = None;
-            if !no_base
-                && !sandboxed
-                && let Some(region) = leading_use_region(&source)
-            {
-                let key = (p.lib_dirs.clone(), region);
-                match bases.entry(key) {
-                    // First file with this use region: parse it the ordinary way.
-                    // A base only pays off when it is shared, and building one here
-                    // would DOUBLE the cost of `loft test <one-file>` — the tight
-                    // inner loop of development, and a group of one by definition.
-                    std::collections::btree_map::Entry::Vacant(slot) => {
-                        slot.insert(BaseSlot::Once);
-                    }
-                    // A second file wants the same libraries, so the parse is worth
-                    // sharing: build it now and hand it to this file and every later
-                    // one.  The group pays one ordinary parse plus one base.
-                    std::collections::btree_map::Entry::Occupied(mut slot) => {
-                        if matches!(slot.get(), BaseSlot::Once) {
-                            let base_file = fa::parent(std::path::Path::new(&abs_file))
-                                .unwrap_or_default()
-                                .join("__loft_test_base.loft")
-                                .to_string_lossy()
-                                .into_owned();
-                            let (libs, region) = slot.key();
-                            let built = build_test_base(
-                                default_dir,
-                                libs,
-                                flag_lib_dirs,
-                                &base_file,
-                                region,
-                            );
-                            slot.insert(BaseSlot::Shared(built));
-                        }
-                        if let BaseSlot::Shared(Some(base)) = slot.get() {
-                            p.seed_from(&base.parser);
-                            base_diagnostics.clone_from(&base.diagnostics);
-                            seeded = Some(base.stdlib_defs);
-                        }
-                    }
-                }
-            }
-            // loft#925 — warm-load the stdlib instead of re-parsing `default/` for
-            // every test file.  A suite builds ONE parser per file (each test file is
-            // its own program, and must stay that way — a shared parser would let one
-            // file's definitions leak into the next), so the stdlib parse was paid
-            // once per file for a directory that cannot have changed between them.
-            // The bundle is the same one `loft <program>` already loads, keyed on the
-            // stdlib directory, so this reuses a cache the run has usually warmed
-            // already rather than adding one.  A miss falls through to the cold parse
-            // exactly as before.
-            //
-            // A seeded file skips it outright: the base holds the same stdlib, so
-            // loading the bundle here would decode it only to have `seed_from`
-            // discard it — which is most of what a seeded file still paid.
-            let start_def = if let Some(stdlib_defs) = seeded {
-                stdlib_defs
-            } else {
-                let stdlib_dir = stdlib_dir_of(default_dir);
-                if !loft::startup_cache::warm_load_stdlib(&mut p, &stdlib_dir) {
-                    // loft#1801 — with no `default/` beside the binary, the embedded
-                    // stdlib; the cache is keyed on the directory, so only a real one is
-                    // saved.
-                    if p.parse_stdlib(&stdlib_dir).is_err() {
-                        println!("  FAIL  {display_name}  (cannot load default library)");
-                        dir_fail += 1;
-                        total_files += 1;
-                        continue;
-                    }
-                    if fa::is_dir(std::path::Path::new(&stdlib_dir)) {
-                        loft::startup_cache::save_stdlib_cache(&p, &stdlib_dir);
-                    }
-                }
-                // The stdlib boundary.  Everything past it belongs to the program
-                // under test: the native codegen range below emits it, and the
-                // coverage tally counts it.  A library the test file `use`s is part
-                // of that program however it got here, so a base must not move this
-                // line — which is why a seeded file takes the boundary the BASE
-                // recorded before its own libraries went in.
-                p.data.definitions()
-            };
-            // `LOFT_TIMING=1` — what this file's front end cost, phase by phase, on one
-            // line, so a slow suite is attributed to a phase and a file.
-            let phase_clock = std::env::var_os("LOFT_TIMING")
-                .is_some()
-                .then(std::time::Instant::now);
-            let parse_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                p.parse(&abs_file, false);
-            }));
-            let parse_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
-            if let Err(payload) = parse_ok {
-                let msg = panic_message(&*payload);
-                if has_expect_error && ann.expect_errors.iter().any(|s| msg.contains(s.as_str())) {
-                    println!("  ok    {display_name}  (expected parse error)");
-                    total_files += 1;
-                    dir_pass += 1;
-                } else {
-                    println!("  FAIL  {display_name}  (parse panic: {msg})");
-                    dir_fail += 1;
-                    total_files += 1;
-                }
-                continue;
-            }
-
-            // Scope analysis — wrap in catch_unwind so a panic here doesn't
-            // kill the entire runner.
-            //
-            // loft#985 — this runs BEFORE the diagnostics are collected below, because the
-            // post-scope lints report through the same channel and the collection is what
-            // puts a diagnostic in front of the reader. It used to sit after the test
-            // discovery further down, which is why nothing it produced could ever be seen.
-            // A file with an ERROR stops here, as the program path does (`main.rs`, loft#883's
-            // gate): the scope pass lowers a finished program, and the IR a refused construct
-            // leaves behind is not one.  Run anyway, a test function holding `break` outside a
-            // loop panicked inside the pass (`index out of bounds`) and the file reported
-            // "scope check panic" in place of *"Cannot break outside a loop"*, so the author
-            // never saw the error.  The diagnostics collected below report it.
-            let has_errors = p.diagnostics.level() >= loft::diagnostics::Level::Error;
-            // The interpreter run reports the functions it entered, and the scope pass is
-            // where `@FR-R-PureReuse`'s shared-call clause makes its variants: armed only at
-            // `compile::byte_code`, the flag came too late, so a test entered the variant
-            // and coverage named its source as never entered.
-            p.data.observes_entries = !native_mode;
-            let scopes_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                if !has_errors {
-                    scopes::check(&mut p.data, &mut p.database);
-                }
-            }));
-            if let Err(payload) = scopes_ok {
-                let msg = panic_message(&*payload);
-                println!("  FAIL  {display_name}  (scope check panic: {msg})");
-                dir_fail += 1;
-                total_files += 1;
-                continue;
-            }
-            // The same lint set the program path runs, ONCE per loaded file rather than
-            // once per test: every test compiles its own bytecode from this one `Data`, so
-            // a per-test call would report each finding N times. Until this ran, a
-            // library's CI — which IS a test run — could not see a lost write, or a
-            // `#superseded` steer pointing at nothing, which is a hard ERROR everywhere
-            // else.
-            let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
-            if has_errors {
-                loft::copy_manifest::clear_materialised_views(&p.data);
-            } else {
-                loft::copy_manifest::drain_written_back_views(&p.data, &mut p.diagnostics);
-                loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
-            }
-            if let (Some(t), Some(parse_ms), Some(scopes_ms)) = (phase_clock, parse_ms, scopes_ms) {
-                eprintln!(
-                    "LOFT_TIMING test_file={display_name} seeded={} parse={parse_ms:.2}ms scopes={:.2}ms lints={:.2}ms defs={}",
-                    seeded.is_some(),
-                    scopes_ms - parse_ms,
-                    t.elapsed().as_secs_f64() * 1000.0 - scopes_ms,
-                    p.data.definitions()
-                );
-            }
-
-            // Collect diagnostics.
+            // Collect diagnostics across up to `MAX_PEEL + 1` rounds (loft#1242): when every
+            // error in a round sits inside isolatable top-level functions, blank those functions
+            // out and re-parse so pass-1 errors cannot mask pass-2 expectations and surviving
+            // cells still compile and run.
             let mut file_result = FileResult {
                 tests: Vec::new(),
                 warnings: Vec::new(),
                 advice: Vec::new(),
                 errors: Vec::new(),
             };
-            // The level, tolerating the `[code]` tag a coded diagnostic renders
-            // (`Advice[superseded-call]: …`).  Matching `"Advice:"` alone sent every CODED
-            // warning and advice into `errors`, so the file failed with "(parse errors)" —
-            // giving a diagnostic its stable identity silently turned it into a build
-            // break.  Anything unrecognised still counts as an error: a diagnostic this
-            // cannot classify must not be quietly dropped.
-            // The base's diagnostics first: they came from the library sources,
-            // which a cold parse read before it reached the test file.
-            for line in base_diagnostics.into_iter().chain(p.diagnostics.lines()) {
-                match loft::diagnostics::compact_level(&line) {
-                    Some(loft::diagnostics::Level::Warning) => {
-                        file_result.warnings.push(line.clone());
-                    }
-                    Some(loft::diagnostics::Level::Advice) => {
-                        file_result.advice.push(line.clone());
-                    }
-                    _ => file_result.errors.push(line.clone()),
+            let mut all_blanked_fns: HashSet<String> = HashSet::new();
+            let mut current_src: Option<String> = None;
+            let mut sandbox_counted_for_file = false;
+            let file_short_name = file_name_of(&abs_file);
+            let mut final_round: Option<(Parser, u32, bool)> = None;
+
+            for depth in 0..=MAX_PEEL {
+                let mut p = Parser::new();
+                p.lib_dirs = lib_dirs.to_vec();
+                // `@C173` — a `--lib` given to `loft test` outranks a pin, as in a run.
+                p.flag_lib_dirs = flag_lib_dirs.to_vec();
+                if let Some(ref pl) = project_lib {
+                    p.lib_dirs.insert(0, pl.clone());
                 }
+                for extra in &ann.extra_lib_dirs {
+                    p.lib_dirs.push(extra.clone());
+                }
+                if let Some(ref proj) = ann.project {
+                    p.lib_dirs.insert(
+                        0,
+                        std::path::Path::new(proj)
+                            .join("lib")
+                            .to_str()
+                            .unwrap_or("")
+                            .to_string(),
+                    );
+                }
+                // @PLN86 / #631 — apply the package's `[sandbox]` policy so admission runs
+                // here too.
+                let sandboxed = if let Some(policy) = sandbox_policy_for(&abs_file) {
+                    sandbox_policy_seen = true;
+                    p.set_sandbox_config(policy);
+                    true
+                } else {
+                    false
+                };
+                // loft#925 — start from the group's shared parse of stdlib + libraries
+                // when there is one.  Skipped under a `[sandbox]` policy.
+                let mut base_diagnostics: Vec<String> = Vec::new();
+                let mut seeded: Option<u32> = None;
+                let active_text = current_src.as_deref().unwrap_or(&source);
+                if !no_base
+                    && !sandboxed
+                    && let Some(region) = leading_use_region(active_text)
+                {
+                    let key = (p.lib_dirs.clone(), region);
+                    match bases.entry(key) {
+                        std::collections::btree_map::Entry::Vacant(slot) => {
+                            slot.insert(BaseSlot::Once);
+                        }
+                        std::collections::btree_map::Entry::Occupied(mut slot) => {
+                            if matches!(slot.get(), BaseSlot::Once) {
+                                let base_file = fa::parent(std::path::Path::new(&abs_file))
+                                    .unwrap_or_default()
+                                    .join("__loft_test_base.loft")
+                                    .to_string_lossy()
+                                    .into_owned();
+                                let (libs, region) = slot.key();
+                                let built = build_test_base(
+                                    default_dir,
+                                    libs,
+                                    flag_lib_dirs,
+                                    &base_file,
+                                    region,
+                                );
+                                slot.insert(BaseSlot::Shared(built));
+                            }
+                            if let BaseSlot::Shared(Some(base)) = slot.get() {
+                                p.seed_from(&base.parser);
+                                if depth == 0 {
+                                    base_diagnostics.clone_from(&base.diagnostics);
+                                }
+                                seeded = Some(base.stdlib_defs);
+                            }
+                        }
+                    }
+                }
+                let start_def = if let Some(stdlib_defs) = seeded {
+                    stdlib_defs
+                } else {
+                    let stdlib_dir = stdlib_dir_of(default_dir);
+                    if !loft::startup_cache::warm_load_stdlib(&mut p, &stdlib_dir) {
+                        if p.parse_stdlib(&stdlib_dir).is_err() {
+                            println!("  FAIL  {display_name}  (cannot load default library)");
+                            dir_fail += 1;
+                            total_files += 1;
+                            break;
+                        }
+                        if fa::is_dir(std::path::Path::new(&stdlib_dir)) {
+                            loft::startup_cache::save_stdlib_cache(&p, &stdlib_dir);
+                        }
+                    }
+                    p.data.definitions()
+                };
+                let phase_clock = std::env::var_os("LOFT_TIMING")
+                    .is_some()
+                    .then(std::time::Instant::now);
+                let parse_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if let Some(ref text) = current_src {
+                        p.parse_as(&abs_file, text, false);
+                    } else {
+                        p.parse(&abs_file, false);
+                    }
+                }));
+                let parse_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+                if let Err(payload) = parse_ok {
+                    let msg = panic_message(&*payload);
+                    if has_expect_error
+                        && ann.expect_errors.iter().any(|s| msg.contains(s.as_str()))
+                    {
+                        println!("  ok    {display_name}  (expected parse error)");
+                        total_files += 1;
+                        dir_pass += 1;
+                    } else {
+                        println!("  FAIL  {display_name}  (parse panic: {msg})");
+                        dir_fail += 1;
+                        total_files += 1;
+                    }
+                    break;
+                }
+
+                // Scope analysis — wrap in catch_unwind so a panic here doesn't
+                // kill the entire runner (loft#985, loft#883).
+                let has_errors = p.diagnostics.level() >= loft::diagnostics::Level::Error;
+                p.data.observes_entries = !native_mode;
+                let scopes_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if !has_errors {
+                        scopes::check(&mut p.data, &mut p.database);
+                    }
+                }));
+                if let Err(payload) = scopes_ok {
+                    let msg = panic_message(&*payload);
+                    println!("  FAIL  {display_name}  (scope check panic: {msg})");
+                    dir_fail += 1;
+                    total_files += 1;
+                    break;
+                }
+                let scopes_ms = phase_clock.map(|t| t.elapsed().as_secs_f64() * 1000.0);
+                if has_errors {
+                    loft::copy_manifest::clear_materialised_views(&p.data);
+                } else {
+                    loft::copy_manifest::drain_written_back_views(&p.data, &mut p.diagnostics);
+                    loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+                }
+                if let (Some(t), Some(parse_ms), Some(scopes_ms)) =
+                    (phase_clock, parse_ms, scopes_ms)
+                {
+                    eprintln!(
+                        "LOFT_TIMING test_file={display_name} seeded={} parse={parse_ms:.2}ms scopes={:.2}ms lints={:.2}ms defs={}",
+                        seeded.is_some(),
+                        scopes_ms - parse_ms,
+                        t.elapsed().as_secs_f64() * 1000.0 - scopes_ms,
+                        p.data.definitions()
+                    );
+                }
+
+                let mut round_errors: Vec<String> = Vec::new();
+                for line in base_diagnostics.into_iter().chain(p.diagnostics.lines()) {
+                    match loft::diagnostics::compact_level(&line) {
+                        Some(loft::diagnostics::Level::Warning) => {
+                            file_result.warnings.push(line);
+                        }
+                        Some(loft::diagnostics::Level::Advice) => {
+                            file_result.advice.push(line);
+                        }
+                        _ => round_errors.push(line),
+                    }
+                }
+                if p.has_sandboxed_defs() {
+                    if !sandbox_counted_for_file {
+                        sandbox_checked_files += 1;
+                        sandbox_counted_for_file = true;
+                    }
+                    for e in p.sandbox_admission_errors() {
+                        round_errors.push(format!("Sandbox admission: {e}"));
+                    }
+                }
+                file_result.errors.extend(round_errors.iter().cloned());
+
+                if round_errors.is_empty() {
+                    final_round = Some((p, start_def, true));
+                    break;
+                }
+                if depth < MAX_PEEL
+                    && let Some((next_src, blanked)) =
+                        peel_failing_fns(active_text, &round_errors, &file_short_name, &ann)
+                {
+                    all_blanked_fns.extend(blanked);
+                    current_src = Some(next_src);
+                    continue;
+                }
+                final_round = Some((p, start_def, false));
+                break;
             }
-            // @PLN86 / #631 — an admission violation fails the file, exactly as a
-            // compile error does.  A rejected script cannot run at all, so a suite
-            // that reported it green was reporting on something the host would refuse
-            // to load.
-            if p.has_sandboxed_defs() {
-                sandbox_checked_files += 1;
-                for e in p.sandbox_admission_errors() {
-                    file_result.errors.push(format!("Sandbox admission: {e}"));
-                }
+
+            let Some((p, start_def, final_round_clean)) = final_round else {
+                continue;
+            };
+            {
+                let mut seen = HashSet::new();
+                file_result.errors.retain(|l| seen.insert(l.clone()));
             }
 
             // The two parser passes emit each diagnostic twice, so every warning and advice
@@ -1561,9 +1687,12 @@ pub(crate) fn run_tests(
             }
 
             // If the file has errors that were all expected (file-level or
-            // per-function), report the passes and skip execution — the
-            // compiler can't produce valid bytecode for a file with errors.
-            if !file_result.errors.is_empty() {
+            // per-function), skip execution only when the final peel round still
+            // carried errors (`!final_round_clean`).  When peeling isolated the
+            // refusing functions and the surviving program compiled cleanly,
+            // record the satisfied refusal cells and continue on to run the
+            // surviving test functions (loft#1242).
+            if !file_result.errors.is_empty() && !final_round_clean {
                 // All errors consumed → success.
                 total_files += 1;
                 for name in &fn_error_pass {
@@ -1589,15 +1718,41 @@ pub(crate) fn run_tests(
                 );
                 continue;
             }
+            if !file_result.errors.is_empty() {
+                for name in &fn_error_pass {
+                    if fn_filter
+                        .as_ref()
+                        .is_none_or(|f| f.iter().any(|x| x == name))
+                    {
+                        file_result.tests.push((name.clone(), true, None));
+                        dir_pass += 1;
+                    }
+                }
+                for name in &fn_warning_pass {
+                    if !fn_error_pass.contains(name)
+                        && all_blanked_fns.contains(name)
+                        && fn_filter
+                            .as_ref()
+                            .is_none_or(|f| f.iter().any(|x| x == name))
+                    {
+                        file_result.tests.push((name.clone(), true, None));
+                        dir_pass += 1;
+                    }
+                }
+            }
             // File-level @EXPECT_ERROR set but no errors at all → fail.
-            if has_expect_error {
+            if has_expect_error && file_result.errors.is_empty() {
                 println!("  FAIL  {display_name}  (expected parse error but file parsed cleanly)");
                 dir_fail += 1;
                 total_files += 1;
                 continue;
             }
             // Per-function @EXPECT_ERROR but no errors at all → fail.
-            if has_fn_errors && fn_error_fail.is_empty() && fn_error_pass.is_empty() {
+            if file_result.errors.is_empty()
+                && has_fn_errors
+                && fn_error_fail.is_empty()
+                && fn_error_pass.is_empty()
+            {
                 println!("  FAIL  {display_name}  (expected errors but file parsed cleanly)");
                 dir_fail += 1;
                 total_files += 1;
@@ -1676,6 +1831,20 @@ pub(crate) fn run_tests(
             }
 
             if test_fns.is_empty() {
+                if !file_result.errors.is_empty() {
+                    total_files += 1;
+                    let fn_names: Vec<&str> = file_result
+                        .tests
+                        .iter()
+                        .map(|(n, _, _)| n.as_str())
+                        .collect();
+                    let fn_list = fn_names.join(", ");
+                    let count = file_result.tests.len();
+                    println!(
+                        "  ok    {display_name}  ({count} expected error{}: {fn_list})",
+                        if count == 1 { "" } else { "s" }
+                    );
+                }
                 // No callable functions found; skip this file silently.
                 continue;
             }

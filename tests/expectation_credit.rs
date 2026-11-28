@@ -224,3 +224,104 @@ fn two_cells_sharing_a_warning_each_need_their_own_report() {
         "the silent cell must be named:\n{out}"
     );
 }
+
+fn run_file_args(tag: &str, extra_args: &[&str], src: &str) -> (i32, String) {
+    let root = std::env::temp_dir().join(format!("loft_1242_{tag}_{}", std::process::id()));
+    let _ = fa::remove_dir_all(&root);
+    fa::create_dir_all(&root).expect("mkdir");
+    let file = root.join("cells.loft");
+    fa::write(&file, src).expect("write cells.loft");
+    let out = loft::platform::process::harness_command(loft_bin())
+        .current_dir(&root)
+        .arg("--tests")
+        .args(extra_args)
+        .arg("cells.loft")
+        .env("LOFT_TIMEOUT", "180")
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_LEAK_CHECK", "1")
+        .output()
+        .expect("run loft --tests");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = fa::remove_dir_all(&root);
+    (out.status.code().unwrap_or(-1), text)
+}
+
+/// loft#1242 / #1772 — `loft --tests` peels isolatable error cells across rounds so a pass-1
+/// refusal (`1__0`, `fn name`) cannot mask pass-2 refusals in the same file, and the surviving
+/// runnable cells still compile and execute on both `--interpret` and `--native-c`.
+#[test]
+fn pass_1_refusal_peels_to_unmask_pass_2_and_runs_survivor() {
+    let file_level = "\
+// @EXPECT_ERROR: Misplaced '_' in number literal
+// @EXPECT_ERROR: comprehension body must produce a value
+
+fn test_pass_1() {
+  x = 1__0;
+  assert(x == 10, \"unreachable\");
+}
+
+fn test_pass_2() {
+  v = [for i in 0..3 { }];
+  assert(len(v) == 3, \"unreachable\");
+}
+
+fn test_survivor() {
+  w: vector<integer> = [];
+  w += [5];
+  w += [6];
+  assert(len(w) == 2, \"survivor ran\");
+}
+";
+    let per_fn = "\
+fn dbl(x: integer) -> integer { x * 2 }
+
+// @EXPECT_ERROR: without 'fn' prefix
+fn bad_fn_prefix() {
+  g = fn dbl;
+  assert(g(2) == 4, \"unreachable\");
+}
+
+// @EXPECT_ERROR: Cannot modify const parameter
+fn bad_const(a: const integer) -> integer {
+  a = 1;
+  a
+}
+
+fn surviving_cell() {
+  g = dbl;
+  assert(g(21) == 42, \"bare fn-ref works\");
+}
+";
+    for (tag, extra) in [("interp", &[][..]), ("native_c", &["--native-c"][..])] {
+        let (code, out) = run_file_args(&format!("peel_file_{tag}"), extra, file_level);
+        assert_eq!(code, 0, "file-level peel ({tag}) must pass:\n{out}");
+        assert!(
+            out.contains("test_survivor"),
+            "surviving test must run ({tag}):\n{out}"
+        );
+
+        let (code, out) = run_file_args(&format!("peel_fn_{tag}"), extra, per_fn);
+        assert_eq!(code, 0, "per-fn peel ({tag}) must pass:\n{out}");
+        assert!(
+            out.contains("surviving_cell"),
+            "surviving cell must run ({tag}):\n{out}"
+        );
+
+        // Positive control: breaking the assertion in the surviving cell MUST fail the run,
+        // proving `loft --tests` actually executed the survivor rather than stopping at errors.
+        let broken_survivor = per_fn.replace("g(21) == 42", "g(21) == 99");
+        let (code, out) = run_file_args(&format!("peel_broken_{tag}"), extra, &broken_survivor);
+        assert_ne!(
+            code, 0,
+            "broken assertion in surviving cell must fail ({tag}):\n{out}"
+        );
+        assert!(
+            out.contains("FAIL") && out.contains("surviving_cell"),
+            "failure must name surviving_cell ({tag}):\n{out}"
+        );
+    }
+}
