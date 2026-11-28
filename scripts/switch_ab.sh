@@ -60,7 +60,9 @@
 # cure's switch too.  A plain run of a file with no `main` runs its `test_*` functions and
 # reports each one that fails (`FAIL <name>`), so a program whose tests fail with a switch off
 # moves its output: under a rewrite's switch that is a defect, under a cure's it is the defect
-# the cure removed, and the program says so with `@catches`.
+# the cure removed, and the program says so with `@catches`.  A `@catches` line that joins several cures with
+# `+` (`LOFT_NO_A+LOFT_NO_B`: each cure removes the defect alone) claims none of them singly, so a
+# run of one of them neither counts it CAUGHT nor VACUOUS; `catches_records.py` sets them all.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -179,7 +181,7 @@ for f in "${files[@]}"; do
     if ! cmp -s <(semantic "$WORK/on/$base.out") <(semantic "$WORK/on2/$base.out"); then
       noise=$((noise + 1))
       echo "NOISE   $f (differs between two runs with the rewrite on)"
-    elif grep -qE "^// @catches:.*\b$SWITCH\b" "$f"; then
+    elif grep -qE "^// @catches: $SWITCH([^+A-Z0-9_]|$)" "$f"; then
       caught=$((caught + 1))
       echo "CAUGHT  $f (the defect $SWITCH restores, which this program declares it catches)"
     elif grep -qE "^// @observes:.*\b$SWITCH\b" "$f"; then
@@ -190,7 +192,7 @@ for f in "${files[@]}"; do
       echo "DEFECT  $f — output moves with $SWITCH:"
       diff <(semantic "$WORK/on/$base.out") <(semantic "$WORK/off/$base.out") | head -12 | sed 's/^/    /'
     fi
-  elif grep -qE "^// @catches:.*\b$SWITCH\b" "$f"; then
+  elif grep -qE "^// @catches: $SWITCH([^+A-Z0-9_]|$)" "$f"; then
     defects=$((defects + 1))
     echo "VACUOUS $f — declares it catches what $SWITCH restores, and its output does not move"
   fi

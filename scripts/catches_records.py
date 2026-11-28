@@ -26,7 +26,9 @@ import tempfile
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE = os.path.join(HERE, "tests", "catches_records.baseline")
-CATCHES = re.compile(r"^// @catches: (LOFT_NO_[A-Z0-9_]+)", re.M)
+# A pairing may name SEVERAL cures joined by `+` (`LOFT_NO_A+LOFT_NO_B`): two cures that each
+# remove the defect on their own, so only with both off does it come back.
+CATCHES = re.compile(r"^// @catches: (LOFT_NO_[A-Z0-9_]+(?:\+LOFT_NO_[A-Z0-9_]+)*)", re.M)
 
 
 def suite_dir():

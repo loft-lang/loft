@@ -149,8 +149,9 @@ def run(loft, cell, switch, timeout):
                 env.update(ARMED_SWITCH.findall(line))
     except OSError:
         pass
-    if switch:
-        env[switch] = "1"
+    # `LOFT_NO_A+LOFT_NO_B`: a pairing that names two cures (`catches_records.py`) sets both.
+    for sw in filter(None, (switch or "").split("+")):
+        env[sw] = "1"
     try:
         p = subprocess.run([loft, "--tests", cell], env=env, capture_output=True, text=True,
                            errors="replace", timeout=timeout + 10, cwd=os.path.dirname(cell),
