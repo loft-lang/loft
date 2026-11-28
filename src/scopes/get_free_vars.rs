@@ -545,12 +545,32 @@ impl Scopes<'_> {
                 // A record whose link delivery the frame decides at run time
                 // (`@FR-L-CapKeep`) stands down above where the caller holds it, and is
                 // released here on the runs that did not deliver it.
+                // A returned ARGUMENT — the local renamed onto the caller's return buffer —
+                // collects the deps of every value the body ever binds to it, so at an exit
+                // ahead of the bind that made it view `v` it names `v` without holding it.
+                // There the store identity decides: `v` is freed unless it is what the buffer
+                // holds now (loft#2684: `return w` copied `w` into the buffer the tail later
+                // rebinds from `with_children(w, …)`, and `w`'s copy leaked on that exit).
+                let promoted_holds_v = ret_var != u16::MAX
+                    && function.tp(ret_var).depend().contains(&v)
+                    && !owns_text_copy(function, ret_var);
+                // The return sources that name `v` in their deps: when every one is such an
+                // argument (and the returned variable is one too, or names nothing), the
+                // returned store is told from `v`'s by identity at the exit.
+                let backing_sources: Vec<u16> = return_sources
+                    .iter()
+                    .copied()
+                    .filter(|&src| src != v && function.tp(src).depend().contains(&v))
+                    .collect();
+                let promoted_by_identity = crate::keys::promoted_return_identity_free()
+                    && ret_var != u16::MAX
+                    && function.is_argument(ret_var)
+                    && (promoted_holds_v || backing_sources.contains(&ret_var))
+                    && backing_sources.iter().all(|&src| src == ret_var);
                 let leaves_frame = ret_borrows_v
-                    || backs_return_source
+                    || backs_return_source && !promoted_by_identity
                     || (link_delivered.contains(&v) && !self.closure_keep.decides_link(v))
-                    || ret_var != u16::MAX
-                        && function.tp(ret_var).depend().contains(&v)
-                        && !owns_text_copy(function, ret_var)
+                    || promoted_holds_v && !promoted_by_identity
                     // …and a CLOSURE RECORD this return delivers.  `ret_borrows_v` decodes the
                     // declared return's `CalleeFrame` note, and that note is published once per
                     // lambda and OVERWRITTEN — so where a function builds more than one it names
@@ -702,6 +722,21 @@ impl Scopes<'_> {
                     && !function.is_skip_free(v)
                     && !self.free_transferred.contains(&v)
                     && !captured_ref;
+                // The identity-decided release of a local the returned argument may hold
+                // (`promoted_by_identity` above): `OpFreeRefIfDistinct(v, ret)` frees it on the
+                // exits where the buffer holds another store.  @FR-O-Buffer @FR-H-FreeAll
+                // A work-ref the returned argument names keeps the suppression it had.
+                let emit = if emit && promoted_by_identity {
+                    if !is_work_ref {
+                        ls.push(Value::Call(
+                            data.def_nr("OpFreeRefIfDistinct"),
+                            vec![Value::Var(v), Value::Var(ret_var)],
+                        ));
+                    }
+                    false
+                } else {
+                    emit
+                };
                 // @FR-L-CapOwn, loft#1464 — the release the frame just gave up is taken over by
                 // a cascade that runs only if the closure BUILD executes.  The suppression is a
                 // static fact about the function; the cascade is a per-RUN one, and where the
@@ -1848,3 +1883,4 @@ fn work_ref_view_frees() -> bool {
 fn rebound_adopter_disarm_off() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_ADOPTER_DISARM").is_some())
 }
+
