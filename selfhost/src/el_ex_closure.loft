@@ -32,6 +32,7 @@ use el_ex_match;
 use el_ex_pattern;
 use el_ex_vector;
 use el_cell;
+use el_ex_deliver;
 use el_ex_assign;
 use el_ex_tuple;
 use el_ex_name;
@@ -690,11 +691,13 @@ pub fn closure_value(e: el::El, vars: el_vars::Vars, d: integer, rec_nm: text, c
   // A closure answering a text is not carried: the borrows of its body's answer (a parameter's
   // view) and of its capture fields are not reproduced yet.
   // A closure answering a text delivers it through its hidden `&text` buffer, as any lambda.  One
-  // that also writes a shared record capture types its answer by the lambda's placeholder for
-  // that capture (`["p"]`), a variable this port's lambdas do not keep: refused by name.
+  // whose answer READS a shared record capture it also writes (`p.n = "z"; p.n`) borrows the
+  // closure record (`text["__closure", "__work_ret"]`), which this port does not reproduce:
+  // refused by name.  (Writing the capture and answering something else is carried.)
+  ltail = el_ex_deliver::tail_syntax(e, body);
   if !e.first_pass && el_types::base(el::def(e, d).returned[0] ?? ir::TyVoid) is TyText {
     for c in caps {
-      if record_type(e, c.tp) && writes_through(e, body, c.name) {
+      if record_type(e, c.tp) && writes_through(e, body, c.name) && ltail >= 0 && answers_field_of(e, ltail, c.name) && el_cell::cell_of(e, c.tp) < 0 {
         el::refuse(e, "a closure answering a text that writes a record capture");
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
       }
@@ -1451,4 +1454,18 @@ pub fn captured_name(e: el::El, vars: el_vars::Vars, n: integer, own: vector<tex
     }
   }
   ""
+}
+
+// Can syntax node `n` answer a field read straight off the name `c` (`p.n`) — itself, or an arm
+// of a branch, a match or a block it answers?
+fn answers_field_of(e: el::El, n: integer, c: text) -> boolean {
+  match e.p.nodes[n] {
+    SMember { e: re, call } => !call && re != null && match e.p.nodes[re!] { SName { name: rn, member: rm } => rn == c && rm == "", _ => false },
+    // (A branch, a match or a block that mentions the capture at all is taken as one: its arms'
+    // answers are delivered by the accumulator, and what they borrow is not reproduced.)
+    SIf { then: _ } => mentions_name(e, n, c),
+    SBlock { stmts: _ } => mentions_name(e, n, c),
+    SMatch { arms: _ } => mentions_name(e, n, c),
+    _ => false
+  }
 }
