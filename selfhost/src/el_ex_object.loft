@@ -1685,7 +1685,15 @@ fn call_ref_at(e: el::El, vars: el_vars::Vars, v: integer, args: vector<integer>
     if el_trace::on() {
       el_trace::state(e, vars, "arg", aat, ae!);
     }
+    // (A short lambda handed to a function value takes the parameter's `fn(…)` type, as one
+    // handed to a function does — `hint_lambda`.)
+    lpt = el_types::base(pts[len(given)] ?? ir::TyVoid);
+    if lpt is TyFunction && match e.p.nodes[ae!] { SLambda { short: lsh } => lsh, _ => false } {
+      vars.lambda_node = ae!;
+      vars.lambda_hint = lpt;
+    }
     x = el_ex_assign::expression(e, vars, ae!);
+    vars.lambda_node = -1;
     given += [x];
     if e.first_pass {
       continue;
