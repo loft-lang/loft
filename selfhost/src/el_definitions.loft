@@ -2497,7 +2497,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           // A default that builds a value is hoisted (`n___dflt_<fn>_<param>`), minted here —
           // before the function it belongs to — where it reads none of the earlier parameters
           // (those it would take as arguments of its own: not carried).
-          d = if tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && hoists_default(e, init!, t!) && !names_any(e, init!, [for ea in arguments { ea.name }]) {
+          // (A `&` parameter keeps its default raw, and an untyped `[]` builds nothing: the
+          // default is the "built nothing" marker, the parameter's own slot — `Var(<index>)`.)
+          empty_amp = amp && match e.p.nodes[init!] { SVecLit { items: dvi } => len(dvi) == 0, _ => false };
+          d = if empty_amp { ir::NdVar { n: len(arguments) } } else if tp != null && !amp && len(tvars) == 0 && len(e.type_vars) == 0 && !starts_with(name, "__") && hoists_default(e, init!, t!) && !names_any(e, init!, [for ea in arguments { ea.name }]) {
             hoisted_default(e, "__dflt_{name}_{an}", tp!, init!)
           } else {
             param_default(e, init!, t!)
