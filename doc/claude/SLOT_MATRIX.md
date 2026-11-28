@@ -108,11 +108,13 @@ background and ends FILE with a line `scripts/wait_for.sh` waits for.
 | `expr '<expression>'` | one expression tried in every slot of its type and inside every wrapper |
 | `explain <cell>` | one failing cell: its program kept, loft's diagnostics on, its IR diffed with its twin's |
 | `walk --old <binary>` | the matrix on an older compiler beside this one |
+| `seq …` | the sequence axis: a few statements over one local ([below](#the-sequence-axis)) |
 
 ## The gate
 
 `tests/slot_matrix.rs` is seven tests, one a slot family, each `slot_matrix.py gate --family
-F`.  A failing test says first which of three things it is:
+F`, and an eighth for the sequence axis, `slot_matrix.py seq gate`, against
+`scripts/slot_sequence.baseline`.  A failing test says first which of three things it is:
 
 - **`BROKEN`** — a cell fails that is not in `scripts/slot_matrix.baseline`.  The failing
   cells are folded toward causes, each with its statement; on GitHub each fold is an
@@ -141,14 +143,82 @@ with both values; and diffs the IR of the cell against the IR of its twin — th
 form beside the broken one, where a compiler fix starts
 ([CODEGEN_METHOD.md](CODEGEN_METHOD.md)).
 
+## The sequence axis
+
+A slot cell is ONE statement, and a defect that needs two statements to meet — a first bind
+and a rebind of one local, an early return ahead of the bind a later statement renames, a
+loop pass that keeps a record and a return before the next mint, a local answered on one
+arm of a join — is the same in every form of operand, so no filler and no twin sees it.
+`slot_matrix.py seq` (the module `scripts/slot_sequence.py`) generates those programs.
+
+**A cell** is a function `sq_N(p: T, k: integer, h: HoldT) -> T` (or the type of a
+projection of `T`) whose body is one to three statements over one local `x`, and `y` bound
+from it, and a tail.  The driver calls it with a parameter a callee hands back (`T`
+numbered 4) and one a callee replaces (numbered 7), and with `k` from 0 to 4, so that each
+branch is taken once and none once; it prints the result, the parameter after the call and
+the holder.
+
+**The answer is computed, not compared.**  The generator evaluates the same statements in
+its own model of the values: every record is "the record numbered n" (its other fields
+follow from n), every bind and every copy into the holder is a copy ([binding.md](formal/binding.md)
+`(B-Copy)`, [calls.md](formal/calls.md) `(F-Ret)`), and it knows what each callee of the
+prelude answers.  A cell fails when a call's line differs from the model's, or when a check
+fails: every program runs under `LOFT_LEAK_CHECK`, `LOFT_NATIVE_LEAK_CHECK`,
+`LOFT_STRICT_STORES=1` and `LOFT_POISON=1`, on the interpreter and the C backend.  So a
+value that is wrong in every spelling is still wrong here.
+
+**The tables.**
+
+| File under `scripts/` | What it holds |
+|---|---|
+| `syntax_sequence.tsv` | the shapes, as class, id, types, loft, model: `src` (what a bind takes: the parameter, a literal, a fresh call, a callee handing back its argument or replacing it, one declared below the cells, `??`, a join of two), `isrc` (what a loop pass mints), `ret` (what an early return answers), `stmt` (a bind; a bind of `y`; a copy into a field or an element of the holder; a write through the local; a discarded call with a literal argument; an early return in a branch; a loop that mints, or returns before or after the mint) and `end` (the local, `y`, the parameter, a literal, a fresh call, a call on the local, a `??`, a join, an explicit `return`; with a projection where the row says `<PJ>`) |
+| `syntax_sequence_prelude.loft` | four types — a record of one integer, a record holding a record and a vector, a struct-enum, `vector<integer>` — and their callees `mk`, `id`, `w` (a fresh record for an odd argument, the argument for an even one, by an early return), `wt` (the same as a tail join), `alt` (`T?`), `pk` (two parameters), and `lw`, which is written below the cells |
+| `slot_sequence.baseline` | the gate's cells that do not pass today |
+
+The first statement binds `x`, from a value that does not read it, or is a loop that mints
+it; a statement reads only locals bound before it, as loft's scopes say (a local first
+bound in a loop body is gone after the loop).  The product is every type and projection ×
+every length × every statement variant in every place: about ten million combinations at
+three statements; at two, 160,000, of which 69,000 keep the scope rule.
+
+**A failing cell is shrunk.**  `seq run` takes each failing cell to the simplest cell that
+still fails on the same backend through the same channel — a statement left out, the
+projection dropped, an earlier row of the table in a hole or the tail — and prints each
+simplest cell once, with how many failing cells shrink to it and over which types.  That
+list, not the failing cells, is what to read: two thousand failing cells of a run shrink to
+about twenty sequences.
+
+| Command (`slot_matrix.py [--jobs N] seq …`) | What it does |
+|---|---|
+| `list` | the shapes, and the size of the product per type, projection and length |
+| `check` | the table is well formed and every one-statement cell has a model that runs; `slot_matrix.py check` runs it too |
+| `run` | the product to `--length` statements (default 3), sampled with `--seed` past `--sample` cells (default 2,000; 0 is all of it), on `--backend` (default both); `--cells FILE` runs named cells, `--list FILE` writes the simplest failing ones |
+| `cell <statement> … <tail>` | one sequence, its statements as loft with `<t>` for the type's letter (`'x = lw_<t>(p);' 'if k == 0 { return x; }' 'y = w_<t>(x);' 'y'`), as shape ids, or as a cell's name; `--keep DIR` keeps its program.  A statement no row makes is named: a row for it is the change |
+| `walk --old <binary>` | the product on an older build beside this one: fixed since, new since, failing on both |
+| `gate [--full] [--update]` | a fixed sample (three statements, 1,500 cells, seed 1) against the baseline; every sixth cell compiled unless `--full` |
+
+**Cost.**  An interpreted cell costs a few milliseconds: the whole product at two
+statements, 69,000 cells, runs in about nine minutes of CPU on four processes.  A compiled cell costs about
+a quarter of a second on a loaded machine, so the C backend gets samples: 6,000 cells is
+about fifty minutes of CPU.  The PR gate (`tests/slot_matrix.rs`
+`sequences_hold_their_baseline`: 1,500 cells interpreted, 250 compiled) takes 15 s here on
+four processes; `seq gate --full`, which the nightly leg runs and `--update` is, several
+minutes.  `SLOT_MATRIX_JOBS` (or `--jobs`) bounds how many programs run at once on a shared
+machine.
+
+**What it cannot see.**  Views and `&` (a view bound, the local rebound, the view read), text,
+closures, `par`, a nullable return type, a match arm as a statement's context, keyed
+collections: no row of the table names them.  A defect of one of those is a row or a type to
+add, or a ledger line.
+
 ## Keeping it honest — every defect is held against it
 
 A compiler defect found by any means is tried against the matrix when it is filed or fixed
 ([ISSUE_TRACKING.md § Every defect is held against the slot
 matrix](ISSUE_TRACKING.md#every-defect-is-held-against-the-slot-matrix)): `cell` for a
-statement, `expr` for an expression.  Reached, or reached with new rows that fail on the
-build with the defect; or a line in the reach ledger, `scripts/slot_reach.tsv`, naming the
-axis the tool lacks.  The ledger's verdicts are `fits-now`, `fits-rows`, `needs-axis` and
+statement, `expr` for an expression, `seq cell` for a defect that spans statements.
+Reached, or reached with new rows that fail on the build with the defect; or a line in the
+reach ledger, `scripts/slot_reach.tsv`, naming the axis the tool lacks.  The ledger's verdicts are `fits-now`, `fits-rows`, `needs-axis` and
 `outside`; the axis with the most lines is the next one to build.  Two more instruments
 say where it is thin without reading an issue: `coverage rules` (the evaluation rules no
 slot cites) and `coverage ops` (the IR operations the corpus makes the compiler emit and no
@@ -178,8 +248,8 @@ on an older compiler: what failed then and passes now is what it would have caug
 
 | Item | What it is | When it is due |
 |---|---|---|
-| A sequence of statements | the axis with the most ledger lines: 31 of the 68 `needs-axis` lines name a sequence of statements, two statements on one local or a statement's context (`awk -F'\t' '$2=="needs-axis"' scripts/slot_reach.tsv`).  A cell is two to four statements over one local, drawn from a table of statement shapes (a bind or rebind from a parameter, a fresh call, a literal or a join of the two; a copy into a field or element; a discarded call with a literal argument; a `??`; an early return in a branch or in a loop before or after the value is made; a loop pass that makes it), ending in a return of the local, of another value or of a projection.  The answer is computed by the generator's own model of the values, not by a twin; every cell also runs under the leak checks, `LOFT_STRICT_STORES` and `LOFT_POISON`, on both backends.  It is accepted when `walk --old` on a build before the ledger's sequence fixes fails the cells of those issues | now: it is the next axis, and every defect a ledger line of this kind names is a cell it must produce |
-| A nightly leg | `--context all --frame all` and `--depth 2` scheduled; the night runs `gate --full` | before the next release: a C-only regression outside the sample is otherwise unseen |
+| More shapes for the sequence axis | views and `&` (a view bound, the local rebound, the view read), a text local, a closure capture, a `-> T?` return, a match arm or a closure body as the statement's context: the shapes the ledger's remaining sequence lines name (`awk -F'\t' '$2=="needs-axis"' scripts/slot_reach.tsv`).  Each is a row of `syntax_sequence.tsv`, or a type of its prelude, with its model | with the first defect of one of those shapes, and before the ledger's sequence lines outnumber the others again |
+| A nightly leg | `--context all --frame all` and `--depth 2` scheduled; the night runs `gate --full`, `seq gate --full` and a `seq run` with a new seed each night on the interpreter (the two-statement product whole) | before the next release: a C-only regression outside the sample is otherwise unseen |
 | Two counted operands | a second counted operand in one statement, with a twin that binds them in the order the form's rule gives; seven issues of the ledger need it | when a defect of that shape is filed that the matrix cannot express |
 | The unreached lexemes | a file in the prelude (`#next`, `#read`, `#format`), field expressions (`init`, `computed`, `default`, `$`), `T.parse`, `yield from`, `#lock`, and a cell kind that expects the program to end (`panic`) | with the first defect in one of them |
 | A second prelude | declaration shapes: nullable fields, a struct-enum, a generic, a record that is an element of two collections; seven ledger issues (the record of scalars only is `sm`) | when the ledger's `shape of a declaration` lines outnumber the others |

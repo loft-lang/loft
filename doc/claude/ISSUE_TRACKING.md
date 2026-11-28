@@ -456,9 +456,12 @@ compiler defect answers one question and writes the answer down with the fix:
    same value>'`; or, when it is an EXPRESSION that looks wrong and not one statement,
    `slot_matrix.py expr '<the expression, <C> for its counter>' --type <its type>`, which
    tries it in every operand position of that type.  Both use the names of
-   `scripts/syntax_slots_prelude.loft`.  A
-   failing cell that the tables already hold (`run --filler all --slot <id>`) means the
-   matrix reaches it; say so in the issue.
+   `scripts/syntax_slots_prelude.loft`.  **A defect that spans statements** (a bind and a
+   rebind, an early return before a later bind, a loop pass) is tried as a sequence:
+   `slot_matrix.py seq cell '<statement>' … '<tail>'`, in the names of
+   `scripts/syntax_sequence_prelude.loft` (SLOT_MATRIX.md § The sequence axis).  A
+   failing cell that the tables already hold (`run --filler all --slot <id>`, `seq run
+   --cells`) means the matrix reaches it; say so in the issue.
 2. **Not reached, and rows would do it** — a slot row, a filler row, an operand type, a
    prelude helper; `cell` prints them.  Add them in the same change as the fix, and check the new cell FAILS on
    the build that has the defect (`slot_matrix.py walk --old <that build>`): a row that
