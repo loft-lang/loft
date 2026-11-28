@@ -99,8 +99,14 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       // @PLN87 P2.1 — its CURRENT store is freed iff it differs from the caller's original.
       ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: p }, ir::NdVar { n: orig }] }];
     }
+    // `(G-Hold)`, loft#1708 — a generator HOLDS every handle it was handed, and gives it back at
+    // its end.
     if scope_fn::base(b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid) is TyIterator {
-      scope_scan::refuse(s, "get_free_vars: a generator returning function (its handle parameters)");
+      for p in 0..scope_fn::count(f) {
+        if scope_fn::is_argument(f, p) && scope_fn::base(scope_fn::tp(f, p)) is TyIterator {
+          ls += [ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: p }] }];
+        }
+      }
     }
   }
   // `fnref_stand_down`, `captured_record_stand_down` and `captured_view_stand_down` act on the
