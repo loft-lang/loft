@@ -1322,7 +1322,13 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // A vector field is written in place like any other (its handle zeroed, the value appended).
   for a in el::def(e, rd).attributes {
     at = a.typedef[0] ?? ir::TyVoid;
-    if !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) && !el_schema::out_of_line(e, rd, a#index) {
+    // (A method the struct carries, `get_pixel`, is an attribute of type routine: no field.)
+    if at is TyRoutine {
+      continue;
+    }
+    // (…and a nullable scalar or text, `opt: integer?`, `ot: text?`, is written as its dense twin.)
+    nscal = at is TyOptional && (el_convert::plain_scalar(el_types::base(at)) || el_types::base(at) is TyText);
+    if !nscal && !el_convert::plain_scalar(at) && !(at is TyText) && !(el_types::base(at) is TyVector) && !(el_types::base(at) is TyReference && struct_ref(e, at) >= 0) && !el_schema::out_of_line(e, rd, a#index) {
       el::refuse(e, "a record literal written into a field or an element: a field that is no plain scalar");
       return ex(ir::NdNull, ir::TyVoid);
     }
@@ -1358,7 +1364,13 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
         // and so does a comprehension field's build: both built apart, as record items are.)
         fmt_item = match e.p.nodes[fe ?? 0] { SVecLit { items: fits } => fe != null && len([for fi2 in fits if match e.p.nodes[fi2] { SString { parts } => len(parts) > 1, _ => false } { fi2 }]) > 0, _ => false };
         comp_field = fe != null && e.p.nodes[fe!] is SComprehension;
-        if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field) {
+        // (…and a collection field given a local that views the place — `data: d2` where both
+        // `d2` and the place's root are parameters, which the caller may have handed one store,
+        // `store_viewers`: the primed field would read the headers it just zeroed.)
+        vfa = attr_nr(el::def(e, rd), match e.p.nodes[fi] { SFieldInit { name: vfn } => vfn, _ => "" });
+        vcoll = vfa >= 0 && match el_types::base(el::def(e, rd).attributes[vfa]!.typedef[0] ?? ir::TyVoid) { TyVector { inner: _ } => true, TyHash { n: _ } => true, TyIndex { n: _ } => true, TySorted { n: _ } => true, _ => false };
+        view_field = vcoll && fe != null && aroot >= 0 && match e.p.nodes[fe!] { SName { name: vsn, member: vsm } => vsm == "" && el_vars::var(vars, vsn) >= 0 && el_ex_copy::store_viewers(vars, aroot).contains(el_vars::var(vars, vsn)), _ => false };
+        if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field || view_field) {
           apart = true;
           // (`snapshot_read_destination`: an item INDEXING the destination's vector —
           // `v: [len(b.inner.v), b.inner.v[0]]` — has Rust copy it first, `_build_src_N` and the
@@ -1460,8 +1472,12 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
           _ => {}
         }
       }
-      fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
-      el_vars::register_work_ref(vars, fe);
+      // (Only where the literal has a vector-literal field: a viewing local, `data: d2`, made no
+      // first-pass element.)
+      if len([for vlf in fields if match e.p.nodes[vlf] { SFieldInit { e: vle } => vle != null && (e.p.nodes[vle!] is SVecLit || e.p.nodes[vle!] is SComprehension), _ => false } { 1 }]) > 0 {
+        fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
+        el_vars::register_work_ref(vars, fe);
+      }
     }
     // (Named apart from the `built` below, so a loft without the `@FR-B-Scope` split fix
     // (2e7b305c7) builds this file: the first pass types only the later binding there.)
