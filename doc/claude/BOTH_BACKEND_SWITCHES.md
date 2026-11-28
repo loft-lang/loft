@@ -301,6 +301,13 @@ that buffer only where the joined value is a different store (`@FR-F-Ret`, loft#
 so the call's answer comes back zeroed.  That temp's rebind leaves the store the caller handed
 in to the rebind's entry-witnessed free (`@FR-O-Buffer`); **`LOFT_NO_NCC_ENTRY_GUARD=1`** frees
 it plainly, and the caller frees it a second time.  Guards `loft-suite/rules/calls/F-Ret/`.
+A call that hands its literal argument back (`x = id(P { … })`) delivers that construction to
+the binding, which adopts its store at a first bind as at a rebind (`@FR-O-Move`, loft#2674);
+**`LOFT_NO_DELIVERED_FIRST_ADOPT=1`** copies at the first bind while the literal's buffer stays
+paired with the binding — one leaked record per first bind.  Only a callee whose EVERY return
+hands the parameter back delivers it; **`LOFT_NO_DELIVERED_EVERY_RETURN=1`** reads the tail
+alone, so a rebind from `if p.v > 3 { return P { … }; } p` adopts plainly and the run answering
+the fresh record leaves the literal to nobody.  Guards `loft-suite/rules/ownership/O-Move/`.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a

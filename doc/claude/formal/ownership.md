@@ -846,6 +846,12 @@ analysis directly (the certifier sidesteps it).
   run answering an always-fresh arm (a double free) breaks the per-path fact.  Guard
   `loft-suite/rules/ownership/O-Complete/2671-…`, `@catches: LOFT_NO_JOIN_RETURN_BACKINGS`.
 
+- **A local bound from a call that hands its literal argument back owns one store (`O-Move`,
+  `O-Buffer`, loft#2674)** — `x = id(P { … })` adopts the literal's store at the first bind as
+  at every rebind, and only a callee whose EVERY return hands its parameter back is read as
+  delivering it; `if p.v > 3 { return P { … }; } p` copies its answer and the literal keeps its
+  own free.  Guard `loft-suite/rules/ownership/O-Move/2674-…`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN

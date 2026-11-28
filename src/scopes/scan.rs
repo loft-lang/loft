@@ -310,6 +310,14 @@ impl Scopes<'_> {
                 let first = !self
                     .var_scope
                     .contains_key(self.var_mapping.get(ov).unwrap_or(ov));
+                // loft#2674 — …except where the call DELIVERS the construction it was handed
+                // (`delivered_work_ref`, loft#1575's `s = me(Bx { … })`): the binding adopts that
+                // store at a rebind, and the construction's buffer is paired with the binding as
+                // its adopter.  Hoisted, the first bind copied the answer instead, the pairing
+                // still took the buffer's free, and the construction leaked once per first bind.
+                // `LOFT_NO_DELIVERED_FIRST_ADOPT=1` hoists it again.
+                let delivered = crate::keys::delivered_first_adopt()
+                    && super::backings::delivered_work_ref(value, function, data).is_some();
                 let set = self.scan_set(*ov, value, function, data);
                 // A FIRST bind of a call whose arguments were hoisted (`{ INSERT <literals>; f(…) }`, `scan_args`)
                 // is bound as the call itself, its preamble run first: the bind arm reads the
@@ -323,6 +331,7 @@ impl Scopes<'_> {
                 let set = match set {
                     Value::Set(v, val)
                         if first
+                            && !delivered
                             && !crate::env_once!(
                                 std::env::var_os("LOFT_NO_SET_PREAMBLE_HOIST").is_some()
                             )

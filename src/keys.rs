@@ -3341,6 +3341,24 @@ pub fn arm_frees_param_deps() -> bool {
     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
 }
 
+/// `LOFT_NO_DELIVERED_EVERY_RETURN=1` — a callee whose TAIL hands its parameter back counts as
+/// delivering the construction it was handed even where an earlier `return` answers a record of
+/// its own, as before loft#2674.
+#[must_use]
+pub fn delivered_every_return() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_EVERY_RETURN"))
+}
+
+/// `LOFT_NO_DELIVERED_FIRST_ADOPT=1` — a first bind of a call that delivers its construction
+/// hoists the construction out and copies the answer, as before loft#2674, while the
+/// construction's buffer is still paired with the binding as its adopter: the buffer leaks.
+#[must_use]
+pub fn delivered_first_adopt() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_FIRST_ADOPT"))
+}
+
 /// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local
 /// the body assigns copies even where the source IS that buffer, as before loft#2673: the
 /// re-mint clears the record and the copy reads the cleared record back.

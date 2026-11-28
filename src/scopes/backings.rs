@@ -252,6 +252,26 @@ pub(super) fn delivered_work_ref(rhs: &Value, function: &Function, data: &Data) 
         let Value::Var(returned) = body else {
             return None;
         };
+        // loft#2674 — and EVERY return hands that parameter back.  A callee whose tail does but
+        // which leaves earlier with a record of its own (`if p.v > 3 { return P { … }; } p`)
+        // answers the construction on some runs only, so the binding cannot adopt the
+        // construction's store: read as delivered, the bind stayed the plain adopt, the run
+        // that answered the fresh record left the construction's store to nobody, and the
+        // interpreter read the other run's answer out of a released store (`0`).
+        // `LOFT_NO_DELIVERED_EVERY_RETURN=1` reads the tail alone again.
+        if crate::keys::delivered_every_return() {
+            let mut other_return = false;
+            def.code.walk(&mut |n| {
+                if let Value::Return(r) = n
+                    && !matches!(r.unspan(), Value::Var(x) if x == returned)
+                {
+                    other_return = true;
+                }
+            });
+            if other_return {
+                return None;
+            }
+        }
         // The argument is the construction itself while the scan reads it — its block, whose
         // tail is the work-ref — or, once lifted, that work-ref by name.
         def.returned.depend().iter().find_map(|&k| {
