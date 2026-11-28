@@ -22,7 +22,7 @@
 //!   later pass mints afresh (the interpreter's free leaves the variable as it was).
 //! - every `return` inside the nest that frees none of it frees the kept record first
 //!   (`free_before_returns`): a pass can return before its own mint, still holding the record
-//!   an earlier pass kept.
+//!   an earlier pass kept.  `LOFT_NO_LOOP_RECORD_RETURN_FREE=1` turns that clause off.
 //!
 //! A function that yields or calls a generator is declined (a live frame may hold the store).
 //! `LOFT_NO_LOOP_RECORD=1` turns the rule off on every backend (and `LOFT_NO_LOOP_BUFFER_REUSE=1`
@@ -295,8 +295,10 @@ fn rewrite(
     let inner = in_loop || matches!(v.unspan(), Value::Loop(_));
     v.for_each_child_mut(&mut |c| rewrite(c, recs, ops, hoisted, inner));
     if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
-        for (at, mine) in kept {
-            free_before_returns(&mut bl.operators[at], &mine, ops);
+        if crate::keys::loop_record_return_free_enabled() {
+            for (at, mine) in kept {
+                free_before_returns(&mut bl.operators[at], &mine, ops);
+            }
         }
     }
 }

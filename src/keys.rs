@@ -1805,6 +1805,18 @@ pub fn arm_scope_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
 }
 
+/// `@FR-R-LoopRecord`'s return paths (loft#2681): a `return` inside the loop nest of a kept
+/// loop record frees the record first unless its own block already does — **DEFAULT ON**,
+/// both backends (an IR rewrite in `opt::loop_record`).  Opt OUT with
+/// `LOFT_NO_LOOP_RECORD_RETURN_FREE`: a `return` the source wrote ahead of the record's
+/// declaration leaves the store an earlier pass kept live again — the first bisect step for a
+/// double free at such a `return`, and the switch the suite cell's `@catches:` names.
+/// `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_OWN_ORACLE=check-records` are the falsifiers.
+pub fn loop_record_return_free_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_RECORD_RETURN_FREE"))
+}
+
 /// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local
 /// adopts at its first bind is POOLED — minted once per activation and handed to every call,
 /// so a callee that promotes a local onto its buffer fills the caller's store instead of
