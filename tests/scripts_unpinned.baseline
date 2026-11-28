@@ -43,11 +43,9 @@ tests/scripts/a-guarded-row-fill-writes-what-its-guard-admits.loft
 tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
 tests/scripts/a-json-value-formats-as-its-json-on-every-backend.loft
 tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
-tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
 tests/scripts/a-lazy-reader-of-an-unbound-collection-answers-on-every-backend.loft
 tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
-tests/scripts/a-loop-buffer-kept-in-the-ir-reads-as-a-fresh-vector.loft
 tests/scripts/a-loop-reads-and-cuts-its-pushed-vector-through-the-header.loft
 tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft
 tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft
