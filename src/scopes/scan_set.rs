@@ -2981,17 +2981,18 @@ fn disarm_at_release(free: Value, v: u16, temps: &[u16], data: &Data) -> Value {
             })
             .collect()
     };
-    fn walk(n: &mut Value, v: u16, f: &dyn Fn(&Value) -> Option<Value>) {
+    fn walk(n: &mut Value, f: &dyn Fn(&Value) -> Option<Value>) {
         if let Some(r) = f(n) {
             *n = r;
             return;
         }
-        n.for_each_child_mut(&mut |c| walk(c, v, f));
+        n.for_each_child_mut(&mut |c| walk(c, f));
     }
     let mut out = free;
-    walk(&mut out, v, &|n: &Value| match n.unspan() {
+    walk(&mut out, &|n: &Value| match n.unspan() {
         Value::Call(d, args)
-            if *d == free_ref && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
+            if *d == free_ref
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(x)) if *x == v) =>
         {
             let mut ops = disarms();
             ops.push(n.clone());
