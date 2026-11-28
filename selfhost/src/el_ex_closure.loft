@@ -331,6 +331,11 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         if !(hint is TyFunction) && e.context >= 0 && el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid) is TyFunction {
           hint = el_types::base(el::def(e, e.context).returned[0] ?? ir::TyVoid);
         }
+        // (A short lambda of no parameters needs no hint for them: `|| { t }` is `fn()` whose
+        // result its body answers — loft#945's `infer_ret`, the hint naming none.)
+        if !(hint is TyFunction) && len(params) == 0 {
+          hint = ir::TyFunction { args: [], result: ir::TyUnknown { n: 0 }, dep: [], consts: 0 };
+        }
         if !(hint is TyFunction) {
           return refuse_lambda(e, vars, at, params, names, body, "a short lambda (`|…|`) with no `fn(…)` its position expects", ret_at: ret);
         }
@@ -489,7 +494,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         el_schema::lay_out_late(e, fr);
       }
       e.closure_var = -1;
-      key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint);
+      key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint, short: short);
       e.captures = saved_caps;
       e.closure_rec = saved_rec;
       e.closure_var = saved_var;

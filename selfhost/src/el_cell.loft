@@ -234,8 +234,10 @@ pub fn declared_assign(e: el::El, vars: el_vars::Vars, v: integer, rhs: integer)
   }
   // (A declaration is the local's first write: its cell is allocated here.)
   out = assign_place(e, vars, "=", Place { place: ir::NdVar { n: v }, cd: cd, v: v }, rhs, first: true);
-  // (A nullable NARROW integer cell's declaration mints the checked cast's `__dn4_N` — unused,
-  // its constant folded — as Rust's cell declaration does: measured, `a: u8? = 1` boxed.)
+  // (A nullable NARROW integer cell's declaration mints the checked cast's `__dn4_N`, unused:
+  // the checked narrowing's temporary, minted where the constant is not yet visible as one —
+  // src/parser/operators.rs `dn4_checked_cast`, reached from store_check.rs's checked narrowing;
+  // the write itself still folds the constant.  Measured on `a: u8? = 1` boxed.)
   dvt = value_of(e, cd);
   if dvt is TyOptional && match el_types::base(dvt) { TyInteger { spec: dsp } => el_types::narrow_width(dsp) > 0 || dsp.forced_size != 0, _ => false } {
     el_vars::create_unique(vars, "_dn4", ir::TyInteger { spec: ir::IntegerSpec { min: -2147483647, max: 2147483647, not_null: false, forced_size: 0 } });
