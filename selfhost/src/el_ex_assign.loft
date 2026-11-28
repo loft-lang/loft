@@ -1819,11 +1819,16 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
         // the loops both binds stand in; a loop's own variable is never that local.
         was_ended = known >= 0 && el_vars::binding_ended(vars, known);
         vars.loop_split_old = -1;
-        if known >= 0 && el_vars::name_of(vars, known) == name && was_ended {
+        // (The per-loop split asks the SOURCE spelling: a binding split once is `o#b3`.)
+        kn = if known >= 0 { el_vars::name_of(vars, known) } else { "" };
+        kspell = if kn.contains("#b") { kn[0..kn.find("#b") ?? len(kn)] } else { kn };
+        if known >= 0 && (kn == name || kspell == name) && was_ended {
           now = el_vars::current_loop(vars);
           was = el_vars::binding_loop(vars, known);
           if el_vars::was_loop_var(vars, known) || !(now >= 0 && was >= 0 && now != was) {
-            ended_bind = known;
+            if kn == name {
+              ended_bind = known;
+            }
           } else if el_vars::current_loop_ord(vars) >= 0 {
             // (Another loop's ended body local: the per-loop split's candidate, loft#1145.)
             ended_bind = known;
