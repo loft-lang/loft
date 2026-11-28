@@ -11,7 +11,8 @@ backend as it ships (`--native-c --ship`), which times the run apart from the im
 Best of `--runs` per side; the two answers must agree or the row is not a measurement.  A
 ratio over 3x is printed as such — the owner's line for telling the performance stream.
 """
-import argparse, os, shutil, subprocess, sys, tempfile
+import argparse, os, shutil, subprocess, sys
+import scratch  # noqa: E402
 
 KERNELS = [("fib", "n_fib", ["30"]), ("mix", "n_mix", ["5000000", "1"]),
            ("collatz", "n_longest", ["1", "100000"])]
@@ -39,7 +40,7 @@ def main():
     root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     loft = os.path.join(root, o.loft) if not os.path.isabs(o.loft) else o.loft
     env = dict(os.environ, LOFT_NO_CACHE="1")
-    tmp = tempfile.mkdtemp(prefix="loft-s14-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-s14-")
     try:
         measure(o, root, loft, env, tmp)
     finally:

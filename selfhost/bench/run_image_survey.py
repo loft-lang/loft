@@ -35,6 +35,7 @@ moves it, with the reason in the message.  Both need the whole corpus (no `--cha
 baseline records: a suite checkout at another commit is another corpus, and is refused by name.
 """
 import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys, tempfile
+import scratch  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
@@ -205,7 +206,7 @@ def main():
         # written for that same form.  The front layer runs the same writer over the same
         # tables, so its images are taken in that form too.
         env["LOFT_NO_TEXT_BORROW"] = "1"
-    tmp = tempfile.mkdtemp(prefix="loft-runimg-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-runimg-")
     try:
         out = os.path.join(tmp, "runner")
         os.makedirs(out, exist_ok=True)

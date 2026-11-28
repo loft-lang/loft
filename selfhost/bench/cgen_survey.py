@@ -31,7 +31,8 @@ writes none: the C backend refuses the program, which is no program of this corp
 
     python3 selfhost/bench/cgen_survey.py [--generator EXE] [--scripts-only] [--jobs N] [--top 30]
 """
-import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys
+import scratch  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
@@ -396,7 +397,7 @@ def main():
         if o.assume:
             env["LOFT_CGEN_ASSUME"] = o.assume
     switches = sorted(k for k, v in env.items() if k.startswith("LOFT_NO_") and v == "1")
-    tmp = tempfile.mkdtemp(prefix="loft-cgen-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-cgen-")
     if (o.form == "debug" or o.layer) and not (o.cgen or o.generator):
         sys.exit("--form debug and --layer compare a generator's output: give --cgen or --generator")
     try:

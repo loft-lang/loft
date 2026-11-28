@@ -18,7 +18,8 @@ which must hold:
 
     python3 selfhost/bench/run_image_bytecode.py [--scripts-only] [--jobs N] [--show]
 """
-import argparse, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, concurrent.futures as cf, os, re, shutil, subprocess, sys
+import scratch  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
@@ -72,7 +73,7 @@ def main():
     loft = o.loft or os.path.join(root, "target", "release", "loft")
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
-    tmp = tempfile.mkdtemp(prefix="loft-runbytes-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-runbytes-")
     try:
         out = os.path.join(tmp, "check")
         os.makedirs(out, exist_ok=True)

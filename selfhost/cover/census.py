@@ -15,7 +15,9 @@ carry), `leak` (it left records of the C runtime's stores live; the row says whe
 skipped: @EXPECT_ERROR / @EXPECT_FAIL / @ARGS / @EXPECT_WARNING files, and files with no main.
 The rows go to target/selfhost-census.tsv; the summary ranks the refusals by programs blocked.
 """
-import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bench"))
+import scratch  # noqa: E402
 
 SKIP = re.compile(r"@EXPECT_ERROR|@EXPECT_FAIL|@ARGS|@EXPECT_WARNING|@SCRIPT")
 
@@ -93,7 +95,7 @@ def main():
     loft = o.loft if os.path.isabs(o.loft) else os.path.join(root, o.loft)
     suite = os.environ.get("LOFT_SUITE_DIR", os.path.join(os.path.dirname(root), "loft-suite"))
     env = dict(os.environ, LOFT_NO_CACHE="1", LOFT_TIMEOUT="120")
-    tmp = tempfile.mkdtemp(prefix="loft-census-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-census-")
     try:
         census(o, root, loft, suite, env, tmp)
     finally:
