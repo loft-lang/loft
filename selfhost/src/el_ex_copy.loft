@@ -891,7 +891,9 @@ pub fn appends_call_in_loop(e: el::El, n: integer, name: text, looped: boolean) 
   }
   match e.p.nodes[n] {
     SAssign { op, target, e: rhs } => {
-      if looped && op == "+=" && rhs != null && e.p.nodes[rhs!] is SCall {
+      // (…or `name = f(…)` there, a call handed a vector buffer of its own: `var_call_rebound_nested`.)
+      rebinds_vec_call = op == "=" && rhs != null && match e.p.nodes[rhs!] { SCall { f: rcf } => rcf != null && match e.p.nodes[rcf!] { SName { name: rfn, member: rfm } => rfm == "" && el::def_nr(e, "n_{rfn}") >= 0 && el_types::base(el::def(e, el::def_nr(e, "n_{rfn}")).returned[0] ?? ir::TyVoid) is TyVector, _ => false }, _ => false };
+      if looped && (op == "+=" || rebinds_vec_call) && rhs != null && e.p.nodes[rhs!] is SCall {
         match e.p.nodes[target] {
           SName { name: tn, member } => { if member == "" && tn == name { return true; } },
           _ => {}
