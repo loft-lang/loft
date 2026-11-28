@@ -105,6 +105,21 @@ fn type_holds_generator(b: ir::Bundle, t: ir::TypeT, path: vector<integer>) -> b
   false
 }
 
+// port: drops.rs fn witness_hook — the hook a release through witness `w` runs for witnessed
+// local `v`: the cascade over the record `w` names, unless a copy off a parameter (`v`'s
+// `__hoff_` flag) made that record's release the caller's.
+pub fn witness_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, w: integer) -> ir::Node? {
+  hook = drop_hook(s, b, f, w);
+  if hook == null {
+    return null;
+  }
+  flag = scope_scan::get(s.handed_off, v);
+  if flag >= 0 {
+    return ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: hook! };
+  }
+  hook
+}
+
 // port: drops.rs fn scope_end_drop — the hook unless a move-copy took it; guarded on the
 // per-path hand-off flag.
 pub fn scope_end_drop(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> ir::Node? {

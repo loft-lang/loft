@@ -27,6 +27,8 @@ use scope_get_free_vars;
 use scope_tuple_members;
 use opt_names;
 use opt_vr_disturb;
+use scope_drops;
+use scope_witness;
 
 // The definitions the pass keys on, looked up once per image.
 pub struct Ops {
@@ -1155,8 +1157,35 @@ fn asks_minted_summary(b: ir::Bundle, value: ir::Node) -> boolean {
 
 // The `Value::Call` arm of `scan_inner`.
 fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f: ir::Function) -> ir::Node {
-  // The owner-witness arms (`OpDatabase` on a witnessed local) find `owner_witness` empty: the
-  // phase refuses every local `owner_witness_locals` could pick.
+  // loft#1510 / D-heap-4 — an IN-PLACE literal rebuild on a witnessed local: its hook runs
+  // through the witness first, and the witness re-points at the rebuilt record after.
+  if d_nr == s.ops.database && len(args) > 0 {
+    match scope_fn::unspan(args[0]!) {
+      NdVar { n: ov0 } => {
+        v = mapped(s, ov0);
+        w = get(s.owner_witness, v);
+        if w >= 0 {
+          ops: vector<ir::Node> = [];
+          hook = scope_drops::witness_hook(s, b, f, v, w);
+          if hook != null {
+            ops += [hook!];
+          }
+          ops += [scope_fn::v_set(w, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+          call_args: vector<ir::Node> = [ir::NdVar { n: v }];
+          call_args += args[1..];
+          ops += [ir::NdCall { def_nr: d_nr, args: call_args }];
+          ops += [scope_witness::witness_points_at(s, w, v)];
+          flag = get(s.handed_off, v);
+          if flag >= 0 {
+            ops += [scope_fn::v_set(flag, ir::NdBoolean { b: false })];
+          }
+          return ir::NdInsert { items: ops };
+        }
+      },
+      _ => {}
+    }
+  }
+  // The capture arms of a closure record (`owner_slot_handoff`) are refused by name.
   if d_nr == s.ops.set_dbref || d_nr == s.ops.free_if_distinct {
     first = scope_fn::unspan(args[0] ?? ir::NdNull);
     rec = match first {
