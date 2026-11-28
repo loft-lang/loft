@@ -150,13 +150,10 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     // A join copied into a container gives its bare call arms an owner before any analysis.
     jr = scope_join_rewrite::write_out_joined_copies(b, d.code[0]!, d.variables);
     vars = scope_fn::copy_function(d.variables);
-    orig_code = scope_join_rewrite::reassociate_coalesce_chains(b, jr.code, vars);
+    orig_code = scope_join_rewrite::reassociate_coalesce_chains(b, jr, vars);
     // `(G-Hold)` — a generator handle shared by a second holder takes a hold on its frame.
     orig_code = scope_handles::retain_shared_handles(b, d_nr, orig_code, vars);
     why = program[d_nr] ?? "";
-    if why == "" {
-      why = jr.why;
-    }
     stale = stale_callees(b, d_nr, orig_code, refused_nrs);
     ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], [], []);
     late = ph.late;
@@ -226,10 +223,9 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     if why != "" {
       if all_reasons {
         all: vector<text> = [];
-        for r in [program[d_nr] ?? "", jr.why] {
-          if r != "" {
-            all += [r];
-          }
+        pr = program[d_nr] ?? "";
+        if pr != "" {
+          all += [pr];
         }
         all += ph.whys;
         r = settled_rewrites(b, d, ph.code, ph.function);

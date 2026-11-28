@@ -122,27 +122,11 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
       }
     }
     // `move_join_hooks_into_arms`, `return_copies_whole_local`, `return_copies_view_holders`,
-    // `return_moved_holders`: the hooks of a returned record.
-    // `move_join_hooks_into_arms` moves the HOOKS of a join's sources into its arms, and
-    // `return_copies_whole_local`, `return_copies_view_holders`, `return_moved_holders` take a
-    // hook away from the sweep: for a record return no source has one (the phase refuses a
-    // record type with a cascade, and a vector source's elements are asked here).  A VECTOR
-    // return's sources are vectors and records, none with a cascade (the phase refuses both).
-    // A keyed, fn-ref, tuple or generator return builds no `materialized_view_return` copy,
-    // which all four read, so none of them applies to it.
-    if (scope_fn::is_record(tp) || scope_fn::base(tp) is TyVector) && !(scope_fn::base(tp) is TyRefVar) {
-      for v in 0..scope_fn::count(f) {
-        match scope_fn::base(scope_fn::tp(f, v)) {
-          TyVector { inner } => {
-            rec = own::heap_def_nr(inner);
-            if rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
-              scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a vector of droppable records beside a record return");
-            }
-          },
-          _ => {}
-        }
-      }
-    } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) && !(scope_fn::base(tp) is TyFunction) && !scope_fn::is_keyed(tp) && !(scope_fn::base(tp) is TyTuple) && !(scope_fn::base(tp) is TyIterator) {
+    // `return_moved_holders` read a `materialized_view_return` copy, which a record or vector
+    // return builds (carried below); a keyed, fn-ref, tuple or generator return builds none.
+    // Any other return refuses.
+    record_or_vector = (scope_fn::is_record(tp) || scope_fn::base(tp) is TyVector) && !(scope_fn::base(tp) is TyRefVar);
+    if !record_or_vector && !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) && !(scope_fn::base(tp) is TyFunction) && !scope_fn::is_keyed(tp) && !(scope_fn::base(tp) is TyTuple) && !(scope_fn::base(tp) is TyIterator) {
       scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a {scope_fn::kind_name(tp)} return");
     }
   }

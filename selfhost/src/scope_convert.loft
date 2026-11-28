@@ -100,9 +100,13 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     for member in scope_tuple_members::sorted_ints(arm_moved) {
       ls += [scope_fn::v_set(tuple_moved_flag(s, f, member), ir::NdBoolean { b: true })];
     }
-    // A record rebuilt in place re-mints no vector literal's backing (`remints_literal_backing`:
-    // a vector of droppable elements is refused by the phase), so its release follows at once.
-    ls += rebuilt.post;
+    // A vector literal's backing re-minted in place is REFILLED by the statements after this
+    // one, so its snapshot is released at the literal's end.
+    if remints_literal_backing(s, v, f) {
+      at_end += rebuilt.post;
+    } else {
+      ls += rebuilt.post;
+    }
     if promoted_refill.waits {
       at_end += promoted_refill.post;
     } else {
@@ -724,10 +728,9 @@ fn tuple_member_moves(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::
       }
       if d == copy_d && len(args) >= 3 && member >= 0 {
         claim = scope_scan::tmap_get(certain, member / 65536, member % 65536);
-        // `call_minted_member_handoff` moves a release only for a member whose record carries
-        // a drop (`copy_moves_drop_from`, `copy_hands_off`): not transcribed.
-        if claim >= 0 && member_has_drop(b, f, member) {
-          scope_scan::refuse(s, "convert::call_minted_member_handoff: a call-minted tuple member with a drop moved");
+        moved = call_minted_member_handoff(s, b, claim, args[1]!, f);
+        if moved >= 0 {
+          scope_scan::set_add(s.drop_transferred, moved);
         }
         to_ref = match scope_fn::unspan(args[1]!) { NdVar { n: dst } => scope_fn::name(f, dst).starts_with("__ref"), _ => false };
         if claim == -1 && (to_ref || scope_join_rewrite::copy_hands_off(b, args[1]!, f)) {
@@ -739,7 +742,7 @@ fn tuple_member_moves(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::
           NdTupleGet { var: base, idx } => if scope_scan::get(s.var_scope, base) == s.scope {
             bk = scope_scan::tmap_get(s.tuple_member_now, base, idx);
             if bk >= 0 && scope_drops::drop_hook(s, b, f, bk) != null {
-              scope_scan::refuse(s, "convert: a tuple's vector member of droppable elements copied (tuple_member_now)");
+              scope_scan::set_add(s.drop_transferred, bk);
             }
           },
           _ => {}
@@ -753,16 +756,30 @@ fn tuple_member_moves(s: scope_scan::Scopes, b: ir::Bundle, v: ir::Node, f: ir::
   arm_moved
 }
 
-// The member's record type has a drop cascade.
-fn member_has_drop(b: ir::Bundle, f: ir::Function, member: integer) -> boolean {
-  match scope_fn::base(scope_fn::tp(f, member / 65536)) {
-    TyTuple { elems } => {
-      e = elems[member % 65536];
-      if e == null {
-        return false;
-      }
-      rec = own::heap_def_nr(e!);
-      rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE
+// port: convert.rs fn call_minted_member_handoff — the call buffer `buf` (the member's claim in
+// `tuple_call_mint`, -1 or -2 for none) whose release a whole-value copy of a call-minted tuple
+// member into `dest` hands over; -1 for none.
+fn call_minted_member_handoff(s: scope_scan::Scopes, b: ir::Bundle, buf: integer, dest: ir::Node, f: ir::Function) -> integer {
+  if buf < 0 {
+    return -1;
+  }
+  match scope_fn::unspan(dest) {
+    NdVar { n: target } => if scope_fn::name(f, target).starts_with("__ref") {
+      return scope_handoff::copy_moves_drop_from(s, b, f, target, buf, true);
+    },
+    _ => {}
+  }
+  // A PLACE whose container releases what it holds takes the release too.
+  if scope_join_rewrite::copy_hands_off(b, dest, f) { buf } else { -1 }
+}
+
+// port: convert.rs fn remints_literal_backing — `OpDatabase(__vdb_N, …)`, the re-mint of a vector
+// literal's backing that the literal's following statements refill.
+fn remints_literal_backing(s: scope_scan::Scopes, stmt: ir::Node, f: ir::Function) -> boolean {
+  match scope_fn::unspan(stmt) {
+    NdCall { def_nr, args } => def_nr == s.ops.database && len(args) > 0 && match scope_fn::unspan(args[0]!) {
+      NdVar { n } => n < scope_fn::count(f) && scope_fn::name(f, n).starts_with("__vdb_"),
+      _ => false
     },
     _ => false
   }
