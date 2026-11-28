@@ -1156,6 +1156,10 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                 ft = el_types::with_deps(ft, if sroot >= 0 { [sroot] } else { [] });
               } else if ft is TyText {
                 ft = el_types::without_deps(ft);
+              } else if keyed_kind(ft) && !(ft is TyOptional) {
+                // (A keyed field binds as the collection the field holds, read in place — a view
+                // the binding never frees, its type borrowing nothing.)
+                ft = el_types::without_deps(ft);
               } else if !el_convert::plain_scalar(el_types::base(ft)) && !el_convert::plain_enum(el_types::base(ft)) {
                 el::refuse(e, "a variant field binding of this type: {type_kind(ft)}");
                 return null;
@@ -1200,6 +1204,11 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                 }
                 r.aliases += [el_vars::VarName { name: bname, nr: el_vars::var(vars, bname) }];
                 el_vars::set_name(vars, bname, mv);
+              }
+              if !e.first_pass && !vars.mv_origins.contains(mv) {
+                vars.mv_origins += [mv];
+                vars.mv_origin_reads += [field_get(e, vd, fa, subj) ?? ir::NdNull];
+                vars.mv_origin_defs += [vd];
               }
               ab += [el_ir::v_set(mv, read!)];
               anames += [bname];

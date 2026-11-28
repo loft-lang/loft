@@ -359,7 +359,12 @@ pub fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir
     // subject's record (loft#1398): typed with the subject's source as its dep
     // (`match_borrow_source`, `element_view_of`), freeing nothing.
     heap = match el_types::base(ft) { TyReference { n: _ } => true, TyVector { inner: _ } => true, TyEnum { is_ref } => is_ref, _ => false };
-    if !el_convert::plain_scalar(el_types::base(ft)) && !is_text && !heap {
+    // (A keyed payload binds as the collection the field holds, a view borrowing nothing.)
+    keyed_cap = keyed_kind(el_types::base(ft)) && !(ft is TyOptional);
+    if keyed_cap {
+      ft = el_types::without_deps(ft);
+    }
+    if !el_convert::plain_scalar(el_types::base(ft)) && !is_text && !heap && !keyed_cap {
       refuse_known(e, ft, "an `is` capture of a field of this type: {type_kind(ft)}");
       return ex(ir::NdNull, ir::TyBoolean);
     }
@@ -380,6 +385,12 @@ pub fn capture_test(e: el::El, vars: el_vars::Vars, x: Ex, vd: integer, test: ir
     if read == null {
       el::refuse(e, "an `is` capture of a field this port reads no value of");
       return ex(ir::NdNull, ir::TyBoolean);
+    }
+    // (`mv_field_origin`, loft#1160: the field this capture projects.)
+    if !e.first_pass && !vars.mv_origins.contains(v) {
+      vars.mv_origins += [v];
+      vars.mv_origin_reads += [read!];
+      vars.mv_origin_defs += [vd];
     }
     vars.is_bindings += [el_ir::v_set(v, read!)];
     vars.is_aliases += [el_vars::CaptureAlias { name: f, nr: el_vars::var(vars, f) }];

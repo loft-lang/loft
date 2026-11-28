@@ -334,6 +334,14 @@ pub struct Vars {
   pub empty_tail: integer = -1,
   pub field_links: vector<integer> = [],
   pub field_link_syn: vector<integer> = [],
+  // `mv_field_origin` (loft#1160): a variant payload binding, the field read it projects and the
+  // variant — a write through the binding to a member of a linked group is spelled against the
+  // field (`resolved_group_write`).  Second pass only.
+  pub mv_origins: vector<integer> = [],
+  pub mv_origin_reads: vector<ir::Node> = [],
+  pub mv_origin_defs: vector<integer> = [],
+  // (The binding whose append is being re-spelled now, so the inner build takes the plain road.)
+  pub group_write: integer = -1,
   // `Function::fn_lambda_map`'s question on both passes: the locals a capturing lambda was
   // bound to (`closure_made` is the pending build, taken by the bind).
   pub closure_bound: vector<integer> = [],

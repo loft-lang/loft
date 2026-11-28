@@ -1442,6 +1442,44 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
       el_vars::mark_user_appended(vars, pl.root, "parse_assign_inner");
     }
   }
+  // `resolved_group_write` (`(Col-Group)`, loft#1160): an append through a variant payload
+  // binding whose field is a member of a linked group is spelled against the field, so the
+  // record is made on the variant and reaches the siblings.
+  if op == "+=" && !e.first_pass && rhs != null && e.p.nodes[rhs!] is SVecLit {
+    match e.p.nodes[target] {
+      SName { name: gbn, member: gbm } => {
+        gbv = if gbm == "" { el_vars::var(vars, gbn) } else { -1 };
+        gbi = -1;
+        for gbo in vars.mv_origins {
+          if gbo == gbv {
+            gbi = gbo#index;
+          }
+        }
+        if gbi >= 0 && vars.group_write != gbv && variant_group_member(e, vars.mv_origin_defs[gbi]!, vars.mv_origin_reads[gbi]!) {
+          // The binding's own append, its records made on the variant (`OpNewRecord(subject,
+          // <variant>, <field>)`) where they were made in the binding: the binding keeps its
+          // pre-allocation, as Rust keeps `vec`.
+          gvd = vars.mv_origin_defs[gbi]!;
+          gsubj = match el_ir::unspan(vars.mv_origin_reads[gbi]!) { NdCall { args: gra } => gra[0] ?? ir::NdNull, _ => ir::NdNull };
+          gpos = match el_ir::unspan(vars.mv_origin_reads[gbi]!) { NdCall { args: gra2 } => match el_ir::unspan(gra2[1] ?? ir::NdNull) { NdInt { n: gp } => gp, _ => -1 }, _ => -1 };
+          gfnr = -1;
+          for gf in el_schema::struct_fields(e, el::def(e, gvd).known_type) {
+            if el_schema::field_position(e, el::def(e, gvd).known_type, gf.name) == gpos {
+              gfnr = gf#index;
+            }
+          }
+          if !(gsubj is NdNull) && gfnr >= 0 {
+            outer_gw = vars.group_write;
+            vars.group_write = gbv;
+            gx = assignment_inner(e, vars, at, fixed, op, target, rhs);
+            vars.group_write = outer_gw;
+            return ex(group_respell(e, gx.code, gbv, gsubj, el::def(e, gvd).known_type, gfnr), gx.tp);
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   // (A write through a link to a keyed field (`a = &b.h; a += [R {…}]`) is the field's: `+=`
   // reads as `b.h += …`; any other write through it is not carried.)
   match e.p.nodes[target] {
@@ -2499,6 +2537,11 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
   // lost write (`mark_copy_bound`, at the text bind, `lower_vec_copy_bind` and the keyed
   // replace alike).
   amp_bind = match e.p.nodes[rhs!] { SUnary { op: ro } => ro == "&", _ => false } || x.tp is TyRefVar;
+  // (`mv_field_origin`, loft#1664: a `&` link to a collection field of a local has that field as
+  // its origin.)
+  if op == "=" && v >= 0 && el_ex_bind::is_link(e, rhs!) && el_types::is_collection(el_types::base(x.tp)) {
+    el_ex_vector::link_origin(e, vars, v, x.code);
+  }
   // `@FR-B-Ref-Alias`, `@FR-H-FreeTwice`: a `&` link to a collection shares its source's store
   // and every whole-value write goes through it, so it never owns one — never freed.
   if op == "=" && v >= 0 && !e.first_pass && match e.p.nodes[rhs!] { SUnary { op: ao } => ao == "&", _ => false } && el_types::is_collection(el_types::base(x.tp)) {
@@ -3173,5 +3216,67 @@ fn bound_rhs(code: ir::Node, dst: integer) -> ir::Node? {
       null
     },
     _ => null
+  }
+}
+
+// `origin_is_group_member` for a variant's field read (`OpGetField(subject, pos, …)`): the field
+// is one of two or more collections of the variant over the same record, one of them keyed.
+fn variant_group_member(e: el::El, vd: integer, read: ir::Node) -> boolean {
+  pos = match el_ir::unspan(read) { NdCall { args: ra } => if len(ra) == 3 { match el_ir::unspan(ra[1]!) { NdInt { n: rp } => rp, _ => -1 } } else { -1 }, _ => -1 };
+  if vd < 0 || pos < 0 {
+    return false;
+  }
+  me = -1;
+  for a in el::def(e, vd).attributes {
+    if el_schema::field_position(e, el::def(e, vd).known_type, a.name) == pos {
+      at = el_types::base(a.typedef[0] ?? ir::TyVoid);
+      me = match at { TyVector { inner: ai } => struct_ref(e, ai), _ => if keyed_kind(at) { el_types::keyed_elem(at) } else { -1 } };
+    }
+  }
+  if me < 0 {
+    return false;
+  }
+  same = 0;
+  keyed = 0;
+  for a in el::def(e, vd).attributes {
+    at = el_types::base(a.typedef[0] ?? ir::TyVoid);
+    if keyed_kind(at) && el_types::keyed_elem(at) == me {
+      same += 1;
+      keyed += 1;
+    } else if match at { TyVector { inner: ai } => struct_ref(e, ai) == me, _ => false } {
+      same += 1;
+    }
+  }
+  same > 1 && keyed > 0
+}
+
+// `resolved_group_write`'s spelling: each record an append made in binding `b`
+// (`OpNewRecord(b, …)` / `OpFinishRecord(b, …)`) made on the variant's field instead.
+fn group_respell(e: el::El, n: ir::Node, b: integer, subj: ir::Node, kt: integer, fnr: integer) -> ir::Node {
+  match n {
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if (nm == "OpNewRecord" || nm == "OpFinishRecord") && len(args) >= 3 && el_ir::unspan(args[0]!) == ir::NdVar { n: b } {
+        if nm == "OpNewRecord" {
+          return el_ir::cl(e, nm, [subj, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]);
+        }
+        return el_ir::cl(e, nm, [subj, args[1]!, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]);
+      }
+      ir::NdCall { def_nr: def_nr, args: [for a in args { group_respell(e, a, b, subj, kt, fnr) }] }
+    },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: group_respell(e, inner, b, subj, kt, fnr) },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: group_respell(e, inner, b, subj, kt, fnr) },
+    NdInsert { items } => ir::NdInsert { items: [for it in items { group_respell(e, it, b, subj, kt, fnr) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: group_respell(e, t, b, subj, kt, fnr), f: group_respell(e, f, b, subj, kt, fnr) },
+    NdBlock { block } => {
+      gb = block[0];
+      gops: vector<ir::Node> = [];
+      for go in block[0].operators {
+        gops += [group_respell(e, go, b, subj, kt, fnr)];
+      }
+      gb.operators = gops;
+      ir::NdBlock { block: [gb] }
+    },
+    _ => n
   }
 }
