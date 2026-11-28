@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 689 of 1 189 programs agree; 214 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 10) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 10): 1 604 of 2 282 programs, 34 800 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 720 of 1 189 programs agree; 183 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 11) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 11): 1 712 of 2 282 programs, 35 835 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -577,6 +577,64 @@ returns 70 each.
 
 Sole refusal families now (programs): the view walk's materialise legs 52, `place_result` 29,
 `owner_witness_locals` 23, the value-form remainder 11, `callref_collection_join_base` 9.
+
+**Step 11 (2026-11-28) — `exit_record`, the `returns` family, handles, the keyed branch.**
+`scope_exit_record.loft` is `exit_record.rs` whole (`(R-ExitVector)`'s record clause), run by
+`check` after `exit_vector`; `scope_exit_vector` gains Rust's `Ops::lookup` and `exit_guard` for
+it.  `free_vars` no longer refuses a fn-ref, keyed, tuple or generator return (none builds the
+`materialized_view_return` copy `move_join_hooks_into_arms` and its siblings read), and the legs
+those returns reach are transcribed: loft#1142's keyed join, the @P329 tuple-of-text staging,
+@P378(b)'s lifted-condition `if` (missing before for records and vectors too),
+`renumber_text_buffer` for a tuple's members, `insert_free`'s fn-ref block hoist (loft#1469), and
+`(G-Hold)`'s function-exit release of a generator's handle parameters.  `scope_handles.loft` is
+`handles.rs` whole: `retain_shared_handles` runs before the scan in place of the refusal of every
+body with a handle local, a handle binding takes `scan_set`'s rebind release (loft#835) and
+`get_free_vars`' scope-exit release.  `rewrite_keyed_replace_branch` (loft#1320) is in
+`scope_args.loft` beside the other `arm_lift` ports.  `scan_set`'s `@FR-B-View` lift dep now
+uses the whole `Type::with_deps` port (`scope_inline_returns::with_deps`, which gains its
+`RefVar` and `Tuple` legs): its own copy knew records and vectors only, so a keyed local bound
+to a projection of a lifted call kept owning.
+
+Refused by name, in the phase: a generator handle moved into a field or an element
+(`handoff::handle_handoff`: `collect_drop_transferred` and the arm hand-off flag are not
+transcribed), and a handle local given both a member's handle and one of its own
+(`mixed_handle_views`' per-path flag).
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 10 | 1 604 / 2 282 | 34 800 / 40 088 | 0 | 689 |
+| + `exit_record` | 1 615 | 34 852 | 0 | |
+| + fn-ref returns | 1 620 | 34 878 | 0 | |
+| + keyed returns, `with_deps` | 1 662 | 35 292 | 0 | |
+| + tuple returns, @P378(b) | 1 662 | 35 354 | 0 | 704 |
+| + generator functions | 1 662 | 35 575 | 0 | |
+| + `handles.rs`, handle locals | 1 704 | 35 818 | 0 | |
+| + `rewrite_keyed_replace_branch` | 1 712 / 2 282 | 35 835 / 40 088 | 0 | 720 |
+
+No definition that agreed was lost at any step, nor a whole-path program; its faults and leak
+are step 7's.  The stale-callee cascade: 165 definitions refused for nothing else (376 at step
+10), in 58 programs; behind it, by programs, `arm_lift` 23, the owner witness 16,
+`place_result` 14, tuple members 8.  By first refusal: tuple bindings 127, closure records 126,
+the view walk 63, drop hooks 57, the owner witness 45, `place_result` 43.
+
+Sole refusal families now (programs): tuples 123 (392 definitions: `scan_set`'s tuple
+binding, `register_binding`'s member backings, `tuple_owned_elem_frees`), the view walk's
+materialise legs 60, `place_result` 38, drop cascades 32, the owner witness 32, `arm_lift` 27
+(the value-form remainder 25), `callref_collection_join_base` 10.  Tuples are the next lever:
+`tuple_members.rs` (533 lines) with the tuple legs of `scan`, `scan_set`, `args` and
+`get_free_vars`.
+
+Two loft defects met, both backends:
+- silent: a vector literal assigned to a field of an element whose index is a field read is built
+  in place, its destination cleared before a call inside the literal reads it —
+  `d.vs[p.i].xs = [first(d, 0)]` stores `[-1]` where `first` reads `d.vs[0].xs[0]` (7); with
+  `k = 0; d.vs[k].xs = …` it is right.  Worked around in `scope_exit_record::apply` by binding
+  the value first;
+- a parse error: a struct literal of a struct declared LATER in the file does not parse when a
+  field value holds a range whose start is an integer literal written tight —
+  `Ro { ok: [for _ in 0..n { true }] }` reports "Expect token ;" at `n`; `0 .. n`, `z..n`, or
+  the struct declared first all parse.  This is step 10's `scope_const_fn` failure: the
+  qualified call was not the cause.
 
 ## Passes
 
