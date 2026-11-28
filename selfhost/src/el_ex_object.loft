@@ -1275,8 +1275,18 @@ pub fn enum_field(e: el::El, vars: el_vars::Vars, x: Ex, ed: integer, name: text
   match place {
     NdVar { n } => { t = el_types::with_deps(t, [n]); },
     _ => {
-      el::refuse(e, "a field of a struct enum read off something other than a local");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      // (A field's or an element's value — `v[0].x` — is read where it lies when every variant
+      // lays the field out at one offset: one read of the place, a view of its root.  A field
+      // only some variants declare, or at several offsets, reads the place again per test: not
+      // carried.)
+      proot = place_root(e, place);
+      uniform = len(owning) == total && len([for ov in owning if field_position(e, ov, name) != field_position(e, found, name) { 1 }]) == 0;
+      slot_read = match place { NdCall { def_nr: spd } => el::def(e, spd).name == "OpGetField" || el::def(e, spd).name == "OpGetVector", _ => false };
+      if proot < 0 || !uniform || !slot_read {
+        el::refuse(e, "a field of a struct enum read off something other than a local");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      t = el_types::with_deps(t, [proot]);
     }
   }
   if e.first_pass {
