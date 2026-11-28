@@ -4,6 +4,7 @@
 # `lil_check.py --discover --write` in the commit that moves it.
 loft-suite/rules/binding/B-Copy/1472-a-materialised-value-struct-view-keeps-its-absence.loft
 loft-suite/rules/binding/B-Copy/1686-a-local-bound-from-a-vector-constant-copies-it.loft
+loft-suite/rules/binding/B-Copy/1690-a-bind-written-into-the-arms-of-a-coalesce-is-the-same-on-both-passes.loft
 loft-suite/rules/binding/B-Copy/201-bind-copies-projection-views.loft
 loft-suite/rules/binding/B-Copy/a-keyed-local-rebound-from-a-call-that-reads-it-keeps-its-records.loft
 loft-suite/rules/binding/B-Copy/a-re-bind-of-a-whole-local-copies-in-every-spelling.loft
@@ -24,6 +25,7 @@ loft-suite/rules/binding/B-Scope/1700d-a-split-binds-literal-is-built-into-the-n
 loft-suite/rules/binding/B-Scope/1955b-a-rebind-reading-its-old-value-keeps-it.loft
 loft-suite/rules/binding/B-Scope/2389-a-local-first-bound-in-a-later-arm-is-in-scope-for-its-free.loft
 loft-suite/rules/binding/B-Scope/2401-a-capture-reassigned-in-a-nested-block-is-read-after-it.loft
+loft-suite/rules/binding/B-Scope/2591-a-name-an-alternation-captured-ends-with-its-arm.loft
 loft-suite/rules/binding/B-Scope/a-sibling-loop-destructure-is-its-own-binding.loft
 loft-suite/rules/binding/B-View-Depth/a-nested-keyed-projection-is-a-view-like-its-vector-twin.loft
 loft-suite/rules/binding/B-View/2489-a-local-bound-from-a-declared-view-of-a-call-result-views-it.loft
@@ -121,10 +123,13 @@ loft-suite/rules/heap/H-Claim/a-freed-file-leaves-no-type-for-the-next-store-in-
 loft-suite/rules/heap/H-Claim/a-par-text-result-leaves-its-output-record-intact.loft
 loft-suite/rules/heap/H-Claim/a-text-keyed-append-releases-only-a-key-it-wrote.loft
 loft-suite/rules/heap/H-ClearRelease/157-store-reset.loft
+loft-suite/rules/heap/H-ClearRelease/a-reused-buffer-is-released-whatever-its-slots-hold.loft
 loft-suite/rules/heap/H-Free/2526-a-text-match-arm-that-may-return-keeps-its-value.loft
 loft-suite/rules/heap/H-Handle/a-copied-file-reads-at-its-own-cursor.loft
+loft-suite/rules/heap/H-Handle/a-file-dying-anywhere-releases-its-handle.loft
 loft-suite/rules/heap/H-Handle/a-file-field-takes-an-append-as-a-file-local-does.loft
 loft-suite/rules/heap/H-LongRef/a-stored-reference-keeps-its-record-when-the-collection-moves.loft
+loft-suite/rules/heap/H-Move/a-file-local-moved-into-a-structure-keeps-its-handle.loft
 loft-suite/rules/heap/H-NewRec/a-recursive-enum-builds-its-vector-children-in-one-literal.loft
 loft-suite/rules/heap/H-RefVal/a-heap-read-and-write-follow-the-null-and-index-rules.loft
 loft-suite/rules/heap/H-Removed/a-reference-to-a-displaced-hash-entry-reads-null.loft
@@ -233,6 +238,7 @@ loft-suite/rules/rewrites/R-Alias/a-result-local-that-adopts-its-buffer-versions
 loft-suite/rules/rewrites/R-Alias/a-versioned-loop-sees-its-adopted-buffer.loft
 loft-suite/rules/rewrites/R-AppendTwin/a-work-buffer-is-the-append-twins-destination.loft
 loft-suite/rules/rewrites/R-Base/157-vector-base.loft
+loft-suite/rules/rewrites/R-Base/158-a-base-survives-a-growth-of-another-store.loft
 loft-suite/rules/rewrites/R-Base/158-text-base.loft
 loft-suite/rules/rewrites/R-Base/a-boolean-field-of-an-element-is-read-through-the-held-base.loft
 loft-suite/rules/rewrites/R-Base/a-byte-element-read-through-the-held-base-answers-the-template.loft
@@ -253,6 +259,7 @@ loft-suite/rules/rewrites/R-Const/a-literal-bodied-function-is-a-constant.loft
 loft-suite/rules/rewrites/R-Const/a-literal-table-is-built-from-its-constant.loft
 loft-suite/rules/rewrites/R-CtorLiteral/a-constructor-literal-keeps-its-arguments-evaluated-once-and-its-vectors-apart.loft
 loft-suite/rules/rewrites/R-CtorLiteral/a-constructor-of-scalars-travels-as-a-value-record-and-one-with-a-vector-is-its-literal.loft
+loft-suite/rules/rewrites/R-Destination/a-call-result-moved-into-an-element-is-built-there.loft
 loft-suite/rules/rewrites/R-DischargeInto/a-text-discharge-into-a-local-answers-the-read-or-the-default.loft
 loft-suite/rules/rewrites/R-ElemFirst/157-element-first.loft
 loft-suite/rules/rewrites/R-ElemFirst/a-rebound-element-first-temp-keeps-its-copy.loft
@@ -262,6 +269,7 @@ loft-suite/rules/rewrites/R-ExitVector/a-local-vector-moved-into-the-exit-litera
 loft-suite/rules/rewrites/R-ExpPow/e-raised-to-a-power-is-the-exponential.loft
 loft-suite/rules/rewrites/R-ExpPow/the-exponent-read-from-a-container-and-a-base-one-bit-off-e-is-still-a-power.loft
 loft-suite/rules/rewrites/R-FieldAppend/a-field-append-outside-a-loop-lands-in-its-field.loft
+loft-suite/rules/rewrites/R-FieldAppend/a-plain-vector-append-without-a-header-lands-in-its-slot.loft
 loft-suite/rules/rewrites/R-FileHold/a-held-cursor-decodes-every-typed-width-and-gives-the-record-back.loft
 loft-suite/rules/rewrites/R-Fill/a-fill-is-the-in-place-set-at-every-element-width.loft
 loft-suite/rules/rewrites/R-FlatCopy/a-flat-copy-moves-its-bytes-between-the-addresses-its-block-holds.loft
@@ -306,6 +314,7 @@ loft-suite/rules/rewrites/R-MoveLast/2192-a-local-copied-into-two-literals-is-mo
 loft-suite/rules/rewrites/R-MoveLast/2445-a-field-built-from-a-view-of-itself-keeps-the-copy.loft
 loft-suite/rules/rewrites/R-MoveLast/a-vector-given-up-to-another-local-is-exchanged-only-where-exact.loft
 loft-suite/rules/rewrites/R-Place/a-place-in-a-store-a-parameter-names-into-is-filled-as-written.loft
+loft-suite/rules/rewrites/R-Place/a-placed-loop-buffer-is-released-at-every-exit.loft
 loft-suite/rules/rewrites/R-PureReuse/a-pure-call-asked-for-twice-answers-what-two-calls-answer.loft
 loft-suite/rules/rewrites/R-Push/157-push-hoist.loft
 loft-suite/rules/rewrites/R-Push/a-path-read-and-pushed-in-one-loop-is-served-by-its-push-header.loft
@@ -334,8 +343,10 @@ loft-suite/rules/rewrites/R-Rebind/a-rebind-hands-its-own-record-only-where-the-
 loft-suite/rules/rewrites/R-Rebind/a-rebind-into-its-own-record-releases-the-field-it-replaces.loft
 loft-suite/rules/rewrites/R-Rebind/a-rebind-whose-call-is-not-made-mints-nothing.loft
 loft-suite/rules/rewrites/R-RecPtr/a-callee-twin-holds-its-record-address-like-the-plain-function.loft
+loft-suite/rules/rewrites/R-RecPtr/a-minted-element-takes-a-value-local-through-its-address.loft
 loft-suite/rules/rewrites/R-RecPtr/a-nested-field-read-through-an-address-sees-a-sub-record-write.loft
 loft-suite/rules/rewrites/R-RecPtr/a-record-parameter-holds-its-address-only-while-nothing-moves-it.loft
+loft-suite/rules/rewrites/R-RecPtr/a-value-record-is-copied-through-one-address.loft
 loft-suite/rules/rewrites/R-RefillBuffer/a-buffer-of-text-records-is-refilled-where-it-is.loft
 loft-suite/rules/rewrites/R-RefillBuffer/a-live-buffer-is-refilled-where-it-is.loft
 loft-suite/rules/rewrites/R-RefillBuffer/a-refilled-repeat-literal-is-overwritten-in-place.loft
@@ -386,11 +397,15 @@ loft-suite/rules/rewrites/R-TextLen/a-loop-reads-the-length-of-a-text-as-the-tex
 loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-lookup-by-several-integers-or-a-text-finds-the-entry-its-key-names.loft
 loft-suite/rules/rewrites/R-TypedKeyed/a-keyed-removal-starts-where-the-key-is-found.loft
 loft-suite/rules/rewrites/R-TypedRead/a-float-read-is-decoded-at-its-site-through-a-held-cursor.loft
+loft-suite/rules/rewrites/R-ValueLocal/a-small-record-local-written-field-wise-is-a-tuple.loft
 loft-suite/rules/rewrites/R-ValueLocal/a-small-record-parameter-is-a-tuple.loft
+loft-suite/rules/rewrites/R-ValueLocal/a-value-local-is-materialised-wherever-a-representation-is-owed.loft
 loft-suite/rules/rewrites/R-ValueLocal/a-value-record-local-rebound-through-a-call-has-no-store-to-track.loft
 loft-suite/rules/rewrites/R-ValueRecord/157-value-chain.loft
+loft-suite/rules/rewrites/R-ValueRecord/157-value-record.loft
 loft-suite/rules/rewrites/R-ValueRecord/1847-a-lifted-value-record-call-with-a-built-argument-compiles.loft
 loft-suite/rules/rewrites/R-ValueRecord/1992-a-record-returned-from-a-branch-that-holds-a-match-compiles.loft
+loft-suite/rules/rewrites/R-ValueRecord/a-nullable-record-returns-its-fields-in-registers.loft
 loft-suite/rules/rewrites/R-ValueRecord/a-small-record-built-into-a-work-local-and-returned-is-read-as-its-fields.loft
 loft-suite/rules/rewrites/R-ValueRecord/a-small-record-is-forwarded-or-built-where-it-is-owed.loft
 loft-suite/rules/rewrites/R-ValueRecord/a-small-record-returned-to-a-reader-is-a-tuple.loft
@@ -492,7 +507,9 @@ tests/scripts/14-formatting.loft
 tests/scripts/146-keyed-rekey-through-view.loft
 tests/scripts/1468-a-nullable-call-result-binds-without-an-ownerless-copy.loft
 tests/scripts/1522-a-rebind-releases-the-buffer-it-adopted.loft
+tests/scripts/1549-a-pooled-buffer-releases-its-previous-occupant.loft
 tests/scripts/1550-a-view-of-one-of-several-arguments-is-copied.loft
+tests/scripts/157-a-constructor-call-builds-its-literal-in-place.loft
 tests/scripts/157-a-loop-record-keeps-its-vectors.loft
 tests/scripts/157-a-struct-return-builds-into-the-callers-buffer.loft
 tests/scripts/157-a-vector-element-is-built-in-place.loft
@@ -522,6 +539,7 @@ tests/scripts/164-a-literal-exit-writes-its-chains-buffer.loft
 tests/scripts/164-element-place.loft
 tests/scripts/164-forward-tuple.loft
 tests/scripts/164-plan53-fn-ref-slot-uninit.loft
+tests/scripts/164-view-field.loft
 tests/scripts/167-a-frame-reader-decodes-a-linked-narrow-local.loft
 tests/scripts/17-min-max-clamp.loft
 tests/scripts/174-foreign-file.loft
@@ -553,6 +571,7 @@ tests/scripts/2241-a-token-1-trie-image-reads-as-written-by-page-and-converted-w
 tests/scripts/22c-par-sources.loft
 tests/scripts/22d-par-narrow.loft
 tests/scripts/23-field-overlap-structs.loft
+tests/scripts/2414-a-null-record-copied-into-a-fresh-slot-is-absent.loft
 tests/scripts/2499-a-match-with-a-leaving-arm-last-in-an-if-branch-runs.loft
 tests/scripts/25-index-elision-borrower.loft
 tests/scripts/25-nullable-character.loft
@@ -637,6 +656,7 @@ tests/scripts/a-hash-walk-is-in-key-order-across-widths-and-removals.loft
 tests/scripts/a-hash-walked-in-a-format-string-is-in-key-order.loft
 tests/scripts/a-hash-written-by-a-compound-subscript-keeps-every-entry.loft
 tests/scripts/a-join-arms-order-does-not-change-the-callers-lowering.loft
+tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
 tests/scripts/a-keyed-bind-from-a-call-on-a-vector-literal-compiles-natively.loft
 tests/scripts/a-keyed-entry-agrees-across-key-widths-and-removals.loft
 tests/scripts/a-leaf-bounds-test-is-taken-once-per-loop.loft
@@ -660,6 +680,7 @@ tests/scripts/a-nullable-call-temp-keeps-the-pooled-buffer-it-displaces.loft
 tests/scripts/a-par-workers-record-results-reach-the-caller-with-their-stores.loft
 tests/scripts/a-parameters-vector-holds-its-header-where-the-buffer-is-apart.loft
 tests/scripts/a-peeled-loop-leaves-its-trip-by-break-or-continue.loft
+tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft
 tests/scripts/a-pure-call-made-twice-is-computed-once.loft
 tests/scripts/a-push-fill-stores-each-element-kind.loft
 tests/scripts/a-read-a-statement-spells-twice-is-read-once.loft
@@ -694,6 +715,7 @@ tests/scripts/a-text-walks-loop-variable-returned-is-copied-out-and-borrowed.lof
 tests/scripts/a-transient-twin-writes-only-what-it-built.loft
 tests/scripts/a-tuple-parameter-is-declined-only-where-its-record-can-be-written.loft
 tests/scripts/a-twin-record-address-is-its-arguments-own.loft
+tests/scripts/a-vector-built-across-a-writing-call-keeps-its-elements.loft
 tests/scripts/a-vector-copied-element-by-element-is-one-append.loft
 tests/scripts/a-vector-delivered-into-its-own-buffer-is-not-copied.loft
 tests/scripts/a-vector-field-of-a-view-reads-through-its-address.loft
