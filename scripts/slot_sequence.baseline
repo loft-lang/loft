@@ -4,8 +4,6 @@
 # not listed here, and on a line here whose cell passes; a fix removes its lines in the same
 # change (`seq gate --update`, then read the diff).  Columns, tab-separated: cell, backend,
 # channel.  A line starting with `~` ends in a crash and may pass.
-e|bind:id.lit|bind:co.x|=w.x	c	double-free
-e|bind:id.lit|bind:co.x|=w.x	interp	double-free
 e|loop.pre:lit:lit|bind:lw.p|loop:w|=ret	c	store
 e|loop.pre:lit:lit|bind:lw.p|loop:w|=ret	interp	leak
 l|bind:mk|=w.x	c	value
@@ -14,10 +12,6 @@ l|bind:w.lit|=w.x	c	value
 l|bind:w.lit|=w.x	interp	value
 l|bind:wt.lit|drop.pk|bind:wt.lit|=x	c	store
 l|bind:wt.lit|drop.pk|bind:wt.lit|=x	interp	leak
-p.v|bind:co.lit|bind:id.lit|bind:lit|=x	c	double-free
-p.v|bind:co.lit|bind:id.lit|bind:lit|=x	interp	double-free
-p.v|bind:jn.w.p|bind:id.lit|loop.post:w:x|=jn	c	double-free
-p.v|bind:jn.w.p|bind:id.lit|loop.post:w:x|=jn	interp	double-free
 p.v|bind:jn.w.p|bump|loop:mk|=x	c	value
 p.v|bind:jn.w.p|bump|loop:mk|=x	interp	value
 p.v|loop.pre:lit:p|bind:w.p|bind:wt.p|=ret	c	store
@@ -28,22 +22,10 @@ p|loop.post:mk:x|bind:lw.p|loop.pre:w:x|=x	c	store
 p|loop.post:mk:x|bind:lw.p|loop.pre:w:x|=x	interp	leak
 p|loop.pre:lit:lit|bind:id.p|=p	c	store
 p|loop.pre:lit:lit|bind:id.p|=p	interp	leak
-r.at|bind:co.lit|bind:w.lito|bind:id.lit|=p	c	double-free
-r.at|bind:co.lit|bind:w.lito|bind:id.lit|=p	interp	double-free
-r.at|bind:co.p|bind:id.lit|=jn	c	double-free
-r.at|bind:co.p|bind:id.lit|=jn	interp	double-free
-r.at|bind:id.lit|bind:w.lito|bind:jn.w.p|=ret	c	double-free
-r.at|bind:id.lit|bind:w.lito|bind:jn.w.p|=ret	interp	double-free
-r.at|loop.post:w:p|bind:id.lit|bind:jn.w.p|=p	c	double-free
-r.at|loop.post:w:p|bind:id.lit|bind:jn.w.p|=p	interp	double-free
 r.at|loop:lit|bind:id.p|=jn	c	store
 r.at|loop:lit|bind:id.p|=jn	interp	leak
 r.at|loop:mk|bind:w.p|bind:wt.lit|=jn	c	store
 r.at|loop:mk|bind:w.p|bind:wt.lit|=jn	interp	leak
-r.xs|bind:co.p|bind:id.lit|=x	c	double-free
-r.xs|bind:co.p|bind:id.lit|=x	interp	double-free
-r.xs|bind:id.lit|bind:jn.w.p|bind:id.lit|=x	c	double-free
-r.xs|bind:id.lit|bind:jn.w.p|bind:id.lit|=x	interp	double-free
 r.xs|loop.post:lit:p|bind:w.p|bump|=x	c	store
 r.xs|loop.post:lit:p|bind:w.p|bump|=x	interp	leak
 r.xs|loop.post:lit:p|loop.pre:lit:lit|bind:w.p|=ret	c	store

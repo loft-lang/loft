@@ -852,6 +852,13 @@ analysis directly (the certifier sidesteps it).
   delivering it; `if p.v > 3 { return P { … }; } p` copies its answer and the literal keeps its
   own free.  Guard `loft-suite/rules/ownership/O-Move/2674-…`.
 
+- **A witnessed local that adopts a delivered literal is its one owner (`O-Witness`, `O-Move`,
+  loft#2689)** — where that local's ownership is MIXED (`x = alt(x) ?? x` beside
+  `x = id(P { … })`), its owner witness releases every store it holds, and the witness takes the
+  literal's store at the delivered bind.  So the store moves as loft#2594's does: the literal's
+  buffer is reset to null behind the bind and keeps no exit free.  A bind the witness does not
+  take keeps the buffer's free.  Guard `loft-suite/rules/ownership/O-Witness/2689-…`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN
