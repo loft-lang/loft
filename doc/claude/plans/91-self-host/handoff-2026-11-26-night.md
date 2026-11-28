@@ -45,8 +45,8 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
-- **2026-11-28 state:** loft30-gate 6887f0f7bc (1787/2284, 496 refused, 0 differ, 1 unaligned).
-  Try 27c6296024 is with the tester.  Next refusal families: the tester's list in
+- **2026-11-28 state:** loft30-gate 62e5ceddce (1797/2284, 486 refused, 0 differ).  Try
+  af532a1896 (tn4 + 153-p4) is with the tester.  Next refusal families: the tester's list in
   `single-family-worklist.md` (scratchpad) — 2500 `reference<…>` of an enum, 1274 an operator on
   a type variable, 1328 a fn-ref rebind, 2256 a text member branch, 1160 a variant binding write.
 - **A literal early `return` beside a constant exit, a parameter exit or a local tail** (probes
@@ -136,10 +136,10 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   literal`, `a return of a record that is not a literal`): R-HostStore's recursive struct-enum
   with early variant returns is the deep case.
 - `fn ret_vec(h: H4) -> vector<integer> { h.v }` with `struct H4` declared BELOW it (probe
-  `rv6`): Rust types the body block `vector<integer>`, with `H4` above `vector<integer>["h"]` —
-  a declaration-order dependence reported to the tester as a Rust deviation candidate, not
-  mirrored.  It holds back `t.0 = null` on a nullable vector tuple member
-  (`t.0 = OpNullRefSentinel()`, probe `tn4`), which would expose it in 153-p4.
+  `rv6`): MIRRORED on the owner's ruling (2026-11-28, Rust unchanged) — the body block keeps the
+  deps pass 1 gave its tail, none where pass 1 typed it `Unknown` outright (`El.p1_untyped_tail`;
+  a typed local of a struct declared below, 2497's `n_base`, is no such tail).  `t.0 = null` on
+  a nullable vector tuple member (tn4) and 153-p4 went with it.
 - A generic instance at TEXT whose tail is an `if`/`match` of text arms (`pick<T>(a, b, c) ->
   T { if c { a } else { b } }` at `text`, probe `gt1`): the port has `promote_monomorph_text_return`'s
   accumulator leg, but `text_instance_carried` refuses first.  Lifting that guard (an
