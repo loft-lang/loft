@@ -119,6 +119,10 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
   // @PLN85 P4-records — the record sources whose free is decided at run time against the
   // value returned (`null_arm_record_sources`).
   null_arm: vector<integer> = [];
+  // loft#2671 — the members of `null_arm` that are a source's backing rather than a source, and
+  // the sources of a join return that own nothing.
+  join_backings: vector<integer> = [];
+  view_sources: vector<integer> = [];
   if is_return {
     collect_return_sources(s, expr, sources);
     if return_has_null_arm(expr, s.ops.null_ref_sentinel) {
@@ -145,6 +149,24 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
       for v in sources {
         if bare_record(scope_fn::tp(f, v)) && owns_freeable_store(s, b, f, v) && !scope_fn::has(null_arm, v) {
           null_arm += [v];
+        }
+      }
+      // loft#2671, `(O-Complete)` — a source that owns nothing but VIEWS stores this frame owns
+      // (a local bound from a join names the temps its arms were lifted into): each such store
+      // is released unless it is the store returned.
+      if env_variable("LOFT_NO_JOIN_RETURN_BACKINGS") == null {
+        live_here = scope_scan::variables(s, to_scope);
+        for v in sources {
+          if !scope_fn::is_record(scope_fn::tp(f, v)) || owns_freeable_store(s, b, f, v) {
+            continue;
+          }
+          view_sources += [v];
+          for d in scope_fn::deps(f, v) {
+            if d != v && d < scope_fn::count(f) && !scope_fn::has(sources, d) && !scope_fn::has(null_arm, d) && scope_fn::has(live_here, d) && scope_fn::is_record(scope_fn::tp(f, d)) && owns_freeable_store(s, b, f, d) {
+              null_arm += [d];
+              join_backings += [d];
+            }
+          }
         }
       }
     }
@@ -178,6 +200,19 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     }
   }
   ls = scope_get_free_vars::get_free_vars(s, b, f, to_scope, tp, ret_var, Delivered { sources: sources });
+  // loft#2671 — a backing the sweep already releases is that free's; and a buffer guarded against
+  // a source that owns nothing needs the join leg's temp to be re-keyed on.
+  if len(join_backings) > 0 {
+    null_arm = [for d in null_arm if !scope_fn::has(join_backings, d) || !any_free_of(ls, d, s.ops.free_ref, s.ops.free_if_distinct) { d }];
+  }
+  view_guarded = false;
+  if len(view_sources) > 0 {
+    for op in ls {
+      if guard_against(op, view_sources, s.ops.free_if_distinct) {
+        view_guarded = true;
+      }
+    }
+  }
   // @PLN85 P4-records — at a RETURN, any record local's store may BE the returned store: its
   // free is conditional on not being it.  (`hooks_follow_returned_frees` moves no hook: none is
   // placed for a record without a cascade.)
@@ -187,7 +222,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
   expr_is_terminal = expr_ends_in_return(expr);
   // @PLN85 P4-records — a null-arm or joined record return: hoist the value to `__ret_N`, run
   // the sweep's frees against it, then free each join source unless it is the value returned.
-  if is_return && !expr_is_terminal && len(null_arm) > 0 {
+  if is_return && !expr_is_terminal && (len(null_arm) > 0 || view_guarded) {
     s.ret_temp_counter += 1;
     tmp = scope_fn::add_temp_var(f, "__ret_{s.ret_temp_counter}", tp);
     scope_scan::set_scope_of(s, tmp, s.scope);
@@ -196,6 +231,11 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     result = bind_return_temp(s, b, tmp, expr, f);
     if scope_fn::is_record(tp) {
       distinct_frees(s, f, ls, tmp, true);
+      // loft#2671 — a buffer kept where a source that owns nothing still names it is keyed on
+      // the value returned instead.
+      for k in 0..len(ls) {
+        ls[k] = rekey_guard(ls[k]!, view_sources, tmp, s.ops.free_if_distinct);
+      }
     }
     result += ls;
     for src in null_arm {
@@ -406,6 +446,49 @@ fn hidden_attr_named(d: ir::Definition, nm: text) -> boolean {
     }
   }
   false
+}
+
+// port: free_vars.rs fn names_free_of — a free of `w` in a sweep op: plain, witness-guarded, or
+// behind an `if`.
+fn names_free_of(op: ir::Node, w: integer, free: integer, free_if: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => (def_nr == free || def_nr == free_if) && len(args) > 0 && (match scope_fn::unspan(args[0]!) { NdVar { n: x } => x == w, _ => false }),
+    NdIf { t, f } => names_free_of(t, w, free, free_if) || names_free_of(f, w, free, free_if),
+    _ => false
+  }
+}
+
+fn any_free_of(ls: vector<ir::Node>, w: integer, free: integer, free_if: integer) -> boolean {
+  for op in ls {
+    if names_free_of(op, w, free, free_if) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: free_vars.rs fn guard_against — an `OpFreeRefIfDistinct(_, s)` with `s` in `witnesses`.
+fn guard_against(op: ir::Node, witnesses: vector<integer>, free_if: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => def_nr == free_if && len(args) > 1 && (match scope_fn::unspan(args[1]!) { NdVar { n: x } => scope_fn::has(witnesses, x), _ => false }),
+    NdIf { t, f } => guard_against(t, witnesses, free_if) || guard_against(f, witnesses, free_if),
+    _ => false
+  }
+}
+
+// port: free_vars.rs fn rekey_guard — every `OpFreeRefIfDistinct(_, s)` with `s` in `witnesses`
+// re-keyed on `ret`, through spans and `if` arms.
+fn rekey_guard(op: ir::Node, witnesses: vector<integer>, ret: integer, free_if: integer) -> ir::Node {
+  match op {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: rekey_guard(inner, witnesses, ret, free_if) },
+    NdCall { def_nr, args } => if guard_against(op, witnesses, free_if) {
+      ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == 1 { ir::NdVar { n: ret } } else { a } }] }
+    } else {
+      op
+    },
+    NdIf { cond, t, f } => ir::NdIf { cond: cond, t: rekey_guard(t, witnesses, ret, free_if), f: rekey_guard(f, witnesses, ret, free_if) },
+    _ => op
+  }
 }
 
 // port: free_vars.rs fn owns_freeable_store
