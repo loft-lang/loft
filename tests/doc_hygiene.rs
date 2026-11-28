@@ -4258,16 +4258,16 @@ fn every_server_test_owns_its_port_base() {
     let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests");
     let mut owner: std::collections::BTreeMap<u32, (String, String)> = Default::default();
     let mut clashes = Vec::new();
-    let mut files: Vec<_> = std::fs::read_dir(&root)
-        .unwrap()
-        .filter_map(Result::ok)
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "rs"))
+    let mut files: Vec<_> = fa::read_dir(&root)
+        .expect("cannot read tests/")
+        .into_iter()
+        .map(|e| e.os_spelling())
+        .filter(|p| fa::extension(p).is_some_and(|x| x == "rs"))
         .collect();
     files.sort();
     for path in files {
-        let name = path.file_name().unwrap().to_string_lossy().to_string();
-        let text = std::fs::read_to_string(&path).unwrap_or_default();
+        let name = fa::file_name(&path).unwrap_or_default();
+        let text = fa::read_to_string(&path).unwrap_or_default();
         let mut func = String::new();
         for line in text.lines() {
             let t = line.trim_start();
