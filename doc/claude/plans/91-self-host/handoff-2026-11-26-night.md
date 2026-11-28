@@ -182,6 +182,15 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   the FIRST pass (the result names `__retbuf` there).  A pass-2 branch is in the c035ae98
   scratchpad (held-tuple-shadow-vector-tail.patch); its pass-1 half does not fire — the first
   pass's tail is not the `__tp_` shadow read — and the program then goes refused → DIFF: held.
+- A format hole over a HASH a call answers (`"{for p in mkh() {p.k}}"`, probe fk2): Rust holds
+  no `_vector_N` — `_hash_scratch_N = n_hash_sorted(n_mkh(), <known>)`, the scratch typed without
+  borrows and the loop variable borrowing it, a `__lift_N: hash` minted last (inlineref).  Not
+  ported; it is refused on its old route (2579, a-for-ends-where-its-source-ends-…).
+- The elaborator's native build met "a store was freed twice" (loft#2675's class, a NEW trigger)
+  on fk8 with `format_for`'s call branch written as `if keyed { … } else if !(cb is TyVector) {
+  refuse; return null }` followed by `if cb is TyVector { sv = …; st = …; lt = …; init = … }`
+  (assignments to the function's locals inside a nested `if`).  The one `if / else if / else`
+  chain builds clean.  Trigger copy: double-free-trigger-el_ex_loop.loft, c035ae98 scratchpad.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
