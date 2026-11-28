@@ -876,6 +876,15 @@ fn vector_of(e: el::El, t: ir::TypeT, elem: integer) -> boolean {
 pub fn fields_at(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: integer, fields: vector<integer>) -> vector<ir::Node>? {
   def = el::def(e, d);
   list: vector<ir::Node> = [];
+  // (A field's value written as a qualified variant literal, `code: Node::NdInt { n: 4 }`, is the
+  // plain variant's literal — the lexer resolves the qualifier for Rust — so it is built in its
+  // field as the unqualified spelling is.)
+  for qfi in fields {
+    match e.p.nodes[qfi] {
+      SFieldInit { e: qfe } => { if qfe != null { el_ex_place::unqualify_literal(e, qfe!); } },
+      _ => {}
+    }
+  }
   // loft#924 — a linked collection group's headers are zeroed as one block, in offset order,
   // before any member is filled: an insert through one member indexes the record into all.  A
   // member the literal names is not carried yet (`group_fills`, the bulk-fill maintenance).
