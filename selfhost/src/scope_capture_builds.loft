@@ -2,13 +2,17 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN91 — the part of `src/scopes/capture_builds.rs` a record binding asks: which construction
-// work-refs a right-hand side delivers to the binding it is assigned to.  The closure-build
-// facts of the module are refused where a closure record is (`phase::pre_scan_refusals`).
+// @PLN91 — `src/scopes/capture_builds.rs` transcribed (scope-pass-port.md step 16): which
+// construction work-refs a right-hand side delivers to its binding, and the closure-build facts
+// (`CaptureBuilds`, `capture_build_backings`) the free emitter reads about each capture.
 
 use ir;
+use own;
 use scope_fn;
+use scope_scan;
 use scope_backings;
+use scope_closure_keep;
+use scope_capture_adoption;
 
 // port: capture_builds.rs fn inline_literal_work_ref — the `__ref_N` an inline record literal
 // built and answers, -1 for none.
@@ -99,4 +103,953 @@ pub fn adopted_work_refs(b: ir::Bundle, rhs: ir::Node, f: ir::Function, database
     },
     _ => {}
   }
+}
+
+// port: variables/mod.rs struct CaptureBuilds — the closure-build facts of one body, read only
+// inside the pass.  A pair is `a * 65536 + b`, as the hand-offs encode theirs; a map from a
+// variable is a `get`/`put` vector (-1 none) or a `VarList`.
+pub struct CaptureBuilds {
+  // The backing local a capture named at its (last) build.
+  pub backing: vector<integer>,
+  // Every backing a capture named at any of its builds (`@FR-O-Latest`).
+  pub backings_at_builds: vector<scope_scan::VarList>,
+  // `record * 65536 + capture` for each build at which the capture was join-bound.
+  pub join_bound_builds: vector<integer>,
+  pub reassigned_after_build: vector<integer>,
+  pub rebuilt_in_loop: vector<integer>,
+  pub rebound_in_loop: vector<integer>,
+  // The closure record TYPES confined to one pass of a loop (loft#1610).
+  pub pass_confined: vector<integer>,
+  pub assigned: vector<integer>,
+  pub built_conditionally: vector<integer>,
+  // Per closure-record local: `capture * 65536 + generation` at its build, repeats kept.
+  pub adopted: vector<scope_scan::VarList>,
+  // Per literal buffer: `record * 65536 + capture`, repeats kept.
+  pub buffer_adopted: vector<scope_scan::VarList>,
+  pub join_arms_at_build: vector<scope_scan::VarList>
+}
+
+pub fn no_capture_builds() -> CaptureBuilds {
+  CaptureBuilds {
+    backing: [], backings_at_builds: [], join_bound_builds: [], reassigned_after_build: [],
+    rebuilt_in_loop: [], rebound_in_loop: [], pass_confined: [], assigned: [],
+    built_conditionally: [], adopted: [], buffer_adopted: [], join_arms_at_build: []
+  }
+}
+
+// `map.entry(v).or_default().push(x)`: repeats kept.
+fn list_push(m: vector<scope_scan::VarList>, v: integer, x: integer) {
+  for e in m {
+    if e.v == v {
+      e.items += [x];
+      return;
+    }
+  }
+  m += [scope_scan::VarList { v: v, items: [x] }];
+}
+
+// `map.insert(v, items)`.
+fn list_set(m: vector<scope_scan::VarList>, v: integer, items: vector<integer>) {
+  for e in m {
+    if e.v == v {
+      e.items = [for x in items { x }];
+      return;
+    }
+  }
+  m += [scope_scan::VarList { v: v, items: [for x in items { x }] }];
+}
+
+// `map.remove(&v)`.
+fn list_remove(m: vector<scope_scan::VarList>, v: integer) {
+  if !scope_scan::list_has_key(m, v) {
+    return;
+  }
+  out: vector<scope_scan::VarList> = [];
+  for x in m {
+    if x.v != v {
+      out += [x];
+    }
+  }
+  m.clear();
+  m += out;
+}
+
+// `Value::walk`'s count of the nodes in `n`: a span is not one.
+fn walk_size(n: ir::Node) -> integer {
+  match n {
+    NdSpan { inner } => { return walk_size(inner); },
+    _ => {}
+  }
+  c = 1;
+  for ch in scope_fn::children(n) {
+    c += walk_size(ch);
+  }
+  c
+}
+
+// port: capture_builds.rs fn filled_capture — the capture a closure slot's fill names, as
+// `capture * 2 + fn_half`, or -1.
+fn filled_capture(b: ir::Bundle, fill: ir::Node?) -> integer {
+  if fill == null {
+    return -1;
+  }
+  match scope_fn::unspan(fill!) {
+    NdVar { n: c } => c * 2,
+    NdCall { def_nr, args } => {
+      if def_nr < 0 || b.data.definitions[def_nr]!.name != "OpFnRefClosure" || len(args) == 0 {
+        return -1;
+      }
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: c } => c * 2 + 1,
+        _ => -1
+      }
+    },
+    _ => -1
+  }
+}
+
+// The variable a node is (spans peeled), -1 for another node.
+fn var_of(n: ir::Node?) -> integer {
+  if n == null {
+    return -1;
+  }
+  match scope_fn::unspan(n!) {
+    NdVar { n: x } => x,
+    _ => -1
+  }
+}
+
+// port: capture_builds.rs fn is_record_local
+pub fn is_record_local(f: ir::Function, w: integer) -> boolean {
+  !scope_fn::is_argument(f, w) && scope_fn::name(f, w).starts_with("___clos_")
+}
+
+// `data.attr(record, name)`: the attribute index, -1 for none.
+pub fn attr(b: ir::Bundle, record: integer, nm: text) -> integer {
+  d = b.data.definitions[record];
+  if d == null {
+    return -1;
+  }
+  for a in d!.attributes {
+    if a.name == nm {
+      return a#index;
+    }
+  }
+  -1
+}
+
+// The closure record type of a record local (-1 for none): `Type::Reference(rec, _)`.
+fn reference_def(f: ir::Function, w: integer) -> integer {
+  match scope_fn::base(scope_fn::tp(f, w)) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+// port: capture_builds.rs fn capture_name
+pub fn capture_name(b: ir::Bundle, record: integer, a: integer) -> text {
+  nm = b.data.definitions[record]!.attributes[a]!.name;
+  if nm.ends_with("__clos") {
+    base = nm[0..len(nm) - 6];
+    if attr(b, record, base) >= 0 {
+      return base;
+    }
+  }
+  nm
+}
+
+// port: capture_builds.rs fn owner_slot_capture — "" for none.
+pub fn owner_slot_capture(b: ir::Bundle, record: integer, a: integer) -> text {
+  nm = b.data.definitions[record]!.attributes[a]!.name;
+  if nm.ends_with("__own") {
+    base = nm[0..len(nm) - 5];
+    if attr(b, record, base) >= 0 {
+      return base;
+    }
+  }
+  ""
+}
+
+// port: capture_builds.rs fn has_owner_slot
+pub fn has_owner_slot(b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  own_name = "{scope_fn::name(f, v)}__own";
+  for w in 0..scope_fn::count(f) {
+    if is_record_local(f, w) {
+      rec = reference_def(f, w);
+      if rec >= 0 && b.data.definitions[rec]!.name.starts_with("__closure_") && attr(b, rec, own_name) >= 0 {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// Does the body capture a local or build a closure record?  Only then has it a closure-build
+// fact a reader asks about.
+pub fn builds_closures(f: ir::Function) -> boolean {
+  for w in 0..scope_fn::count(f) {
+    if is_record_local(f, w) || scope_fn::is_captured(f, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// The pre-order walk of `capture_build_backings`, with the facts it carries between nodes.
+struct BuildWalk {
+  latest: vector<integer>,
+  minted: vector<scope_scan::VarList>,
+  join_arms: vector<scope_scan::VarList>,
+  generation: vector<integer>,
+  built: vector<integer>,
+  resolved: vector<integer>,
+  at: integer,
+  null_sets: vector<integer>,
+  arm_joins: vector<ArmJoin>,
+  builds_records: boolean
+}
+
+// One entry of `arm_written_joins`, keyed by the else arm's last assignment's walk position.
+struct ArmJoin {
+  node: integer,
+  v: integer,
+  owners: vector<integer>
+}
+
+// port: capture_builds.rs fn capture_build_backings — the closure-build facts of one body.
+// A body with no captured local and no closure record has none any reader asks about.
+pub fn capture_build_backings(b: ir::Bundle, set_dbref: integer, f: ir::Function, code: ir::Node) -> CaptureBuilds {
+  out = no_capture_builds();
+  if !builds_closures(f) {
+    return out;
+  }
+  builds_records = false;
+  for w in 0..scope_fn::count(f) {
+    if is_record_local(f, w) {
+      builds_records = true;
+    }
+  }
+  w = BuildWalk {
+    latest: [], minted: [], join_arms: [], generation: [], built: [], resolved: [], at: 0,
+    null_sets: [], arm_joins: [], builds_records: builds_records
+  };
+  if env_variable("LOFT_NO_NULL_SLOT_GENERATION") == null {
+    null_slot_sets(b, code, w);
+  }
+  if env_variable("LOFT_NO_ARM_WRITTEN_JOIN") == null {
+    ctr = [0];
+    arm_written_joins(b, code, f, w, ctr);
+  }
+  w.at = 0;
+  captures_built_in_a_loop(code, set_dbref, false, out.rebuilt_in_loop);
+  captures_rebound_in_a_loop(code, set_dbref, out.rebound_in_loop);
+  out.pass_confined = scope_closure_keep::pass_confined_records(b, f, code);
+  captures_built_conditionally(code, set_dbref, false, out.built_conditionally);
+  captures_of_displaced_records(f, code, set_dbref, out.built_conditionally);
+  build_walk(b, set_dbref, f, code, out, w);
+  out
+}
+
+fn build_walk(b: ir::Bundle, set_dbref: integer, f: ir::Function, n: ir::Node, out: CaptureBuilds, w: BuildWalk) {
+  match n {
+    NdSpan { inner } => { build_walk(b, set_dbref, f, inner, out, w); return; },
+    _ => {}
+  }
+  idx = w.at;
+  w.at += 1;
+  match n {
+    NdSet { var: v, inner: rhs } => build_set(b, set_dbref, f, idx, v, rhs, out, w),
+    NdCall { def_nr, args } => if def_nr == set_dbref {
+      build_call(b, args, out, w);
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    build_walk(b, set_dbref, f, ch, out, w);
+  }
+}
+
+// One build adopting `c` (through `record`) at the walk's current facts.
+fn record_build(out: CaptureBuilds, w: BuildWalk, record: integer, c: integer) {
+  g = scope_scan::get(w.generation, c);
+  list_push(out.adopted, record, c * 65536 + (if g < 0 { 0 } else { g }));
+  for bu in scope_scan::list_of(w.minted, c) {
+    list_push(out.buffer_adopted, bu, record * 65536 + c);
+  }
+  if scope_scan::list_has_key(w.join_arms, c) {
+    list_set(out.join_arms_at_build, c, scope_scan::list_of(w.join_arms, c));
+    scope_scan::set_add(out.join_bound_builds, record * 65536 + c);
+  }
+}
+
+// A capture's backing named at a build.
+fn record_backing(out: CaptureBuilds, w: BuildWalk, c: integer, bk: integer) {
+  scope_scan::put(out.backing, c, bk);
+  scope_scan::list_add(out.backings_at_builds, c, bk);
+  scope_scan::set_add(w.built, bk);
+}
+
+fn build_set(b: ir::Bundle, set_dbref: integer, f: ir::Function, idx: integer, v: integer, rhs: ir::Node, out: CaptureBuilds, w: BuildWalk) {
+  // A build inside this statement's own right-hand side captures the value the local held
+  // BEFORE the assignment: resolved here, against `latest` as it still stands.
+  for t in captures_built_in(b, f, rhs, set_dbref, w.latest) {
+    scope_scan::set_add(w.built, t.c);
+    if t.backing >= 0 {
+      record_backing(out, w, t.c, t.backing);
+    }
+    record_build(out, w, t.record, t.c);
+    scope_scan::set_add(w.resolved, t.c);
+    // @FR-O-Latest — this very assignment moves the local off the store the record adopted.
+    if t.c == v || t.backing == v {
+      scope_scan::set_add(out.reassigned_after_build, v);
+    }
+  }
+  if scope_fn::has(w.built, v) {
+    scope_scan::set_add(out.reassigned_after_build, v);
+  }
+  held_before = scope_scan::get(w.latest, v);
+  roots: vector<integer> = [];
+  viewed = own::view_root_slots(b, rhs, roots) && len(roots) == 1 && bind_views_root(f, v, rhs, roots[0]!);
+  cb = scope_backings::call_buffer_of(rhs, f);
+  if viewed {
+    scope_scan::put(w.latest, v, store_holder(w.latest, roots[0]!));
+  } else if cb >= 0 {
+    scope_scan::put(w.latest, v, cb);
+  } else {
+    scope_scan::put(w.latest, v, -1);
+  }
+  slot_step = scope_fn::has(w.null_sets, idx);
+  if w.builds_records {
+    scope_scan::set_add(out.assigned, v);
+  }
+  if !slot_step {
+    g = scope_scan::get(w.generation, v);
+    scope_scan::put(w.generation, v, if g < 0 { 1 } else { g + 1 });
+  }
+  arms: vector<integer> = [];
+  if scope_fn::is_captured(f, v) {
+    arms = join_arm_stores(b, rhs, f);
+  }
+  if len(arms) == 0 {
+    list_remove(w.join_arms, v);
+  } else {
+    list_set(w.join_arms, v, arms);
+  }
+  for aj in w.arm_joins {
+    if aj.node == idx && aj.v == v {
+      owners = [for o in aj.owners { o }];
+      if len(owners) == 1 && held_before >= 0 && !scope_fn::has(owners, held_before) {
+        owners += [held_before];
+      }
+      if len(owners) > 1 {
+        list_set(w.join_arms, v, owners);
+        scope_scan::put(w.latest, v, -1);
+      }
+    }
+  }
+  bufs: vector<integer> = [];
+  adopted_work_refs(b, rhs, f, scope_fn::def_nr(b, "OpDatabase"), bufs);
+  if len(bufs) == 0 {
+    list_remove(w.minted, v);
+  } else {
+    list_set(w.minted, v, bufs);
+  }
+}
+
+fn build_call(b: ir::Bundle, args: vector<ir::Node>, out: CaptureBuilds, w: BuildWalk) {
+  fc = filled_capture(b, args[2]);
+  if fc < 0 {
+    return;
+  }
+  c = fc / 2;
+  if scope_fn::has(w.resolved, c) {
+    scope_scan::set_remove(w.resolved, c);
+    return;
+  }
+  scope_scan::set_add(w.built, c);
+  bk = scope_scan::get(w.latest, c);
+  if fc % 2 == 0 && bk >= 0 {
+    record_backing(out, w, c, bk);
+  }
+  record = var_of(args[0]);
+  if record >= 0 {
+    record_build(out, w, record, c);
+  }
+}
+
+// One build `captures_built_in` found: the record local, the capture, the backing (-1 none).
+struct Found {
+  record: integer,
+  c: integer,
+  backing: integer
+}
+
+// port: capture_builds.rs fn captures_built_in — the `(record, capture, backing)` of every
+// build inside `rhs`, against a copy of `outer`.
+fn captures_built_in(b: ir::Bundle, f: ir::Function, rhs: ir::Node, set_dbref: integer, outer: vector<integer>) -> vector<Found> {
+  latest = [for x in outer { x }];
+  found: vector<Found> = [];
+  built_in_walk(b, f, rhs, set_dbref, latest, found);
+  found
+}
+
+fn built_in_walk(b: ir::Bundle, f: ir::Function, n: ir::Node, set_dbref: integer, latest: vector<integer>, found: vector<Found>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: c, inner: src } => {
+      roots: vector<integer> = [];
+      if own::view_root_slots(b, src, roots) && len(roots) == 1 && bind_views_root(f, c, src, roots[0]!) {
+        scope_scan::put(latest, c, roots[0]!);
+      } else {
+        scope_scan::put(latest, c, -1);
+      }
+    },
+    NdCall { def_nr, args } => if def_nr == set_dbref {
+      record = var_of(args[0]);
+      fc = filled_capture(b, args[2]);
+      if record >= 0 && fc >= 0 {
+        c = fc / 2;
+        bk = if fc % 2 == 1 { -1 } else { scope_scan::get(latest, c) };
+        found += [Found { record: record, c: c, backing: bk }];
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    built_in_walk(b, f, ch, set_dbref, latest, found);
+  }
+}
+
+// port: capture_builds.rs fn store_holder — the local that HOLDS the store `root` reaches.
+fn store_holder(latest: vector<integer>, root: integer) -> integer {
+  holder = root;
+  for _ in 0..8 {
+    next = scope_scan::get(latest, holder);
+    if next >= 0 && next != holder {
+      holder = next;
+    } else {
+      break;
+    }
+  }
+  holder
+}
+
+// port: capture_builds.rs fn bind_views_root.  `Function::materialised_views` is empty here: a
+// frame with a view to materialise is refused before the scan (`pre_scan_refusals`).
+fn bind_views_root(f: ir::Function, v: integer, rhs: ir::Node, root: integer) -> boolean {
+  root != v && !scope_fn::is_argument(f, root)
+    && (!rhs_is_a_bare_local_read(rhs) || scope_fn::base(scope_fn::tp(f, v)) is TyRefVar)
+}
+
+// port: capture_builds.rs fn rhs_is_a_bare_local_read
+fn rhs_is_a_bare_local_read(rhs: ir::Node) -> boolean {
+  match scope_fn::unspan(rhs) {
+    NdVar => true,
+    NdBlock { block } => len(block[0].operators) == 1 && rhs_is_a_bare_local_read(block[0].operators[0]!),
+    NdInsert { items } => len(items) == 1 && rhs_is_a_bare_local_read(items[0]!),
+    _ => false
+  }
+}
+
+// port: capture_builds.rs fn join_arm_stores — the stores a join right-hand side may deliver.
+fn join_arm_stores(b: ir::Bundle, rhs: ir::Node, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  join_owner_walk(rhs, f, out);
+  arms = scope_backings::construction_work_refs(b, rhs, f);
+  branch_arm_stores(rhs, f, arms);
+  branch = len(arms) > 1;
+  for a in arms {
+    if (branch || len(out) > 0) && !scope_fn::has(out, a) {
+      out += [a];
+    }
+  }
+  out
+}
+
+fn join_owner_walk(n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t } => if len(scope_fn::join_owners(f, t)) > 0 {
+      work = [for o in scope_fn::join_owners(f, t) { o }];
+      work += scope_fn::deps(f, t);
+      while len(work) > 0 {
+        a = work[len(work) - 1]!;
+        work = work[0..len(work) - 1];
+        if a == t || a == scope_fn::NONE || scope_fn::is_argument(f, a) || scope_fn::has(out, a) {
+          continue;
+        }
+        out += [a];
+        work += scope_fn::join_owners(f, a);
+        work += scope_fn::deps(f, a);
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    join_owner_walk(ch, f, out);
+  }
+}
+
+// port: capture_builds.rs fn branch_arm_stores
+fn branch_arm_stores(v: ir::Node, f: ir::Function, out: vector<integer>) {
+  match scope_fn::unspan(v) {
+    NdIf { t, f: e } => {
+      branch_arm_stores(t, f, out);
+      branch_arm_stores(e, f, out);
+    },
+    NdVar { n: x } => if scope_fn::name(f, x).starts_with("__") && !scope_fn::is_argument(f, x)
+      && !scope_fn::is_skip_free(f, x) && len(scope_fn::deps(f, x)) == 0
+      && own::heap_def_nr(scope_fn::base(scope_fn::tp(f, x))) != null {
+      if !scope_fn::has(out, x) {
+        out += [x];
+      }
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      n = len(bl.operators);
+      tail_if = false;
+      if n > 0 {
+        tail = scope_fn::unspan(bl.operators[n - 1]!);
+        if tail is NdIf {
+          tail_if = true;
+          branch_arm_stores(tail, f, out);
+        }
+      }
+      if !tail_if {
+        for d in scope_fn::depend(bl.result[0] ?? ir::TyVoid) {
+          if !scope_fn::has(out, d) {
+            out += [d];
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+}
+
+// port: capture_builds.rs fn null_slot_sets — the walk positions of the assignments to `c`
+// inside the then-arm of an `if OpRefIsNull(c)` (`@FR-L-CapOne`), into `w.null_sets`.
+fn null_slot_sets(b: ir::Bundle, code: ir::Node, w: BuildWalk) {
+  w.at = 0;
+  is_null = scope_fn::def_nr(b, "OpRefIsNull");
+  null_slot_walk(code, is_null, [], w);
+}
+
+fn null_slot_walk(n: ir::Node, is_null: integer, active: vector<integer>, w: BuildWalk) {
+  match n {
+    NdSpan { inner } => { null_slot_walk(inner, is_null, active, w); return; },
+    _ => {}
+  }
+  idx = w.at;
+  w.at += 1;
+  match n {
+    NdSet { var: x } => if scope_fn::has(active, x) && !scope_fn::has(w.null_sets, idx) {
+      w.null_sets += [idx];
+    },
+    NdIf { cond, t, f: e } => {
+      c = -1;
+      match scope_fn::unspan(cond) {
+        NdCall { def_nr, args } => if def_nr == is_null && len(args) > 0 {
+          c = var_of(args[0]);
+        },
+        _ => {}
+      }
+      null_slot_walk(cond, is_null, active, w);
+      if c >= 0 {
+        inner = [for x in active { x }];
+        inner += [c];
+        null_slot_walk(t, is_null, inner, w);
+      } else {
+        null_slot_walk(t, is_null, active, w);
+      }
+      null_slot_walk(e, is_null, active, w);
+      return;
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    null_slot_walk(ch, is_null, active, w);
+  }
+}
+
+// port: capture_builds.rs fn arm_written_joins — per captured local, a value branch written
+// out per arm: keyed by the walk position of the else arm's last assignment (or the then arm's,
+// for a one-armed branch), the arms' owners.  A later branch's entry replaces an earlier one's.
+fn arm_written_joins(b: ir::Bundle, n: ir::Node, f: ir::Function, w: BuildWalk, ctr: vector<integer>) {
+  match n {
+    NdSpan { inner } => { arm_written_joins(b, inner, f, w, ctr); return; },
+    _ => {}
+  }
+  idx = ctr[0]!;
+  ctr[0] = idx + 1;
+  match n {
+    NdIf { cond, t, f: e } => {
+      t_at = idx + 1 + walk_size(cond);
+      e_at = t_at + walk_size(t);
+      get_field = scope_fn::def_nr(b, "OpGetField");
+      for v in 0..scope_fn::count(f) {
+        if !scope_fn::is_captured(f, v) {
+          continue;
+        }
+        st = last_set(t, v, f, get_field, t_at);
+        se = last_set(e, v, f, get_field, e_at);
+        if st.node >= 0 && st.owner >= 0 && se.node >= 0 && se.owner >= 0 && st.owner != se.owner {
+          put_arm_join(w, se.node, v, [st.owner, se.owner]);
+        } else if st.node >= 0 && st.owner >= 0 && se.node < 0 {
+          put_arm_join(w, st.node, v, [st.owner]);
+        }
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    arm_written_joins(b, ch, f, w, ctr);
+  }
+}
+
+fn put_arm_join(w: BuildWalk, node: integer, v: integer, owners: vector<integer>) {
+  for aj in w.arm_joins {
+    if aj.node == node {
+      aj.v = v;
+      aj.owners = owners;
+      return;
+    }
+  }
+  w.arm_joins += [ArmJoin { node: node, v: v, owners: owners }];
+}
+
+// The last assignment to `v` in an arm: its walk position (-1 none) and the store it binds.
+struct LastSet {
+  node: integer,
+  owner: integer,
+  at: integer
+}
+
+fn last_set(arm: ir::Node, v: integer, f: ir::Function, get_field: integer, start: integer) -> LastSet {
+  ls = LastSet { node: -1, owner: -1, at: start };
+  last_set_walk(arm, v, f, get_field, ls);
+  ls
+}
+
+fn last_set_walk(n: ir::Node, v: integer, f: ir::Function, get_field: integer, ls: LastSet) {
+  match n {
+    NdSpan { inner } => { last_set_walk(inner, v, f, get_field, ls); return; },
+    _ => {}
+  }
+  idx = ls.at;
+  ls.at += 1;
+  match n {
+    NdSet { var: x, inner: rhs } => if x == v {
+      ls.node = idx;
+      ls.owner = scope_backings::call_buffer_of(rhs, f);
+      if ls.owner < 0 {
+        ls.owner = scope_backings::literal_backing_of(rhs, f, get_field);
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    last_set_walk(ch, v, f, get_field, ls);
+  }
+}
+
+// The capture of an `OpSetDbRef(record, off, Var(c))` (-1 for another node).
+fn set_capture(n: ir::Node, set_dbref: integer) -> integer {
+  match n {
+    NdCall { def_nr, args } => if def_nr == set_dbref && len(args) > 2 {
+      return var_of(args[2]);
+    },
+    _ => {}
+  }
+  -1
+}
+
+// port: capture_builds.rs fn captures_built_conditionally
+fn captures_built_conditionally(node: ir::Node, set_dbref: integer, branched: boolean, out: vector<integer>) {
+  u = scope_fn::unspan(node);
+  if branched {
+    c = set_capture(u, set_dbref);
+    if c >= 0 {
+      scope_scan::set_add(out, c);
+    }
+  }
+  match u {
+    NdIf { cond, t, f } => {
+      captures_built_conditionally(cond, set_dbref, branched, out);
+      captures_built_conditionally(t, set_dbref, true, out);
+      captures_built_conditionally(f, set_dbref, true, out);
+    },
+    NdBlock { block } => {
+      br = branched;
+      for op in block[0].operators {
+        captures_built_conditionally(op, set_dbref, br, out);
+        br = br || subtree_has_return(op);
+      }
+    },
+    NdInsert { items } => {
+      br = branched;
+      for op in items {
+        captures_built_conditionally(op, set_dbref, br, out);
+        br = br || subtree_has_return(op);
+      }
+    },
+    _ => {
+      lp = u is NdLoop;
+      for ch in scope_fn::children(u) {
+        captures_built_conditionally(ch, set_dbref, branched || lp, out);
+      }
+    }
+  }
+}
+
+// port: capture_builds.rs fn subtree_has_return
+fn subtree_has_return(n: ir::Node) -> boolean {
+  u = scope_fn::unspan(n);
+  if u is NdReturn {
+    return true;
+  }
+  for ch in scope_fn::children(u) {
+    if subtree_has_return(ch) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn captures_built_in_a_loop
+fn captures_built_in_a_loop(node: ir::Node, set_dbref: integer, in_loop: boolean, out: vector<integer>) {
+  u = scope_fn::unspan(node);
+  inner = in_loop || u is NdLoop;
+  if in_loop {
+    c = set_capture(u, set_dbref);
+    if c >= 0 {
+      scope_scan::set_add(out, c);
+    }
+  }
+  for ch in scope_fn::children(u) {
+    captures_built_in_a_loop(ch, set_dbref, inner, out);
+  }
+}
+
+// Does `n` hold an `OpSetDbRef` call anywhere?
+fn has_set_dbref(n: ir::Node, set_dbref: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr } => if def_nr == set_dbref { return true; },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if has_set_dbref(ch, set_dbref) {
+      return true;
+    }
+  }
+  false
+}
+
+// The loop walk of `captures_rebound_in_a_loop`: each capture's first build position, and each
+// assignment's position (`MAX` where its own right-hand side builds it).
+struct ReboundWalk {
+  at: integer,
+  first_build: vector<integer>,
+  sets_v: vector<integer>,
+  sets_at: vector<integer>
+}
+
+// port: capture_builds.rs fn captures_rebound_in_a_loop
+pub fn captures_rebound_in_a_loop(node: ir::Node, set_dbref: integer, out: vector<integer>) {
+  u = scope_fn::unspan(node);
+  if u is NdLoop {
+    if !has_set_dbref(u, set_dbref) {
+      return;
+    }
+    rw = ReboundWalk { at: 0, first_build: [], sets_v: [], sets_at: [] };
+    rebound_walk(u, set_dbref, rw);
+    branched: vector<integer> = [];
+    for ch in scope_fn::children(u) {
+      captures_built_conditionally(ch, set_dbref, false, branched);
+    }
+    for k in 0..len(rw.sets_v) {
+      v = rw.sets_v[k]!;
+      i = rw.sets_at[k]!;
+      fb = scope_scan::get(rw.first_build, v);
+      if fb >= 0 && (i > fb || scope_fn::has(branched, v)) {
+        scope_scan::set_add(out, v);
+      }
+    }
+  }
+  for ch in scope_fn::children(u) {
+    captures_rebound_in_a_loop(ch, set_dbref, out);
+  }
+}
+
+fn rebound_walk(n: ir::Node, set_dbref: integer, rw: ReboundWalk) {
+  match n {
+    NdSpan { inner } => { rebound_walk(inner, set_dbref, rw); return; },
+    _ => {}
+  }
+  rw.at += 1;
+  match n {
+    NdCall { def_nr } => if def_nr == set_dbref {
+      c = set_capture(n, set_dbref);
+      if c >= 0 && scope_scan::get(rw.first_build, c) < 0 {
+        scope_scan::put(rw.first_build, c, rw.at);
+      }
+    },
+    NdSet { var: v, inner: rhs } => {
+      rw.sets_v += [v];
+      rw.sets_at += [if builds_capture(rhs, set_dbref, v) { 2147483647 } else { rw.at }];
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    rebound_walk(ch, set_dbref, rw);
+  }
+}
+
+// Does `n` build a closure slot from `v` (`OpSetDbRef(_, _, Var(v))`)?
+fn builds_capture(n: ir::Node, set_dbref: integer, v: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  if set_capture(u, set_dbref) == v {
+    return true;
+  }
+  for ch in scope_fn::children(u) {
+    if builds_capture(ch, set_dbref, v) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn captures_of_displaced_records
+fn captures_of_displaced_records(f: ir::Function, code: ir::Node, set_dbref: integer, out: vector<integer>) {
+  displaced: vector<integer> = [];
+  for t in 0..scope_fn::count(f) {
+    nm = scope_fn::name(f, t);
+    while nm.starts_with("_") {
+      nm = nm[1..len(nm)];
+    }
+    if nm.starts_with("oldrec") {
+      r = reference_def(f, t);
+      if r >= 0 {
+        displaced += [r];
+      }
+    }
+  }
+  builds: vector<integer> = [];
+  for w in 0..scope_fn::count(f) {
+    if is_record_local(f, w) {
+      r = reference_def(f, w);
+      if r >= 0 {
+        builds += [r];
+      }
+    }
+  }
+  for i in 0..len(builds) {
+    r = builds[i]!;
+    later = false;
+    for j in i + 1..len(builds) {
+      if builds[j]! == r {
+        later = true;
+      }
+    }
+    if later && !scope_fn::has(displaced, r) {
+      displaced += [r];
+    }
+  }
+  if len(displaced) == 0 {
+    return;
+  }
+  displaced_walk(f, code, set_dbref, displaced, out);
+}
+
+fn displaced_walk(f: ir::Function, n: ir::Node, set_dbref: integer, displaced: vector<integer>, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if def_nr == set_dbref && len(args) > 2 {
+      rec = var_of(args[0]);
+      c = var_of(args[2]);
+      if rec >= 0 && c >= 0 && rec < scope_fn::count(f) && is_record_local(f, rec) && scope_fn::has(displaced, reference_def(f, rec)) {
+        scope_scan::set_add(out, c);
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    displaced_walk(f, ch, set_dbref, displaced, out);
+  }
+}
+
+// `LOFT_TRACE_CAPTURE_BUILDS=1` — the facts of one body, sorted, in the form the Rust trace of
+// the same name prints (`phase.rs`), so the two can be compared line by line.
+pub fn trace(name: text, c: CaptureBuilds) -> text {
+  bk: vector<integer> = [];
+  for x in c.backing {
+    if x >= 0 {
+      bk += [x#index * 65536 + x];
+    }
+  }
+  "[capture-builds] {name}: backing {sorted(bk)} at_builds {lists(c.backings_at_builds, true)} jbb {sorted(c.join_bound_builds)} rab {sorted(c.reassigned_after_build)} ril {sorted(c.rebuilt_in_loop)} rbl {sorted(c.rebound_in_loop)} pc {sorted(c.pass_confined)} asg {sorted(c.assigned)} bc {sorted(c.built_conditionally)} adopted {lists(c.adopted, false)} badopt {lists(c.buffer_adopted, false)} jab {lists(c.join_arms_at_build, false)}"
+}
+
+fn sorted(v: vector<integer>) -> text {
+  s = [for x in v { x }];
+  n = len(s);
+  for i in 0..n {
+    for j in 0..n - 1 - i {
+      if s[j]! > s[j + 1]! {
+        t = s[j]!;
+        s[j] = s[j + 1]!;
+        s[j + 1] = t;
+      }
+    }
+  }
+  r = "[";
+  for x in s {
+    if x#index > 0 {
+      r += ",";
+    }
+    r += "{x}";
+  }
+  r + "]"
+}
+
+fn lists(m: vector<scope_scan::VarList>, sort_items: boolean) -> text {
+  keys: vector<integer> = [for e in m { e.v }];
+  r = "(";
+  first = true;
+  for k in sorted_ints(keys) {
+    if !first {
+      r += ";";
+    }
+    first = false;
+    items = scope_scan::list_of(m, k);
+    r += "{k}:" + (if sort_items { sorted(items) } else { plain(items) });
+  }
+  r + ")"
+}
+
+fn sorted_ints(v: vector<integer>) -> vector<integer> {
+  s = [for x in v { x }];
+  n = len(s);
+  for i in 0..n {
+    for j in 0..n - 1 - i {
+      if s[j]! > s[j + 1]! {
+        t = s[j]!;
+        s[j] = s[j + 1]!;
+        s[j + 1] = t;
+      }
+    }
+  }
+  s
+}
+
+fn plain(v: vector<integer>) -> text {
+  r = "[";
+  for x in v {
+    if x#index > 0 {
+      r += ",";
+    }
+    r += "{x}";
+  }
+  r + "]"
 }

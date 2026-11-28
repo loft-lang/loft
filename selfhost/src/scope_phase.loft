@@ -23,6 +23,7 @@ use scope_backings;
 use scope_buffers;
 use scope_drops;
 use scope_handoff;
+use scope_capture_builds;
 use scope_view_walk;
 use opt_names;
 
@@ -131,6 +132,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     owned_handle_members: [],
     stale_defs: stale,
     orig_code: orig_code,
+    capture_build_backing: scope_capture_builds::no_capture_builds(),
     why: "",
     whys: []
   };
@@ -146,6 +148,11 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   s.null_led_first = null_led_first_binds_in(b, orig_code);
   s.literal_moves = literal_moves_in(b, orig_code, orig_vars, s.null_led_first);
   function = scope_fn::copy_function(orig_vars);
+  s.capture_build_backing = scope_capture_builds::capture_build_backings(b, ops.set_dbref, function, orig_code);
+  if env_variable("LOFT_TRACE_CAPTURE_BUILDS") != null && scope_capture_builds::builds_closures(function) {
+    t = scope_capture_builds::trace(b.data.definitions[d_nr]!.name, s.capture_build_backing);
+    eprintln("{t}");
+  }
   pre_scan_refusals(s, b, orig_code, function);
   s.owned_handle_members = scope_handles::owned_handle_members(b, orig_code, function);
   for v in function.variables {
@@ -484,12 +491,7 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   if has_block(code, "text_mirror") {
     scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a text payload view");
   }
-  // `capture_build_backings`, `closure_keep_set` — the closure records this frame builds.
-  for v in f.variables {
-    if v.name.starts_with("___clos_") {
-      scope_scan::refuse(s, "capture_builds::capture_build_backings: a closure record");
-    }
-  }
+  // `closure_keep_set` — the closure records this frame builds.
   // `capture_adoption::mark_borrowed_captures` (after the loop): `check` refuses a cascade a
   // frame's capture verdicts decide, and settles the pruning on the laid-out bodies.
   if has_block(code, "fn_ref_with_closure") {

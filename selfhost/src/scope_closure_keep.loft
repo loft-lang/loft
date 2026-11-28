@@ -1,0 +1,424 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/closure_keep.rs` begun (scope-pass-port.md step 16):
+// `pass_confined_records`, the closure record types confined to one pass of a loop
+// (loft#1610, `@FR-L-CapOwn`), which `capture_build_backings` records.
+
+use ir;
+use scope_fn;
+use scope_scan;
+use binds;
+use scope_capture_builds;
+use scope_capture_adoption;
+
+// A build, a flow or an argument build of the confinement walk: the record (or fn-ref) `a`,
+// the holder `g`, the callee and argument, the loop (-1 outside every loop).
+struct Flow {
+  a: integer,
+  g: integer,
+  callee: integer,
+  arg: integer,
+  lp: integer
+}
+
+// port: closure_keep.rs struct ConfinementWalk
+struct CWalk {
+  release_ops: vector<integer>,
+  fn_closure: integer,
+  keep_temps: vector<integer>,
+  next_id: integer,
+  builds: vector<Flow>,
+  sets: vector<scope_scan::VarList>,
+  read_as_value: vector<integer>,
+  held_f: vector<integer>,
+  held_r: vector<integer>,
+  argument_builds: vector<Flow>,
+  leaving: vector<integer>,
+  flows: vector<Flow>,
+  argument_flows: vector<Flow>,
+  loft_fns: vector<boolean>,
+  fn_refs: vector<integer>
+}
+
+// port: closure_keep.rs fn pass_confined_records — the closure record TYPES built in a loop
+// body into a fn-ref local that lives only in that pass of the loop, or handed to a callee that
+// only calls (or returns to a pass-confined holder) the closure.
+pub fn pass_confined_records(b: ir::Bundle, f: ir::Function, code: ir::Node) -> vector<integer> {
+  any = false;
+  for v in 0..scope_fn::count(f) {
+    if scope_fn::base(scope_fn::tp(f, v)) is TyFunction || scope_fn::name(f, v).starts_with("___clos_") {
+      any = true;
+    }
+  }
+  if !any {
+    return [];
+  }
+  release: vector<integer> = [];
+  for nm in ["OpFreeRef", "OpFreeRefIfDistinct", "OpConvBoolFromRef", "OpRefIsNull", "OpDistinctStore", "OpFnRefDetachShared", "OpDropFnRef"] {
+    d = scope_fn::def_nr(b, nm);
+    if d >= 0 {
+      release += [d];
+    }
+  }
+  keep: vector<integer> = [];
+  fn_refs: vector<integer> = [];
+  for v in 0..scope_fn::count(f) {
+    n = scope_fn::name(f, v);
+    if n.starts_with("__fkeep_") || n.starts_with("__fklink_") || (n.starts_with("__fdisp_") && env_variable("LOFT_NO_FDISP_KEEP_TEMP") == null) {
+      keep += [v];
+    }
+    if !scope_fn::is_argument(f, v) && scope_fn::base(scope_fn::tp(f, v)) is TyFunction {
+      fn_refs += [v];
+    }
+  }
+  lf: vector<boolean> = [];
+  argument_confined = env_variable("LOFT_NO_ARGUMENT_CLOSURE_CONFINED") == null;
+  for d in b.data.definitions {
+    lf += [argument_confined && binds::is_loft_defined(d)];
+  }
+  w = CWalk {
+    release_ops: release, fn_closure: scope_fn::def_nr(b, "OpFnRefClosure"), keep_temps: keep,
+    next_id: 0, builds: [], sets: [], read_as_value: [], held_f: [], held_r: [],
+    argument_builds: [], leaving: [], flows: [], argument_flows: [], loft_fns: lf, fn_refs: fn_refs
+  };
+  cwalk(b, w, code, -1);
+  loop_out: vector<integer> = [];
+  while true {
+    out = confined(b, w, f);
+    grew = false;
+    for k in 0..len(w.held_f) {
+      fv = w.held_f[k]!;
+      rec = scope_capture_builds_record(f, w.held_r[k]!);
+      holder_confined = rec >= 0 && scope_fn::has(out, rec);
+      if !holder_confined && !scope_fn::has(w.read_as_value, fv) {
+        w.read_as_value += [fv];
+        grew = true;
+      }
+    }
+    if !grew {
+      loop_out = out;
+      break;
+    }
+  }
+  loop_out
+}
+
+// `Type::Reference(rec, _)` of a local's type, -1 for another.
+fn scope_capture_builds_record(f: ir::Function, v: integer) -> integer {
+  match scope_fn::base(scope_fn::tp(f, v)) {
+    TyReference { n } => n,
+    _ => -1
+  }
+}
+
+// port: closure_keep.rs fn ConfinementWalk::built_record — -1 for none.
+fn built_record(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdFnRef { var: rec } => if rec != scope_fn::NONE { rec } else { -1 },
+    NdBlock { block } => {
+      n = len(block[0].operators);
+      if n == 0 { -1 } else { built_record(block[0].operators[n - 1]!) }
+    },
+    NdInsert { items } => if len(items) == 0 { -1 } else { built_record(items[len(items) - 1]!) },
+    _ => -1
+  }
+}
+
+fn var_of(n: ir::Node?) -> integer {
+  if n == null {
+    return -1;
+  }
+  match scope_fn::unspan(n!) {
+    NdVar { n: x } => x,
+    _ => -1
+  }
+}
+
+fn is_loft_fn(w: CWalk, d: integer) -> boolean {
+  d >= 0 && (w.loft_fns[d] ?? false)
+}
+
+// port: closure_keep.rs fn ConfinementWalk::walk — `lp` -1 outside every loop.
+fn cwalk(b: ir::Bundle, w: CWalk, node: ir::Node, lp: integer) {
+  u = scope_fn::unspan(node);
+  match u {
+    NdCall { args } => if len(args) > 2 {
+      r = var_of(args[0]);
+      match scope_fn::unspan(args[2]!) {
+        NdCall { def_nr: c, args: inner } => if r >= 0 && c == w.fn_closure && len(inner) > 0 {
+          fv = var_of(inner[0]);
+          if fv >= 0 {
+            w.held_f += [fv];
+            w.held_r += [r];
+            return;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  loop_id = lp;
+  match u {
+    NdSet { var: v, inner: rhs } => {
+      r = scope_fn::unspan(rhs);
+      if scope_fn::has(w.keep_temps, v) && r is NdVar {
+        return;
+      }
+      if r is NdNull {
+        return;
+      }
+      returned_confined = env_variable("LOFT_NO_RETURNED_CLOSURE_CONFINED") == null;
+      cd = -1;
+      cargs: vector<ir::Node> = [];
+      match r {
+        NdCall { def_nr, args } => { cd = def_nr; cargs = args; },
+        _ => {}
+      }
+      if loop_id >= 0 && returned_confined && is_loft_fn(w, cd) {
+        scope_scan::list_add(w.sets, v, loop_id);
+        for a in cargs {
+          i = a#index;
+          fv = var_of(a);
+          if fv >= 0 && scope_fn::has(w.fn_refs, fv) {
+            w.flows += [Flow { a: fv, g: v, callee: cd, arg: i, lp: loop_id }];
+            continue;
+          }
+          rec = built_record(a);
+          if rec >= 0 {
+            w.argument_flows += [Flow { a: rec, g: v, callee: cd, arg: i, lp: loop_id }];
+          }
+          cwalk(b, w, a, loop_id);
+        }
+        return;
+      }
+      scope_scan::list_add(w.sets, v, loop_id);
+      if loop_id >= 0 {
+        rec = built_record(rhs);
+        if rec >= 0 {
+          w.builds += [Flow { a: v, g: rec, callee: -1, arg: -1, lp: loop_id }];
+        }
+      }
+    },
+    NdLoop => {
+      loop_id = w.next_id;
+      w.next_id += 1;
+    },
+    NdVar { n: v } => scope_scan::set_add(w.read_as_value, v),
+    NdCall { def_nr: d, args } => {
+      if scope_fn::has(w.release_ops, d) {
+        return;
+      }
+      if loop_id >= 0 && is_loft_fn(w, d) {
+        for a in args {
+          rec = built_record(a);
+          if rec >= 0 {
+            w.argument_builds += [Flow { a: rec, g: -1, callee: d, arg: a#index, lp: loop_id }];
+          }
+        }
+      }
+    },
+    NdReturn { inner } => {
+      rec = built_record(inner);
+      if rec >= 0 {
+        scope_scan::set_add(w.leaving, rec);
+      }
+    },
+    NdYield { inner } => {
+      rec = built_record(inner);
+      if rec >= 0 {
+        scope_scan::set_add(w.leaving, rec);
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    cwalk(b, w, ch, loop_id);
+  }
+}
+
+// `sets[g]` is exactly `{lp}` and `g` is never read as a value.
+fn holder_confined(w: CWalk, g: integer, lp: integer) -> boolean {
+  ids = scope_scan::list_of(w.sets, g);
+  len(ids) == 1 && ids[0]! == lp && !scope_fn::has(w.read_as_value, g)
+}
+
+fn is_closure_record(b: ir::Bundle, record: integer) -> boolean {
+  record >= 0 && b.data.definitions[record]!.name.starts_with("__closure_")
+}
+
+// port: closure_keep.rs fn ConfinementWalk::confined
+fn confined(b: ir::Bundle, w: CWalk, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  flowed_out: vector<integer> = [];
+  for fl in w.flows {
+    f_loop = -2;
+    for bu in w.builds {
+      if f_loop == -2 && bu.a == fl.a {
+        f_loop = bu.lp;
+      }
+    }
+    kept = f_loop != -2 && holder_confined(w, fl.g, f_loop) && returns_or_calls(b, w, fl.callee, fl.arg);
+    if !kept {
+      scope_scan::set_add(flowed_out, fl.a);
+    }
+  }
+  for bu in w.builds {
+    ids = scope_scan::list_of(w.sets, bu.a);
+    only_this_loop = len(ids) == 1 && ids[0]! == bu.lp;
+    record = scope_capture_builds_record(f, bu.g);
+    if only_this_loop && !scope_fn::has(w.read_as_value, bu.a) && !scope_fn::has(flowed_out, bu.a) && is_closure_record(b, record) {
+      scope_scan::set_add(out, record);
+    }
+  }
+  for ab in w.argument_builds {
+    built_as_local = false;
+    for bu in w.builds {
+      if bu.g == ab.a {
+        built_as_local = true;
+      }
+    }
+    if scope_fn::has(w.leaving, ab.a) || built_as_local {
+      continue;
+    }
+    record = scope_capture_builds_record(f, ab.a);
+    if only_called(b, w, ab.callee, ab.arg) && is_closure_record(b, record) && !capture_set_in(b, w, f, record, ab.lp) {
+      scope_scan::set_add(out, record);
+    }
+  }
+  for af in w.argument_flows {
+    if scope_fn::has(w.leaving, af.a) || !holder_confined(w, af.g, af.lp) || !returns_or_calls(b, w, af.callee, af.arg) {
+      continue;
+    }
+    record = scope_capture_builds_record(f, af.a);
+    if is_closure_record(b, record) && !capture_set_in(b, w, f, record, af.lp) {
+      scope_scan::set_add(out, record);
+    }
+  }
+  out
+}
+
+// port: closure_keep.rs fn ConfinementWalk::capture_set_in
+fn capture_set_in(b: ir::Bundle, w: CWalk, f: ir::Function, record: integer, lp: integer) -> boolean {
+  old = env_variable("LOFT_LOOP_LOCAL_CAPTURE_UNCONFINES") != null;
+  for at in b.data.definitions[record]!.attributes {
+    a = at#index;
+    if !old && !scope_capture_adoption::capture_attr_is_cascade_relevant(b, record, a) {
+      continue;
+    }
+    c = scope_fn::var(f, scope_capture_builds::capture_name(b, record, a));
+    if c < 0 {
+      continue;
+    }
+    ids = scope_scan::list_of(w.sets, c);
+    if len(ids) == 0 || !scope_fn::has(ids, lp) {
+      continue;
+    }
+    if old {
+      return true;
+    }
+    for i in ids {
+      if i != lp {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// port: closure_keep.rs fn ConfinementWalk::only_called
+fn only_called(b: ir::Bundle, w: CWalk, callee: integer, arg: integer) -> boolean {
+  asked: vector<integer> = [];
+  only_called_in(b, w, callee, arg, asked)
+}
+
+// port: closure_keep.rs fn escapes_in, over the body `returns_or_calls` strips when `strip`:
+// there a `Var(p)` in tail position (a returned value, an arm of one, a block's last operator)
+// reads as `Null`.
+fn escapes_in(b: ir::Bundle, w: CWalk, node: ir::Node, p: integer, asked: vector<integer>, strip: boolean, tail: boolean) -> boolean {
+  u = scope_fn::unspan(node);
+  match u {
+    NdVar { n: v } => if v == p {
+      return !(strip && tail);
+    },
+    NdCall { def_nr: d, args } => {
+      if scope_fn::has(w.release_ops, d) {
+        return false;
+      }
+      if is_loft_fn(w, d) {
+        for a in args {
+          if var_of(a) == p {
+            if !only_called_in(b, w, d, a#index, asked) {
+              return true;
+            }
+          } else if escapes_in(b, w, a, p, asked, strip, false) {
+            return true;
+          }
+        }
+        return false;
+      }
+    },
+    NdReturn { inner } => if strip {
+      return escapes_in(b, w, inner, p, asked, strip, true);
+    },
+    NdIf { cond, t, f } => if strip {
+      return escapes_in(b, w, cond, p, asked, strip, false) || escapes_in(b, w, t, p, asked, strip, tail)
+        || escapes_in(b, w, f, p, asked, strip, tail);
+    },
+    NdBlock { block } => if strip {
+      n = len(block[0].operators);
+      for op in block[0].operators {
+        if escapes_in(b, w, op, p, asked, strip, tail && op#index + 1 == n) {
+          return true;
+        }
+      }
+      return false;
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if escapes_in(b, w, ch, p, asked, strip, false) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: closure_keep.rs fn returns_or_calls
+fn returns_or_calls(b: ir::Bundle, w: CWalk, callee: integer, arg: integer) -> boolean {
+  if callee < 0 || arg < 0 || arg > 65535 {
+    return false;
+  }
+  def = b.data.definitions[callee]!;
+  if !scope_fn::is_argument(def.variables, arg) || !(scope_fn::base(def.returned[0] ?? ir::TyVoid) is TyFunction) {
+    return false;
+  }
+  if len(def.code) == 0 {
+    return true;
+  }
+  asked: vector<integer> = [];
+  !escapes_in(b, w, def.code[0]!, arg, asked, true, true)
+}
+
+// port: closure_keep.rs fn only_called_in — `asked` holds `callee * 65536 + arg`.
+fn only_called_in(b: ir::Bundle, w: CWalk, callee: integer, arg: integer, asked: vector<integer>) -> boolean {
+  key = callee * 65536 + arg;
+  if scope_fn::has(asked, key) {
+    return true;
+  }
+  asked += [key];
+  if arg > 65535 {
+    return false;
+  }
+  def = b.data.definitions[callee]!;
+  if !scope_fn::is_argument(def.variables, arg) {
+    return false;
+  }
+  if len(def.code) == 0 {
+    return true;
+  }
+  !escapes_in(b, w, def.code[0]!, arg, asked, false, false)
+}
+
