@@ -265,7 +265,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   tret_made = false;
   match b.code { NdBlock { block } => { tret_made = len(block[0].operators) > 0 && match el_ir::unspan(el_ir::last(block[0].operators)) { NdVar { n } => starts_with(el_vars::name_of(vars, n), "___tret_"), _ => false }; }, _ => {} }
   dd = el::def(e, e.context);
-  if !tret_made && el_types::base(result) is TyText && dd.def_type != el::DT_GENERIC && !starts_with(dd.name, "n___lambda_") && (e.first_pass || def_has_attr_prefix(dd, "___acc")) {
+  if !tret_made && el_types::base(result) is TyText && dd.def_type != el::DT_GENERIC && (e.first_pass || def_has_attr_prefix(dd, "___acc")) {
     match b.code {
       NdBlock { block } => {
         bl = block[0];
@@ -2007,6 +2007,11 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT, mid: boolean = 
       // first pass promoted it — its number follows the pool, not the role — and another
       // compiler temp only where the first pass published no hidden text buffer.)
       if !e.first_pass && (starts_with(nm, "__work_") || len([for pa in el::def(e, d).attributes if pa.hidden && ((pa.typedef[0] ?? ir::TyVoid) is TyRefVar) { pa }]) > 0) {
+        continue;
+      }
+      // (…and a lambda's compiler temp on the first pass too, once the lambda holds a hidden text
+      // buffer — its `__work_ret`, or a local a `return` promoted: the temp is copied into it.)
+      if e.first_pass && starts_with(el::def(e, d).name, "n___lambda_") && starts_with(nm, "_") && len([for pa2 in el::def(e, d).attributes if pa2.hidden && ((pa2.typedef[0] ?? ir::TyVoid) is TyRefVar) { pa2 }]) > 0 {
         continue;
       }
       na = el::attribute(nm, stack);
