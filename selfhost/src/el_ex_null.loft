@@ -2767,6 +2767,18 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
         return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
       }
     }
+    // @FR-B-RefType-Return — a `-> &T` function's `return` hands back the place itself.
+    if el::def(e, e.context).returned_ref {
+      if result is TyRefVar {
+        el::refuse(e, "a `&` scalar, text or tuple return");
+        return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
+      }
+      if v.tp is TyNull {
+        return ex(ir::NdReturn { inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyNever);
+      }
+      rc = el_convert::convert_store(e, vars, v.code, v.tp, result);
+      return ex(ir::NdReturn { inner: rc ?? v.code }, ir::TyNever);
+    }
     // A struct enum is a record as well: a variant is built into the buffer as a struct is.
     if el_types::base(result) is TyReference || (el_types::struct_enum_def(result) >= 0 && !(result is TyOptional)) || (el_types::struct_enum_def(result) >= 0 && !(v.tp is TyNull)) {
       return record_return(e, vars, v, result);

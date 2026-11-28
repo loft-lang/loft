@@ -66,6 +66,13 @@ impl FnWriter<'_> {
             ("OpVarRef", [Value::Var(v)]) if self.store_links[*v as usize] => {
                 Ok(E::new(super::var_name(self.vars.name(*v), *v), K::Ref))
             }
+            // `@FR-B-RefType-Return` — a stack-backed `&scalar` / `&text` parameter or link
+            // returned by a `-> &T` function: its C pointer.
+            ("OpVarRef", [Value::Var(v)]) if self.links[*v as usize] => {
+                let lt = crate::c::LinkTarget::of(self.shapes[*v as usize])
+                    .ok_or("a stack link of no pointer shape")?;
+                Ok(E::new(super::var_name(self.vars.name(*v), *v), K::Ptr(lt)))
+            }
             ("OpAbsInt", [v]) => {
                 let v = self.expr(v, ind)?;
                 Ok(E::new(format!("loft_abs(cx, {})", as_int(v)?), K::Int))

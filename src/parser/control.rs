@@ -968,11 +968,10 @@ impl Parser {
         // (`convert`) where the joined value meets it.
         let sibling_fn;
         let result = if matches!(context, "else" | "if" | "match_arm")
-            && result
-                .function_consts()
-                .is_some_and(|c| c != crate::data::ConstParams::NONE)
+            && let Some(c) = result.function_consts()
+            && c.bits() != 0
         {
-            sibling_fn = result.with_function_consts(crate::data::ConstParams::NONE);
+            sibling_fn = result.with_function_consts(c.without_param_consts());
             &sibling_fn
         } else {
             result
@@ -1772,7 +1771,12 @@ impl Parser {
         {
             *tail = *inner;
         }
-        if matches!(t, Type::RefVar(_)) {
+        if matches!(t, Type::RefVar(_))
+            && !(context == "return from block"
+                && self.context != u32::MAX
+                && self.data.def(self.context).returned_ref
+                && matches!(self.data.def(self.context).returned(), Type::RefVar(_)))
+        {
             let mut code = l.pop().unwrap().clone();
             self.un_ref(&mut t, &mut code);
             l.push(code);
@@ -1900,6 +1904,7 @@ impl Parser {
         // reading an undefined arg slot (SIGSEGV in `rpc_eval_*`).  A run-once
         // eval fn gains nothing from the leak-opt anyway.
         let do_tret_bind = context == "return from block"
+            && !self.data.def(self.context).returned_ref
             && matches!(result.base(), Type::Text(_))
             && !self.data.def(self.context).is_reentered_eval()
             && l.last().is_some_and(|tail| self.tret_bind_ok(tail, &l))
@@ -1994,6 +1999,7 @@ impl Parser {
             !matches!(result, Type::Optional(_)) && matches!(t, Type::Optional(_));
         let do_if_acc = !do_tret_bind
             && context == "return from block"
+            && !self.data.def(self.context).returned_ref
             && matches!(result.base(), Type::Text(_))
             && !self.data.def(self.context).is_reentered_eval()
             && l.last().is_some_and(Self::if_tail_yields_text)
@@ -2149,6 +2155,7 @@ impl Parser {
         if !self.first_pass
             && !in_generic_template
             && context == "return from block"
+            && !self.data.def(self.context).returned_ref
             && matches!(
                 result.base(),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
@@ -2660,6 +2667,13 @@ impl Parser {
             // first concrete arm has nothing to agree with and names the type instead.
             let unboxed_tail;
             let t = if context == "return from block"
+                && self.context != u32::MAX
+                && self.data.def(self.context).returned_ref
+                && let Some(tt) = self.prepare_place_return_expr(&mut l[last], t, result)
+            {
+                unboxed_tail = tt;
+                &unboxed_tail
+            } else if context == "return from block"
                 && let Some(tt) = self.unbox_stored_tuple_tail(t, result, &mut l[last])
             {
                 unboxed_tail = tt;
@@ -2669,7 +2683,11 @@ impl Parser {
             };
             let arm_of_sibling = context == "else"
                 || ((context == "if" || context == "match_arm") && !result.is_unknown());
+            let place_ret_tail = context == "return from block"
+                && self.context != u32::MAX
+                && self.data.def(self.context).returned_ref;
             let tuple_rewritten = !self.first_pass
+                && !place_ret_tail
                 && (context == "return from block" || arm_of_sibling)
                 // `@FR-N-Shape` through `base()`: "is this tail a tuple?" is a SHAPE question and
                 // answers alike for `(τ…)` and the in-flight `(τ…)?` an absent read carries
@@ -2725,6 +2743,7 @@ impl Parser {
             // separate result slot where its non-null twin shares one.
             let if_unified = !self.first_pass
                 && context == "return from block"
+                && !self.data.def(self.context).returned_ref
                 && crate::data::is_dbref(result.base())
                 && matches!(l[last].unspan(), Value::If(_, _, _))
                 && self.unify_if_branches_work_refs(&mut l[last]).is_some();
@@ -2732,32 +2751,11 @@ impl Parser {
                 let inner = std::mem::replace(&mut l[last], Value::Null);
                 l[last] = Value::Return(Box::new(inner));
             }
-            // @PLN85 cluster II — a VECTOR-returning fn whose tail is a `match`/`if`
-            // with per-arm LOCAL buffers (arms are `_vec_N`, not the `__ref_N`
-            // work-refs `if_unified` shares; the match types as `Never`, so the
-            // type-keyed vector arm below — keyed on `t` — is skipped). Without
-            // NRVO the result is delivered via a fresh local while the caller's
-            // eagerly-allocated `__retbuf` work-ref store is orphaned and LEAKS on
-            // the interpreter (Edge B / `init_ref`). Deliver per-arm into `__retbuf`.
-            // Fires for an explicit `return match` (t = Never) AND an implicit
-            // `{ match }` block tail (t = Vector — #416). `tail_terminal_is_branch`
-            // keeps it to match/if tails. `tail_if_has_null_arm` EXCLUDES a nullable
-            // return (`{ if b { [..] } else { null } }`): materialising it would set
-            // `returned = Vector[__retbuf]` while a reachable arm yields null, which
-            // native cannot represent. enc's exhaustive-match default-null is nested
-            // and unreachable, so it is not a direct arm-null and still materialises.
-            //
-            // loft#938 — a return that PEELS (`-> vector<T>?` with the buffer ABI) is the
-            // one case where a direct null arm is representable, so it drops the
-            // exclusion: the delivery re-wraps the `?` (`returned = optional(vector[
-            // __retbuf])`), the value arms yield the buffer and the null arm yields the
-            // sentinel, which is what a nullable DbRef return already means on both
-            // backends.  Non-nullable behaviour is untouched — `ret_promo_peels` is false
-            // for it whatever the switch says.
             let vec_match_candidate = !tuple_rewritten
                 && !if_unified
                 && !self.first_pass
                 && context == "return from block"
+                && !self.data.def(self.context).returned_ref
                 && matches!(result.ret_promo_base(), Type::Vector(_, _))
                 && matches!(
                     t.ret_promo_base(),
@@ -2877,7 +2875,7 @@ impl Parser {
             if is_return && !needs_convert {
                 self.n_store_violation(t, result, "the return value", ret_at.as_ref());
             }
-            if is_return {
+            if is_return && !self.data.def(self.context).returned_ref {
                 self.copy_returned_fn_field(&mut l[last]);
             }
             let converted = if needs_convert {
@@ -3029,7 +3027,13 @@ impl Parser {
         let generic_promote_ok = self.data.def_type(self.context) != DefType::Generic
             || matches!(self.data.def(self.context).returned(),
                 Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<"));
-        if generic_promote_ok && context == "return from block" {
+        if context == "return from block"
+            && self.context != u32::MAX
+            && self.data.def(self.context).returned_ref
+            && self.data.def_type(self.context) != DefType::Generic
+        {
+            self.finalize_place_return_body(l, t, tail_pos);
+        } else if generic_promote_ok && context == "return from block" {
             // loft#918 — pass 1 cannot type a local bound to a call whose callee is
             // declared LOWER in the file: the call has nothing to resolve against there,
             // so the local reads `Unknown` and the text work-buffer promotion below never
@@ -3272,6 +3276,754 @@ impl Parser {
             }
         }
         tp
+    }
+}
+
+#[derive(Clone, Copy)]
+enum PlaceRoot {
+    Param(u16),
+    Local(u16),
+    NotAPlace,
+}
+
+impl Parser {
+    /// `@FR-B-RefType-Return` — rewrite a `-> &(A, B)` return expression whose type is `Tuple(_)`
+    /// back to its stored `__tuple<A, B>` `DbRef` place (`stored_tuple_dest`), refusing non-place
+    /// tuple literals.
+    pub(crate) fn prepare_place_return_expr(
+        &mut self,
+        expr: &mut Value,
+        t: &Type,
+        expected: &Type,
+    ) -> Option<Type> {
+        if let Type::Reference(d, _) = expected.base()
+            && self.data.def(*d).name().starts_with("__tuple<")
+            && matches!(t.base(), Type::Tuple(_))
+        {
+            let mut ok = true;
+            Self::unbox_tuple_place_leaves(expr, &self.data, &mut ok);
+            if !ok && !self.first_pass {
+                self.refuse_tuple_value_link();
+            }
+            let out = if matches!(t, Type::Optional(_)) {
+                Type::optional(expected.base().clone())
+            } else {
+                expected.clone()
+            };
+            return Some(out);
+        }
+        // @FR-B-RefType-Return — Phase C: scalar (`-> &integer`, …) and text (`-> &text`)
+        // place-returning functions lower every place leaf to its raw `DbRef` / link pointer.
+        if matches!(expected.base(), Type::RefVar(_)) {
+            self.lower_refvar_return_leaves(expr);
+            return Some(expected.clone());
+        }
+        None
+    }
+
+    fn lower_refvar_return_leaves(&mut self, expr: &mut Value) {
+        match expr {
+            Value::Span(b) => self.lower_refvar_return_leaves(&mut b.1),
+            Value::If(_, t, e) => {
+                self.lower_refvar_return_leaves(t);
+                self.lower_refvar_return_leaves(e);
+            }
+            Value::Block(bl) if bl.name == "place_ref_call" => {
+                let n = bl.operators.len();
+                if n >= 2
+                    && let Value::Set(tmp, _) = &bl.operators[n - 2]
+                {
+                    let t_nr = *tmp;
+                    bl.operators[n - 1] = self.cl("OpVarRef", &[Value::Var(t_nr)]);
+                    bl.name = "place_ref_ret";
+                }
+            }
+            Value::Block(bl) if bl.name != "ncr" => {
+                if let Some(last) = bl
+                    .operators
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    self.lower_refvar_return_leaves(last);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    self.lower_refvar_return_leaves(last);
+                }
+            }
+            Value::Null => {
+                *expr = self.cl("OpNullRefSentinel", &[]);
+            }
+            Value::Var(v) if matches!(self.vars.tp(*v).base(), Type::RefVar(_)) => {
+                let v_nr = *v;
+                *expr = self.cl("OpVarRef", &[Value::Var(v_nr)]);
+            }
+            leaf => {
+                if Self::is_amp_place(leaf, &self.data)
+                    && let Some(place) = self.scalar_place_ref(leaf)
+                {
+                    *leaf = place;
+                }
+            }
+        }
+    }
+
+    fn unbox_tuple_place_leaves(expr: &mut Value, data: &crate::data::Data, ok: &mut bool) {
+        if let Some(place) = Self::stored_tuple_dest(expr)
+            && place.is_place_read(data)
+        {
+            *expr = place;
+            return;
+        }
+        match expr {
+            Value::Span(b) => Self::unbox_tuple_place_leaves(&mut b.1, data, ok),
+            Value::If(_, t, e) => {
+                Self::unbox_tuple_place_leaves(t, data, ok);
+                Self::unbox_tuple_place_leaves(e, data, ok);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl
+                    .operators
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    Self::unbox_tuple_place_leaves(last, data, ok);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    Self::unbox_tuple_place_leaves(last, data, ok);
+                }
+            }
+            Value::Null => {}
+            _ => *ok = false,
+        }
+    }
+
+    /// `@FR-B-RefType-Return` — validate all exit expressions of a `-> &T` function body, enforce
+    /// the single-parameter place invariant (`|D| = 1`) and `@FR-Const-Value`, mark local view
+    /// aliases with `set_amp_link`, strip outer `OpRefFromChildRec` when returning out-of-line
+    /// fields, and publish `Deps::attrs(vec![param_idx])` on `def.returned`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "validates all exits, single-parameter rule, and OOL stripping together"
+    )]
+    pub(crate) fn finalize_place_return_body(
+        &mut self,
+        l: &mut [Value],
+        tail_tp: &Type,
+        tail_pos: &crate::lexer::Position,
+    ) {
+        let mut env: Vec<(u16, Value)> = Vec::new();
+        for op in l.iter() {
+            if let Value::Set(v, rhs) = op.unspan() {
+                env.push((*v, (**rhs).clone()));
+            }
+        }
+        let mut param_roots: Vec<u16> = Vec::new();
+        let mut has_ool_leaf = false;
+        let mut has_non_ool_leaf = false;
+        let mut had_error = false;
+        let mut has_any_exit = false;
+
+        // Walk explicit `return` statements inside `l`.
+        let mut explicit_returns: Vec<(Value, Option<crate::lexer::Position>)> = Vec::new();
+        for op in l.iter() {
+            let default_pos = op.span_pos().copied();
+            op.walk(&mut |n| {
+                if let Value::Return(inner) = n {
+                    let pos = inner.span_pos().copied().or(default_pos);
+                    explicit_returns.push(((**inner).clone(), pos));
+                }
+            });
+        }
+        for (ret_val, pos) in &explicit_returns {
+            has_any_exit = true;
+            let at = pos.unwrap_or(*tail_pos);
+            self.check_place_return_value(
+                ret_val,
+                &env,
+                &at,
+                0,
+                &mut param_roots,
+                &mut has_ool_leaf,
+                &mut has_non_ool_leaf,
+                &mut had_error,
+            );
+        }
+
+        // Walk implicit tail if present and not already a `Value::Return`.
+        if !matches!(tail_tp.base(), Type::Void | Type::Never)
+            && let Some(last) = l
+                .iter()
+                .rev()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            && !matches!(last.unspan(), Value::Return(_))
+        {
+            has_any_exit = true;
+            let at = last.span_pos().copied().unwrap_or(*tail_pos);
+            self.check_place_return_value(
+                last,
+                &env,
+                &at,
+                0,
+                &mut param_roots,
+                &mut has_ool_leaf,
+                &mut has_non_ool_leaf,
+                &mut had_error,
+            );
+        }
+
+        let fn_name = self.data.def(self.context).original_name();
+        let ret_disp = self
+            .data
+            .display_type_name(self.data.def(self.context).returned());
+
+        if !self.first_pass && !had_error {
+            if param_roots.len() > 1 {
+                let names: Vec<String> = param_roots
+                    .iter()
+                    .filter_map(|&idx| {
+                        self.data
+                            .def(self.context)
+                            .attributes()
+                            .get(idx as usize)
+                            .map(|a| format!("'{}'", a.name))
+                    })
+                    .collect();
+                self.lexer.pos_diagnostic(
+                    Level::Error,
+                    tail_pos,
+                    &format!(
+                        "'{fn_name}' returns a place from more than one parameter ({}) — a \
+                         `-> &{ret_disp}` function must borrow from a single parameter so callers \
+                         can track its container",
+                        names.join(", ")
+                    ),
+                );
+                had_error = true;
+            } else if param_roots.is_empty() && has_any_exit {
+                // Only `null` returned across all exits: allowed iff there is exactly one
+                // place-capable parameter to tie the nullable signature to; refused when zero.
+                let cand: Vec<u16> = self
+                    .data
+                    .def(self.context)
+                    .attributes()
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| {
+                        !a.hidden
+                            && !a.name.starts_with("__")
+                            && Self::param_can_root_place(&a.typedef)
+                    })
+                    .map(|(i, _)| i as u16)
+                    .collect();
+                if cand.len() == 1 {
+                    param_roots.push(cand[0]);
+                } else {
+                    self.lexer.pos_diagnostic(
+                        Level::Error,
+                        tail_pos,
+                        &format!(
+                            "'{fn_name}' is declared `-> &{ret_disp}` and must borrow a place from \
+                             one parameter"
+                        ),
+                    );
+                    had_error = true;
+                }
+            }
+        }
+
+        if let Some(&p_attr) = param_roots.first()
+            && !had_error
+        {
+            self.data.definitions[self.context as usize].returned_ref_param = p_attr;
+            let cur_ret = self.data.def(self.context).returned().clone();
+            let updated_ret = cur_ret.rewrap_deps(&Deps::attrs(vec![p_attr]));
+            self.data.definitions[self.context as usize].returned = updated_ret;
+        }
+
+        if has_ool_leaf && !has_non_ool_leaf && !had_error {
+            self.data.definitions[self.context as usize].returned_ref_ool = true;
+            let null_sentinel = self.cl("OpNullRefSentinel", &[]);
+            for op in l.iter_mut() {
+                Self::strip_ool_in_returns(op, &self.data, &null_sentinel);
+            }
+            if !matches!(tail_tp.base(), Type::Void | Type::Never)
+                && let Some(last) = l
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                && !matches!(last.unspan(), Value::Return(_))
+            {
+                Self::strip_ool_leaf(last, &self.data, &null_sentinel);
+            }
+        }
+    }
+
+    fn param_can_root_place(tp: &Type) -> bool {
+        if matches!(tp.base(), Type::RefVar(_)) {
+            return true;
+        }
+        matches!(
+            tp.base(),
+            Type::Reference(_, _)
+                | Type::Enum(_, true, _)
+                | Type::Vector(_, _)
+                | Type::Sorted(_, _, _)
+                | Type::Hash(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        clippy::too_many_lines,
+        reason = "accumulates and diagnoses place-return leaf shapes in one walk"
+    )]
+    fn check_place_return_value(
+        &mut self,
+        val: &Value,
+        env: &[(u16, Value)],
+        at: &crate::lexer::Position,
+        depth: u8,
+        param_roots: &mut Vec<u16>,
+        has_ool_leaf: &mut bool,
+        has_non_ool_leaf: &mut bool,
+        had_error: &mut bool,
+    ) {
+        if depth > 16 {
+            return;
+        }
+        match val.unspan() {
+            Value::Null => {}
+            Value::Call(d, args)
+                if args.is_empty()
+                    && (self.data.def(*d).name() == "OpNullRefSentinel"
+                        || self.data.def(*d).name().starts_with("OpConv")
+                            && self.data.def(*d).name().ends_with("FromNull")) => {}
+            Value::If(_, t, e) => {
+                self.check_place_return_value(
+                    t,
+                    env,
+                    at,
+                    depth + 1,
+                    param_roots,
+                    has_ool_leaf,
+                    has_non_ool_leaf,
+                    had_error,
+                );
+                self.check_place_return_value(
+                    e,
+                    env,
+                    at,
+                    depth + 1,
+                    param_roots,
+                    has_ool_leaf,
+                    has_non_ool_leaf,
+                    had_error,
+                );
+            }
+            Value::Block(bl)
+                if !matches!(
+                    bl.name,
+                    "Object" | "Vector" | "EnumUnitLit" | "Formatted string"
+                ) =>
+            {
+                let mut inner_env = env.to_vec();
+                for op in &bl.operators {
+                    if let Value::Set(v, rhs) = op.unspan() {
+                        inner_env.push((*v, (**rhs).clone()));
+                    }
+                }
+                if let Some(tail) = bl
+                    .operators
+                    .iter()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    self.check_place_return_value(
+                        tail,
+                        &inner_env,
+                        at,
+                        depth + 1,
+                        param_roots,
+                        has_ool_leaf,
+                        has_non_ool_leaf,
+                        had_error,
+                    );
+                }
+            }
+            Value::Insert(ops) => {
+                let mut inner_env = env.to_vec();
+                for op in ops {
+                    if let Value::Set(v, rhs) = op.unspan() {
+                        inner_env.push((*v, (**rhs).clone()));
+                    }
+                }
+                if let Some(tail) = ops
+                    .iter()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    self.check_place_return_value(
+                        tail,
+                        &inner_env,
+                        at,
+                        depth + 1,
+                        param_roots,
+                        has_ool_leaf,
+                        has_non_ool_leaf,
+                        had_error,
+                    );
+                }
+            }
+            Value::Var(v) if !self.vars.is_argument(*v) => {
+                // @FR-O-Proxy asks oracle — distinguishes an owned local from a view alias for the place-return check.
+                let user_owned_local = !self.vars.is_compiler_generated(*v)
+                    && !matches!(self.vars.tp(*v).base(), Type::RefVar(_))
+                    && self.vars.tp(*v).depend().is_empty()
+                    && !env.iter().rev().any(|(x, rhs)| {
+                        x == v
+                            && matches!(
+                                rhs.unspan(),
+                                Value::Call(d, _)
+                                    if (*d as usize) < self.data.definitions.len()
+                                        && self.data.def(*d).returned_ref
+                            )
+                    });
+                let bound_rhs = (!user_owned_local)
+                    .then(|| {
+                        env.iter()
+                            .rev()
+                            .find(|(x, rhs)| x == v && !matches!(rhs.unspan(), Value::Null))
+                    })
+                    .flatten();
+                if let Some((_, rhs)) = bound_rhs {
+                    // Local view/link returned: mark it `set_amp_link` so reshape refusals guard
+                    // it, and trace its bound RHS to verify it aliases a parameter place.
+                    self.vars.set_amp_link(*v);
+                    self.check_place_return_value(
+                        rhs,
+                        env,
+                        at,
+                        depth + 1,
+                        param_roots,
+                        has_ool_leaf,
+                        has_non_ool_leaf,
+                        had_error,
+                    );
+                } else if !self.first_pass {
+                    let fn_name = self.data.def(self.context).original_name();
+                    let vname = self.vars.written_name(*v).to_string();
+                    self.lexer.pos_diagnostic(
+                        Level::Error,
+                        at,
+                        &format!(
+                            "'{fn_name}' cannot return a place rooted in local '{vname}' — its \
+                             frame is freed when '{fn_name}' returns"
+                        ),
+                    );
+                    *had_error = true;
+                }
+            }
+            leaf => {
+                if self.out_of_line_place(leaf).is_some() {
+                    *has_ool_leaf = true;
+                } else {
+                    *has_non_ool_leaf = true;
+                }
+                match self.resolve_place_leaf_root(leaf, env, 0) {
+                    PlaceRoot::Param(p_var) => {
+                        let attr_idx = self
+                            .vars
+                            .arguments()
+                            .iter()
+                            .position(|&x| x == p_var)
+                            .unwrap_or(p_var as usize);
+                        let p_name = self.vars.written_name(p_var).to_string();
+                        let attr_tp = self
+                            .data
+                            .def(self.context)
+                            .attributes()
+                            .get(attr_idx)
+                            .map_or_else(|| self.vars.tp(p_var).clone(), |a| a.typedef.clone());
+                        let is_const_param = self
+                            .data
+                            .def(self.context)
+                            .attributes()
+                            .get(attr_idx)
+                            .is_some_and(|a| a.value_const)
+                            || self.vars.is_value_const(p_var);
+                        let is_val_struct = matches!(attr_tp.base(), Type::Reference(d, _)
+                            if self.data.is_value_struct(*d));
+                        if (!Self::param_can_root_place(&attr_tp) || is_val_struct)
+                            && !self.first_pass
+                        {
+                            let fn_name = self.data.def(self.context).original_name();
+                            self.lexer.pos_diagnostic(
+                                Level::Error,
+                                at,
+                                &format!(
+                                    "'{fn_name}' cannot return a place from by-value parameter \
+                                     '{p_name}' — it is a copy in '{fn_name}'s frame; declare \
+                                     `{p_name}: &…` or return by value"
+                                ),
+                            );
+                            *had_error = true;
+                        } else if is_const_param
+                            && !self.data.def(self.context).returned_const
+                            && !self.first_pass
+                        {
+                            let fn_name = self.data.def(self.context).original_name();
+                            let ret_disp = self
+                                .data
+                                .display_type_name(self.data.def(self.context).returned());
+                            self.lexer.pos_diagnostic(
+                                Level::Error,
+                                at,
+                                &format!(
+                                    "'{fn_name}' returns a writable `&{ret_disp}` place from \
+                                     `const` parameter '{p_name}' — declare `-> const &{ret_disp}`, \
+                                     remove `const` on '{p_name}', or return by value"
+                                ),
+                            );
+                            *had_error = true;
+                        } else if !param_roots.contains(&(attr_idx as u16)) {
+                            param_roots.push(attr_idx as u16);
+                        }
+                    }
+                    PlaceRoot::Local(v) => {
+                        if !self.first_pass {
+                            let fn_name = self.data.def(self.context).original_name();
+                            let vname = self.vars.written_name(v).to_string();
+                            let is_cap = v == self.closure_param
+                                || self.vars.name(v) == "__closure"
+                                || self.captured_names.iter().any(|(n, _)| n == &vname);
+                            if is_cap {
+                                self.lexer.pos_diagnostic(
+                                    Level::Error,
+                                    at,
+                                    &format!(
+                                        "'{fn_name}' cannot return a place rooted in a captured \
+                                         closure variable — pass the container as a parameter \
+                                         instead"
+                                    ),
+                                );
+                            } else {
+                                self.lexer.pos_diagnostic(
+                                    Level::Error,
+                                    at,
+                                    &format!(
+                                        "'{fn_name}' cannot return a place rooted in local \
+                                         '{vname}' — its frame is freed when '{fn_name}' returns"
+                                    ),
+                                );
+                            }
+                            *had_error = true;
+                        }
+                    }
+                    PlaceRoot::NotAPlace => {
+                        if !self.first_pass {
+                            let fn_name = self.data.def(self.context).original_name();
+                            let ret_disp = self
+                                .data
+                                .display_type_name(self.data.def(self.context).returned());
+                            self.lexer.pos_diagnostic(
+                                Level::Error,
+                                at,
+                                &format!(
+                                    "'{fn_name}' is declared `-> &{ret_disp}`, which must return \
+                                     an addressable place in one parameter, not a temporary or \
+                                     computed value"
+                                ),
+                            );
+                            *had_error = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolve_place_leaf_root(
+        &mut self,
+        leaf: &Value,
+        env: &[(u16, Value)],
+        depth: u8,
+    ) -> PlaceRoot {
+        if depth > 16 {
+            return PlaceRoot::NotAPlace;
+        }
+        match leaf.unspan() {
+            Value::Var(v) => {
+                // @FR-O-Proxy asks oracle — distinguishes an owned local from a view alias for the place-return check.
+                let user_owned_local = !self.vars.is_argument(*v)
+                    && !self.vars.is_compiler_generated(*v)
+                    && !matches!(self.vars.tp(*v).base(), Type::RefVar(_))
+                    && self.vars.tp(*v).depend().is_empty()
+                    && !env.iter().rev().any(|(x, rhs)| {
+                        x == v
+                            && matches!(
+                                rhs.unspan(),
+                                Value::Call(d, _)
+                                    if (*d as usize) < self.data.definitions.len()
+                                        && self.data.def(*d).returned_ref
+                            )
+                    });
+                if self.vars.is_argument(*v) && !self.vars.name(*v).starts_with("__") {
+                    PlaceRoot::Param(*v)
+                } else if !user_owned_local
+                    && let Some((_, rhs)) = env
+                        .iter()
+                        .rev()
+                        .find(|(x, rhs)| x == v && !matches!(rhs.unspan(), Value::Null))
+                {
+                    self.vars.set_amp_link(*v);
+                    self.resolve_place_leaf_root(rhs, env, depth + 1)
+                } else {
+                    PlaceRoot::Local(*v)
+                }
+            }
+            Value::Call(d_nr, args) => {
+                let def = self.data.def(*d_nr);
+                if def.returned_ref {
+                    let p = if def.returned_ref_param == u16::MAX {
+                        0
+                    } else {
+                        def.returned_ref_param as usize
+                    };
+                    return match args.get(p) {
+                        Some(arg) => self.resolve_place_leaf_root(arg, env, depth + 1),
+                        None => PlaceRoot::NotAPlace,
+                    };
+                }
+                let name = def.name();
+                let is_proj = name.starts_with("OpGet")
+                    || matches!(
+                        name,
+                        "OpVectorRef"
+                            | "OpVectorRefNullable"
+                            | "OpRefFromChildRec"
+                            | "OpVarRef"
+                            | "OpCreateStack"
+                    );
+                if is_proj && let Some(first) = args.first() {
+                    self.resolve_place_leaf_root(first, env, depth + 1)
+                } else {
+                    PlaceRoot::NotAPlace
+                }
+            }
+            Value::CallRef(fv, args)
+                if self
+                    .vars
+                    .tp(*fv)
+                    .function_consts()
+                    .is_some_and(crate::data::ConstParams::ret_ref) =>
+            {
+                let cands: Vec<usize> = self
+                    .vars
+                    .tp(*fv)
+                    .base()
+                    .fn_return_deps_attrs()
+                    .unwrap_or_else(|| vec![0]);
+                if cands.len() == 1
+                    && let Some(arg) = args.get(cands[0])
+                {
+                    self.resolve_place_leaf_root(arg, env, depth + 1)
+                } else {
+                    PlaceRoot::NotAPlace
+                }
+            }
+            Value::Block(bl) => bl
+                .operators
+                .iter()
+                .rev()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                .map_or(PlaceRoot::NotAPlace, |tail| {
+                    let mut inner_env = env.to_vec();
+                    for op in &bl.operators {
+                        if let Value::Set(v, rhs) = op.unspan() {
+                            inner_env.push((*v, (**rhs).clone()));
+                        }
+                    }
+                    self.resolve_place_leaf_root(tail, &inner_env, depth + 1)
+                }),
+            _ => PlaceRoot::NotAPlace,
+        }
+    }
+
+    fn strip_ool_in_returns(node: &mut Value, data: &crate::data::Data, null_sentinel: &Value) {
+        match node {
+            Value::Return(inner) => Self::strip_ool_leaf(inner, data, null_sentinel),
+            Value::Span(b) => Self::strip_ool_in_returns(&mut b.1, data, null_sentinel),
+            Value::If(_, t, e) => {
+                Self::strip_ool_in_returns(t, data, null_sentinel);
+                Self::strip_ool_in_returns(e, data, null_sentinel);
+            }
+            Value::Block(bl) => {
+                for op in &mut bl.operators {
+                    Self::strip_ool_in_returns(op, data, null_sentinel);
+                }
+            }
+            Value::Insert(ops) => {
+                for op in ops {
+                    Self::strip_ool_in_returns(op, data, null_sentinel);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn strip_ool_leaf(node: &mut Value, data: &crate::data::Data, null_sentinel: &Value) {
+        match node {
+            Value::Span(b) => Self::strip_ool_leaf(&mut b.1, data, null_sentinel),
+            Value::If(_, t, e) => {
+                Self::strip_ool_leaf(t, data, null_sentinel);
+                Self::strip_ool_leaf(e, data, null_sentinel);
+            }
+            Value::Block(bl) => {
+                if let Some(last) = bl
+                    .operators
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    Self::strip_ool_leaf(last, data, null_sentinel);
+                }
+            }
+            Value::Insert(ops) => {
+                if let Some(last) = ops
+                    .iter_mut()
+                    .rev()
+                    .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                {
+                    Self::strip_ool_leaf(last, data, null_sentinel);
+                }
+            }
+            Value::Null => {
+                *node = null_sentinel.clone();
+            }
+            Value::Call(d, args)
+                if data.def(*d).name() == "OpRefFromChildRec" && args.len() == 1 =>
+            {
+                *node = args.remove(0);
+            }
+            _ => {}
+        }
     }
 
     /// loft#2562 — a returned keyed collection that is a FIELD of a local record is copied
@@ -14732,10 +15484,17 @@ impl Parser {
             // "expected __tuple<…>, got (…)" even though the SAME tuple as a
             // function's final expression compiles.  parse_return is the statement
             // path; block_result is the tail path — they must agree.
-            let t = self
-                .unbox_stored_tuple_tail(&t, &r_type, &mut v)
-                .unwrap_or(t);
+            let t = if self.context != u32::MAX
+                && self.data.def(self.context).returned_ref
+                && let Some(tt) = self.prepare_place_return_expr(&mut v, &t, &r_type)
+            {
+                tt
+            } else {
+                self.unbox_stored_tuple_tail(&t, &r_type, &mut v)
+                    .unwrap_or(t)
+            };
             let tuple_rewritten = !self.first_pass
+                && !self.data.def(self.context).returned_ref
                 // Through `base()`, exactly as `block_result`'s twin above: the statement path
                 // and the tail path must agree about what a tuple is, and an absent tuple is one
                 // (`@FR-N-Shape`, `@FR-T-Absent`, `D-tup-10`).
@@ -14766,7 +15525,9 @@ impl Parser {
             {
                 self.validate_convert("return", &t, &r_type, &expr_start.position);
             }
-            self.copy_returned_fn_field(&mut v);
+            if !self.data.def(self.context).returned_ref {
+                self.copy_returned_fn_field(&mut v);
+            }
             // loft#822 — `convert` can UNBOX a stored tuple into its stack spelling, and
             // `t` still names the spelling the value had BEFORE that.  The delivery
             // classification below branches on `t`'s kind: left stale it sees a
@@ -14797,7 +15558,9 @@ impl Parser {
             // this site — the legacy `__ref_1` OpAppendVector injection
             // further down must then NOT fire a second copy.
             let mut vector_bound = false;
-            if self.data.def_type(self.context) != DefType::Generic {
+            if self.data.def_type(self.context) != DefType::Generic
+                && !self.data.def(self.context).returned_ref
+            {
                 // Explicit `return <expr>;`: the full body is not available
                 // here, so pass the return expression itself as a one-element
                 // body — `ref_return`'s one-buffer binding substitutes /
@@ -16417,10 +17180,43 @@ impl Parser {
         // candidate's `&text` buffer count and the dispatcher pops the excess, because a
         // `&text` points into the CALLER's frame and only the caller can supply one that
         // outlives the call (loft#1116).
+        let store_text_ret = param_consts.ret_ref()
+            && matches!(
+                ret_type.base(),
+                Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+            )
+            && {
+                let cands = slot_tp
+                    .base()
+                    .fn_return_deps_attrs()
+                    .unwrap_or_else(|| vec![0]);
+                cands.len() == 1 && {
+                    let p = cands[0];
+                    !matches!(param_types.get(p).map(Type::base), Some(Type::RefVar(_)))
+                        || list.get(p).is_some_and(|a| self.is_text_place(a))
+                }
+            };
         let work_vars = self.fnref_text_buffer_vars(param_types.len(), ret_type.as_ref());
         if self.first_pass {
             // Pass 1 answers the call's shape, as the zero-argument twin above does.
+            let mut callref_pres = Vec::new();
+            for (i, expected) in param_types.iter().enumerate() {
+                if matches!(expected.base(), Type::RefVar(_))
+                    && let Some(arg) = list.get(i)
+                    && let Some((setup, _, _)) = Self::peel_place_ref_call(arg)
+                {
+                    callref_pres.extend(setup);
+                }
+            }
             *val = Value::CallRef(v_nr, list.to_vec());
+            if param_consts.ret_ref() && matches!(ret_type.base(), Type::RefVar(_)) {
+                return Some(self.wrap_refvar_place_call(
+                    val,
+                    ret_type.as_ref(),
+                    store_text_ret,
+                    callref_pres,
+                ));
+            }
             return Some(*ret_type);
         }
         {
@@ -16446,7 +17242,23 @@ impl Parser {
                 );
             }
             let mut converted = list.to_vec();
+            let mut callref_pres = Vec::new();
             for (i, expected) in param_types.iter().enumerate() {
+                if matches!(expected.base(), Type::RefVar(_))
+                    && let Some((setup, call, tail)) = Self::peel_place_ref_call(&converted[i])
+                {
+                    if !param_consts.is(i) && self.call_is_const_place_ref(&call) {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Cannot pass a `const &` return place to mutable `&` parameter {} of '{name}' — \
+                             declare the parameter `const &` or pass a local copy",
+                            i + 1
+                        );
+                    }
+                    callref_pres.extend(setup);
+                    converted[i] = tail;
+                }
                 self.convert(&mut converted[i], &types[i], expected);
             }
             // `@FR-F-ParamText` — a closure may grow the store a text argument views.
@@ -16523,6 +17335,19 @@ impl Parser {
                 }
             }
             *val = call_ir;
+            if param_consts.ret_ref() && matches!(ret_type.base(), Type::RefVar(_)) {
+                return Some(self.wrap_refvar_place_call(
+                    val,
+                    ret_type.as_ref(),
+                    store_text_ret,
+                    callref_pres,
+                ));
+            }
+            if !callref_pres.is_empty() {
+                let call = std::mem::replace(val, Value::Null);
+                callref_pres.push(call);
+                *val = v_block(callref_pres, *ret_type.clone(), "amp arg setup");
+            }
             // for void-return capturing lambdas, write updated closure
             // record fields back to the corresponding outer variables so the caller
             // observes mutations made inside the lambda body (e.g. `count += x`).

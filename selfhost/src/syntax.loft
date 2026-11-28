@@ -21,7 +21,7 @@ pub enum Syn {
   SImport { pub at: integer, pub name: text, pub alias: text },
   SCapability { pub at: integer, pub public: boolean, pub name: text, pub path: vector<text> },
   // ── functions ──
-  SFn { pub at: integer, pub public: boolean, pub is_op: boolean, pub name: text, pub tvars: vector<integer>, pub params: vector<integer>, pub ret: integer?, pub ret_const: boolean, pub cap: integer?, pub body: integer?, pub annots: vector<integer> },
+  SFn { pub at: integer, pub public: boolean, pub is_op: boolean, pub name: text, pub tvars: vector<integer>, pub params: vector<integer>, pub ret: integer?, pub ret_const: boolean, pub ret_amp: boolean = false, pub cap: integer?, pub body: integer?, pub annots: vector<integer> },
   STVar { pub at: integer, pub name: text, pub bounds: vector<text> },
   SParam { pub at: integer, pub name: text, pub amp: boolean, pub fixed: boolean, pub tp: integer?, pub init: integer?, pub cap: integer? },
   SCapLink { pub at: integer, pub path: vector<text>, pub right: text },
@@ -39,7 +39,7 @@ pub enum Syn {
   SIType { pub at: integer, pub name: text, pub bounds: vector<text> },
   // `end` is the token after the member (before its optional `;`): where the Rust parser stands
   // when it records the member's definitions.
-  SIFn { pub at: integer, pub kind: text, pub name: text, pub params: vector<integer>, pub ret: integer?, pub end: integer },
+  SIFn { pub at: integer, pub kind: text, pub name: text, pub params: vector<integer>, pub ret: integer?, pub ret_amp: boolean = false, pub ret_const: boolean = false, pub end: integer },
   SConst { pub at: integer, pub public: boolean, pub fixed: boolean, pub name: text, pub tp: integer?, pub value: integer? },
   // ── types ──
   // A named type: `name[::member]<args>[deps] limit(lo, hi) not null .assoc ?`.  `keys` holds a
@@ -47,7 +47,7 @@ pub enum Syn {
   STy { pub at: integer, pub name: text, pub member: text, pub args: vector<integer>, pub elem_null: boolean, pub keys: vector<text>, pub deps: vector<text>, pub limit: integer?, pub not_null: boolean, pub assoc: text, pub nullable: boolean },
   SLimit { pub at: integer, pub lo: integer?, pub hi: integer? },
   STyTuple { pub at: integer, pub elems: vector<integer> },
-  STyFn { pub at: integer, pub args: vector<integer>, pub ret: integer? },
+  STyFn { pub at: integer, pub args: vector<integer>, pub ret: integer?, pub ret_amp: boolean = false, pub ret_const: boolean = false },
   STyArg { pub at: integer, pub amp: boolean, pub fixed: boolean, pub tp: integer? },
   // ── statements ──
   // `end`: the closing `}`'s token, which no count of braces can find past a string hole.
@@ -85,7 +85,7 @@ pub enum Syn {
   SVecLit { pub at: integer, pub items: vector<integer> },
   SRepeat { pub at: integer, pub e: integer?, pub n: integer },
   SComprehension { pub at: integer, pub binds: vector<text>, pub source: integer, pub filter: integer?, pub body: integer? },
-  SLambda { pub at: integer, pub params: vector<integer>, pub ret: integer?, pub body: integer?, pub short: boolean, pub names: vector<text> },
+  SLambda { pub at: integer, pub params: vector<integer>, pub ret: integer?, pub ret_amp: boolean = false, pub ret_const: boolean = false, pub body: integer?, pub short: boolean, pub names: vector<text> },
   SSizeof { pub at: integer, pub kind: text, pub tp: integer?, pub e: integer? },
   SIntrinsic { pub at: integer, pub kind: text, pub args: vector<integer> },
   SVectorParse { pub at: integer, pub elem: text, pub args: vector<integer> },
@@ -256,8 +256,19 @@ fn ty(p: Syntax) -> integer? {
       elems += rest;
       add(p, STyTuple { at: at, elems: elems })
     },
-    [KwFn, LParen, (args: ty_arg)*(Comma), RParen, (r: ret_type)?] =>
-      add(p, STyFn { at: at, args: args, ret: r }),
+    [KwFn, LParen, (args: ty_arg)*(Comma), RParen, (r: ret_type)?] => {
+      rt: integer? = null;
+      ra = false;
+      rc = false;
+      if r != null {
+        if p.nodes[r ?? 0] is SParam { tp, amp, fixed } {
+          rt = tp;
+          ra = amp;
+          rc = fixed;
+        }
+      }
+      add(p, STyFn { at: at, args: args, ret: rt, ret_amp: ra, ret_const: rc })
+    },
     [n: named_ty] => n,
     _ => null
   }
@@ -278,9 +289,15 @@ fn trailing_comma(p: Syntax) -> integer? {
   }
 }
 
+// @FR-B-RefType-Return — `-> (& / const)? Type`, carried in `SParam { tp, amp, fixed }`.
 fn ret_type(p: Syntax) -> integer? {
+  at = p.pos;
   match p {
-    [Arrow, t: ty] => t,
+    [Arrow, "const", Amp, t: ty] => add(p, SParam { at: at, name: "", amp: true, fixed: true, tp: t, init: null, cap: null }),
+    [Arrow, Amp, "const", t: ty] => add(p, SParam { at: at, name: "", amp: true, fixed: true, tp: t, init: null, cap: null }),
+    [Arrow, Amp, t: ty] => add(p, SParam { at: at, name: "", amp: true, fixed: false, tp: t, init: null, cap: null }),
+    [Arrow, "const", t: ty] => add(p, SParam { at: at, name: "", amp: false, fixed: true, tp: t, init: null, cap: null }),
+    [Arrow, t: ty] => add(p, SParam { at: at, name: "", amp: false, fixed: false, tp: t, init: null, cap: null }),
     _ => null
   }
 }
@@ -586,17 +603,19 @@ fn fn_decl(p: Syntax) -> integer? {
      (r: fn_ret)?, (c: cap_link)?, b: fn_body, (an: annotation)*] => {
       ret: integer? = null;
       ret_const = false;
+      ret_amp = false;
       if r != null {
-        if p.nodes[r ?? 0] is SParam { tp, fixed } {
+        if p.nodes[r ?? 0] is SParam { tp, fixed, amp } {
           ret = tp;
           ret_const = fixed;
+          ret_amp = amp;
         }
       }
       body: integer? = null;
       if p.nodes[b] is SBlock {
         body = b;
       }
-      add(p, SFn { at: at, public: pb != null, is_op: name_of(p, k) == "operator", name: name_of(p, n), tvars: items(p, tv), params: ps, ret: ret, ret_const: ret_const, cap: c, body: body, annots: an })
+      add(p, SFn { at: at, public: pb != null, is_op: name_of(p, k) == "operator", name: name_of(p, n), tvars: items(p, tv), params: ps, ret: ret, ret_const: ret_const, ret_amp: ret_amp, cap: c, body: body, annots: an })
     },
     _ => null
   }
@@ -622,10 +641,13 @@ fn fn_name(p: Syntax) -> integer? {
   }
 }
 
-// `-> const? Type Deps?`, in a carrier `SParam` (`tp`, `fixed`; the deps go on the type).
+// `-> (& / const)? Type Deps?`, in a carrier `SParam` (`tp`, `amp`, `fixed`; the deps go on the type).
 fn fn_ret(p: Syntax) -> integer? {
   at = p.pos;
   match p {
+    [Arrow, "const", Amp, t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: true, fixed: true, tp: with_deps(p, t, d), init: null, cap: null }),
+    [Arrow, Amp, "const", t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: true, fixed: true, tp: with_deps(p, t, d), init: null, cap: null }),
+    [Arrow, Amp, t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: true, fixed: false, tp: with_deps(p, t, d), init: null, cap: null }),
     [Arrow, "const", t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: false, fixed: true, tp: with_deps(p, t, d), init: null, cap: null }),
     [Arrow, t: ty, (d: deps)?] => add(p, SParam { at: at, name: "", amp: false, fixed: false, tp: with_deps(p, t, d), init: null, cap: null }),
     _ => null
@@ -884,15 +906,29 @@ fn interface_member(p: Syntax) -> integer? {
     },
     [KwType, Ident { name }, (_s: semi)?] => add(p, SIType { at: at, name: name, bounds: [] }),
     [KwFn, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
-      add(p, SIFn { at: at, kind: "fn", name: name, params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+      s_ifn(p, at, "fn", name, ps, r, s),
     [KwOperator, Ident { name }, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
-      add(p, SIFn { at: at, kind: "operator", name: name, params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+      s_ifn(p, at, "operator", name, ps, r, s),
     ["op", LBracket, RBracket, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
-      add(p, SIFn { at: at, kind: "op", name: "[]", params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+      s_ifn(p, at, "op", "[]", ps, r, s),
     ["op", o: op_token, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, (s: semi)?] =>
-      add(p, SIFn { at: at, kind: "op", name: name_of(p, o), params: ps, ret: r, end: if s == null { p.pos } else { p.pos - 1 } }),
+      s_ifn(p, at, "op", name_of(p, o), ps, r, s),
     _ => null
   }
+}
+
+fn s_ifn(p: Syntax, at: integer, kind: text, name: text, ps: vector<integer>, r: integer?, s: integer?) -> integer {
+  rt: integer? = null;
+  ra = false;
+  rc = false;
+  if r != null {
+    if p.nodes[r ?? 0] is SParam { tp, amp, fixed } {
+      rt = tp;
+      ra = amp;
+      rc = fixed;
+    }
+  }
+  add(p, SIFn { at: at, kind: kind, name: name, params: ps, ret: rt, ret_amp: ra, ret_const: rc, end: if s == null { p.pos } else { p.pos - 1 } })
 }
 
 // Constant <- 'const'? Ident (':' Type)? '=' Expr ';'                   parse_constant
@@ -1950,8 +1986,19 @@ fn vec_item(p: Syntax) -> integer? {
 fn lambda(p: Syntax) -> integer? {
   at = p.pos;
   match p {
-    [KwFn, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, b: block] =>
-      add(p, SLambda { at: at, params: ps, ret: r, body: b, short: false, names: [] }),
+    [KwFn, LParen, (ps: param)*(Comma), (_t: trailing_comma)?, RParen, (r: ret_type)?, b: block] => {
+      rt: integer? = null;
+      ra = false;
+      rc = false;
+      if r != null {
+        if p.nodes[r ?? 0] is SParam { tp, amp, fixed } {
+          rt = tp;
+          ra = amp;
+          rc = fixed;
+        }
+      }
+      add(p, SLambda { at: at, params: ps, ret: rt, ret_amp: ra, ret_const: rc, body: b, short: false, names: [] })
+    },
     [OrOr, b: block] => add(p, SLambda { at: at, params: [], ret: null, body: b, short: true, names: [] }),
     [Pipe, (ns: ident)*(Comma), Pipe, b: block] =>
       add(p, SLambda { at: at, params: [], ret: null, body: b, short: true, names: texts(p, ns) }),

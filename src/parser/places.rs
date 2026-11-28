@@ -98,8 +98,27 @@ impl Parser {
             // A tuple local's member (`@FR-B-Ref-Lvalue`): the bind lowering decides which
             // member types it can link, and refuses the rest by name.
             Value::Var(_) | Value::TupleGet(_, _) => true,
+            Value::Block(bl) if bl.name == "place_ref_call" || bl.name == "place_ref_ret" => bl
+                .operators
+                .len()
+                >= 2
+                && bl.operators[..bl.operators.len() - 1].iter().all(
+                    |op| matches!(op.unspan(), Value::Set(_, rhs) if Self::is_amp_place(rhs, data)),
+                ),
+            Value::CallRef(_, args) => args.iter().any(|a| Self::is_amp_place(a, data)),
             Value::Call(d_nr, args) => {
-                let name = data.def(*d_nr).name();
+                let def = data.def(*d_nr);
+                if def.returned_ref {
+                    // @FR-B-RefType-Return — a `-> &T` call names a place iff its borrowed
+                    // parameter argument is itself a place (refusing `e = &first(mk())`).
+                    let p = def.returned_ref_param as usize;
+                    return if p < args.len() {
+                        Self::is_amp_place(&args[p], data)
+                    } else {
+                        args.iter().any(|a| Self::is_amp_place(a, data))
+                    };
+                }
+                let name = def.name();
                 let listed = matches!(
                     name,
                     "OpGetField"
@@ -123,6 +142,9 @@ impl Parser {
                         // a store-kind text link (`OpGetText(OpVarRef(t), 0)`).
                         | "OpGetText"
                         | "OpVarRef"
+                        | "OpCreateStack"
+                        | "OpGetStackRef"
+                        | "OpGetSlotRef"
                 );
                 // loft#1567 — every NARROW read op, asked from the one home that names them
                 // (`NarrowIntKind::get_op`) rather than re-listed here.  The hand-kept list
@@ -701,11 +723,14 @@ impl Parser {
         // Asked of THIS body's errors: another function's refusal says nothing about this one.
         let refused_already = body_refused;
         for (a_nr, a) in arguments.iter().enumerate() {
+            let returned_as_place = self.data.def(self.context).returned_ref
+                && self.data.def(self.context).returned_ref_param == a_nr as u16;
             if matches!(a.typedef, Type::RefVar(_))
                 && !a.constant
                 && !refused_already
                 && !written.contains(&(a_nr as u16))
                 && !lambda_written.contains(&a.name)
+                && !returned_as_place
             {
                 // loft#1003 — point at the `&` itself when the declaration captured it.
                 // The fallback is the variable's source, which for a parameter is a position

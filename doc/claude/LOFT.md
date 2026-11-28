@@ -273,7 +273,7 @@ store on its own line.
 | `reference<T>`                     | Reference (pointer) to a stored `T` record; assigning re-points it; the record lives as long as the store of its holder — the compiler keeps it there, and refuses the few shapes it cannot keep (a holder that is an element of a parameter's collection, two parameters naming one record) |
 | `reference<T>?`                    | The same pointer, allowed to be absent.  For a tree or a list that OWNS its nodes, a `T?` field is the child ([§ Recursive types](#recursive-types--a-child-or-a-link)) |
 | `iterator<T, I>`                   | Iterator yielding `T` using internal state `I`        |
-| `fn(T1, T2) -> R`                  | First-class function type                             |
+| `fn(T1, T2) -> R` / `fn(S) -> &R`  | First-class function type (value return or single-parameter place return) |
 
 The key fields are declared **inside** the angle brackets with the element type.
 A `-` prefix on a field name means descending order:
@@ -553,7 +553,7 @@ The same desugar runs in the browser, so a script is exactly what the
 
 ## Declarations, files and grammar
 
-Functions, references, constants, type aliases, imports, shadowing and qualified names, file structure, `#rust` annotations, the shebang and the informal grammar: [LOFT_DECLARATIONS.md](LOFT_DECLARATIONS.md).
+Functions (a `-> T` return is an independent value; `-> &T` returns a place inside one parameter, so changing `-> T` to `-> &T` turns callers' plain record binds into views), references, constants, type aliases, imports, shadowing and qualified names, file structure, `#rust` annotations, the shebang and the informal grammar: [LOFT_DECLARATIONS.md](LOFT_DECLARATIONS.md).
 
 ## Operators
 

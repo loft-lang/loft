@@ -108,8 +108,8 @@ fn top_item(e: el::El, it: integer) {
     SAlias { at, name, tp, size } => { parse_typedef(e, at, name, tp, size); },
     SEnum { at, name, tvars, variants } => { parse_enum(e, at, name, tvars, variants); },
     SInterface { at, name, members, end } => { parse_interface(e, at, name, members, end); },
-    SFn { at, is_op, name, tvars, params, ret, ret_const, body, annots } => {
-      key = parse_function(e, at, name, params, ret, body, is_op, tvars, ret_const, annots);
+    SFn { at, is_op, name, tvars, params, ret, ret_const, ret_amp, body, annots } => {
+      key = parse_function(e, at, name, params, ret, body, is_op, tvars, ret_const, annots, ret_amp: ret_amp);
       e.type_vars = [];
       if e.first_pass && (key == "" || el::def_nr(e, key) < 0) {
         e.declined += [name];
@@ -2205,7 +2205,7 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
         }
         el::refuse(e, "an interface's associated type");
       },
-      SIFn { kind, name: method, params, ret, end: mend } => {
+      SIFn { kind, name: method, params, ret, ret_amp, ret_const, end: mend } => {
         member = if kind == "op" { "Op{op_rename(method)}" } else { method };
         if e.first_pass && d >= 0 {
           // The member's signature: its parameters as declared (`self: Self` among them) and
@@ -2236,6 +2236,12 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
               return;
             }
             rt = r!;
+            if ret_amp {
+              rb = el_types::base(rt);
+              if el_convert::plain_scalar(rb) || rb is TyText || match rb { TyEnum { is_ref } => !is_ref, _ => false } {
+                rt = ir::TyRefVar { inner: rt };
+              }
+            }
           }
           stub = "__iface_{d}#{len(params)}_{member}";
           if el::def_nr(e, stub) < 0 {
@@ -2243,6 +2249,8 @@ fn parse_interface(e: el::El, at: integer, name: text, members: vector<integer>,
             e.b.data.definitions[sn].attributes = sig;
             e.b.data.definitions[sn].parent = d;
             e.b.data.definitions[sn].operator_form = kind == "operator";
+            e.b.data.definitions[sn].returned_ref = ret_amp;
+            e.b.data.definitions[sn].returned_const = ret_const;
             el::set_returned(e, sn, rt);
           }
           sym = symbolic_member(member, len(params));
@@ -2416,7 +2424,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
 // The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = [], short_names: vector<text> = [], hint: ir::TypeT = ir::TyVoid) -> text {
+pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = [], short_names: vector<text> = [], hint: ir::TypeT = ir::TyVoid, ret_amp: boolean = false) -> text {
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
   // definition's image is the plain one, so both are read past.  An `operator` form is the
   // method of its name, marked (`operator_form`) so the form it backs reaches it.
@@ -2557,9 +2565,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // A hoisted default has no signature in the source: its definition stands where the lexer
     // stood past the default's first token (`default_value_fn`), which is `at`.
   } else if ret != null {
-    // `-> T` (or `-> const T`, a function or a tuple type): the lexer stood on the `->`, which a
-    // `const` stands between.
-    back = if ret_const { 2 } else { 1 };
+    // `-> T` (or `-> const T`, `-> &T`, a function or a tuple type): the lexer stood on the `->`,
+    // which `const` and `&` stand between.
+    back = 1 + (if ret_const { 1 } else { 0 }) + (if ret_amp { 1 } else { 0 });
     match e.p.nodes[ret ?? 0] {
       STy { at: tat } => { after = tat - back; },
       STyFn { at: tat } => { after = tat - back; },
@@ -2633,7 +2641,26 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
       e.context = -1;
       return "";
     }
-    rt = boxed_tuple_return(e, t!);
+    if ret_amp {
+      // @FR-B-RefType-Return — scalar/text returns wrap in `TyRefVar`; tuple returns box.
+      rb0 = el_types::base(t!);
+      if rb0 is TyTuple {
+        rel0 = match rb0 { TyTuple { elems } => elems, _ => [] };
+        rtd0 = el_types::tuple_def_of(e, rel0);
+        if rtd0 < 0 {
+          el::refuse(e, "a `&` tuple return");
+          e.context = -1;
+          return "";
+        }
+        rt = if t! is TyOptional { ir::TyOptional { inner: ir::TyReference { n: rtd0, dep: [] } } } else { ir::TyReference { n: rtd0, dep: [] } };
+      } else if el_convert::plain_scalar(rb0) || rb0 is TyText || match rb0 { TyEnum { is_ref } => !is_ref, _ => false } {
+        rt = ir::TyRefVar { inner: t! };
+      } else {
+        rt = t!;
+      }
+    } else {
+      rt = boxed_tuple_return(e, t!);
+    }
   }
   el_vars::take_over(vars, el::def(e, e.context).variables);
   for so in e.step_over {
@@ -2652,6 +2679,8 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     el::set_returned(e, e.context, if infers { ir::TyUnknown { n: 0 } } else { rt });
     // `@FR-Const-Foreign` (@C139): `-> const T` hands out value-const data.
     e.b.data.definitions[e.context].returned_const = ret_const;
+    // `@FR-B-RefType-Return` (@PLN232): `-> &T` hands out a place in one parameter's lifetime.
+    e.b.data.definitions[e.context].returned_ref = ret_amp;
     // @PLN187 — where the declared result and each parameter's declared type name a user
     // `type` alias (`parse_function`'s `returned_fact`, `pending_param_facts`).  A lambda's
     // result keeps none, as `parse_lambda` records none: a lambda is called through its `fn`
@@ -2750,7 +2779,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // A `τ?` result is delivered as `τ`'s is (`ret_promo_base`, `buffered_payload`); a nullable
     // vector's delivery is not carried: refused by name.
     rp = match rt { TyOptional { inner } => inner, _ => rt };
-    if e.first_pass && takes_ret_buffer(e, rp) && !mentions_type_var(e, rt) && !starts_with(name, "__lambda_") {
+    if e.first_pass && !ret_amp && takes_ret_buffer(e, rp) && !mentions_type_var(e, rt) && !starts_with(name, "__lambda_") {
       d = e.context;
       a = el::attribute("__retbuf", el_types::without_deps(rp));
       a.hidden = true;
@@ -2878,6 +2907,9 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
         },
         _ => {}
       }
+    }
+    if ret_amp && el::def(e, e.context).def_type != el::DT_GENERIC {
+      code = finalize_place_return(e, vars, code, rt);
     }
     e.b.data.definitions[e.context].code = [code];
     // The return-promotion verdicts Rust's `ref_return` takes on this body, for the route gate.
@@ -3200,21 +3232,26 @@ fn bound_stubs(e: el::El, holder: integer, pos: ir::Position) -> boolean {
       // `__work_1: &text` a concrete method's text return adds, a heap answer the hidden
       // `__retbuf` of its base, which the stub's result borrows.  A builtin implementation
       // takes neither, and the instance drops the trailing argument.
-      if rb is TyText {
+      if !c.returned_ref && rb is TyText {
         wb = el::attribute("__work_1", ir::TyRefVar { inner: ir::TyText { dep: [] } });
         wb.hidden = true;
         e.b.data.definitions[sd].attributes += [wb];
       }
-      if heap {
+      if !c.returned_ref && heap {
         rbuf = el::attribute("__retbuf", el_types::without_deps(rb));
         rbuf.hidden = true;
         e.b.data.definitions[sd].attributes += [rbuf];
         // (A `-> Self?` answer borrows the buffer the same way, behind its `?`.)
         rbd = el_types::with_deps(el_types::without_deps(rb), [len(el::def(e, sd).attributes) - 1]);
         rt = if rt is TyOptional { ir::TyOptional { inner: rbd } } else { rbd };
+      } else if c.returned_ref && heap && len(c.attributes) > 0 {
+        rbd = el_types::with_deps(el_types::without_deps(rb), [0]);
+        rt = if rt is TyOptional { ir::TyOptional { inner: rbd } } else { rbd };
       }
       e.b.data.definitions[sd].returned = [rt];
       e.b.data.definitions[sd].operator_form = c.operator_form;
+      e.b.data.definitions[sd].returned_ref = c.returned_ref;
+      e.b.data.definitions[sd].returned_const = c.returned_const;
       // (A `-> Self?` heap answer is not carried past its stub: registered as Rust registers it,
       // then refused by name.)
       if heap && rt is TyOptional {
@@ -3244,6 +3281,120 @@ pub fn interface_method_name(name: text) -> text {
   name
 }
 
+// `@FR-B-RefType-Return` — record the single parameter attribute `p_attr` that a `-> &T` body's
+// exits root in, refusing scalar/text/tuple place returns and multi-parameter or local exits.
+fn place_leaf_roots(e: el::El, vars: el_vars::Vars, n: ir::Node, env: vector<ir::Node>, marks: vector<integer>) {
+  match el_ir::unspan(n) {
+    NdNull => {},
+    NdIf { t, f } => { place_leaf_roots(e, vars, t, env, marks); place_leaf_roots(e, vars, f, env, marks); },
+    NdBlock { block } => {
+      bn = block[0].name;
+      if bn == "Object" || bn == "Vector" || bn == "EnumUnitLit" || bn == "Formatted string" {
+        marks[1] = 1;
+      } else if len(block[0].operators) > 0 {
+        place_leaf_roots(e, vars, block[0].operators[-1]!, env, marks);
+      }
+    },
+    NdInsert { items } => { if len(items) > 0 { place_leaf_roots(e, vars, items[-1]!, env, marks); } },
+    NdCall { def_nr, args } => {
+      nm = el::def(e, def_nr).name;
+      if len(args) == 0 && (nm == "OpNullRefSentinel" || (starts_with(nm, "OpConv") && nm.ends_with("FromNull"))) {
+        return;
+      }
+      if nm == "OpRefFromChildRec" {
+        marks[1] = 1;
+        return;
+      }
+      r = el_ex_base::place_root(e, n);
+      if r >= 0 {
+        place_leaf_roots(e, vars, ir::NdVar { n: r }, env, marks);
+      } else {
+        marks[1] = 1;
+      }
+    },
+    NdVar { n: v } => {
+      if v >= 0 && v < len(vars.vars) && vars.vars[v].argument && !el_ex_base::hidden_param(e, vars, v) {
+        pa = el_ex_base::attr_nr(el::def(e, e.context), el_vars::name_of(vars, v));
+        if pa >= 0 {
+          if marks[0] == -1 { marks[0] = pa; } else if marks[0] != pa { marks[0] = -2; }
+          return;
+        }
+      }
+      for op in env {
+        match el_ir::unspan(op) {
+          NdSet { var: sv, inner: si } => {
+            if sv == v && !(el_ir::unspan(si) is NdNull) {
+              place_leaf_roots(e, vars, si, [], marks);
+              return;
+            }
+          },
+          _ => {}
+        }
+      }
+      ds = el_types::deps(el_vars::tp(vars, v));
+      if len(ds) > 0 {
+        for dv in ds {
+          if dv != v {
+            place_leaf_roots(e, vars, ir::NdVar { n: dv }, [], marks);
+          }
+        }
+        return;
+      }
+      marks[1] = 1;
+    },
+    _ => { marks[1] = 1; }
+  }
+}
+
+fn collect_return_roots(e: el::El, vars: el_vars::Vars, n: ir::Node, env: vector<ir::Node>, marks: vector<integer>) {
+  match el_ir::unspan(n) {
+    NdReturn { inner } => {
+      marks[2] = 1;
+      place_leaf_roots(e, vars, inner, env, marks);
+      return;
+    },
+    _ => {}
+  }
+  for c in el_ir::children(n) {
+    collect_return_roots(e, vars, c, env, marks);
+  }
+}
+
+fn finalize_place_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rt: ir::TypeT) -> ir::Node {
+  if rt is TyRefVar || match el_types::base(rt) { TyReference { n: rn } => starts_with(el::def(e, rn).name, "__tuple<"), _ => false } {
+    el::refuse(e, "a `&` scalar, text or tuple return");
+    return code;
+  }
+  bl = match code { NdBlock { block } => block[0], _ => return code };
+  marks = [-1, 0, 0];
+  collect_return_roots(e, vars, code, bl.operators, marks);
+  if len(bl.operators) > 0 && !(el_ir::unspan(bl.operators[-1]!) is NdReturn) {
+    marks[2] = 1;
+    place_leaf_roots(e, vars, bl.operators[-1]!, bl.operators, marks);
+  }
+  if marks[0] == -1 && marks[1] == 0 && marks[2] == 1 {
+    cand: vector<integer> = [];
+    for a in el::def(e, e.context).attributes {
+      ab = el_types::base(a.typedef[0] ?? ir::TyVoid);
+      ok = !a.hidden && !starts_with(a.name, "__") && (ab is TyRefVar || ab is TyReference || ab is TyVector || keyed(ab) || match ab { TyEnum { is_ref } => is_ref, _ => false });
+      if ok { cand += [a#index]; }
+    }
+    if len(cand) == 1 { marks[0] = cand[0]!; } else { marks[1] = 1; }
+  }
+  if marks[0] >= 0 && marks[1] == 0 {
+    cur = el::def(e, e.context).returned[0] ?? rt;
+    upd = el_types::with_deps(cur, [marks[0]!]);
+    e.b.data.definitions[e.context].returned = [upd];
+    if !e.first_pass {
+      bl.result = [upd];
+      return ir::NdBlock { block: [bl] };
+    }
+  } else if !e.first_pass {
+    el::refuse(e, "a `&` return that does not name a place in one parameter");
+  }
+  code
+}
+
 // `Type::takes_ret_buffer`: a struct record, a struct-enum or a vector.
 // `reserve_late_return_buffers` (between the passes): a function — a lambda above all —
 // answering a record, a struct enum or a vector that has no buffer yet takes its hidden
@@ -3254,7 +3405,7 @@ pub fn reserve_late_return_buffers(e: el::El) {
     // (Any function of the program, not a lambda only: one whose result named a record
     // declared below it — `fn mk(n) -> X { … }` before `struct X` — was the stub's `Unknown` at
     // its signature, so it gets its buffer here, once the stub resolved.)
-    if d.def_type != el::DT_FUNCTION || d.source != e.source || !(starts_with(d.name, "n_") || starts_with(d.name, "t_")) || el_ir::is_null(d.code[0] ?? ir::NdNull) {
+    if d.def_type != el::DT_FUNCTION || d.returned_ref || d.source != e.source || !(starts_with(d.name, "n_") || starts_with(d.name, "t_")) || el_ir::is_null(d.code[0] ?? ir::NdNull) {
       continue;
     }
     // A `τ?` result's buffer is `τ`'s, the borrows the first pass merged kept.

@@ -1725,7 +1725,10 @@ impl Parser {
             // a void left operand, as it does after an `if`.
             // `const x = expr` — mark the resulting local variable as const after initialisation.
             let const_decl = self.lexer.has_keyword("const");
+            let prev_const_decl = self.in_const_decl;
+            self.in_const_decl = const_decl;
             let res = self.parse_assign(val);
+            self.in_const_decl = prev_const_decl;
             if const_decl && !self.first_pass {
                 let v_nr = match val {
                     Value::Set(nr, _) => Some(*nr),
@@ -4072,7 +4075,13 @@ use a separate collection or add after the loop"
         let Value::Call(g, gargs) = field.unspan() else {
             return None;
         };
-        if self.data.def(*g).name() != "OpGetField" {
+        let gdef = self.data.def(*g);
+        if gdef.returned_ref && gdef.returned_ref_ool {
+            // @FR-B-RefType-Return — a place-returning function returning an out-of-line field.
+            let kt = self.out_of_line_kt(gdef.returned());
+            return Some((field.clone(), kt));
+        }
+        if gdef.name() != "OpGetField" {
             return None;
         }
         match gargs.get(2).map(Value::unspan) {
@@ -4100,7 +4109,15 @@ use a separate collection or add after the loop"
                 .whole_write(self.context, *v, self.vars.name(*v));
             return;
         }
-        let field = self.child_rec_place(rhs).is_some();
+        let field = self.child_rec_place(rhs).is_some()
+            || matches!(rhs.unspan(), Value::Call(d, _)
+            if (*d as usize) < self.data.definitions.len()
+                && self.data.def(*d).returned_ref
+                && matches!(
+                    self.data.def(*d).returned(),
+                    Type::Optional(inner)
+                        if matches!(inner.as_ref(), Type::Reference(_, _) | Type::Enum(_, true, _))
+                ));
         let facts = self.slot_links.note(self.context, *v, self.vars.name(*v));
         if field {
             facts.field = true;
@@ -5169,6 +5186,50 @@ use a separate collection or add after the loop"
         // as that route's target-shape test and every shape it declines falls through
         // unchecked.  Two did.
         self.guard_const_write(var_nr, op);
+        if !self.first_pass && !self.amp_pending {
+            // @FR-B-RefType-Return, @FR-Const-Value — direct write through a `-> const &T` call
+            // (`ro_first(s).hp = 99`), where no local binding holds `foreign_bound`.
+            let mut cur = to.unspan();
+            loop {
+                match cur {
+                    Value::Call(d, args) => {
+                        if (*d as usize) < self.data.definitions.len()
+                            && self.data.def(*d).returned_ref
+                            && self.data.def(*d).returned_const
+                        {
+                            let fn_name = self.data.def(*d).original_name();
+                            diagnostic!(
+                                self.lexer,
+                                Level::Error,
+                                "Cannot modify place returned by '{fn_name}': it is declared `-> const &…`"
+                            );
+                            break;
+                        }
+                        if let Some(first) = args.first() {
+                            cur = first.unspan();
+                        } else {
+                            break;
+                        }
+                    }
+                    Value::CallRef(fv, _)
+                        if self
+                            .vars
+                            .tp(*fv)
+                            .function_consts()
+                            .is_some_and(crate::data::ConstParams::ret_const) =>
+                    {
+                        let fn_name = self.vars.written_name(*fv).to_string();
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Cannot modify place returned by '{fn_name}': it is declared `-> const &…`"
+                        );
+                        break;
+                    }
+                    _ => break,
+                }
+            }
+        }
         // @PLN130 F4 — and ask the KEY-WRITE question here too, for exactly the reason the
         // const guard above gives.  Whether `c.k = …` re-keys a record a keyed collection
         // indexes is a property of the PLACE, not of the route that lowers the store, and
@@ -6094,6 +6155,36 @@ use a separate collection or add after the loop"
             // to it does: the parameter itself is the caller's borrowed view (loft#2422).
             // Both spellings, `c = &t` and `c: &text = t`, reach here; pass 1 promotes, and
             // pass 2 reads the name as the copy.
+            let const_link_decl = self.in_const_decl || self.declaring_const == var_nr;
+            if let Some((setup, call, tail)) = Self::peel_place_ref_call(code) {
+                if !self.first_pass
+                    && var_nr != u16::MAX
+                    && !const_link_decl
+                    && self.call_is_const_place_ref(&call)
+                {
+                    let name = self.vars.written_name(var_nr).to_string();
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot bind mutable link '{name}' to a `const &` return place — \
+                         declare `const {name} = &…` or copy without `&`"
+                    );
+                }
+                self.pending_link_slot.extend(setup);
+                *code = tail;
+            } else if !self.first_pass
+                && var_nr != u16::MAX
+                && !const_link_decl
+                && self.call_is_const_place_ref(code)
+            {
+                let name = self.vars.written_name(var_nr).to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot bind mutable link '{name}' to a `const &` return place — \
+                     declare `const {name} = &…` or copy without `&`"
+                );
+            }
             if self.first_pass
                 && let Value::Var(p) = *code.unspan()
                 && p < self.vars.count()
@@ -7316,6 +7407,24 @@ use a separate collection or add after the loop"
             (Type::RefVar(inner), Value::Var(src))
                 if matches!(self.vars.tp(*src).base(), Type::RefVar(_)) =>
             {
+                inner.without_deps()
+            }
+            (Type::RefVar(inner), _)
+                if Self::peel_place_ref_call(code).is_some()
+                    || matches!(code.unspan(), Value::Call(d, _) if self.data.def(*d).returned_ref)
+                    || matches!(
+                        code.unspan(),
+                        Value::CallRef(fv, _)
+                            if self
+                                .vars
+                                .tp(*fv)
+                                .function_consts()
+                                .is_some_and(crate::data::ConstParams::ret_ref)
+                    )
+                    || matches!(code.unspan(), Value::Null) =>
+            {
+                // @FR-B-RefType-Return, @FR-B-Copy — a plain bind of a `-> &scalar` / `-> &text`
+                // call copies what the place holds instead of creating a second link.
                 inner.without_deps()
             }
             _ => s_type,
@@ -11414,8 +11523,29 @@ use a separate collection or add after the loop"
                 } else {
                     None
                 };
+                let mut f_type = f_type;
                 let mut f2_setup: Vec<Value> = Vec::new();
                 let mut f2_hoisted = false;
+                if let Some((setup, call, tail)) = Self::peel_place_ref_call(&to) {
+                    if !self.first_pass && self.call_is_const_place_ref(&call) {
+                        let fn_name = match call.unspan() {
+                            Value::Call(d, _) => self.data.def(*d).original_name(),
+                            Value::CallRef(fv, _) => self.vars.written_name(*fv).to_string(),
+                            _ => String::new(),
+                        };
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "Cannot modify place returned by '{fn_name}': it is declared `-> const &…`"
+                        );
+                    }
+                    if let Value::Var(tmp) = tail.unspan() {
+                        f_type = self.vars.tp(*tmp).clone();
+                    }
+                    f2_setup.extend(setup);
+                    to = tail.clone();
+                    *code = tail;
+                }
                 if let Some((get_d, accessor, offset, field_tp)) = f2_place {
                     // The hoist rewrites `to` to reference a fresh temp, which hides the
                     // ORIGINAL place's const / value-const base from `validate_write` (it walks
@@ -12652,7 +12782,10 @@ use a separate collection or add after the loop"
                 let fld_zero = matches!(gargs.get(1).map(Value::unspan), Some(Value::Int(0)));
                 if gargs.first().is_some_and(|a| {
                     matches!(a.unspan(), Value::Call(d, _)
-                        if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
+                        if matches!(
+                            self.data.def(*d).name(),
+                            "OpGetVector" | "OpVectorRef" | "OpVarRef"
+                        ) || self.data.def(*d).returned_ref)
                 }) {
                     // A read THROUGH an element accessor.  The element is the place only when
                     // the field operand is zero, where the element's base address and the
@@ -12682,6 +12815,43 @@ use a separate collection or add after the loop"
             Value::TupleGet(..) => None,
             // Anything else is a value, not a place: a literal, a computed value, a call result.
             _ => None,
+        }
+    }
+
+    /// `@FR-B-RefType-Return` — extract `(setup_ops, last_call, tail)` from a `place_ref_call`
+    /// block synthesized for a `-> &scalar` / `-> &text` call.
+    pub(crate) fn peel_place_ref_call(val: &Value) -> Option<(Vec<Value>, Value, Value)> {
+        let Value::Block(bl) = val.unspan() else {
+            return None;
+        };
+        if bl.name != "place_ref_call" || bl.operators.len() < 2 {
+            return None;
+        }
+        let n = bl.operators.len();
+        let Value::Set(_, call) = &bl.operators[n - 2] else {
+            return None;
+        };
+        Some((
+            bl.operators[..n - 1].to_vec(),
+            (**call).clone(),
+            bl.operators[n - 1].clone(),
+        ))
+    }
+
+    /// `@FR-B-RefType-Return`, `@FR-Const-Value` — does `call` invoke a `-> const &T` callee?
+    pub(crate) fn call_is_const_place_ref(&self, call: &Value) -> bool {
+        match call.unspan() {
+            Value::Call(d, _) => {
+                (*d as usize) < self.data.definitions.len()
+                    && self.data.def(*d).returned_ref
+                    && self.data.def(*d).returned_const
+            }
+            Value::CallRef(fv, _) => self
+                .vars
+                .tp(*fv)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_const),
+            _ => false,
         }
     }
 

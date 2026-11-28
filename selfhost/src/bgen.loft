@@ -1782,7 +1782,8 @@ fn first_bind(g: Gen, v: integer, value: ir::Node) {
       join_bind(g, v, value, binds::join_record(shape)!, jb!, true);
       return;
     }
-    if binds::return_adopts_fresh_store(def_of(g, callee!)) || var.view_elided || binds::adopts_minted_at_bind(g.b, g.ops, f, v, value) {
+    // @FR-B-RefType-Return — a `-> &Record` call binds as a view (`OpPutRef`).
+    if def_of(g, callee!).returned_ref || binds::return_adopts_fresh_store(def_of(g, callee!)) || var.view_elided || binds::adopts_minted_at_bind(g.b, g.ops, f, v, value) {
       generate(g, value, false);
       init_slot(g, v, "OpPutRef");
       return;

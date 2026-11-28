@@ -205,7 +205,7 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
             type_list(stores, slot, ds::TYFUNC_ARGS, args);
             type_child_rec(stores, slot, ds::TYFUNC_RESULT, result);
             dep_list(stores, slot, ds::TYFUNC_DEP, dep);
-            slot.set_field_int(stores, ds::TYFUNC_CONSTS, i64::from(consts.bits()));
+            slot.set_field_int(stores, ds::TYFUNC_CONSTS, consts.encode_i64());
         }
         Type::Rewritten(inner) => {
             slot.set_discriminant(stores, ds::TY_REWRITTEN);
@@ -492,6 +492,7 @@ fn write_definition(
     r.set_field_str(stores, ds::DEF_RETURNED_FACT, &d.returned_fact.encode()); // @PLN187
     r.set_field_str(stores, ds::DEF_NO_PREFILL, &d.no_prefill.encode()); // @FR-R-CompleteWrite
     r.set_field_bool(stores, ds::DEF_RETURNED_CONST, d.returned_const); // @FR-Const-Foreign
+    r.set_field_bool(stores, ds::DEF_RETURNED_REF, d.returned_ref); // @FR-B-RefType-Return
     r.set_field_int(stores, ds::DEF_CLOSURE_RECORD, i64::from(d.closure_record));
     name_list(stores, r, ds::DEF_MUTATED_CAPTURES, &d.mutated_captures);
     name_list(stores, r, ds::DEF_SCALARS_TO_BOX, &d.scalars_to_box);

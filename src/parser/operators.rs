@@ -631,6 +631,7 @@ impl Parser {
                 let def = &self.data.def(*fn_nr);
                 // User function with code (not a built-in op)
                 def.name().starts_with("n_")
+                    && !def.returned_ref
                     && *def.code() != Value::Null
                     && !self.answers_caller_buffer(*fn_nr, args)
             }
@@ -1240,8 +1241,21 @@ impl Parser {
     /// is built from — answers no, as does a bare variable.
     pub(crate) fn produces_whole_record(&self, val: &Value) -> bool {
         match val.unspan() {
-            Value::Block(_) | Value::Insert(_) | Value::CallRef(_, _) => true,
-            Value::Call(d, _) => !self.data.def(*d).name().starts_with("Op"),
+            Value::Block(bl)
+                if bl.name == "ncr"
+                    && let Some(Value::Set(_, rhs)) = bl.operators.first().map(Value::unspan) =>
+            {
+                self.produces_whole_record(rhs)
+            }
+            Value::Block(_) | Value::Insert(_) => true,
+            Value::CallRef(v, _) => !self
+                .vars
+                .tp(*v)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_ref),
+            Value::Call(d, _) => {
+                !self.data.def(*d).name().starts_with("Op") && !self.data.def(*d).returned_ref
+            }
             _ => false,
         }
     }
@@ -4351,6 +4365,7 @@ impl Parser {
             Type::Reference(_, _) | Type::Enum(_, true, _)
         ) && matches!(code.unspan(), Value::Call(d, _)
                 if !self.data.def(*d).name().starts_with("Op")
+                    && !self.data.def(*d).returned_ref
                     && (self.data.def(*d).is_loft_defined() || *d == self.context))
             && !crate::env_once!(std::env::var_os("LOFT_NO_NCR_CALL_OWNS").is_some())
         {
@@ -7202,12 +7217,16 @@ impl Parser {
             return;
         }
         let attrs = self.data.def(self.context).attributes().to_vec();
-        for a in &attrs {
+        for (a_nr, a) in attrs.iter().enumerate() {
             // `self` is the method-receiver convention — `&self` is idiomatic and
             // not the "&Object to mutate" misconception this lint targets, so it is
             // never flagged even when only field-mutated.  Hidden synthetic params
             // (return buffers) are not user `&` either.
-            if a.hidden || a.name == "self" {
+            if a.hidden
+                || a.name == "self"
+                || (self.data.def(self.context).returned_ref
+                    && self.data.def(self.context).returned_ref_param == a_nr as u16)
+            {
                 continue;
             }
             let var = self.vars.var(&a.name);

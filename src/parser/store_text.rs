@@ -210,11 +210,32 @@ impl Parser {
             code.walk(&mut |v| {
                 if let Value::Set(u, rhs) = v
                     && let Value::Call(g, a) = rhs.unspan()
-                    && self.data.def(*g).name() == "OpVarRef"
-                    && let [Value::Var(x)] = a.as_slice()
-                    && links.contains(x)
                 {
-                    links.insert(*u);
+                    if self.data.def(*g).name() == "OpVarRef"
+                        && let [Value::Var(x)] = a.as_slice()
+                        && links.contains(x)
+                    {
+                        links.insert(*u);
+                    } else if self.data.def(*g).returned_ref
+                        && matches!(
+                            self.data.def(*g).returned.base(),
+                            Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+                        )
+                    {
+                        let p = self.data.def(*g).returned_ref_param as usize;
+                        if let Some(arg) = a.get(p) {
+                            let from_link = match arg.unspan() {
+                                Value::Var(x) => links.contains(x),
+                                Value::Call(vr, va) if self.data.def(*vr).name() == "OpVarRef" => {
+                                    matches!(va.as_slice(), [Value::Var(x)] if links.contains(x))
+                                }
+                                _ => false,
+                            };
+                            if from_link {
+                                links.insert(*u);
+                            }
+                        }
+                    }
                 }
             });
             if links.len() == before {
@@ -252,6 +273,10 @@ impl Parser {
 
     /// Rewrite one body to the store spelling of the links in `links`.  `params` are the
     /// parameters among them: a local link's bind (`u = &t`) is kept as the bind it is.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "rewrites every store-text link access shape in one pass"
+    )]
     fn rewrite_store_text(
         &mut self,
         node: &mut Value,
@@ -265,6 +290,16 @@ impl Parser {
             }
             Value::Set(x, rhs) if links.contains(x) => {
                 let x = *x;
+                if let Value::Call(g, _) = rhs.unspan()
+                    && self.data.def(*g).returned_ref
+                    && matches!(
+                        self.data.def(*g).returned.base(),
+                        Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+                    )
+                {
+                    self.rewrite_store_text(rhs, links, params, work);
+                    return;
+                }
                 let bind = matches!(rhs.unspan(), Value::Call(g, _)
                     if matches!(self.data.def(*g).name(), "OpVarRef" | "OpCreateStack"));
                 if bind {

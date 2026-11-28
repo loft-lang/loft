@@ -1777,7 +1777,8 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
     // variable an `&` link for the scope pass's reshape refusals (`set_amp_link`), which the
     // image does not carry.
     rb = el_types::base(a.tp);
-    if !(a.code is NdVar) && !(a.tp is TyOptional) && (struct_ref(e, rb) >= 0 || el_convert::struct_enum(rb)) && place_root(e, a.code) >= 0 {
+    place_call = match el_ir::unspan(a.code) { NdCall { def_nr } => def_nr >= 0 && def_nr < len(e.b.data.definitions) && el::def(e, def_nr).returned_ref, _ => false };
+    if !(a.code is NdVar) && (!(a.tp is TyOptional) || place_call) && (struct_ref(e, rb) >= 0 || el_convert::struct_enum(rb)) && place_root(e, a.code) >= 0 {
       return a;
     }
     // A link to an out-of-line child (`l = &t.next`) is the child's view the same way, absent

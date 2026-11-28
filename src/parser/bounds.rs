@@ -757,6 +757,36 @@ impl Parser {
         if self_nr == u32::MAX {
             return None;
         }
+        let want_ref = self.data.def(iface_method).returned_ref;
+        let got_ref = self.data.def(concrete_method).returned_ref;
+        if want_ref != got_ref {
+            // @FR-B-RefType-Return — place-returning `-> &T` and value-returning `-> T` do not
+            // satisfy one another across an interface bound.
+            let concrete_type = self.data.def(concrete_nr).returned().clone();
+            let want = Self::substitute_type(
+                self.data.def(iface_method).returned().clone(),
+                self_nr,
+                &concrete_type,
+            );
+            let got = self.data.def(concrete_method).returned().clone();
+            let fmt_ret = |t: &Type, r: bool| {
+                let base = if r && let Type::RefVar(inner) = t {
+                    inner.source_name(&self.data)
+                } else {
+                    t.source_name(&self.data)
+                };
+                if r {
+                    format!("'&{base}'")
+                } else {
+                    format!("'{base}'")
+                }
+            };
+            return Some(format!(
+                "'{method}' returns {} but the interface declares {}",
+                fmt_ret(&got, got_ref),
+                fmt_ret(&want, want_ref)
+            ));
+        }
         let concrete_type = self.data.def(concrete_nr).returned().clone();
         let want = Self::substitute_type(
             self.data.def(iface_method).returned().clone(),

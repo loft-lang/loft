@@ -909,9 +909,26 @@ impl Value {
         match self.unspan() {
             Value::Var(_) => true,
             Value::Call(d_nr, args) => {
-                let name = data.def(*d_nr).name();
+                let def = data.def(*d_nr);
+                if def.returned_ref {
+                    // @FR-B-RefType-Return — a place-returning call produces a caller DbRef.
+                    return true;
+                }
+                let name = def.name();
                 (name == "OpGetField" || name == "OpGetVector" || name == "OpVectorRef")
                     && args.first().is_some_and(|a| a.is_place_read(data))
+            }
+            Value::CallRef(v_nr, _) => {
+                // @FR-B-RefType-Return — a call through a `fn(...) -> &T` value produces a DbRef.
+                let _ = v_nr;
+                false
+            }
+            Value::Block(bl) if bl.name == "place_ref_call" || bl.name == "place_ref_ret" => {
+                bl.operators.len() >= 2
+                    && matches!(
+                        bl.operators[bl.operators.len() - 2].unspan(),
+                        Value::Set(_, c) if c.is_place_read(data)
+                    )
             }
             _ => false,
         }
@@ -1145,11 +1162,19 @@ pub struct Deps {
 /// and the one question it answers, whether a function may stand where another signature is
 /// expected, is asked in one direction by [`ConstParams::stands_for`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct ConstParams(u32);
+pub struct ConstParams {
+    bits: u32,
+    ret_ref: bool,
+    ret_const: bool,
+}
 
 impl ConstParams {
-    /// No parameter is `const`.
-    pub const NONE: ConstParams = ConstParams(0);
+    /// No parameter is `const`, and the return is by value.
+    pub const NONE: ConstParams = ConstParams {
+        bits: 0,
+        ret_ref: false,
+        ret_const: false,
+    };
     /// A function type spells `const` on its first `LIMIT` parameters only.
     pub const LIMIT: usize = 32;
 
@@ -1163,39 +1188,101 @@ impl ConstParams {
                 bits |= 1 << i;
             }
         }
-        ConstParams(bits)
+        ConstParams {
+            bits,
+            ret_ref: false,
+            ret_const: false,
+        }
     }
 
     #[must_use]
     pub fn from_bits(bits: u32) -> Self {
-        ConstParams(bits)
+        ConstParams {
+            bits,
+            ret_ref: false,
+            ret_const: false,
+        }
     }
 
     #[must_use]
     pub fn bits(self) -> u32 {
-        self.0
+        self.bits
+    }
+
+    /// `@FR-B-RefType-Return` — mark whether the function type returns a place (`-> &T`).
+    #[must_use]
+    pub fn with_ret_ref(mut self, ret_ref: bool, ret_const: bool) -> Self {
+        self.ret_ref = ret_ref;
+        self.ret_const = ret_const;
+        self
+    }
+
+    /// `@FR-B-RefType-Return` — does this function type return a place (`-> &T`)?
+    #[must_use]
+    pub fn ret_ref(self) -> bool {
+        self.ret_ref
+    }
+
+    /// Does this function type declare `-> const ...`?
+    #[must_use]
+    pub fn ret_const(self) -> bool {
+        self.ret_const
+    }
+
+    /// Clear parameter `const` flags while preserving return `ret_ref` / `ret_const`.
+    #[must_use]
+    pub fn without_param_consts(mut self) -> Self {
+        self.bits = 0;
+        self
+    }
+
+    /// Encode into 64-bit integer for IR store / JSON (`bits` in `0..32`, `ret_ref` at bit 32,
+    /// `ret_const` at bit 33).
+    #[must_use]
+    pub fn encode_i64(self) -> i64 {
+        i64::from(self.bits) | (i64::from(self.ret_ref) << 32) | (i64::from(self.ret_const) << 33)
+    }
+
+    /// Decode from [`Self::encode_i64`].
+    #[must_use]
+    pub fn decode_i64(raw: i64) -> Self {
+        let u = raw as u64;
+        ConstParams {
+            bits: u as u32,
+            ret_ref: (u & (1u64 << 32)) != 0,
+            ret_const: (u & (1u64 << 33)) != 0,
+        }
     }
 
     /// Is parameter `i` declared `const`?
     #[must_use]
     pub fn is(self, i: usize) -> bool {
-        i < Self::LIMIT && self.0 & (1 << i) != 0
+        i < Self::LIMIT && self.bits & (1 << i) != 0
     }
 
     /// May a function whose parameters are `self` stand where `expected` is asked for?  Every
     /// parameter the expected signature promises is `const` must be `const` here too, or a caller
     /// trusting that promise hands a read-only value to a function that may write it.  The other
     /// direction is free: a `const` parameter can take any value a plain one can.
+    /// `@FR-B-RefType-Return`: `-> &T` and `-> T` never stand for one another (`self.ret_ref ==
+    /// expected.ret_ref`), and a `-> const &T` producer cannot stand where writable `-> &T` is
+    /// expected (`!self.ret_const || expected.ret_const`).
     #[must_use]
     pub fn stands_for(self, expected: ConstParams) -> bool {
-        expected.0 & !self.0 == 0
+        expected.bits & !self.bits == 0
+            && self.ret_ref == expected.ret_ref
+            && (!self.ret_const || expected.ret_const)
     }
 
     /// The parameters `const` in BOTH masks: what a slot that may hold either function can
     /// promise about a parameter.
     #[must_use]
     pub fn common(self, other: ConstParams) -> ConstParams {
-        ConstParams(self.0 & other.0)
+        ConstParams {
+            bits: self.bits & other.bits,
+            ret_ref: self.ret_ref && other.ret_ref,
+            ret_const: self.ret_const || other.ret_const,
+        }
     }
 }
 
@@ -1218,6 +1305,18 @@ impl Type {
             Type::Optional(inner) => Type::optional(inner.with_function_consts(consts)),
             Type::Function(p, r, d, _) => Type::Function(p.clone(), r.clone(), d.clone(), consts),
             other => other.clone(),
+        }
+    }
+
+    /// `@FR-B-RefType-Return` — the parameter indices (in attr space) that a `Type::Function`'s
+    /// return type borrows.
+    #[must_use]
+    pub fn fn_return_deps_attrs(&self) -> Option<Vec<usize>> {
+        match self.base() {
+            Type::Function(_, ret, ..) => ret
+                .borrow_deps()
+                .map(|d| d.as_attr_indices().iter().map(|&i| i as usize).collect()),
+            _ => None,
         }
     }
 }
@@ -2733,8 +2832,9 @@ impl Type {
         // wrongly reports two structurally-identical fn-refs as different
         // (e.g. the @P344 loop-var reuse check fired on `for f in a {…}` then
         // `for f in b {…}` even though both are `fn(integer)->integer`).
-        if let (Type::Function(sp, sr, ..), Type::Function(op, or, ..)) = (self, other) {
-            return sp.len() == op.len()
+        if let (Type::Function(sp, sr, _, sc), Type::Function(op, or, _, oc)) = (self, other) {
+            return sc.ret_ref() == oc.ret_ref()
+                && sp.len() == op.len()
                 && sp.iter().zip(op.iter()).all(|(a, b)| a.is_equal(b))
                 && sr.is_equal(or);
         }
@@ -2782,8 +2882,9 @@ impl Type {
             (Type::Trie(r, rf, _), Type::Trie(o, of, _)) => return r == o && rf == of,
             (Type::Sorted(r, rf, _), Type::Sorted(o, of, _))
             | (Type::Index(r, rf, _), Type::Index(o, of, _)) => return r == o && rf == of,
-            (Type::Function(sp, sr, ..), Type::Function(op, or, ..)) => {
-                return sp.len() == op.len()
+            (Type::Function(sp, sr, _, sc), Type::Function(op, or, _, oc)) => {
+                return sc.ret_ref() == oc.ret_ref()
+                    && sp.len() == op.len()
                     && sp.iter().zip(op.iter()).all(|(a, b)| a.is_equal(b))
                     && sr.is_equal(or);
             }
@@ -3060,7 +3161,18 @@ impl Type {
                 if matches!(ret.as_ref(), Type::Void) {
                     format!("fn({p})")
                 } else {
-                    format!("fn({p}) -> {}", ret.render(data, source))
+                    let r_inner = if consts.ret_ref() {
+                        if let Type::RefVar(inner) = ret.as_ref() {
+                            inner.render(data, source)
+                        } else {
+                            ret.render(data, source)
+                        }
+                    } else {
+                        ret.render(data, source)
+                    };
+                    let c_prefix = if consts.ret_const() { "const " } else { "" };
+                    let amp = if consts.ret_ref() { "&" } else { "" };
+                    format!("fn({p}) -> {c_prefix}{amp}{r_inner}")
                 }
             }
         }
@@ -4727,6 +4839,16 @@ pub struct Definition {
     /// Persisted through the IR store (`DEF_RETURNED_CONST`), so a cached stdlib keeps it;
     /// mirrored in `selfhost/src/ir.loft`.
     pub returned_const: bool,
+    /// `@FR-B-RefType-Return` — declared `-> &T`: returns a caller place rather than a value.
+    /// Persisted through the IR store (`DEF_RETURNED_REF`), mirrored in `selfhost/src/ir.loft`.
+    pub returned_ref: bool,
+    /// `@FR-B-RefType-Return` — in-memory cache of the single borrowed parameter index (`u16::MAX`
+    /// when unresolved or not a place-returning function).
+    pub returned_ref_param: u16,
+    /// `@FR-B-RefType-Return`, `@FR-L-OutOfLine` — true when `returned_ref` returns an out-of-line
+    /// child-rec field (`OpGetField` inside `OpRefFromChildRec`), so callers wrap the call in
+    /// `OpRefFromChildRec`.
+    pub returned_ref_ool: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -5069,6 +5191,9 @@ impl Definition {
     /// so the backends cannot diverge on the out-of-range / hidden-only edge.
     #[must_use]
     pub fn returns_borrowed_view(&self) -> bool {
+        if self.returned_ref {
+            return true;
+        }
         let attrs = self.attributes();
         self.returned().depend().iter().any(|&d| {
             // A `CALLEE_FRAME_BIT`-tagged note is a closure-internal frame var,
@@ -5412,6 +5537,9 @@ impl Definition {
 
     #[must_use]
     pub fn monomorph_return_is_fresh(&self, null_ref: u32, self_nr: u32) -> bool {
+        if self.returned_ref {
+            return false;
+        }
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let mut seen_return = false;
@@ -5550,6 +5678,9 @@ impl Definition {
     /// only flat, single-level calls — which is why they said it was safe).
     #[must_use]
     pub fn return_adopts_fresh_store(&self) -> bool {
+        if self.returned_ref {
+            return false;
+        }
         let deps = self.returned().depend();
         // Empty → owned/fresh → adopt.
         if deps.is_empty() {
@@ -7626,6 +7757,9 @@ impl Data {
             builtin: false,
             operator_form: false,
             returned_const: false,
+            returned_ref: false,
+            returned_ref_param: u16::MAX,
+            returned_ref_ool: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,
@@ -9000,8 +9134,44 @@ impl Data {
     #[must_use]
     pub fn is_store_text_arg(&self, arg: &Value) -> bool {
         match arg.unspan() {
-            Value::Call(g, _) => {
+            Value::Call(g, args) => {
                 let def = self.def(*g);
+                if def.returned_ref
+                    && matches!(
+                        def.returned.base(),
+                        Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+                    )
+                {
+                    // @FR-B-RefType-Return — a `-> &text` call returns a store text place unless
+                    // it forwards a stack-kind `&text` parameter.
+                    let p = if def.returned_ref_param == u16::MAX {
+                        def.attributes
+                            .iter()
+                            .position(|a| {
+                                matches!(
+                                    a.typedef.base(),
+                                    Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+                                )
+                            })
+                            .unwrap_or(usize::MAX)
+                    } else {
+                        def.returned_ref_param as usize
+                    };
+                    if let Some(attr) = def.attributes.get(p)
+                        && matches!(attr.typedef.base(), Type::RefVar(_))
+                    {
+                        if def
+                            .variables
+                            .arguments()
+                            .get(p)
+                            .is_some_and(|&v| def.variables.is_store_text_link(v))
+                        {
+                            return true;
+                        }
+                        return args.get(p).is_some_and(|a| self.is_store_text_arg(a));
+                    }
+                    return true;
+                }
                 def.name() != "OpCreateStack"
                     && matches!(def.returned.base(), Type::Reference(_, _))
             }
@@ -9645,7 +9815,16 @@ impl Data {
                         }
                     })
                     .collect();
-                format!("fn({}) -> {}", p.join(", "), rec(ret))
+                let amp = if consts.ret_ref() { "&" } else { "" };
+                let c_pre = if consts.ret_const() { "const " } else { "" };
+                let r_inner = if consts.ret_ref()
+                    && let Type::RefVar(inner) = ret.as_ref()
+                {
+                    rec(inner)
+                } else {
+                    rec(ret)
+                };
+                format!("fn({}) -> {c_pre}{amp}{r_inner}", p.join(", "))
             }
             _ => self.identity_spelling_erasing(tp),
         }
@@ -9672,11 +9851,21 @@ impl Data {
             Type::Tuple(elems) => {
                 format!("({})", elems.iter().map(rec).collect::<Vec<_>>().join(", "))
             }
-            Type::Function(params, ret, _, _) => format!(
-                "fn({}) -> {}",
-                params.iter().map(rec).collect::<Vec<_>>().join(", "),
-                rec(ret)
-            ),
+            Type::Function(params, ret, _, consts) => {
+                let amp = if consts.ret_ref() { "&" } else { "" };
+                let c_pre = if consts.ret_const() { "const " } else { "" };
+                let r_inner = if consts.ret_ref()
+                    && let Type::RefVar(inner) = ret.as_ref()
+                {
+                    rec(inner)
+                } else {
+                    rec(ret)
+                };
+                format!(
+                    "fn({}) -> {c_pre}{amp}{r_inner}",
+                    params.iter().map(rec).collect::<Vec<_>>().join(", "),
+                )
+            }
             _ => self.identity_spelling(tp),
         }
     }

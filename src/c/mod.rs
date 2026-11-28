@@ -121,6 +121,48 @@ impl Refusal {
     }
 }
 
+/// `@FR-B-RefType-Return` — target kind of a stack-backed `-> &scalar` / `-> &text` pointer return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkTarget {
+    Int,
+    Int32,
+    Bool,
+    Text,
+    Enum,
+    Float,
+    Single,
+    Char,
+}
+
+impl LinkTarget {
+    pub(crate) fn of(c: CType) -> Option<Self> {
+        Some(match c {
+            CType::Int => Self::Int,
+            CType::Int32 => Self::Int32,
+            CType::Bool => Self::Bool,
+            CType::Text => Self::Text,
+            CType::Enum => Self::Enum,
+            CType::Float => Self::Float,
+            CType::Single => Self::Single,
+            CType::Char => Self::Char,
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn ctype(self) -> CType {
+        match self {
+            Self::Int => CType::Int,
+            Self::Int32 => CType::Int32,
+            Self::Bool => CType::Bool,
+            Self::Text => CType::Text,
+            Self::Enum => CType::Enum,
+            Self::Float => CType::Float,
+            Self::Single => CType::Single,
+            Self::Char => CType::Char,
+        }
+    }
+}
+
 /// The C shapes a loft value takes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CType {
@@ -149,6 +191,9 @@ pub(crate) enum CType {
     Fn,
     /// A tuple: the C struct [`Cx::tuple_shapes`] numbers, held and passed by value.
     Tuple(u32),
+    /// `@FR-B-RefType-Return` — a stack-backed `&scalar` / `&text` pointer returned by a
+    /// pass-through `-> &T` function (`int64_t *`, `loft_text *`, …); null is 0.
+    Ptr(LinkTarget),
     /// `@FR-R-Transient` — a record held outside the store: a pointer to the struct of this
     /// group (`lt_<group> *`); null is 0.
     Tr(u16),
@@ -194,6 +239,7 @@ pub(crate) fn held(cx: &Cx, c: CType) -> String {
         CType::Char => "uint32_t".into(),
         CType::Fn => "loft_fn".into(),
         CType::Tuple(id) => format!("loft_tup{id}"),
+        CType::Ptr(lt) => format!("{} *", held(cx, lt.ctype())),
         CType::Tr(g) => format!("lt_{} *", cx.type_ident(g)),
         CType::TrVec => "loft_ta_vec *".into(),
         CType::Void => "void".into(),
@@ -1077,6 +1123,42 @@ impl<'a> Cx<'a> {
         }
     }
 
+    /// `@FR-B-RefType-Return` — C return shape of definition `d` under place-twin mask `places`.
+    /// A `-> &scalar` / `-> &text` function returns `CType::Ref` (`loft_ref`) when its borrowed
+    /// parameter is a heap container or a store-link twin, and `CType::Ptr` (`<held> *`) when it
+    /// forwards a stack-backed `&scalar` / `&text` parameter.
+    pub(crate) fn return_ctype(&self, d: u32, places: u64) -> Option<CType> {
+        let def = self.data.def(d);
+        if let Type::RefVar(inner) = def.returned().base()
+            && def.returned_ref
+        {
+            let p = if def.returned_ref_param == u16::MAX {
+                0
+            } else {
+                def.returned_ref_param as usize
+            };
+            if let Some(attr) = def.attributes().get(p)
+                && let Type::RefVar(p_inner) = attr.typedef.base()
+                && (crate::data::is_scalar(p_inner.base())
+                    || matches!(p_inner.base(), Type::Text(_) | Type::Tuple(_)))
+            {
+                let store_param = (p < 64 && places & (1 << p) != 0)
+                    || def
+                        .variables()
+                        .arguments()
+                        .get(p)
+                        .is_some_and(|&v| def.variables().is_store_text_link(v));
+                if store_param {
+                    return Some(CType::Ref);
+                }
+                let inner_c = self.ctype(inner)?;
+                return LinkTarget::of(inner_c).map(CType::Ptr);
+            }
+            return Some(CType::Ref);
+        }
+        self.ctype(def.returned())
+    }
+
     /// Does tuple struct `id` hold a text at any depth, which it owns and must copy and free?
     pub(crate) fn tuple_has_text(&self, id: u32) -> bool {
         self.tuple_shapes(id).into_iter().any(|c| match c {
@@ -1103,6 +1185,7 @@ impl<'a> Cx<'a> {
                 CType::Single => "f".to_string(),
                 CType::Char => "c".to_string(),
                 CType::Fn => "n".to_string(),
+                CType::Ptr(_) => "p".to_string(),
                 CType::TrVec => "v".to_string(),
                 CType::Void => "z".to_string(),
                 CType::Tuple(t) => {
@@ -1220,7 +1303,7 @@ impl<'a> Cx<'a> {
                     .collect();
                 format!("{{ {} }}", fields.join(", "))
             }
-            CType::Tr(_) | CType::TrVec => "0".into(),
+            CType::Ptr(_) | CType::Tr(_) | CType::TrVec => "0".into(),
             CType::Void => String::new(),
         }
     }
@@ -3887,6 +3970,7 @@ fn shape_word(cx: &Cx, c: CType) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         ),
+        CType::Ptr(lt) => format!("ptr({})", shape_word(cx, lt.ctype())),
         CType::Tr(g) => format!("tr{g}"),
         CType::TrVec => "trvec".into(),
         CType::Void => "void".into(),
@@ -4069,7 +4153,7 @@ fn function(cx: &Cx, d: u32, mask: u64) -> Result<(String, String), String> {
             .vr_ctype(key)
             .ok_or("a value record without its layout")?,
         None => cx
-            .ctype(def.returned())
+            .return_ctype(d, places)
             .ok_or_else(|| format!("returns {}", type_word(def.returned())))?,
     };
     if unloaded {

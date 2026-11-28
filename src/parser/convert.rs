@@ -1152,8 +1152,7 @@ impl Parser {
             // ABI and is immune, so this is interpreter-correctness parity.
             // Only non-text references need this — `&text` borrows have their
             // own work-text copy semantics handled in the Text arm below.
-            if !matches!(**ref_tp, Type::Text(_))
-                && let Value::Var(v) = code
+            if let Value::Var(v) = code
                 && matches!(self.vars.tp(*v), Type::RefVar(vinner) if vinner.is_equal(ref_tp))
             {
                 return true;

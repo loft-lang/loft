@@ -1126,3 +1126,24 @@ fn every_pinned_code_is_documented() {
         missing.join(", ")
     );
 }
+
+/// @FR-B-RefType-Return, @PLN232 Q8 — `lost-write` on a value-returning `-> T` accessor offers a
+/// conditional fix suggesting `declare 'first's return -> &Enemy` and warning that plain binds
+/// become views.
+#[test]
+fn lost_write_offers_place_return_fix_on_value_accessor() {
+    let rendered = explain_output(
+        "struct Enemy { hp: integer }\n\
+         struct State { enemies: vector<Enemy> }\n\
+         fn first(s: State) -> Enemy { s.enemies[0] }\n\
+         fn main() {\n\
+           s = State { enemies: [Enemy { hp: 10 }] };\n\
+           first(s).hp = 5;\n\
+         }\n",
+    );
+    assert!(
+        rendered.contains("declare `first`'s return `-> &Enemy`")
+            && rendered.contains("views the element instead of copying it"),
+        "expected Q8 place-return fix in --explain output, got:\n{rendered}"
+    );
+}

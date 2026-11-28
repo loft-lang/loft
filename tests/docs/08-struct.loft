@@ -4,6 +4,7 @@
 // @TITLE: Grouping related data with structs
 // @FR-B-View: a struct element read from a vector is a view of it.
 // @FR-B-Copy: a whole-value bind and a record update `..base` copy.
+// @FR-B-RefType-Return: a `-> &Struct` function returns a place inside one parameter.
 // @FR-F-Default-Field: a field default is computed per construction and may read `$`.
 // @FR-F-Render-Fields: a struct renders every field in order, a null child as `null`.
 // @FR-L-Narrow: a range-limited field stores in the smallest width (`sizeof`).
@@ -54,6 +55,19 @@ fn to_hex(self: Colour) -> integer {
 
 fn dimmed(self: Colour) -> Colour {
   Colour {r: self.r / 2 ?? 0, g: self.g / 2 ?? 0, b: self.b / 2 ?? 0 }
+}
+// ## Returning a struct in place
+// Write '-> &StructName' when a helper should return an existing record inside one of
+// its parameters instead of a fresh copy. Every exit of the body must name a place in
+// that same parameter. Calling the helper then reaches the element itself: writing a
+// field or passing the call to another function updates the container in place, and a
+// plain bind 'p = first_product(shelf)' views that element just as 'p = shelf[0]' does.
+// Changing an existing '-> Product' helper to '-> &Product' turns callers' plain binds
+// from independent copies into views, so use '-> &Product' when reaching the stored
+// record is what callers want.
+
+fn first_product(items: vector<Product>) -> &Product {
+  items[0]
 }
 // ## Defaults and Computed Fields
 // Write '= expression' after the type to set a stored default, filled at construction.
@@ -241,6 +255,17 @@ fn main() {
   linked = &item;
   linked.stock = 1;
   assert(item.stock == 1, "'&' binds a live link");
+  // A '-> &Product' helper reaches the element inside 'shelf' directly.
+  first_product(shelf).stock = 12;
+  assert(shelf[0].stock == 12, "writing through a -> &Product call updates shelf[0]");
+  viewed = first_product(shelf);
+  viewed.stock -= 2;
+  assert(shelf[0].stock == 10, "a plain bind of -> &Product views the element");
+  linked_first = &first_product(shelf);
+  linked_first.stock = 6;
+  assert(shelf[0].stock == 6, "'&' on a -> &Product call links the element");
+  // Restore 'spare' and 'item' alignment for the comparison section below.
+  item.stock = 1;
   // A tree: children are fields of the struct's own type, nullable so a branch can end.
   root = Tree { key: 5, left: Tree { key: 3 } };
   assert(root.left.key == 3, "a child reads like any field");

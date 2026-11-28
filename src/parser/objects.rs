@@ -189,7 +189,7 @@ impl Parser {
         }
         let hint = self.lambda_hint();
         let fits: Vec<u32> = match hint.base() {
-            Type::Function(args, ret, ..) => members
+            Type::Function(args, ret, _, want_consts) => members
                 .iter()
                 .copied()
                 .filter(|&m| {
@@ -199,7 +199,8 @@ impl Parser {
                         want.base().is_unknown() || have.base().is_equal(want.base())
                     };
                     let have = self.fn_ref_arg_types(m);
-                    have.len() == args.len()
+                    self.data.def(m).returned_ref == want_consts.ret_ref()
+                        && have.len() == args.len()
                         && have.iter().zip(args).all(|(h, a)| fits(h, a))
                         && fits(self.data.def(m).returned(), ret)
                 })
@@ -321,11 +322,13 @@ impl Parser {
     /// filter: a function value says which parameters are read-only because its signature does
     /// (C124, formal/binding.md D-bind-45).
     fn fn_ref_consts(&self, fn_d_nr: u32) -> crate::data::ConstParams {
+        let def = self.data.def(fn_d_nr);
         crate::data::ConstParams::from_flags(
             self.fn_ref_visible_args(fn_d_nr)
                 .into_iter()
-                .map(|a| self.data.def(fn_d_nr).attributes()[a].value_const),
+                .map(|a| def.attributes()[a].value_const),
         )
+        .with_ret_ref(def.returned_ref, def.returned_const)
     }
 
     fn fn_ref_visible_args(&self, fn_d_nr: u32) -> Vec<usize> {

@@ -18,8 +18,8 @@ index 722f5086f..020e5033c 100644
 -            diagnostic!(
 -                self.lexer,
 -                Level::Error,
--                "`&` marks a variable or a parameter as a link to a place (`fn f(x: &T)`, \
--                 `x = &a`); a return type, a field, an element or a tuple member holds a \
+-                "`&` marks a variable, a parameter or a return type as a link to a place \
+-                 (`fn f(x: &T) -> &T`, `x = &a`); a field, an element or a tuple member holds a \
 -                 value and cannot be a link — drop the `&` (a field that points into another \
 -                 store is `reference<T>`)"
 -            );

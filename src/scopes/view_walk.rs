@@ -1948,8 +1948,20 @@ pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, valu
     if let Value::Call(d, _) = value.unspan() {
         let def = data.def(*d);
         matches!(def.name(), "OpCreateStack" | "OpVarRef")
+            // @FR-B-RefType-Return — binding a link slot to a `-> &scalar` / `-> &text` call
+            // installs the returned place reference.
+            || (def.returned_ref && matches!(def.returned.base(), Type::RefVar(_)))
             || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
             || function.is_store_text_link(var)
+    } else if let Value::CallRef(fv, _) = value.unspan() {
+        function
+            .tp(*fv)
+            .function_consts()
+            .is_some_and(crate::data::ConstParams::ret_ref)
+            && matches!(
+                function.tp(*fv).base(),
+                Type::Function(_, ret, ..) if matches!(ret.base(), Type::RefVar(_))
+            )
     } else {
         false
     }
@@ -1962,7 +1974,9 @@ pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, valu
 /// its caller and never by a `Set` the walk sees.  @FR-B-Ref-Reshape keys on the aliasing
 /// relation, so both spellings reach it.
 pub(super) fn is_place_link(function: &Function, v: u16) -> bool {
-    !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
+    !function.is_argument(v)
+        && !function.name(v).starts_with("_plink")
+        && matches!(function.tp(v).base(), Type::RefVar(_))
 }
 
 /// Which half of [`established_stores`] to answer.

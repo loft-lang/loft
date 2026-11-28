@@ -70,6 +70,16 @@ cannot read its texts.
 
 ### New
 
+**A function can return a place with `-> &T`.**  Write `fn first(s: State) -> &Enemy { s.enemies[0] }`
+when a helper or method should hand back an element or field inside one of its parameters rather
+than a copy.  Calling it stands for that place wherever you use it: `first(s).hp -= 10` and
+`hurt(first(s), 10)` change `s.enemies[0]` directly, `e = &first(s)` binds a live reference to it,
+and `e = first(s)` views a record in place (or copies a number or text, just as `s.enemies[0]`
+does).  Write `-> const &T` when callers may read the place without changing it.  Generics,
+interface methods, and `fn(State) -> &Enemy` function values support `-> &T` the same way, and the
+compiler refuses a `-> &T` function whose body returns a local variable, a temporary value, or
+places from two different parameters.
+
 **A page runs `par` on Web Workers.**  A page built with `--html` whose program runs a `par` loop
 spreads it over a pool of Web Workers, started before the program runs, when the page is served
 cross-origin isolated (the `Cross-Origin-Opener-Policy` and `Cross-Origin-Embedder-Policy`

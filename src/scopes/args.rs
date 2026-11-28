@@ -1581,9 +1581,20 @@ impl Scopes<'_> {
         };
         let wv = *wv;
         let orig = orig.unspan().clone();
-        if !matches!(&orig, Value::Call(g, _)
-            if matches!(data.def(*g).name(), "OpGetVector" | "OpVectorRef" | "OpGetField"))
-        {
+        let is_place_call = match &orig {
+            Value::Call(g, _) => {
+                matches!(
+                    data.def(*g).name(),
+                    "OpGetVector" | "OpVectorRef" | "OpGetField"
+                ) || data.def(*g).returned_ref
+            }
+            Value::CallRef(fv, _) => function
+                .tp(*fv)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_ref),
+            _ => false,
+        };
+        if !is_place_call {
             return None;
         }
         // Does the callee whole-reassign the `&`-param at this position? (`Set(param, non-Null)`

@@ -1560,11 +1560,10 @@ impl Parser {
         // the arm answers with its own: the join is what BOTH declare (`join_arm_into`), as a
         // block arm's is (`parse_block`).
         let sibling_fn;
-        let expected = if expected
-            .function_consts()
-            .is_some_and(|c| c != crate::data::ConstParams::NONE)
+        let expected = if let Some(c) = expected.function_consts()
+            && c.bits() != 0
         {
-            sibling_fn = expected.with_function_consts(crate::data::ConstParams::NONE);
+            sibling_fn = expected.with_function_consts(c.without_param_consts());
             &sibling_fn
         } else {
             expected

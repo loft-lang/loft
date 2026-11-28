@@ -204,6 +204,7 @@ impl FirstArm {
 /// The lowering of the first assignment `v = value` in function `d_nr`; the reason for each
 /// test is beside it.  `state::codegen::gen_set_first_at_tos` emits the answer.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "dispatches every first-bind arm")]
 pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Value) -> FirstArm {
     let tp = function.tp(v);
     // A `text?` local routes to the text path too: `.base()` peels the marker (@PLN25).
@@ -282,6 +283,26 @@ pub fn first_arm(data: &Data, d_nr: u32, function: &Function, v: u16, value: &Va
     }
     // A closure call whose target is unresolved: copy a store it hands back that is a
     // capture, adopt one it minted (@FR-O-Unknown decides, loft#1659).
+    // @FR-B-RefType-Return — a call to a place-returning `-> &T` function or `fn(...) -> &T`
+    // value: when the local keeps its borrow deps (`e = first(s)`), it views the returned place
+    // directly (`FirstArm::Plain`, zero copy); when its deps were stripped (materialised before a
+    // disturbance of `s`, or `first(mk())` over a temporary), `CallCopy` copies into `e`'s store.
+    let is_ret_ref_callref = matches!(value.unspan(), Value::CallRef(fv, _)
+        if function.tp(*fv).function_consts().is_some_and(crate::data::ConstParams::ret_ref));
+    if (is_ret_ref_callref
+        || crate::use_analysis::callee_of(data, d_nr, value)
+            .is_some_and(|fn_nr| data.def(fn_nr).returned_ref))
+        && !tp.depend().is_empty()
+    {
+        return FirstArm::Plain;
+    }
+    if is_ret_ref_callref
+        && tp.depend().is_empty()
+        && let Type::Reference(rec, _) | Type::Enum(rec, true, _) =
+            crate::use_analysis::first_bind_shape(tp).clone()
+    {
+        return FirstArm::CallCopy { d_nr: rec };
+    }
     if let Some(rec) = crate::use_analysis::opaque_callref_bind(data, d_nr, tp, value) {
         return FirstArm::OpaqueCallRef { rec };
     }

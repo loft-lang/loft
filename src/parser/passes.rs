@@ -790,6 +790,7 @@ impl Parser {
             let def = self.data.def(d);
             if !matches!(self.data.def_type(d), DefType::Function)
                 || *def.code() == Value::Null
+                || def.returned_ref
                 || def.is_operator()
                 || !def.rust().is_empty()
                 || !def.native().is_empty()
@@ -828,6 +829,7 @@ impl Parser {
             let def = self.data.def(d);
             if !matches!(self.data.def_type(d), DefType::Function)
                 || *def.code() == Value::Null
+                || def.returned_ref
                 || def.is_operator()
                 || !def.rust().is_empty()
                 || !def.native().is_empty()

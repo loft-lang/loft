@@ -124,6 +124,19 @@ fn function_name(param: type, other: type = default_value) -> return_type {
 - Default parameter values are supported.
 - Functions without a `->` clause return `void`.
 - A function body ending in an expression (without `;`) returns that value.
+- A function declared `-> &T` (or `-> const &T` / `-> &const T`) returns a **place** inside one
+  of its parameters rather than an independent copy (`fn first(s: State) -> &Enemy { s.enemies[0] }`,
+  `@FR-B-RefType-Return`):
+  - Every exit of the body must root in the **same single parameter**; returning a local, a fresh
+    constructor, or places from two different parameters is a compile error.
+  - At the call site, `first(s)` stands for that place in every position: field writes
+    (`first(s).hp -= 10`), passing to a `&` or mutating parameter (`hurt(first(s), 10)`), `&` link
+    binds (`e = &first(s)`), and plain binds (`e = first(s)` views a record, struct-enum, or
+    collection in place, and copies a scalar or `text`, matching `s.enemies[0]`).
+  - **Contract warning:** changing an existing `-> T` accessor to `-> &T` changes callers' plain
+    record binds (`e = first(s)`) from independent copies to live views of the container.
+  - `-> const &T` (or `-> &const T`) returns a read-only place; mutations and plain `&` binds
+    through it are refused unless the binding is `const`.
 
 A standard-library function implemented in Rust is declared without a body, followed by
 `#rust "..."` — in `default/` only; a library binds Rust with `#native` (@C87):
@@ -164,25 +177,27 @@ operand must be **addressable** (a variable, struct field, or vector element —
 |---|---|---|
 | `a = &b` | ✅ | `&b` as the whole assignment RHS — bind a reference to `b`. |
 | `a: &T = b` | ✅ | the declared type says reference; `b` is the referent. |
-| `a = &(1 + 2)`, `a = &f()` | ❌ error | operand is a temporary, not addressable. |
-| `f(&x)`, `&x + 1`, `[&a]` | ❌ error | `&` used as a general operator / sub-expression. |
+| `fn f(s: S) -> &T` | ✅ | the return type says place; the body returns a place in one parameter `s` (`@FR-B-RefType-Return`). |
+| `a = &first(s)` where `first` is `-> &T` | ✅ | `first(s)` is an addressable place in `s`. |
+| `a = &(1 + 2)`, `a = &f()` (`f` is `-> T`) | ❌ error | operand is a temporary, not addressable. |
+| `f(&x)`, `&x + 1`, `[&a]`, `return &x` | ❌ error | `&` used as a general operator / sub-expression. |
 | `f(x)` where the param is `&T` | ✅ | the reference comes from the parameter's TYPE — call without `&`. |
 | `&a = 4` (`&` on the assignment TARGET) | ❌ error | `&` is a bind-site marker, not an lvalue. |
 
-So a `&` parameter is called by passing the variable directly (`f(x)`), and a `&` local is bound
-with `a = &b` or `a: &T = b`. A `&` reference cannot outlive its source.
+So a `&` parameter is called by passing the variable directly (`f(x)`), a `&` return writes the
+plain place in its body (`s.enemies[0]`, never `&s.enemies[0]`), and a `&` local is bound with
+`a = &b` or `a: &T = b`. A `&` reference cannot outlive its source.
 
-> **Status (2026-06, @PLN87):** every `&`-reference is live read- and write-through on both backends —
-> a scalar local (`a = &b`, `a: &T = b`), a **struct field** (`b = &s.x`), a **vector element**
-> (`c = &v[0]`), a **heap whole-value** (`p = &o`, aliases the struct — `p = o` without `&` still
-> copies), a **stored tuple** (`q = &rows[1]`, `p = &h.pair`, or `rows[1]` passed to a `&(…)`
-> parameter — it links like a struct), and a `&` **function parameter** (`fn f(b: &integer)`,
-> called `f(a)`). The addressable-operand
-> check and the general-operator ban (`&` only as a binding RHS; `&`-params called without `&`) are in
-> place. The edges are characterized too: a reference-to-reference works; a reference can't escape its
-> source (no `&T` return type, no `&` in a collection literal, no `&T` struct field). The ladder is
-> complete — see [plans/87-reference-default-binding.md](plans/87-reference-default-binding.md). The one
-> deferral is full borrow checking (the formal spec's `ownership.md`).
+> [!NOTE]
+> Every `&`-reference is live read- and write-through on both backends — a scalar local (`a = &b`,
+> `a: &T = b`), a **struct field** (`b = &s.x`), a **vector element** (`c = &v[0]`), a **heap
+> whole-value** (`p = &o`, aliases the struct — `p = o` without `&` still copies), a **stored
+> tuple** (`q = &rows[1]`, `p = &h.pair`, or `rows[1]` passed to a `&(…)` parameter — it links like
+> a struct), a `&` **function parameter** (`fn f(b: &integer)`, called `f(a)`), and a `-> &T`
+> **place-returning function** (`fn first(s: State) -> &Enemy { s.enemies[0] }`, whose call stands
+> for that place in `s`'s lifetime). A reference-to-reference works; a reference cannot escape its
+> source (a `-> &T` body cannot return a local or temporary, no `&` in a collection literal, no
+> `&T` struct field, no `&` parameter or return on a generator).
 
 ### Constants
 

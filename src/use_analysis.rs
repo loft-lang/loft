@@ -3911,6 +3911,10 @@ fn projection_place_of(
 
 /// [`projection_place_of`] with a fifth answer: the offset of the field read NEAREST the root
 /// alone, not summed with the run it sits in (`g.h.c` answers `off_h`).
+#[expect(
+    clippy::too_many_lines,
+    reason = "single projection loop across field, element, and place-return hops"
+)]
 fn projection_walk(
     data: &Data,
     value: &Value,
@@ -3956,10 +3960,49 @@ fn projection_walk(
             cur = payload;
             continue;
         }
+        // @FR-B-RefType-Return — an `ncr` `!`-unwrap around a place-returning call
+        // (`maybe_first(s)!` lowers to `{ _ncr = maybe_first(s); if ...; _ncr }`) yields the
+        // call's own place on the surviving path.
+        if let Value::Block(bl) = cur.unspan()
+            && bl.name == "ncr"
+            && let Some(Value::Set(tmp, rhs)) = bl.operators.first().map(Value::unspan)
+            && matches!(bl.operators.last().map(Value::unspan), Some(Value::Var(v)) if v == tmp)
+            && matches!(rhs.unspan(), Value::Call(d, _)
+                if (*d as usize) < data.definitions.len() && data.def(*d).returned_ref)
+        {
+            cur = rhs;
+            continue;
+        }
         let Value::Call(d, args) = cur.unspan() else {
             return None;
         };
         let name = data.def(*d).name();
+        // Peel `OpRefFromChildRec` only around an out-of-line `-> &Tree?` call (`returned_ref`);
+        // plain `OpRefFromChildRec(OpGetField(...))` stays `None` here so `@FR-B-OutOfLine`'s
+        // dedicated child-record rules handle it.
+        if name == "OpRefFromChildRec"
+            && let Some(inner) = args.first()
+            && matches!(inner.unspan(), Value::Call(cd, _)
+                if (*cd as usize) < data.definitions.len() && data.def(*cd).returned_ref)
+        {
+            cur = inner;
+            continue;
+        }
+        if data.def(*d).returned_ref {
+            return place_return_walk(
+                data,
+                *d,
+                args,
+                nullable_reads,
+                field,
+                elems,
+                in_run,
+                root_index,
+                run_since_elem,
+                nearest,
+                0,
+            );
+        }
         let projects = is_projection_op(data, *d)
             || (nullable_reads && matches!(name, "OpGetVectorNullable" | "OpVectorRefNullable"));
         if !projects {
@@ -4015,6 +4058,304 @@ fn projection_walk(
             }
             Some(inner) => cur = inner,
             None => return None,
+        }
+    }
+}
+
+/// `@FR-B-RefType-Return` — compose the outer projection chain (`outer_field`, `outer_elems`, …)
+/// with a place-returning call `fn_nr(args)` by resolving the callee's return projection(s) on
+/// its borrowed parameter and substituting `args[param_idx]`.
+#[expect(
+    clippy::too_many_arguments,
+    clippy::too_many_lines,
+    reason = "carries and composes projection_walk's 5-tuple accumulator"
+)]
+fn place_return_walk(
+    data: &Data,
+    fn_nr: u32,
+    args: &[Value],
+    nullable_reads: bool,
+    outer_field: u32,
+    outer_elems: u8,
+    outer_in_run: bool,
+    outer_root_idx: Option<i32>,
+    outer_run_since_elem: u32,
+    outer_nearest: u32,
+    depth: u8,
+) -> Option<(u16, u32, u8, Option<(u32, i32)>, u32)> {
+    if depth > 8 {
+        return None;
+    }
+    let def = data.def(fn_nr);
+    let p = if def.returned_ref_param == u16::MAX {
+        def.returned().depend().first().copied().unwrap_or(0)
+    } else {
+        def.returned_ref_param
+    };
+    let mut arg = args.get(p as usize)?.unspan();
+    if let Value::Call(cs, cargs) = arg
+        && data.def(*cs).name() == "OpCreateStack"
+        && let Some(first) = cargs.first()
+    {
+        arg = first.unspan();
+    }
+    // Collect the callee's return projections rooted at parameter `p`.
+    let mut callee_places: Vec<(u32, u8, Option<(u32, i32)>, u32)> = Vec::new();
+    collect_callee_param_projections(
+        data,
+        def.code(),
+        p,
+        nullable_reads,
+        depth,
+        &mut callee_places,
+    );
+    let (cal_field, cal_elems, cal_idx, cal_nearest) = if callee_places.is_empty() {
+        // Whole parameter returned (`fn id(e: &Enemy) -> &Enemy { e }`), or body not yet parsed.
+        (ANY_FIELD, 0u8, None, ANY_FIELD)
+    } else {
+        let first = callee_places[0];
+        let same_field = callee_places.iter().all(|x| x.0 == first.0);
+        let max_elems = callee_places.iter().map(|x| x.1).max().unwrap_or(0);
+        let idx = if callee_places.len() == 1 {
+            first.2
+        } else {
+            None
+        };
+        let f = if same_field { first.0 } else { ANY_FIELD };
+        let nr = if callee_places.iter().all(|x| x.3 == first.3) {
+            first.3
+        } else {
+            ANY_FIELD
+        };
+        (f, max_elems, idx, nr)
+    };
+    // Combine callee projection with outer projection: `first(s).hp` = `s.<cal>.hp`.
+    let comb_elems = cal_elems.saturating_add(outer_elems);
+    let comb_field = if cal_elems > 0 {
+        cal_field
+    } else {
+        match (cal_field, outer_field) {
+            (ANY_FIELD, o) => o,
+            (c, ANY_FIELD) => c,
+            (c, o) if outer_in_run => c + o,
+            (c, _) => c,
+        }
+    };
+    let comb_nearest = if cal_nearest != ANY_FIELD {
+        cal_nearest
+    } else if cal_elems == 0 {
+        outer_nearest
+    } else {
+        ANY_FIELD
+    };
+    let comb_idx = if cal_elems > 0 {
+        cal_idx
+    } else {
+        outer_root_idx.map(|i| {
+            let r = match (cal_field, outer_run_since_elem) {
+                (ANY_FIELD, o) => o,
+                (c, ANY_FIELD) => c,
+                (c, o) => c + o,
+            };
+            (r, i)
+        })
+    };
+    // Now compose with `arg` in the caller's frame.
+    let arg_unwrapped = discharged_variable(arg).unwrap_or(arg);
+    if let Value::Var(c) = arg_unwrapped {
+        return Some((*c, comb_field, comb_elems, comb_idx, comb_nearest));
+    }
+    let (base_c, base_f, base_elems, base_idx, base_nearest) =
+        projection_walk(data, arg_unwrapped, nullable_reads)?;
+    let final_elems = base_elems.saturating_add(comb_elems);
+    let final_field = if base_elems > 0 {
+        base_f
+    } else {
+        match (base_f, comb_field) {
+            (ANY_FIELD, o) => o,
+            (b, ANY_FIELD) => b,
+            (b, o) => b + o,
+        }
+    };
+    let final_nearest = if base_nearest != ANY_FIELD {
+        base_nearest
+    } else if base_elems == 0 {
+        comb_nearest
+    } else {
+        ANY_FIELD
+    };
+    let final_idx = if base_elems > 0 {
+        base_idx
+    } else {
+        comb_idx.map(|(r, i)| {
+            let nr = match (base_f, r) {
+                (ANY_FIELD, o) => o,
+                (b, ANY_FIELD) => b,
+                (b, o) => b + o,
+            };
+            (nr, i)
+        })
+    };
+    Some((base_c, final_field, final_elems, final_idx, final_nearest))
+}
+
+/// `@FR-B-RefType-Return` — collect `(field, elems, root_idx, nearest)` for every non-null return
+/// leaf of `code` rooted at parameter slot `param_var`.
+pub(crate) fn collect_callee_param_projections(
+    data: &Data,
+    code: &Value,
+    param_var: u16,
+    nullable_reads: bool,
+    depth: u8,
+    out: &mut Vec<(u32, u8, Option<(u32, i32)>, u32)>,
+) {
+    if depth > 8 {
+        return;
+    }
+    let mut env: Vec<(u16, &Value)> = Vec::new();
+    if let Value::Block(bl) = code.unspan() {
+        for op in &bl.operators {
+            if let Value::Set(v, rhs) = op.unspan() {
+                env.push((*v, rhs));
+            }
+        }
+        if let Some(tail) = bl
+            .operators
+            .iter()
+            .rev()
+            .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            && !matches!(tail.unspan(), Value::Return(_))
+        {
+            collect_leaf_param_proj(data, tail, param_var, nullable_reads, &env, depth, out);
+        }
+    }
+    code.walk(&mut |n| {
+        if let Value::Return(inner) = n.unspan() {
+            collect_leaf_param_proj(data, inner, param_var, nullable_reads, &env, depth, out);
+        }
+    });
+}
+
+#[expect(
+    clippy::too_many_lines,
+    reason = "recursively collects callee return projections across branches and blocks"
+)]
+fn collect_leaf_param_proj<'a>(
+    data: &Data,
+    val: &'a Value,
+    param_var: u16,
+    nullable_reads: bool,
+    env: &[(u16, &'a Value)],
+    depth: u8,
+    out: &mut Vec<(u32, u8, Option<(u32, i32)>, u32)>,
+) {
+    if depth > 12 {
+        return;
+    }
+    match val.unspan() {
+        Value::Null => {}
+        Value::If(_, t, e) => {
+            collect_leaf_param_proj(data, t, param_var, nullable_reads, env, depth + 1, out);
+            collect_leaf_param_proj(data, e, param_var, nullable_reads, env, depth + 1, out);
+        }
+        Value::Block(bl) => {
+            let mut inner_env = env.to_vec();
+            for op in &bl.operators {
+                if let Value::Set(v, rhs) = op.unspan() {
+                    inner_env.push((*v, rhs));
+                }
+            }
+            if let Some(tail) = bl
+                .operators
+                .iter()
+                .rev()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            {
+                collect_leaf_param_proj(
+                    data,
+                    tail,
+                    param_var,
+                    nullable_reads,
+                    &inner_env,
+                    depth + 1,
+                    out,
+                );
+            }
+        }
+        Value::Insert(ops) => {
+            let mut inner_env = env.to_vec();
+            for op in ops {
+                if let Value::Set(v, rhs) = op.unspan() {
+                    inner_env.push((*v, rhs));
+                }
+            }
+            if let Some(tail) = ops
+                .iter()
+                .rev()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+            {
+                collect_leaf_param_proj(
+                    data,
+                    tail,
+                    param_var,
+                    nullable_reads,
+                    &inner_env,
+                    depth + 1,
+                    out,
+                );
+            }
+        }
+        Value::Var(v) => {
+            if *v == param_var {
+                out.push((ANY_FIELD, 0, None, ANY_FIELD));
+            } else if let Some((_, rhs)) = env.iter().rev().find(|(x, _)| x == v) {
+                collect_leaf_param_proj(data, rhs, param_var, nullable_reads, env, depth + 1, out);
+            }
+        }
+        other => {
+            // Handle `OpGetStackRef(OpVarRef(p), 0)` / `OpVarRef(p)` (`&` parameter forward).
+            if let Value::Call(d, args) = other {
+                let nm = data.def(*d).name();
+                if nm == "OpVarRef"
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == param_var)
+                {
+                    out.push((ANY_FIELD, 0, None, ANY_FIELD));
+                    return;
+                }
+                if (nm == "OpGetStackRef" || nm == "OpGetSlotRef")
+                    && let Some(Value::Call(vd, vargs)) = args.first().map(Value::unspan)
+                    && data.def(*vd).name() == "OpVarRef"
+                    && matches!(vargs.first().map(Value::unspan), Some(Value::Var(v)) if *v == param_var)
+                {
+                    out.push((ANY_FIELD, 0, None, ANY_FIELD));
+                    return;
+                }
+            }
+            if let Some((c, f, el, idx, nr)) = projection_walk(data, other, nullable_reads) {
+                if c == param_var {
+                    out.push((f, el, idx, nr));
+                } else if let Some((_, rhs)) = env.iter().rev().find(|(x, _)| *x == c)
+                    && let Some((bc, bf, bel, bidx, bnr)) =
+                        projection_walk(data, rhs, nullable_reads)
+                    && bc == param_var
+                {
+                    let tf = if bel > 0 {
+                        bf
+                    } else {
+                        match (bf, f) {
+                            (ANY_FIELD, o) => o,
+                            (b, ANY_FIELD) => b,
+                            (b, o) => b + o,
+                        }
+                    };
+                    out.push((
+                        tf,
+                        bel.saturating_add(el),
+                        if bel > 0 { bidx } else { idx },
+                        if bnr == ANY_FIELD { nr } else { bnr },
+                    ));
+                }
+            }
         }
     }
 }
@@ -6089,9 +6430,9 @@ pub fn drop_copy_census(
                 fname: &def.name,
                 copy_d,
                 op_append: data.def_nr("OpAppendVector"),
-                returned: data
-                    .type_owns_droppable_anywhere(def.returned.base())
-                    .then(|| data.display_type_name(&def.returned)),
+                returned: (!def.returned_ref
+                    && data.type_owns_droppable_anywhere(def.returned.base()))
+                .then(|| data.display_type_name(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
                 placement: crate::lease::Placement::Structure,
@@ -9088,20 +9429,23 @@ pub fn warn_double_move(
                 concept_ref: "@F106",
             });
         }
-        // heap-history.md D-heap-7 family 2 — a parameter's member returned.
-        for (root, at) in std::mem::take(&mut cx.ret_found) {
-            let file = if at.file.is_empty() {
-                def_file
-            } else {
-                at.file.as_str()
-            };
-            report_returned_parameter_member(
-                diags,
-                def.variables.name(root),
-                def.variables.is_argument(root),
-                file,
-                &at,
-            );
+        // heap-history.md D-heap-7 family 2 — a parameter's member returned (value-returning only;
+        // `@FR-B-RefType-Return` returns a view of the caller's place with no second owner).
+        if !def.returned_ref {
+            for (root, at) in std::mem::take(&mut cx.ret_found) {
+                let file = if at.file.is_empty() {
+                    def_file
+                } else {
+                    at.file.as_str()
+                };
+                report_returned_parameter_member(
+                    diags,
+                    def.variables.name(root),
+                    def.variables.is_argument(root),
+                    file,
+                    &at,
+                );
+            }
         }
     }
 }
@@ -9556,23 +9900,35 @@ fn written_before_rebind(code: &Value, data: &Data, p: u16, rebound: &mut bool) 
 /// A result BOUND to a local first (`e = first(s)`) arrives as a `Var` and is deliberately
 /// not matched — see [`warn_lost_temp_writes`].
 fn copies_a_reachable_place(data: &Data, func: &Function, arg: &Value) -> bool {
+    copied_place_callee(data, func, arg).is_some()
+}
+
+fn copied_place_callee(data: &Data, func: &Function, arg: &Value) -> Option<u32> {
     let Value::Call(fn_nr, inner_args) = arg.unspan() else {
-        return false;
+        return None;
     };
     let def = data.def(*fn_nr);
+    if def.returned_ref {
+        // @FR-B-RefType-Return — returns the caller's place itself, not a temporary copy.
+        return None;
+    }
     // A function or a METHOD (`s.first()` is `t_5State_first`): a builtin has no body, so the
     // `code` test is what leaves those out.
     if !(def.name().starts_with("n_") || def.name().starts_with("t_")) || *def.code() == Value::Null
     {
-        return false;
+        return None;
     }
     // Deps are variable numbers in the CALLEE's frame, and its parameters come first, so a
     // dep below the argument count names the argument the caller supplied for it.
-    def.returned().depend().iter().any(|&j| {
-        inner_args
-            .get(j as usize)
-            .is_some_and(|a| matches!(a.unspan(), Value::Var(v) if !func.name(*v).starts_with('_')))
-    })
+    def.returned()
+        .depend()
+        .iter()
+        .any(|&j| {
+            inner_args.get(j as usize).is_some_and(
+                |a| matches!(a.unspan(), Value::Var(v) if !func.name(*v).starts_with('_')),
+            )
+        })
+        .then_some(*fn_nr)
 }
 
 /// The call each `__lift_N` temporary (and each `__place_N` a compound assignment binds) holds,
@@ -9649,6 +10005,10 @@ fn lifted_call_results(
 /// `warning` tier, per the two-tier rule: ignoring it produces a wrong result. It is
 /// therefore an UNDER-approximation — it reports the shape it can prove and stays silent on
 /// a write lost through any other kind of temporary.
+#[expect(
+    clippy::too_many_lines,
+    reason = "renders lost-write diagnostics and conditional fixes per shape"
+)]
 pub fn warn_lost_temp_writes(
     data: &Data,
     diags: &mut crate::diagnostics::Diagnostics,
@@ -9682,7 +10042,7 @@ pub fn warn_lost_temp_writes(
             None,
             &mut found,
         );
-        for (callee, param, at) in found {
+        for (callee, param, accessor, at) in found {
             let file = match &at {
                 Some(p) if !p.file.is_empty() => p.file.as_str(),
                 _ => def_file,
@@ -9690,6 +10050,24 @@ pub fn warn_lost_temp_writes(
             let (line, col) = at
                 .as_ref()
                 .map_or((def.position.line, 0), |p| (p.line, p.pos));
+            let add_place_return_fix = |diags: &mut crate::diagnostics::Diagnostics, acc: u32| {
+                if acc != u32::MAX {
+                    let acc_def = data.def(acc);
+                    let acc_name = acc_def.original_name();
+                    let ret_tp = data.display_type_name(acc_def.returned());
+                    diags.fix_last(crate::diagnostics::Fix {
+                        kind: crate::diagnostics::FixKind::Conditional,
+                        title: format!("declare `{acc_name}`'s return `-> &{ret_tp}`"),
+                        condition: Some(format!(
+                            "every caller of `{acc_name}` means to reach the element: a plain \
+                                 bind of its result then views the element instead of copying it"
+                        )),
+                        edit: None,
+                        concept: "reference",
+                        concept_ref: "@F21",
+                    });
+                }
+            };
             if callee == u32::MAX {
                 diags.add_at_coded(
                     crate::diagnostics::Level::Warning,
@@ -9711,6 +10089,7 @@ pub fn warn_lost_temp_writes(
                     concept: "reference",
                     concept_ref: "@F21",
                 });
+                add_place_return_fix(diags, accessor);
                 continue;
             }
             let callee_def = data.def(callee);
@@ -9748,6 +10127,7 @@ pub fn warn_lost_temp_writes(
                 concept: "reference",
                 concept_ref: "@F21",
             });
+            add_place_return_fix(diags, accessor);
         }
     }
 }
@@ -9776,53 +10156,44 @@ fn scan_lost_temp_writes(
     params: &mut HashMap<u32, HashSet<u16>>,
     lifted: &HashMap<u16, (Value, Option<Position>)>,
     at: Option<&Position>,
-    out: &mut Vec<(u32, u16, Option<Position>)>,
+    out: &mut Vec<(u32, u16, u32, Option<Position>)>,
 ) {
     let here = node.span_pos().or(at);
-    // A WRITE into the call result itself — `first(s).hp = 3`, `s.first().hp -= 10` — is the
-    // same loss with no callee in between: the operator writes the `__lift_N` copy, which is
-    // freed at the end of the statement.  The same two facts: the write (an operator that
-    // writes its first argument, read through any projection of the copy) and a copy of a
-    // place the caller can reach.  Reported as `u32::MAX` for the callee.
     if let Value::Call(op, args) = node
         && crate::parser::writes_its_first_argument(data.def(*op).name())
         && let Some(target) = args.first()
         && let Some(v) = projected_base(data, target)
         && let Some((rhs, lift_at)) = lifted.get(&v)
-        && copies_a_reachable_place(data, func, rhs)
+        && let Some(acc) = copied_place_callee(data, func, rhs)
     {
         out.push((
             u32::MAX,
             v,
+            acc,
             node.span_pos().or(lift_at.as_ref()).or(at).copied(),
         ));
     }
-    // Matched on the BARE node, not `unspan()`: `for_each_child` hands a `Span`'s inner
-    // value straight back, so unspanning here would match the same call twice — once
-    // through its wrapper and once as its own child — and report it twice.
     if let Value::Call(callee, args) = node {
         let def = data.def(*callee);
-        // A user function only: an `Op*` builtin has no loft body to have written through,
-        // and its first-arg writes are exactly what `find_field_written_vars` reads.
         if matches!(def.def_type, DefType::Function) && *def.code() != Value::Null {
             let written = params
                 .entry(*callee)
                 .or_insert_with(|| write_through_params(data, *callee));
             if !written.is_empty() {
                 for (i, arg) in args.iter().enumerate() {
-                    // After `scopes::check` an inline call argument arrives as the `__lift_N`
-                    // bound to it one statement earlier: ask about that binding's value.
                     let (asked, lift_at) = match arg.unspan() {
                         Value::Var(v) => lifted
                             .get(v)
                             .map_or((arg, None), |(rhs, p)| (rhs, p.as_ref())),
                         _ => (arg, None),
                     };
-                    if written.contains(&(i as u16)) && copies_a_reachable_place(data, func, asked)
+                    if written.contains(&(i as u16))
+                        && let Some(acc) = copied_place_callee(data, func, asked)
                     {
                         out.push((
                             *callee,
                             i as u16,
+                            acc,
                             node.span_pos().or(lift_at).or(at).copied(),
                         ));
                     }
@@ -11329,9 +11700,9 @@ pub fn lease_calls(data: &mut Data, fresh: &[u32]) {
                 fname: &def.name,
                 copy_d,
                 op_append: data.def_nr("OpAppendVector"),
-                returned: data
-                    .type_owns_droppable_anywhere(def.returned.base())
-                    .then(|| data.display_type_name(&def.returned)),
+                returned: (!def.returned_ref
+                    && data.type_owns_droppable_anywhere(def.returned.base()))
+                .then(|| data.display_type_name(&def.returned)),
                 whole_tuple: None,
                 rhs_of: None,
                 placement: crate::lease::Placement::Structure,

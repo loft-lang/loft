@@ -1034,7 +1034,19 @@ pub fn place_root(e: el::El, n: ir::Node) -> integer {
   match n {
     NdSpan { inner } => place_root(e, inner),
     NdVar { n: v } => v,
-    NdCall { def_nr, args } => if projection_op(el::def(e, def_nr).name) && len(args) > 0 { place_root(e, args[0]) } else { -1 },
+    NdCall { def_nr, args } => {
+      if projection_op(el::def(e, def_nr).name) && len(args) > 0 {
+        return place_root(e, args[0]);
+      }
+      // @FR-B-RefType-Return — a `-> &T` call roots in the borrowed parameter's argument.
+      if def_nr >= 0 && def_nr < len(e.b.data.definitions) && el::def(e, def_nr).returned_ref {
+        ds = el_types::deps(el::def(e, def_nr).returned[0] ?? ir::TyVoid);
+        if len(ds) == 1 && ds[0]! >= 0 && ds[0]! < len(args) {
+          return place_root(e, args[ds[0]!]);
+        }
+      }
+      -1
+    },
     _ => -1
   }
 }

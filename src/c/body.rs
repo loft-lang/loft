@@ -74,6 +74,8 @@ enum K {
     Fn,
     /// A tuple struct, by its number.
     Tup(u32),
+    /// `@FR-B-RefType-Return` — a stack-backed `&scalar` / `&text` pointer (`int64_t *`, `loft_text *`).
+    Ptr(super::LinkTarget),
     /// No value.
     Void,
 }
@@ -142,6 +144,7 @@ fn kind_of(c: CType) -> K {
         CType::Char => K::Char,
         CType::Fn => K::Fn,
         CType::Tuple(id) => K::Tup(id),
+        CType::Ptr(lt) => K::Ptr(lt),
         // A transient pointer has no expression kind: it never reaches the ordinary path.
         CType::Tr(_) | CType::TrVec | CType::Void => K::Void,
     }
@@ -874,10 +877,8 @@ impl<'a> FnWriter<'a> {
             // store link: the IR reads and writes it as the field it names.
             store_links: {
                 let vars = def.variables();
-                let seed: Vec<u16> = vars
-                    .arguments()
-                    .into_iter()
-                    .filter(|&a| vars.is_store_text_link(a))
+                let seed: Vec<u16> = (0..vars.count())
+                    .filter(|&v| vars.is_store_text_link(v))
                     .collect();
                 store_links(cx, def, &seed)
             },
@@ -1068,7 +1069,7 @@ impl<'a> FnWriter<'a> {
     pub(crate) fn places(mut self, mask: u64) -> Self {
         if mask != 0 {
             let def = self.cx.data.def(self.d);
-            let seed: Vec<u16> = self
+            let mut seed: Vec<u16> = self
                 .vars
                 .arguments()
                 .iter()
@@ -1076,6 +1077,11 @@ impl<'a> FnWriter<'a> {
                 .filter(|&(i, &a)| mask & (1 << i) != 0 || self.vars.is_store_text_link(a))
                 .map(|(_, &a)| a)
                 .collect();
+            for v in 0..self.vars.count() {
+                if self.vars.is_store_text_link(v) && !seed.contains(&v) {
+                    seed.push(v);
+                }
+            }
             self.store_links = store_links(self.cx, def, &seed);
         }
         self
@@ -4799,7 +4805,7 @@ impl<'a> FnWriter<'a> {
             CType::Single => format!("{target} = (float) NAN;"),
             CType::Char => format!("{target} = 0;"),
             CType::Fn => format!("{target} = loft_fn_of(cx, LOFT_NULL);"),
-            CType::Tr(_) | CType::TrVec => format!("{target} = 0;"),
+            CType::Ptr(_) | CType::Tr(_) | CType::TrVec => format!("{target} = 0;"),
             CType::Tuple(id) => {
                 for (i, e) in self.cx.tuple_shapes(id).into_iter().enumerate() {
                     self.null_into(&format!("{target}.f{i}"), e, ind);
@@ -6183,7 +6189,7 @@ impl<'a> FnWriter<'a> {
     /// A rebind whose result is fresh on one arm and borrowed on the other (`Own::Join`) that
     /// `join_stmt` does not bind — the call reads the variable, or the variable does not own
     /// what it displaces — is this copy, as the bytecode writer's #360 path copies it.
-    fn call_copy(&self, v: u16, x: &Value) -> Option<(u16, bool)> {
+    fn call_copy(&self, v: u16, x: &Value, first: bool) -> Option<(u16, bool)> {
         use crate::data::Type;
         use crate::use_analysis as ua;
         let data = self.cx.data;
@@ -6196,9 +6202,31 @@ impl<'a> FnWriter<'a> {
         let (Type::Reference(d, _) | Type::Enum(d, true, _)) = shape.base().clone() else {
             return None;
         };
+        if let Value::CallRef(fv, _) = x.unspan()
+            && self
+                .vars
+                .tp(*fv)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_ref)
+        {
+            // @FR-O-Proxy asks copy — a view (`!depend().is_empty()`) binds the place directly.
+            if first && !self.vars.tp(v).depend().is_empty() {
+                return None;
+            }
+            return Some((data.def(d).known_type(), false));
+        }
         let f = ua::callee_of(data, self.d, x)?;
         if !data.def(f).is_loft_defined() {
             return None;
+        }
+        if data.def(f).returned_ref {
+            // @FR-B-RefType-Return — a first bind keeping its deps views the place directly;
+            // stripped deps (materialised view or temporary arg) copy into `v`'s own store.
+            // @FR-O-Proxy asks copy — chooses direct place view vs copy into `v`'s store.
+            if first && !self.vars.tp(v).depend().is_empty() {
+                return None;
+            }
+            return Some((data.def(d).known_type(), false));
         }
         if data.def(f).return_adopts_fresh_store()
             || self.vars.is_view_elided(v)
@@ -6951,7 +6979,7 @@ impl<'a> FnWriter<'a> {
                 crate::bind_lowering::ReArm::CallCopy { .. }
                     | crate::bind_lowering::ReArm::Join { .. }
             );
-        if rebind_copies && let Some((tp, frees)) = self.call_copy(var, x) {
+        if rebind_copies && let Some((tp, frees)) = self.call_copy(var, x, first) {
             self.set_arm(if frees { "call-copy-free" } else { "call-copy" });
             let bytes = self.copyable(tp)?;
             let e = self.expr(x, ind)?;
@@ -7151,6 +7179,20 @@ impl<'a> FnWriter<'a> {
         }
         let to = match self.stack_target(x) {
             Some(to) => Some(to),
+            None if crate::c::LinkTarget::of(self.shapes[var as usize]).is_some()
+                && matches!(x.unspan(), Value::Call(..) | Value::CallRef(..))
+                && !self.store_links[var as usize] =>
+            {
+                let want = crate::c::LinkTarget::of(self.shapes[var as usize]).expect("checked");
+                let e = self.expr(x, ind)?;
+                if e.kind == K::Ptr(want) {
+                    Some(e.code)
+                } else if self.shapes[var as usize] != CType::Ref {
+                    self.direct_place(var, x, ind)?
+                } else {
+                    None
+                }
+            }
             None if self.shapes[var as usize] != CType::Ref => self.direct_place(var, x, ind)?,
             None => None,
         };
@@ -8020,6 +8062,10 @@ impl<'a> FnWriter<'a> {
     fn shape_of(&self, v: &Value) -> Result<CType, String> {
         let cx = self.cx;
         match v.unspan() {
+            Value::Block(b) if b.name == "place_ref_ret" => Ok(self.ret),
+            Value::Block(b) if b.name == "place_ref_call" => cx
+                .ctype(b.result.peel_link())
+                .ok_or_else(|| format!("a block of type {}", type_word(&b.result))),
             Value::Block(b) => cx
                 .ctype(&b.result)
                 .ok_or_else(|| format!("a block of type {}", type_word(&b.result))),
@@ -8548,6 +8594,7 @@ impl<'a> FnWriter<'a> {
             K::Single => (CType::Single, value.code),
             K::Char => (CType::Char, value.code),
             K::Fn => (CType::Fn, value.code),
+            K::Ptr(lt) => (CType::Ptr(lt), value.code),
             _ => (CType::Bool, as_bool(value)?),
         };
         let temp = self.temp(shape);
@@ -8662,7 +8709,7 @@ impl<'a> FnWriter<'a> {
             Some(key) => cx
                 .vr_ctype(key)
                 .ok_or("a value record without its layout")?,
-            None => cx.ctype(def.returned()).ok_or_else(|| {
+            None => cx.return_ctype(d, 0).ok_or_else(|| {
                 format!("a call to {callee} returning {}", type_word(def.returned()))
             })?,
         };
@@ -8712,6 +8759,11 @@ impl<'a> FnWriter<'a> {
             }
         }
         let (values, places) = self.link_args(d, args, &shapes, &mut xs, ind)?;
+        let ret = if vr_key.is_none() && !native && places != 0 {
+            cx.return_ctype(d, places).unwrap_or(ret)
+        } else {
+            ret
+        };
         let ptr = cx.vr_ptr_params(d);
         let tuple_params: Vec<(usize, u16, bool)> = tuple_params
             .into_iter()
@@ -9178,9 +9230,6 @@ impl<'a> FnWriter<'a> {
             .collect::<Option<Vec<_>>>()
             .ok_or("a function value with a parameter of no C shape")?;
         let shapes: Vec<CType> = sig_params.iter().map(|(c, _)| *c).collect();
-        let ret = cx
-            .ctype(&ret)
-            .ok_or_else(|| format!("a function value returning {}", type_word(&ret)))?;
         if args.len() < shapes.len() {
             return Err("a call through a function value with arguments left out".into());
         }
@@ -9203,6 +9252,39 @@ impl<'a> FnWriter<'a> {
                 modes.push((*c, 0));
             }
         }
+        let ret = if let crate::data::Type::RefVar(inner) = ret.base()
+            && self
+                .vars
+                .tp(v)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_ref)
+        {
+            let cands = self
+                .vars
+                .tp(v)
+                .base()
+                .fn_return_deps_attrs()
+                .unwrap_or_else(|| vec![0]);
+            let p = cands.first().copied().unwrap_or(0);
+            let is_store = match modes.get(p) {
+                Some((_, 0 | 2)) => true,
+                Some((_, 1)) => false,
+                _ => true,
+            };
+            if is_store {
+                CType::Ref
+            } else {
+                let ic = cx
+                    .ctype(inner)
+                    .ok_or_else(|| format!("a function value returning {}", type_word(&ret)))?;
+                crate::c::LinkTarget::of(ic)
+                    .map(CType::Ptr)
+                    .ok_or_else(|| format!("a function value returning {}", type_word(&ret)))?
+            }
+        } else {
+            cx.ctype(&ret)
+                .ok_or_else(|| format!("a function value returning {}", type_word(&ret)))?
+        };
         let sig = cx.fn_sig(modes, ret);
         self.value_args(&args[..shapes.len()], &shapes, &values, &mut xs, false, ind)?;
         let mut list = vec![self.var(v)];
@@ -9288,11 +9370,11 @@ impl<'a> FnWriter<'a> {
             Value::Var(v) if self.store_links[*v as usize] => {
                 Ok(Some(var_name(self.vars.name(*v), *v)))
             }
-            Value::Call(op, _)
+            Value::Call(op, call_args)
                 if matches!(
                     self.cx.data.def(*op).name(),
                     "OpGetField" | "OpGetVector" | "OpVarRef"
-                ) =>
+                ) || call_returns_store_place_in(self.cx, *op, call_args, &self.store_links) =>
             {
                 let e = self.expr(a, ind)?;
                 let t = self.temp(CType::Ref);
@@ -12232,6 +12314,11 @@ fn as_shape(cx: &Cx, e: E, c: CType) -> Result<String, String> {
         CType::Single => as_single(e),
         CType::Char => as_char(e),
         CType::Fn => as_fn(e),
+        CType::Ptr(lt) => match e.kind {
+            K::Ptr(got) if got == lt => Ok(e.code),
+            _ if e.code == "loft_ref_null(cx)" => Ok("0".into()),
+            _ => Err(format!("expected pointer, got {:?}", e.kind)),
+        },
         CType::Tr(_) | CType::TrVec => Err("a transient value outside its mapping".into()),
         CType::Void => Err("a void value".into()),
     }
@@ -12567,8 +12654,10 @@ fn store_links(cx: &Cx, def: &crate::data::Definition, seed: &[u16]) -> Vec<bool
                 Value::Call(d, xs) => match cx.data.def(*d).name() {
                     "OpCreateStack" => false,
                     "OpVarRef" => matches!(xs.as_slice(), [Value::Var(a)] if store[*a as usize]),
-                    _ => true,
+                    "OpGetField" | "OpGetVector" | "OpVectorRef" => true,
+                    _ => call_returns_store_place_in(cx, *d, xs, &store),
                 },
+                Value::CallRef(fv, xs) => call_ref_returns_store_place_in(vars, *fv, xs, &store),
                 _ => true,
             });
             if all_places {
@@ -12628,8 +12717,91 @@ fn shape_of_kind(k: K) -> Option<CType> {
         K::Char => CType::Char,
         K::Fn => CType::Fn,
         K::Tup(id) => CType::Tuple(id),
+        K::Ptr(lt) => CType::Ptr(lt),
         K::View | K::Void => return None,
     })
+}
+
+/// `@FR-B-RefType-Return` — does a `-> &scalar` / `-> &text` call `d(xs)` return a store `loft_ref`
+/// rather than a stack pointer?
+fn call_returns_store_place_in(cx: &Cx, d: u32, xs: &[Value], store: &[bool]) -> bool {
+    let def = cx.data.def(d);
+    if !def.returned_ref || !matches!(def.returned().base(), crate::data::Type::RefVar(_)) {
+        return false;
+    }
+    let p = if def.returned_ref_param == u16::MAX {
+        0
+    } else {
+        def.returned_ref_param as usize
+    };
+    if let Some(attr) = def.attributes().get(p)
+        && let crate::data::Type::RefVar(p_inner) = attr.typedef.base()
+        && (crate::data::is_scalar(p_inner.base())
+            || matches!(
+                p_inner.base(),
+                crate::data::Type::Text(_) | crate::data::Type::Tuple(_)
+            ))
+    {
+        if def
+            .variables()
+            .arguments()
+            .get(p)
+            .is_some_and(|&v| def.variables().is_store_text_link(v))
+        {
+            return true;
+        }
+        return xs
+            .get(p)
+            .is_some_and(|a| arg_is_store_place_in(cx, a, store));
+    }
+    true
+}
+
+fn call_ref_returns_store_place_in(
+    vars: &crate::variables::Function,
+    fv: u16,
+    xs: &[Value],
+    store: &[bool],
+) -> bool {
+    let tp = vars.tp(fv).base();
+    let crate::data::Type::Function(params, ret, ..) = tp else {
+        return false;
+    };
+    if !matches!(ret.base(), crate::data::Type::RefVar(_)) {
+        return false;
+    }
+    let cands = tp.fn_return_deps_attrs().unwrap_or_else(|| vec![0]);
+    let p = cands.first().copied().unwrap_or(0);
+    if let Some(pt) = params.get(p)
+        && let crate::data::Type::RefVar(p_inner) = pt.base()
+        && (crate::data::is_scalar(p_inner.base())
+            || matches!(
+                p_inner.base(),
+                crate::data::Type::Text(_) | crate::data::Type::Tuple(_)
+            ))
+    {
+        return xs.get(p).is_some_and(|a| match a.unspan() {
+            Value::Var(v) => store.get(*v as usize).copied().unwrap_or(false),
+            Value::Call(..) => true,
+            _ => false,
+        });
+    }
+    true
+}
+
+fn arg_is_store_place_in(cx: &Cx, a: &Value, store: &[bool]) -> bool {
+    match a.unspan() {
+        Value::Var(v) => store.get(*v as usize).copied().unwrap_or(false),
+        Value::Call(op, args) => match cx.data.def(*op).name() {
+            "OpCreateStack" => false,
+            "OpVarRef" => {
+                matches!(args.as_slice(), [Value::Var(v)] if store.get(*v as usize).copied().unwrap_or(false))
+            }
+            "OpGetField" | "OpGetVector" | "OpVectorRef" => true,
+            _ => call_returns_store_place_in(cx, *op, args, store),
+        },
+        _ => false,
+    }
 }
 
 /// `@FR-R-SliceArg`: the wrapper variable of a slice VALUE — the block a slice used as a value is

@@ -1427,15 +1427,58 @@ impl Parser {
         if self.in_sandbox && !self.first_pass {
             self.record_param_lock_overrides(d_nr, &actual);
         }
-        let pres = std::mem::take(&mut self.pending_arg_pres);
+        let mut pres = std::mem::take(&mut self.pending_arg_pres);
         let posts = std::mem::take(&mut self.pending_arg_posts);
         self.add_defaults(d_nr, &mut actual, &mut all_types);
         if !self.first_pass {
             self.copy_store_text_args(d_nr, &mut actual);
         }
-        let tp = self.call_dependencies(d_nr, &all_types);
+        let mut tp = self.call_dependencies(d_nr, &all_types);
         self.record_closure_arguments(d_nr, &actual, arg_pos);
+        let store_text_ret = self.data.def(d_nr).returned_ref
+            && matches!(
+                tp.base(),
+                Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+            )
+            && {
+                let def = self.data.def(d_nr);
+                let p = if def.returned_ref_param == u16::MAX {
+                    def.attributes
+                        .iter()
+                        .position(|a| {
+                            matches!(
+                                a.typedef.base(),
+                                Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))
+                            )
+                        })
+                        .unwrap_or(usize::MAX)
+                } else {
+                    def.returned_ref_param as usize
+                };
+                if let Some(attr) = def.attributes.get(p)
+                    && matches!(attr.typedef.base(), Type::RefVar(_))
+                {
+                    actual
+                        .get(p)
+                        .is_some_and(|a| self.data.is_store_text_arg(a))
+                } else {
+                    true
+                }
+            };
         *code = Value::Call(d_nr, actual);
+        // @FR-B-RefType-Return — wrap an out-of-line field-returning call in `OpRefFromChildRec`
+        // so callers read/write/link it identically to a direct `host.field` expression.
+        if self.data.def(d_nr).returned_ref && self.data.def(d_nr).returned_ref_ool {
+            let inner = std::mem::replace(code, Value::Null);
+            *code = self.cl("OpRefFromChildRec", &[inner]);
+        } else if self.data.def(d_nr).returned_ref && matches!(tp.base(), Type::RefVar(_)) {
+            let pre_ops = if posts.is_empty() {
+                std::mem::take(&mut pres)
+            } else {
+                Vec::new()
+            };
+            tp = self.wrap_refvar_place_call(code, &tp, store_text_ret, pre_ops);
+        }
         // loft#2146 — an argument linked through a temp is stored back once the call returns.
         if !posts.is_empty() {
             let call = std::mem::replace(code, Value::Null);
@@ -1453,6 +1496,11 @@ impl Parser {
                 ops.push(Value::Var(r));
                 *code = crate::data::v_block(ops, tp.clone(), "amp slot write-back");
             }
+        } else if !pres.is_empty() {
+            let call = std::mem::replace(code, Value::Null);
+            let mut ops = pres;
+            ops.push(call);
+            *code = crate::data::v_block(ops, tp.clone(), "amp arg setup");
         }
         self.warn_text_len_byte_index(d_nr, code);
         // @PLN102 arc C step 3 — the recommended-idiom STEER.  A resolved call FROM
@@ -1531,5 +1579,60 @@ impl Parser {
             }
         }
         tp
+    }
+
+    /// `@FR-B-RefType-Return` — Phase C: bind a `-> &scalar` or `-> &text` call into a synthetic
+    /// `&` slot `__plink_N` so reads, `=` / `+=` writes, `&` links, and `&T` arguments all address
+    /// the returned place once.  Store-kind `-> &text` calls mark `__plink_N` with
+    /// `set_store_text_link` and expose `store_text_link_place(__plink_N)`.
+    pub(crate) fn wrap_refvar_place_call(
+        &mut self,
+        code: &mut Value,
+        ret_tp: &Type,
+        store_text: bool,
+        mut pre_ops: Vec<Value>,
+    ) -> Type {
+        let link_tp = ret_tp.base().clone();
+        let tmp = self.create_unique("plink", &link_tp);
+        if tmp != u16::MAX {
+            self.vars.defined(tmp);
+            if store_text {
+                self.vars.set_store_text_link(tmp);
+            }
+        }
+        let out_tp = if store_text {
+            let deps = if !ret_tp.depend().is_empty() {
+                Deps::frame(ret_tp.depend())
+            } else if tmp != u16::MAX {
+                Deps::frame1(tmp)
+            } else {
+                Deps::none()
+            };
+            let text_tp = Type::Text(deps);
+            if matches!(ret_tp, Type::Optional(_)) {
+                Type::optional(text_tp)
+            } else {
+                text_tp
+            }
+        } else {
+            let inner = ret_tp.peel_link().clone();
+            if matches!(ret_tp, Type::Optional(_)) && !matches!(inner, Type::Optional(_)) {
+                Type::optional(inner)
+            } else {
+                inner
+            }
+        };
+        if tmp != u16::MAX {
+            let call = std::mem::replace(code, Value::Null);
+            let tail = if store_text {
+                self.store_text_link_place(tmp)
+            } else {
+                Value::Var(tmp)
+            };
+            pre_ops.push(crate::data::v_set(tmp, call));
+            pre_ops.push(tail);
+            *code = crate::data::v_block(pre_ops, out_tp.clone(), "place_ref_call");
+        }
+        out_tp
     }
 }

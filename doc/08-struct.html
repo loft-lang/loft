@@ -46,6 +46,11 @@
 <pre><code><span class="kw">fn</span> <span class="fn-call">dimmed</span>(self: <span class="en">Colour</span>) -&gt; <span class="en">Colour</span> {
   <span class="en">Colour</span> {r: self.r / <span class="nm">2</span> ?? <span class="nm">0</span>, g: self.g / <span class="nm">2</span> ?? <span class="nm">0</span>, b: self.b / <span class="nm">2</span> ?? <span class="nm">0</span> }
 }</code></pre>
+<h2 id="returning-a-struct-in-place">Returning a struct in place</h2>
+<p>Write <code>-&gt; &amp;StructName</code> when a helper should return an existing record inside one of its parameters instead of a fresh copy. Every exit of the body must name a place in that same parameter. Calling the helper then reaches the element itself: writing a field or passing the call to another function updates the container in place, and a plain bind <code>p = first_product(shelf)</code> views that element just as <code>p = shelf[0]</code> does. Changing an existing <code>-&gt; Product</code> helper to <code>-&gt; &amp;Product</code> turns callers' plain binds from independent copies into views, so use <code>-&gt; &amp;Product</code> when reaching the stored record is what callers want.</p>
+<pre><code><span class="kw">fn</span> <span class="fn-call">first_product</span>(items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">Product</span>&gt;) -&gt; &amp;<span class="en">Product</span> {
+  items[<span class="nm">0</span>]
+}</code></pre>
 <h2 id="defaults-and-computed-fields">Defaults and Computed Fields</h2>
 <p>Write <code>= expression</code> after the type to set a stored default, filled at construction. Use <code>computed(expression)</code> for a field that recalculates every time you read it — it takes no space in the record and always reflects the current state. Inside both, <code>$</code> refers to the struct.</p>
 <pre><code><span class="kw">struct</span> <span class="en">Item</span> {
@@ -180,6 +185,17 @@
 <pre><code>  linked = &amp;item;
   linked.stock = <span class="nm">1</span>;
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(item.stock == <span class="nm">1</span>, <span class="st">"'&amp;' binds a live link"</span>);</code></pre>
+<p>A <code>-&gt; &amp;Product</code> helper reaches the element inside <code>shelf</code> directly.</p>
+<pre><code>  <span class="fn-call">first_product</span>(shelf).stock = <span class="nm">12</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(shelf[<span class="nm">0</span>].stock == <span class="nm">12</span>, <span class="st">"writing through a -&gt; &amp;Product call updates shelf[0]"</span>);
+  viewed = <span class="fn-call">first_product</span>(shelf);
+  viewed.stock -= <span class="nm">2</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(shelf[<span class="nm">0</span>].stock == <span class="nm">10</span>, <span class="st">"a plain bind of -&gt; &amp;Product views the element"</span>);
+  linked_first = &amp;<span class="fn-call">first_product</span>(shelf);
+  linked_first.stock = <span class="nm">6</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(shelf[<span class="nm">0</span>].stock == <span class="nm">6</span>, <span class="st">"'&amp;' on a -&gt; &amp;Product call links the element"</span>);</code></pre>
+<p>Restore <code>spare</code> and <code>item</code> alignment for the comparison section below.</p>
+<pre><code>  item.stock = <span class="nm">1</span>;</code></pre>
 <p>A tree: children are fields of the struct's own type, nullable so a branch can end.</p>
 <pre><code>  root = <span class="en">Tree</span> { key: <span class="nm">5</span>, left: <span class="en">Tree</span> { key: <span class="nm">3</span> } };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(root.left.key == <span class="nm">3</span>, <span class="st">"a child reads like any field"</span>);
@@ -235,6 +251,7 @@
 //
 //
 //
+//
 // A struct groups related values under one name. Instead of keeping a
 // product's name, price, and stock count in three separate variables that
 // can drift out of sync, you bundle them together into a Product struct.
@@ -282,6 +299,19 @@ fn to_hex(self: Colour) -&gt; integer {
 
 fn dimmed(self: Colour) -&gt; Colour {
   Colour {r: self.r / 2 ?? 0, g: self.g / 2 ?? 0, b: self.b / 2 ?? 0 }
+}
+// ## Returning a struct in place
+// Write '-&gt; &amp;StructName' when a helper should return an existing record inside one of
+// its parameters instead of a fresh copy. Every exit of the body must name a place in
+// that same parameter. Calling the helper then reaches the element itself: writing a
+// field or passing the call to another function updates the container in place, and a
+// plain bind 'p = first_product(shelf)' views that element just as 'p = shelf[0]' does.
+// Changing an existing '-&gt; Product' helper to '-&gt; &amp;Product' turns callers' plain binds
+// from independent copies into views, so use '-&gt; &amp;Product' when reaching the stored
+// record is what callers want.
+
+fn first_product(items: vector&lt;Product&gt;) -&gt; &amp;Product {
+  items[0]
 }
 // ## Defaults and Computed Fields
 // Write '= expression' after the type to set a stored default, filled at construction.
@@ -469,6 +499,17 @@ fn main() {
   linked = &amp;item;
   linked.stock = 1;
   assert(item.stock == 1, "'&amp;' binds a live link");
+  // A '-&gt; &amp;Product' helper reaches the element inside 'shelf' directly.
+  first_product(shelf).stock = 12;
+  assert(shelf[0].stock == 12, "writing through a -&gt; &amp;Product call updates shelf[0]");
+  viewed = first_product(shelf);
+  viewed.stock -= 2;
+  assert(shelf[0].stock == 10, "a plain bind of -&gt; &amp;Product views the element");
+  linked_first = &amp;first_product(shelf);
+  linked_first.stock = 6;
+  assert(shelf[0].stock == 6, "'&amp;' on a -&gt; &amp;Product call links the element");
+  // Restore 'spare' and 'item' alignment for the comparison section below.
+  item.stock = 1;
   // A tree: children are fields of the struct's own type, nullable so a branch can end.
   root = Tree { key: 5, left: Tree { key: 3 } };
   assert(root.left.key == 3, "a child reads like any field");

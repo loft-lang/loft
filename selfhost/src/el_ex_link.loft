@@ -148,7 +148,8 @@ pub fn gives_away_its_store(e: el::El, code: ir::Node) -> boolean {
       if def_nr == e.context && e.self_view_tail {
         return false;
       }
-      starts_with(cd.name, "n_") && !((cd.code[0] ?? ir::NdNull) is NdNull) && !returns_argument_view(cd)
+      // @FR-B-RefType-Return — a place-returning call never hands over a fresh store.
+      starts_with(cd.name, "n_") && !((cd.code[0] ?? ir::NdNull) is NdNull) && !cd.returned_ref && !returns_argument_view(cd)
     },
     NdBlock { block } => block[0].name == "Object",
     _ => false

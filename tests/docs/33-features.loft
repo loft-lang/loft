@@ -42,7 +42,7 @@
 // - **@F18** — `const` parameters
 // - **@F19** — Method dispatch via `self` / `both`
 // - **@F20** — Variant-based dynamic dispatch
-// - **@F21** — References `&T` — parameters + write-back bindings
+// - **@F21** — References `&T` — parameters, bindings + place returns
 // - **@F22** — Closures & lambdas (value capture, cross-scope)
 // - **@F23** — Function references as first-class values
 // - **@F24** — Higher-order functions (map / filter / reduce)

@@ -579,10 +579,10 @@ fn wrong_cast() {
 #[test]
 fn link_field_type() {
     code!("struct Bad { f: &integer }\nfn test() { }").error(
-        "`&` marks a variable or a parameter as a link to a place (`fn f(x: &T)`, `x = &a`); \
-         a return type, a field, an element or a tuple member holds a value and cannot be a \
-         link — drop the `&` (a field that points into another store is `reference<T>`) at \
-         link_field_type:1:25",
+        "`&` marks a variable, a parameter or a return type as a link to a place \
+         (`fn f(x: &T) -> &T`, `x = &a`); a field, an element or a tuple member holds a value \
+         and cannot be a link — drop the `&` (a field that points into another store is \
+         `reference<T>`) at link_field_type:1:25",
     );
 }
 

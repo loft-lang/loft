@@ -1,15 +1,26 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 // @F21 — GENERATED from loft-lang/features#21 by tools/features/gen.loft — DO NOT EDIT.
+struct Counter { n: integer }
+struct Pair { left: Counter, right: Counter }
+
 fn add_to(x: &integer, amount: integer) {
     x += amount;
 }
+
+fn side(p: Pair, left: boolean) -> &Counter {
+    if left { p.left } else { p.right }
+}
+
 fn main() {
     total = 10;
-    add_to(total, 5);              // no `&` at the call
+    add_to(total, 5);                   // no `&` at the call
     add_to(total, 100);
-    println("total = {total}");    // total = 115
-    alias = &total;                // a local reference
+    println("total = {total}");         // total = 115
+    alias = &total;                     // a local reference
     alias += 1;
-    println("total = {total}");    // total = 116
+    println("total = {total}");         // total = 116
+    pair = Pair { left: Counter { n: 1 }, right: Counter { n: 2 } };
+    side(pair, true).n += 5;            // -> &Counter writes pair.left in place
+    println("left = {pair.left.n}, right = {pair.right.n}"); // left = 6, right = 2
 }

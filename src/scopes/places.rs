@@ -128,6 +128,7 @@ pub(crate) fn value_view_places_depth(
 /// name"* — a literal, a mint, a call.  That is the safe answer here in both directions: an
 /// unnamed value is not materialised, so a shape this cannot read keeps the aliasing it has
 /// today rather than gaining a copy nothing asked for.
+#[expect(clippy::too_many_lines, reason = "walks every place-bearing IR arm")]
 fn view_place_in<'a>(
     value: &'a Value,
     data: &Data,
@@ -163,6 +164,84 @@ fn view_place_in<'a>(
         Value::Var(x) => {
             if let Some((_, bound)) = env.iter().rev().find(|(v, _)| v == x) {
                 view_place_in(bound, data, function, env, depth + 1, out);
+            }
+        }
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpVarRef"
+                && matches!(args.as_slice(), [Value::Var(_)]) =>
+        {
+            view_place_in(&args[0], data, function, env, depth + 1, out);
+        }
+        // @FR-B-RefType-Return — a call through a `fn(...) -> &T` value views whichever candidate
+        // argument(s) the function type's return deps name.
+        Value::CallRef(fv, args)
+            if function
+                .tp(*fv)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_ref) =>
+        {
+            for arg in args {
+                let inner = peel_stack_ref(arg, data);
+                if let Some((place, elems)) = named_place_depth(inner, data)
+                    && !function.is_compiler_generated(place.0)
+                {
+                    let elems = elems.max(1);
+                    match out.iter_mut().find(|(p, _)| *p == place) {
+                        Some((_, d)) => *d = (*d).max(elems),
+                        None => out.push((place, elems)),
+                    }
+                }
+            }
+        }
+        // @FR-B-RefType-Return — a `-> &T` call whose body branches across multiple fields of its
+        // parameter (`if pick_a { t.a[0] } else { t.b[0] }`) records EACH field place separately,
+        // rather than collapsing to `ANY_FIELD` or dropping to none.
+        Value::Call(d_nr, args)
+            if (*d_nr as usize) < data.definitions.len() && data.def(*d_nr).returned_ref =>
+        {
+            let def = data.def(*d_nr);
+            let p = if def.returned_ref_param == u16::MAX {
+                def.returned().depend().first().copied().unwrap_or(0)
+            } else {
+                def.returned_ref_param
+            };
+            if let Some(arg) = args.get(p as usize)
+                && let Some((base_place, base_at)) = call_arg_at(arg, data)
+                && !function.is_compiler_generated(base_place.0)
+            {
+                let mut callee_places = Vec::new();
+                crate::use_analysis::collect_callee_param_projections(
+                    data,
+                    def.code(),
+                    p,
+                    true,
+                    0,
+                    &mut callee_places,
+                );
+                if callee_places.is_empty() {
+                    let d_el = base_at.depth.max(1);
+                    match out.iter_mut().find(|(pl, _)| *pl == base_place) {
+                        Some((_, d)) => *d = (*d).max(d_el),
+                        None => out.push((base_place, d_el)),
+                    }
+                } else {
+                    for (cf, cel, cidx, _) in callee_places {
+                        let (composed, cat) = compose_param_at(
+                            base_place,
+                            base_at,
+                            cf,
+                            ContainerAt {
+                                depth: cel,
+                                index: cidx,
+                            },
+                        );
+                        match out.iter_mut().find(|(pl, _)| *pl == composed) {
+                            Some((_, d)) => *d = (*d).max(cat.depth),
+                            None => out.push((composed, cat.depth)),
+                        }
+                    }
+                }
             }
         }
         // A place inside a COMPILER-GENERATED container is not a place any disturbance can

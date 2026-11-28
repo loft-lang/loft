@@ -316,7 +316,7 @@ fn names_captured_in(e: el::El, vars: el_vars::Vars, n: integer, own: vector<tex
 
 pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
   match e.p.nodes[n] {
-    SLambda { at, params, ret, body, short, names } => {
+    SLambda { at, params, ret, ret_amp, ret_const, body, short, names } => {
       // `parse_lambda_short`: `|x, y| …` takes its parameter types — and its result — from the
       // `fn(…)` the position expects (`lambda_hint`): a call's parameter or a typed bind.
       hint: ir::TypeT = ir::TyVoid;
@@ -484,7 +484,7 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         el_schema::lay_out_late(e, fr);
       }
       e.closure_var = -1;
-      key = el_definitions::parse_function(e, at, nm, params, ret, body, short_names: if short { names } else { [] }, hint: hint);
+      key = el_definitions::parse_function(e, at, nm, params, ret, body, ret_const: ret_const, short_names: if short { names } else { [] }, hint: hint, ret_amp: ret_amp);
       e.captures = saved_caps;
       e.closure_rec = saved_rec;
       e.closure_var = saved_var;

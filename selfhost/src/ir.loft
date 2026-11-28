@@ -314,6 +314,8 @@ struct Definition {
   ref_evacuations: vector<integer>,
   // @PLN91 the constant twin `__const_<name>` is linked (`Definition::literal_const`, @FR-R-Const)
   const_linked: boolean,
+  // @FR-B-RefType-Return `-> &T`: the function returns a caller place rather than a value
+  returned_ref: boolean,
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can
