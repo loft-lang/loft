@@ -1009,7 +1009,8 @@ pub fn index(e: el::El, vars: el_vars::Vars, at: integer, c: integer?, keys: vec
   // A struct enum's element is read as the enum's place in it, as a walk reads it; a vector's
   // as the inner vector's place.
   pk = element_place_type(e, inner);
-  if record && pk >= 0 && !e.first_pass {
+  // (A LINKED element is read through its id, `OpVectorRef`: the record itself.)
+  if record && pk >= 0 && !e.first_pass && !linked_record(e, inner) {
     code = el_ir::cl(e, "OpGetField", [code, ir::NdInt { n: 0 }, ir::NdInt { n: pk }]);
   }
   if !e.first_pass {

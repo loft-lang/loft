@@ -1667,6 +1667,11 @@ pub fn linked_record(e: el::El, t: ir::TypeT) -> boolean {
       k = el::def(e, n).known_type;
       k != el_schema::NO_TYPE && (e.b.types[k]!.linked)
     },
+    // (…and a struct enum's, `reference<Node>` over an enum.)
+    TyEnum { n: en, is_ref: er } => {
+      ek = el::def(e, en).known_type;
+      er && ek != el_schema::NO_TYPE && (e.b.types[ek]!.linked)
+    },
     _ => false
   }
 }
