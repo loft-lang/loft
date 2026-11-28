@@ -7282,6 +7282,11 @@ use a separate collection or add after the loop"
         } else {
             Vec::new()
         };
+        // …and the append does not make `buf` a view of its source either, so a source that is
+        // an argument is not recorded as one `buf` viewed (`Function::has_viewed_argument`, the
+        // return-buffer rename's question): `b: vector<u8> = []; b += v; b` stays renamable.
+        let viewed_argument_before =
+            preserve_append_backing && self.vars.has_viewed_argument(var_nr);
         // `&τ` is a PARAMETER-PASSING MODE, not a value type: it says the callee shares
         // the caller's store in place, which only the argument slot can express.  Reading
         // a `&` parameter as a value (`w = v`) yields `τ` BORROWED FROM that parameter,
@@ -7978,6 +7983,9 @@ use a separate collection or add after the loop"
                 self.vars.make_independent(var_nr, d);
             }
             self.vars.depend_on_all(var_nr, &saved_backing);
+            if !viewed_argument_before {
+                self.vars.forget_viewed_argument(var_nr);
+            }
         }
         // Plan-22 phase 02d-vi — bypass the text-special branch
         // when the LHS is auto-deref'd boxed text.  The general
