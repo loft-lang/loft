@@ -1,0 +1,61 @@
+diff --git b/src/keys.rs a/src/keys.rs
+index d13cb5d21..1f4a8ec9d 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -3785,16 +3785,6 @@ pub fn lift_delivered_move() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_LIFT_DELIVERED_MOVE"))
+ }
+ 
+-/// `LOFT_NO_TEMP_HELD_VIEW=1` — a local bound from a value whose every store a compiler temp
+-/// holds (`alt(x) ?? P { … }`: the `??` subject and the default's work-ref) is recorded as
+-/// owning it again, as before loft#2698: a later bind of a view frees it as the displaced store
+-/// and the temp frees it at exit.
+-#[must_use]
+-pub fn temp_held_view() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_TEMP_HELD_VIEW"))
+-}
+-
+ /// `LOFT_NO_NCC_WITNESS_HANDOVER=1` — a witnessed local rebound in a loop from a `??` keeps viewing
+ /// the subject temp's store, as before loft#2699: the temp releases it at its re-entry, before the
+ /// next pass's value reads the local (`for … { x = alt(x) ?? x }`).
+diff --git b/src/scopes/scan_set.rs a/src/scopes/scan_set.rs
+index 88f35e564..7a59bcf1c 100644
+--- b/src/scopes/scan_set.rs
++++ a/src/scopes/scan_set.rs
+@@ -920,21 +920,9 @@ impl Scopes<'_> {
+             // the flag's to answer, per path.  Recorded as a view, the arm that copied and the
+             // arm that did not disagreed at the join, so a later rebind released neither
+             // (heap-history.md `D-heap-7`).
+-            // loft#2698, `@FR-O-Witness`, `@FR-O-Owner` — a `??` every store of which a COMPILER
+-            // TEMP holds (its subject `__ncc_N`, a default literal's work-ref) is a view of that
+-            // temp, which releases it: the local does not own it, whatever the oracle says of
+-            // the value.  Recorded as owned, the next bind of a view freed it as the store the
+-            // local displaced (the transition free below), and the temp freed it again at exit
+-            // (`x = alt(p) ?? p; x = alt(x) ?? P { … }; x = alt(p) ?? p`).  Only a `??`: a
+-            // literal bound directly is owned through its tracked work-ref, which the
+-            // transition free disarms (`construction_backing`).
+-            // `LOFT_NO_TEMP_HELD_VIEW=1` records it as owned again.
+-            let temp_held = crate::keys::temp_held_view()
+-                && super::witness::coalesce_subject_temp(value, function).is_some()
+-                && super::witness::held_by_compiler_temp(value, function, data);
+             if self.copy_flagged_on_target(function, data, v, value)
+                 || var_bind_copies(function, data, v, value)
+-                || (matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned) && !temp_held)
++                || matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
+             {
+                 self.owned_refs.insert(v, self.loops.len());
+             } else {
+diff --git b/src/scopes/witness.rs a/src/scopes/witness.rs
+index 5c092c28a..9f33b6b29 100644
+--- b/src/scopes/witness.rs
++++ a/src/scopes/witness.rs
+@@ -754,7 +754,7 @@ fn ncr_tail_holds_own_store(
+ /// so a binding of it is a VIEW of that temp, never a store the local owns: read as a mint,
+ /// the witness adopted the temp's store and released it a second time (loft#2045), and read
+ /// as a mint beside a real one it hid the mix the witness exists for (loft#2041).
+-pub(super) fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> bool {
++fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> bool {
+     match value.unspan() {
+         Value::Var(r) => {
+             (*r as usize) < function.count() as usize

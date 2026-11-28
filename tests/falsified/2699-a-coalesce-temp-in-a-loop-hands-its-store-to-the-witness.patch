@@ -1,0 +1,141 @@
+diff --git b/src/keys.rs a/src/keys.rs
+index d13cb5d21..a4ee5f116 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -3795,15 +3795,6 @@ pub fn temp_held_view() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_TEMP_HELD_VIEW"))
+ }
+ 
+-/// `LOFT_NO_NCC_WITNESS_HANDOVER=1` — a witnessed local rebound in a loop from a `??` keeps viewing
+-/// the subject temp's store, as before loft#2699: the temp releases it at its re-entry, before the
+-/// next pass's value reads the local (`for … { x = alt(x) ?? x }`).
+-#[must_use]
+-pub fn ncc_witness_handover() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_NCC_WITNESS_HANDOVER"))
+-}
+-
+ /// `LOFT_NO_RETURNED_ADOPTER_DISARM=1` — a literal buffer whose adopter is a RETURN SOURCE of the
+ /// exit, an owner assigned more than once, keeps its exit free guarded against that adopter
+ /// (`Scopes::pair_literal_buffers`): the adopter's rebind and the buffer both release the store.
+diff --git b/src/scopes/scan_set.rs a/src/scopes/scan_set.rs
+index 88f35e564..32b887a58 100644
+--- b/src/scopes/scan_set.rs
++++ a/src/scopes/scan_set.rs
+@@ -2641,48 +2641,7 @@ impl Scopes<'_> {
+                     witness_ops.push(guarded_release);
+                     witness_ops.push(witness_points_at(w, v, data));
+                 }
+-                WitnessSet::Other => {
+-                    witness_ops.push(guarded_release);
+-                    // loft#2699, `@FR-O-Witness`, `@FR-O-Owner` — a `??` in a LOOP whose local
+-                    // outlives the pass: on the run that takes the subject temp's store the local
+-                    // views it, and the temp releases it at its re-entry, which comes BEFORE the
+-                    // next pass's value reads the local (`for … { x = alt(x) ?? x }` read a freed
+-                    // store).  So the temp hands that store to the witness, which releases it after
+-                    // the value that displaces it is computed, and is reset behind the bind.
+-                    // `LOFT_NO_NCC_WITNESS_HANDOVER=1` leaves it the temp's.
+-                    // Only a temp that OWNS its store hands it over: a projection subject views
+-                    // its container and is never freed (`@FR-O-Override`).  And only where the
+-                    // value reads the local: otherwise nothing reads it between the re-entry
+-                    // free and the rebind, and the temp's release stands.
+-                    if crate::keys::ncc_witness_handover()
+-                        && (value.reads_var(v) || value.reads_var(ov))
+-                        && let Some(t) = super::witness::coalesce_subject_temp(value, function)
+-                        // @FR-O-Proxy asks free — the temp's store moves to the witness, which
+-                        // frees it; a viewing subject stays the temp's (@FR-O-Override above).
+-                        && function.proxy_says_owned(t)
+-                        && let Some(&loop_scope) = self.loops.last()
+-                        && self.var_scope.get(&v).is_some_and(|&vs| vs < loop_scope)
+-                    {
+-                        let same = v_if(
+-                            Value::Call(
+-                                data.def_nr("OpDistinctStore"),
+-                                vec![Value::Var(v), Value::Var(t)],
+-                            ),
+-                            Value::Boolean(false),
+-                            Value::Boolean(true),
+-                        );
+-                        let not_null =
+-                            Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+-                        witness_ops.push(v_if(
+-                            v_if(not_null, same, Value::Boolean(false)),
+-                            Value::Insert(vec![
+-                                witness_points_at(w, v, data),
+-                                Value::Call(data.def_nr("OpInitRefSentinel"), vec![Value::Var(t)]),
+-                            ]),
+-                            Value::Null,
+-                        ));
+-                    }
+-                }
++                WitnessSet::Other => witness_ops.push(guarded_release),
+                 // The witness takes the store only where no temp of the choice holds it: the
+                 // call made it into a null buffer, and the local is its one name (the
+                 // self-hosted elaborator's `member`, `x = match … { … expression(…) … }`).
+diff --git b/src/scopes/witness.rs a/src/scopes/witness.rs
+index 5c092c28a..6ee0f1af3 100644
+--- b/src/scopes/witness.rs
++++ a/src/scopes/witness.rs
+@@ -415,26 +415,6 @@ pub(super) fn owner_witness_locals(
+                 && !materialised_views.contains_key(&v)
+         })
+         .collect();
+-    // loft#2699, `@FR-O-Witness` — a local that outlives a loop pass and is rebound in it from a
+-    // `??` that reads it (`for … { x = alt(x) ?? x }`) views the subject temp's store on the runs
+-    // that take it, and the temp releases that store at its re-entry, before the next pass reads
+-    // the local.  The temp hands the store over to a witness then (`scan_set`), so the local is
+-    // witnessed whatever its other binds are.  `LOFT_NO_NCC_WITNESS_HANDOVER=1` leaves it out.
+-    if crate::keys::ncc_witness_handover() {
+-        for v in loop_coalesce_locals(code, function) {
+-            if !function.is_argument(v)
+-                && !function.name(v).starts_with("__")
+-                && !function.is_captured(v)
+-                && !function.was_loop_var(v)
+-                && !matches!(function.tp(v), Type::RefVar(_))
+-                && function.tp(v).base().heap_def_nr().is_some()
+-                && !materialised_views.contains_key(&v)
+-            {
+-                minted.insert(v);
+-                viewed.insert(v);
+-            }
+-        }
+-    }
+     for v in reassigned_captures {
+         minted.insert(v);
+         viewed.insert(v);
+@@ -980,35 +960,3 @@ pub(super) fn coalesce_subject_temp(value: &Value, function: &Function) -> Optio
+             .any(|op| matches!(op.unspan(), Value::Set(x, _) if x == t)))
+     .then_some(*t)
+ }
+-
+-/// The locals bound before a loop and rebound inside it from a `??` that reads them — the shape
+-/// whose subject temp hands its store to the local's witness ([`coalesce_subject_temp`]).
+-fn loop_coalesce_locals(code: &Value, function: &Function) -> Vec<u16> {
+-    fn walk(
+-        node: &Value,
+-        function: &Function,
+-        depth: usize,
+-        first: &mut HashMap<u16, usize>,
+-        out: &mut Vec<u16>,
+-    ) {
+-        if let Value::Set(t, val) = node.unspan() {
+-            let at = *first.entry(*t).or_insert(depth);
+-            if at < depth
+-                // @FR-O-Proxy asks alloc — decides whether the local gets a witness, not a release
+-                && coalesce_subject_temp(val, function)
+-                    .is_some_and(|n| function.proxy_says_owned(n))
+-                && val.reads_var(*t)
+-                && !out.contains(t)
+-            {
+-                out.push(*t);
+-            }
+-        }
+-        let inner = depth + usize::from(matches!(node.unspan(), Value::Loop(_)));
+-        node.unspan()
+-            .for_each_child(&mut |c| walk(c, function, inner, first, out));
+-    }
+-    let mut first = HashMap::default();
+-    let mut out = Vec::new();
+-    walk(code, function, 0, &mut first, &mut out);
+-    out
+-}
