@@ -4565,7 +4565,7 @@ pub fn register_default_literal(e: el::El, vars: el_vars::Vars, d: ir::Node, lhs
           wds = el_types::deps(el_vars::tp(vars, w));
           bk = if el_vars::tp(vars, w) is TyVector && len(wds) > 0 { wds[0] } else { -1 };
           el_vars::set_var_type(vars, w, el_types::with_deps(el_vars::tp(vars, w), []));
-          if lhs is TyVector && len(el_types::deps(lhs)) == 0 && !borrows {
+          if lhs is TyVector && len(el_types::deps(lhs)) == 0 {
             el_vars::set_skip_free(vars, w, "build_null_coalesce_default_inner");
           } else if backed {
             el_vars::mark_inline(vars, w, "build_null_coalesce_default_inner");
