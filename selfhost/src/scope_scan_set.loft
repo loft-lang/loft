@@ -158,7 +158,11 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     }
   }
   // A `??` hoist that OWNS its subject is re-bound on every pass of a loop.
-  if transition_free == null && was_in_scope && scope_fn::name(f, v).starts_with("__ncc_") && scope_fn::is_record(t) && scope_fn::proxy_says_owned(f, v) {
+  // `@FR-O-Buffer`, loft#2673 — not where the hoist was promoted onto the return buffer: the
+  // rebind's own free, guarded by the entry witness, is the one home for the displaced store.
+  // `LOFT_NO_NCC_ENTRY_GUARD=1` takes the plain free again.
+  if transition_free == null && was_in_scope && scope_fn::name(f, v).starts_with("__ncc_") && scope_fn::is_record(t) && scope_fn::proxy_says_owned(f, v)
+    && (binds::entry_witness(f, v) == null || env_variable("LOFT_NO_NCC_ENTRY_GUARD") != null) {
     transition_free = scope_drops::free_ref(s, v);
   }
   // loft#1128 — the PATH-SENSITIVE half: the transition free GUARDED on the return buffer's

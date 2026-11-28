@@ -15,6 +15,7 @@
 use ir;
 use own;
 use scope_fn;
+use scope_backings;
 use binds;
 use scope_scan_set;
 use scope_branches;
@@ -690,11 +691,14 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
     NdVar { n: ov } => ir::NdVar { n: mapped(s, ov) },
     NdSet { var: ov, inner } => {
       first = !in_scope(s, mapped(s, ov));
+      // loft#2674 — …except where the call DELIVERS the construction it was handed: the binding
+      // adopts that store.  `LOFT_NO_DELIVERED_FIRST_ADOPT=1` hoists it again.
+      delivered = env_variable("LOFT_NO_DELIVERED_FIRST_ADOPT") == null && scope_backings::delivered_work_ref(b, inner, f) >= 0;
       set = scope_scan_set::scan_set(s, b, ov, inner, f);
       // A FIRST bind of a call whose arguments were hoisted is bound as the call itself.
       match set {
         NdSet { var: v, inner: sv } => {
-          if first && is_insert_call_tail(sv) {
+          if first && !delivered && is_insert_call_tail(sv) {
             match scope_fn::unspan(sv) {
               NdInsert { items } => {
                 k = len(items);
