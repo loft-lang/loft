@@ -1,0 +1,107 @@
+diff --git b/src/keys.rs a/src/keys.rs
+index d13cb5d21..102cd52e3 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -3804,15 +3804,6 @@ pub fn ncc_witness_handover() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_NCC_WITNESS_HANDOVER"))
+ }
+ 
+-/// `LOFT_NO_RETURNED_ADOPTER_DISARM=1` — a literal buffer whose adopter is a RETURN SOURCE of the
+-/// exit, an owner assigned more than once, keeps its exit free guarded against that adopter
+-/// (`Scopes::pair_literal_buffers`): the adopter's rebind and the buffer both release the store.
+-#[must_use]
+-pub fn returned_adopter_disarm_off() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_NO_RETURNED_ADOPTER_DISARM"))
+-}
+-
+ /// `LOFT_C_NULL_FREES_ENTRY=1` — the C writer's call copy into a promoted return buffer frees the
+ /// store the caller handed in when the call answers null (`loft_bind_copy`'s null arm), as it did
+ /// before `@FR-O-Buffer` was asked there.
+diff --git b/src/scopes/get_free_vars.rs a/src/scopes/get_free_vars.rs
+index f796b56b8..3fe946b7b 100644
+--- b/src/scopes/get_free_vars.rs
++++ a/src/scopes/get_free_vars.rs
+@@ -1487,7 +1487,7 @@ impl Scopes<'_> {
+             guarded.append(&mut ls);
+             ls = guarded;
+         }
+-        self.pair_literal_buffers(&mut ls, data, function, return_sources);
++        self.pair_literal_buffers(&mut ls, data, function);
+         ls
+     }
+ 
+@@ -1499,18 +1499,7 @@ impl Scopes<'_> {
+     /// sweep does not free keeps the buffer's plain free: that is then the store's only release
+     /// (a captured local, one with no free of its own — loft#1317's measurements).
+     /// `LOFT_NO_LITERAL_BUFFER_PAIR=1` keeps every buffer's plain free.
+-    ///
+-    /// `returned` is this exit's return sources: a local among them is released by the return
+-    /// itself — handed to the caller, or freed by identity against the value returned after
+-    /// this sweep (`free_vars`' join leg) — so it holds no free in `ls` and still releases
+-    /// what it names on this path.
+-    fn pair_literal_buffers(
+-        &mut self,
+-        ls: &mut Vec<Value>,
+-        data: &Data,
+-        function: &Function,
+-        returned: &HashSet<u16>,
+-    ) {
++    fn pair_literal_buffers(&mut self, ls: &mut Vec<Value>, data: &Data, function: &Function) {
+         static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+         if *OFF.get_or_init(|| std::env::var("LOFT_NO_LITERAL_BUFFER_PAIR").is_ok_and(|v| v != "0"))
+             || self.literal_buffer.is_empty()
+@@ -1562,7 +1551,11 @@ impl Scopes<'_> {
+                         Some(Value::Var(b)) if *d == free || guarded_by_adopter(args, *b) => self
+                             .literal_buffer
+                             .get(b)
+-                            .filter(|&&w| w != *b)
++                            .filter(|&&w| {
++                                w != *b
++                                    && (ls.iter().any(|op| frees(op, w))
++                                        || rebound_params.contains(&w))
++                            })
+                             .map(|&w| (*b, w)),
+                         _ => None,
+                     }
+@@ -1573,22 +1566,7 @@ impl Scopes<'_> {
+                 i += 1;
+                 continue;
+             };
+-            let released_here = ls.iter().any(|op| frees(op, w)) || rebound_params.contains(&w);
+-            // `@FR-H-FreeTwice`, `@FR-O-Owner` — a RETURN SOURCE of this exit is released by
+-            // the return, not by this sweep, so it holds no free here; it still releases on
+-            // every path what it names, and only the disarm below applies to it.  Read as
+-            // unreleased, `x = id(P { … }); x = mk(…); alt(x) ?? x` kept the buffer's guarded
+-            // free keyed on `x`, and the rebind and the buffer both released the literal's store
+-            // (a double free on `--native`; the interpreter's early displaced free let the next
+-            // mint reuse the number, so its guard declined by luck).
+-            // `LOFT_NO_RETURNED_ADOPTER_DISARM=1` keeps that buffer's free.
+-            let returned_adopter = !released_here
+-                && returned.contains(&w)
+-                && !crate::keys::returned_adopter_disarm_off();
+-            if !released_here && !returned_adopter {
+-                i += 1;
+-                continue;
+-            }
++            ls.remove(i);
+             // `@FR-H-FreeTwice` — an OWNING local assigned more than once releases the
+             // buffer's store on every path: its rebind's displaced free where it moved on, its
+             // own free here where it did not.  Paired, the buffer freed it a second time once
+@@ -1613,16 +1591,9 @@ impl Scopes<'_> {
+                 || (function.is_argument(w) && rebound_params.contains(&w))
+                 || (self.late_owners.contains(&w) && !crate::keys::late_owner_disarm_off());
+             if multi && owner && !rebound_adopter_disarm_off() {
+-                ls.remove(i);
+                 self.adopter_released.insert(b);
+                 continue;
+             }
+-            if returned_adopter {
+-                // Not disarmed: the buffer's guard against the returned local stands as it was.
+-                i += 1;
+-                continue;
+-            }
+-            ls.remove(i);
+             let mentions = |op: &Value| {
+                 let mut hit = false;
+                 op.walk(&mut |n| {
