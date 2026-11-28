@@ -1988,6 +1988,12 @@ pub fn text_return(e: el::El, vars: el_vars::Vars, t: ir::TypeT, mid: boolean = 
       if len([for ec in e.captures if ec.name == nm { 1 }]) > 0 {
         continue;
       }
+      // `@FR-L-CapWrite` (`classify_text_dep`, loft#2297): a text LOCAL a closure writes is boxed
+      // into a cell, the one place both the frame and the closure write; as the hidden `&text`
+      // buffer it would stay unboxed, so it stays a local, delivered by copy (`SkipOwnedLocal`).
+      if !vars.vars[v].argument && len([for sb in el::def(e, d).scalars_to_box if sb.name == nm { 1 }]) > 0 {
+        continue;
+      }
       // `@FR-R-TextBorrow` (`classify_text_dep`'s loop arm): a `for` loop's own variable stays a
       // local, delivered by copy — promoted to the caller's buffer it would be copied into on
       // every turn, where left a local it borrows each element of the walked vector.
