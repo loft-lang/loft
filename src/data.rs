@@ -11082,6 +11082,13 @@ impl Data {
         // reaches `new_record` with the same lookup.  An inferred tuple element is the
         // one shape that arrives unregistered (loft#943).
         self.ensure_tuple_defs(lexer, tp);
+        // The wrapper is GLOBAL (source 0, below), so its field type keeps the element's shape
+        // and none of its deps: a dep is a variable of the frame that asked first
+        // (`[for x in vi { x }]` asks with `x`'s `ref(__tuple<…>)["_vector_1"]`), and in any
+        // other frame that number names nothing or an unrelated local (loft#666's hazard,
+        // `Type::without_deps`).
+        let elm = tp.without_deps();
+        let tp = &elm;
         let fld_tp = Type::Vector(Box::new(tp.clone()), Deps::none());
         let fld = fld_tp.name(self);
         if self.def_nr(&fld) == u32::MAX {
