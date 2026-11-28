@@ -294,11 +294,11 @@ fn rewrite(
     }
     let inner = in_loop || matches!(v.unspan(), Value::Loop(_));
     v.for_each_child_mut(&mut |c| rewrite(c, recs, ops, hoisted, inner));
-    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
-        if crate::keys::loop_record_return_free_enabled() {
-            for (at, mine) in kept {
-                free_before_returns(&mut bl.operators[at], &mine, ops);
-            }
+    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut()
+        && crate::keys::loop_record_return_free_enabled()
+    {
+        for (at, mine) in kept {
+            free_before_returns(&mut bl.operators[at], &mine, ops);
         }
     }
 }
