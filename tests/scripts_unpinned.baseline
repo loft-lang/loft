@@ -2,7 +2,6 @@
 # language suite as cells (TESTING.md § tests/scripts/).  A RATCHET: it only shrinks.
 # `scripts/scripts_named.py check` gates it; `bless` rewrites it after a move.
 tests/scripts/138-vector-of-vector-single.loft
-tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft
 tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft
 tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
 tests/scripts/2090-a-passing-assert-builds-no-message.loft
@@ -41,7 +40,6 @@ tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
 tests/scripts/a-json-value-formats-as-its-json-on-every-backend.loft
 tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
 tests/scripts/a-lazy-reader-of-an-unbound-collection-answers-on-every-backend.loft
-tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
 tests/scripts/a-loop-reads-and-cuts-its-pushed-vector-through-the-header.loft
 tests/scripts/a-loop-that-returns-from-inside-keeps-its-holders.loft
 tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft
