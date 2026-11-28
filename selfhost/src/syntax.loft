@@ -984,6 +984,7 @@ fn stmt(p: Syntax) -> integer? {
     [e: loop_like, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: void_block, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: void_match, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
+    [e: void_if, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: if_no_else, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: null }),
     [e: expr, (o: store_else)?, (s: semi)?] => add(p, SStmt { at: at, e: e, semi: s != null, orelse: o }),
     _ => null
@@ -1025,6 +1026,71 @@ fn void_match(p: Syntax) -> integer? {
     [_v: void_match_ahead, m: match_expr] => m,
     _ => null
   }
+}
+
+// …and an `if` … `else` whose every arm is such a block (`{ return 0.0; } else { k = 1; }`): a
+// `(` on the next line starts the next statement, no call of the `if`.
+fn void_if(p: Syntax) -> integer? {
+  match p {
+    [_v: void_if_ahead, x: if_expr] => x,
+    _ => null
+  }
+}
+
+// Zero-width: the `if` here has an `else`, and each of its arms — through `else if` — is a block
+// that closes nothing or whose last token before its `}` is a `;`.
+fn void_if_ahead(p: Syntax) -> integer? {
+  i = p.pos;
+  if !(p.src[i] is KwIf) {
+    return null;
+  }
+  while i < len(p.src) && p.src[i] is KwIf {
+    // (The condition: up to the `{` at bracket depth 0.)
+    i += 1;
+    depth = 0;
+    while i < len(p.src) && !(depth == 0 && p.src[i] is LBrace) {
+      if p.src[i] is LParen || p.src[i] is LBracket {
+        depth += 1;
+      } else if p.src[i] is RParen || p.src[i] is RBracket {
+        depth -= 1;
+      }
+      i += 1;
+    }
+    if i >= len(p.src) {
+      return null;
+    }
+    j = void_block_end(p, i);
+    if j < 0 {
+      return null;
+    }
+    i = j + 1;
+    if i >= len(p.src) || !(p.src[i] is KwElse) {
+      return null;
+    }
+    i += 1;
+    if i < len(p.src) && p.src[i] is LBrace {
+      return if void_block_end(p, i) >= 0 { p.pos } else { null };
+    }
+  }
+  null
+}
+
+// The `}` closing the void block opened at `i`, or -1 where it is no void block.
+fn void_block_end(p: Syntax, i: integer) -> integer {
+  bd = 0;
+  j = i;
+  while j < len(p.src) {
+    if p.src[j] is LBrace {
+      bd += 1;
+    } else if p.src[j] is RBrace {
+      bd -= 1;
+      if bd == 0 {
+        return if j == i + 1 || p.src[j - 1] is Semi { j } else { -1 };
+      }
+    }
+    j += 1;
+  }
+  -1
 }
 
 // Zero-width: the `match` here has arms, and at its own depth every `=>` is followed by a block

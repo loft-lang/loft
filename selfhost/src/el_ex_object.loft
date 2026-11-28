@@ -2037,6 +2037,18 @@ fn call_expression_inner(e: el::El, vars: el_vars::Vars, at: integer, f: integer
       return ex(el_ir::v_block([el_ir::v_set(iw, ix.code), icr.code], icr.tp, "fn_call_tmp"), icr.tp);
     }
   }
+  // (A parenthesised field read called, `(c.cb)()`, is the field's call `c.cb()`: Rust lowers the
+  // two alike — the function value read into a `__fn_ref_tmp`, `fn_call_tmp`.)
+  if name == "" && f != null && match e.p.nodes[f!] { SParen { e: pe } => pe != null && match e.p.nodes[pe!] { SMember { call: pc } => !pc, _ => false }, _ => false } {
+    pm = match e.p.nodes[f!] { SParen { e: pe2 } => pe2!, _ => 0 };
+    match e.p.nodes[pm] {
+      SMember { at: mat, e: me, name: mn } => {
+        e.p.nodes += [SMember { at: mat, e: me, name: mn, args: args, call: true }];
+        return el_ex_assign::expression(e, vars, len(e.p.nodes) - 1);
+      },
+      _ => {}
+    }
+  }
   if name == "" || (source < 0 && el_vars::var(vars, name) >= 0) {
     kind = if name == "" { syn_kind(e, f ?? 0) } else { "a local of type {type_kind(el_vars::tp(vars, el_vars::var(vars, name)))}" };
     el::refuse(e, "a call that is not of a function by its bare name: {kind}");
