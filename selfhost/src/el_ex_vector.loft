@@ -1789,12 +1789,14 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       if lv >= 0 && !vars.amp_vectors.contains(lv) {
         vars.amp_vectors += [lv];
       }
+      link_origin(e, vars, lv, a.code);
       return a;
     }
     // A link to a KEYED local is its view the same way (`a = &h`: `a: hash<…>["h"] = h`), the
     // writes through it the collection's (`@FR-B-Ref-Uniform`).  A link to a keyed FIELD of a
     // local (`a = &b.h`) the same, its uses the field's (`Vars.field_links`).
     if keyed_kind(el_types::base(a.tp)) && !(a.tp is TyOptional) && (a.code is NdVar || calls(e, el_ir::unspan(a.code), "OpGetField") && place_root(e, el_ir::unspan(a.code)) >= 0 && el_ir::unspan(match el_ir::unspan(a.code) { NdCall { args: fga } => fga[0] ?? ir::NdNull, _ => ir::NdNull }) is NdVar) && len(el_types::deps(a.tp)) > 0 {
+      link_origin(e, vars, lv, a.code);
       return a;
     }
     // A link to a FUNCTION-value local (`pd = &g`) is the local's slot the same way
@@ -2250,4 +2252,31 @@ pub fn concat_operand(e: el::El, vars: el_vars::Vars, list: vector<ir::Node>, ac
 // `Value::Long`.
 pub fn int_node(n: integer) -> ir::Node {
   if n >= -2147483648 && n <= 2147483647 { ir::NdInt { n: n } } else { ir::NdLong { n: n } }
+}
+
+// `field_read_parent_type` (loft#1664): a `&` link to a field of a local (`d = &p.data`) has
+// that field as its origin (`mv_field_origin`), so a write through the link to a member of a
+// linked group is spelled against the field.  Second pass only; any other base declines.
+pub fn link_origin(e: el::El, vars: el_vars::Vars, lv: integer, code: ir::Node) {
+  if e.first_pass || lv < 0 || vars.mv_origins.contains(lv) {
+    return;
+  }
+  match el_ir::unspan(code) {
+    NdCall { def_nr: ld, args: la } => {
+      if el::def(e, ld).name == "OpGetField" && len(la) == 3 {
+        match el_ir::unspan(la[0]!) {
+          NdVar { n: lr } => {
+            pd = struct_ref(e, el_types::base(el_vars::tp(vars, lr)));
+            if pd >= 0 {
+              vars.mv_origins += [lv];
+              vars.mv_origin_reads += [el_ir::unspan(code)];
+              vars.mv_origin_defs += [pd];
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
 }
