@@ -458,7 +458,11 @@ and a decision that reads the wrong one is wrong in the silent direction:
                 place — the slot may hold a view.  A store a COMPILER TEMP holds — an
                 element of a call's result held by the call's work-ref, a `??` result held
                 by its subject or its default's work-ref — is such a view too: the temp
-                releases it.  A store the witness adopts has no other owner (O-Owner): the
+                releases it.  Its release must not precede a read of the view: a `??` subject
+                temp a LOOP re-enters releases at the head of the next pass, before that
+                pass's value reads a local that outlives the pass, so such a local is
+                witnessed and the temp hands the witness the store on the run the local took
+                it.  A store the witness adopts has no other owner (O-Owner): the
                 temp a call is lifted into hands it over when the local reads a field of
                 the call's result, and a call whose result a witnessed local adopts never
                 takes a pooled return buffer.  A CAPTURED such local — and one assigned
@@ -888,6 +892,13 @@ analysis directly (the certifier sidesteps it).
   bound directly stays owned: its tracked work-ref is disarmed where it is released).
   Recorded as owned, `x = alt(x) ?? P { … }` followed by a bind of a view freed the temp's
   store as the displaced one.  Guard `loft-suite/rules/ownership/O-Witness/2698-…`.
+
+- **A `??` temp in a loop hands its store to the witness (`O-Witness`, `O-Detach`, loft#2699)** —
+  the subject temp releases its store at its re-entry, before the next pass's value is computed,
+  so a local that outlives the pass and views it (`for … { x = alt(x) ?? x }`) read it released.
+  Such a local is witnessed, and on the run that takes the temp's store the temp hands it to the
+  witness and is reset; the witness releases it after the value displacing it is computed.  Guard
+  `loft-suite/rules/ownership/O-Witness/2699-…`.
 
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails

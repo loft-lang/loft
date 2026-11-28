@@ -2604,7 +2604,46 @@ impl Scopes<'_> {
                     witness_ops.push(guarded_release);
                     witness_ops.push(witness_points_at(w, v, data));
                 }
-                WitnessSet::Other => witness_ops.push(guarded_release),
+                WitnessSet::Other => {
+                    witness_ops.push(guarded_release);
+                    // loft#2699, `@FR-O-Witness`, `@FR-O-Owner` — a `??` in a LOOP whose local
+                    // outlives the pass: on the run that takes the subject temp's store the local
+                    // views it, and the temp releases it at its re-entry, which comes BEFORE the
+                    // next pass's value reads the local (`for … { x = alt(x) ?? x }` read a freed
+                    // store).  So the temp hands that store to the witness, which releases it after
+                    // the value that displaces it is computed, and is reset behind the bind.
+                    // `LOFT_NO_NCC_WITNESS_HANDOVER=1` leaves it the temp's.
+                    // Only a temp that OWNS its store hands it over: a projection subject views
+                    // its container and is never freed (`@FR-O-Override`).  And only where the
+                    // value reads the local: otherwise nothing reads it between the re-entry
+                    // free and the rebind, and the temp's release stands.
+                    if crate::keys::ncc_witness_handover()
+                        && (value.reads_var(v) || value.reads_var(ov))
+                        && let Some(t) = super::witness::coalesce_subject_temp(value, function)
+                        && function.proxy_says_owned(t)
+                        && let Some(&loop_scope) = self.loops.last()
+                        && self.var_scope.get(&v).is_some_and(|&vs| vs < loop_scope)
+                    {
+                        let same = v_if(
+                            Value::Call(
+                                data.def_nr("OpDistinctStore"),
+                                vec![Value::Var(v), Value::Var(t)],
+                            ),
+                            Value::Boolean(false),
+                            Value::Boolean(true),
+                        );
+                        let not_null =
+                            Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+                        witness_ops.push(v_if(
+                            v_if(not_null, same, Value::Boolean(false)),
+                            Value::Insert(vec![
+                                witness_points_at(w, v, data),
+                                Value::Call(data.def_nr("OpInitRefSentinel"), vec![Value::Var(t)]),
+                            ]),
+                            Value::Null,
+                        ));
+                    }
+                }
                 // The witness takes the store only where no temp of the choice holds it: the
                 // call made it into a null buffer, and the local is its one name (the
                 // self-hosted elaborator's `member`, `x = match … { … expression(…) … }`).

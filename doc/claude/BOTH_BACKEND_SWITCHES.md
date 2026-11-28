@@ -335,6 +335,11 @@ default's work-ref) is recorded as a VIEW, not as the local's own (`@FR-O-Witnes
 **`LOFT_NO_TEMP_HELD_VIEW=1`** records it as owned, and a later bind of a view frees that store
 as the displaced one while the temp frees it at exit.  Guards
 `loft-suite/rules/ownership/O-Witness/2698-…`.
+A local that outlives a loop pass, rebound in it from a `??` that reads it
+(`for … { x = alt(x) ?? x }`), is witnessed, and on the run that takes the subject temp's store
+the temp hands it to the witness and is reset (`@FR-O-Witness`, loft#2699);
+**`LOFT_NO_NCC_WITNESS_HANDOVER=1`** leaves it the temp's, which frees it at its re-entry before
+the next pass reads the local.  Guards `loft-suite/rules/ownership/O-Witness/2699-…`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
 the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->

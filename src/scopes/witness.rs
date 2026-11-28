@@ -415,6 +415,26 @@ pub(super) fn owner_witness_locals(
                 && !materialised_views.contains_key(&v)
         })
         .collect();
+    // loft#2699, `@FR-O-Witness` — a local that outlives a loop pass and is rebound in it from a
+    // `??` that reads it (`for … { x = alt(x) ?? x }`) views the subject temp's store on the runs
+    // that take it, and the temp releases that store at its re-entry, before the next pass reads
+    // the local.  The temp hands the store over to a witness then (`scan_set`), so the local is
+    // witnessed whatever its other binds are.  `LOFT_NO_NCC_WITNESS_HANDOVER=1` leaves it out.
+    if crate::keys::ncc_witness_handover() {
+        for v in loop_coalesce_locals(code, function) {
+            if !function.is_argument(v)
+                && !function.name(v).starts_with("__")
+                && !function.is_captured(v)
+                && !function.was_loop_var(v)
+                && !matches!(function.tp(v), Type::RefVar(_))
+                && function.tp(v).base().heap_def_nr().is_some()
+                && !materialised_views.contains_key(&v)
+            {
+                minted.insert(v);
+                viewed.insert(v);
+            }
+        }
+    }
     for v in reassigned_captures {
         minted.insert(v);
         viewed.insert(v);
@@ -959,4 +979,35 @@ pub(super) fn coalesce_subject_temp(value: &Value, function: &Function) -> Optio
             .iter()
             .any(|op| matches!(op.unspan(), Value::Set(x, _) if x == t)))
     .then_some(*t)
+}
+
+/// The locals bound before a loop and rebound inside it from a `??` that reads them — the shape
+/// whose subject temp hands its store to the local's witness ([`coalesce_subject_temp`]).
+fn loop_coalesce_locals(code: &Value, function: &Function) -> Vec<u16> {
+    fn walk(
+        node: &Value,
+        function: &Function,
+        depth: usize,
+        first: &mut HashMap<u16, usize>,
+        out: &mut Vec<u16>,
+    ) {
+        if let Value::Set(t, val) = node.unspan() {
+            let at = *first.entry(*t).or_insert(depth);
+            if at < depth
+                && coalesce_subject_temp(val, function)
+                    .is_some_and(|n| function.proxy_says_owned(n))
+                && val.reads_var(*t)
+                && !out.contains(t)
+            {
+                out.push(*t);
+            }
+        }
+        let inner = depth + usize::from(matches!(node.unspan(), Value::Loop(_)));
+        node.unspan()
+            .for_each_child(&mut |c| walk(c, function, inner, first, out));
+    }
+    let mut first = HashMap::default();
+    let mut out = Vec::new();
+    walk(code, function, 0, &mut first, &mut out);
+    out
 }
