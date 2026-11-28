@@ -722,6 +722,30 @@ pub fn variables(s: Scopes, to_scope: integer) -> vector<integer> {
   res
 }
 
+// port: scan.rs, the `Drop` arm's span peel (loft#2677) — a `Span` around the `Insert` a lifted
+// argument made hides the discarded call at its end; the position moves onto that final value,
+// as `scan_set`'s flatten keeps it.  `LOFT_NO_DROP_SPAN_PEEL` leaves the span in place.
+fn drop_span_peel(scanned: ir::Node) -> ir::Node {
+  if env_variable("LOFT_NO_DROP_SPAN_PEEL") != null {
+    return scanned;
+  }
+  match scanned {
+    NdSpan { pos, inner } => match inner {
+      NdInsert { items } => {
+        k = len(items);
+        if k == 0 {
+          return scanned;
+        }
+        ops: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+        ops += [ir::NdSpan { pos: pos, inner: items[k - 1]! }];
+        ir::NdInsert { items: ops }
+      },
+      _ => scanned
+    },
+    _ => scanned
+  }
+}
+
 // port: scan.rs fn new_lift_var — a `__lift_N` temporary that owns an inline value, taking the
 // join witnesses `inline_struct_return` left for it.
 pub fn new_lift_var(s: Scopes, f: ir::Function, t: ir::TypeT) -> integer {
@@ -938,7 +962,7 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
     },
     NdInsert { items } => ir::NdInsert { items: [for x in items { scan(s, b, x, f) }] },
     NdDrop { inner } => {
-      scanned = scan(s, b, inner, f);
+      scanned = drop_span_peel(scan(s, b, inner, f));
       // #490 — a discarded result that owns a fresh store is bound to a `__lift_N`.
       match scanned {
         NdInsert { items } => {
