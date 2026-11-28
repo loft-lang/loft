@@ -2348,6 +2348,11 @@ pub fn vector_buffer_call(e: el::El, vars: el_vars::Vars, d: integer, list: vect
   }
   buf = el_vars::work_ref(vars, ir::TyVector { inner: inner, dep: [] });
   el_vars::mark_caller_hidden_buf(vars, buf, "add_defaults");
+  // (`add_defaults` registers the content's `vector<T>` / `main_vector<T>` with the buffer, where
+  // no earlier site made them: at the lexer's position, the token after the call's `)` read.)
+  if e.at >= 0 && el_schema::wants_vector_def(e, nm) {
+    el_schema::make_vector_def(e, inner, nm, el::pos_at(e, el::past_call(e, e.at)), true);
+  }
   // The declared result names the buffer when the callee delivers into it; one answering
   // something else (a `null`) declares no borrow, and the call borrows nothing.
   // (`call_dependencies` on the first pass: a callee whose result borrows a parameter there —
