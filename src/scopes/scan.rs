@@ -327,7 +327,10 @@ impl Scopes<'_> {
                 // left that argument's buffer freed beside the binding (loft#2638).
                 // A rebind keeps it: its displaced store is released against the value it reads
                 // (a loop's `s = me(Bx { … })` leaked one record split apart).
-                // `LOFT_NO_SET_PREAMBLE_HOIST=1` keeps the `Insert` as the value.
+                // `LOFT_NO_SET_PREAMBLE_HOIST=1` keeps the `Insert` as the value.  Since loft#2674
+                // this arm is reached only under `LOFT_NO_DELIVERED_FIRST_ADOPT=1`: `scan_set`
+                // already flattens a bind no argument is delivered through, and a delivered one
+                // keeps its preamble and adopts (`delivered` above).
                 let set = match set {
                     Value::Set(v, val)
                         if first
