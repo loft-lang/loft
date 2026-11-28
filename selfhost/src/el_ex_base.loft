@@ -2456,6 +2456,12 @@ pub fn vector_rows(e: el::El, t: ir::TypeT, lit: integer, declared: boolean, app
     e.b.data.definitions[fvd].known_type = el_schema::vector_type(e, el_schema::content_type(e, t));
   }
   md = el::def_nr(e, "main_vector<{nm}>");
+  // (A wrapper the second pass makes — the element declared below the literal, unknown to the
+  // first — is laid out where it is made, its field's vector store type with it: Rust's
+  // `main_vector<Node>` store type ahead of `vector<Node>`'s.)
+  if !e.first_pass && md >= 0 && el::def(e, md).known_type == el_schema::NO_TYPE {
+    el_schema::lay_out_late(e, md);
+  }
   vk = vector_store(e, t, nm);
   // `Parser::vector_of`, on either pass: an element whose record already has its store type —
   // a library's, laid out when that library's file ended — has its `vector<T>` store type made

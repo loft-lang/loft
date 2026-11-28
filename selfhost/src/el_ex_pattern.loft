@@ -3151,7 +3151,12 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
   // A literal with items has its element's `vector<…>` row made here; an empty one, declared
   // or not (`g: vector<single> = []`), numbers nothing yet: its rows come at its store's mint,
   // `main_vector<T>` before `vector<T>`, after the structs.
-  if len(xs) > 0 {
+  // (On the second pass a record element whose wrapper no pass laid out yet — declared below
+  // the literal, unknown to the first — has its row made by that wrapper's layout, at the
+  // store's mint: Rust's `vector_db` runs before the items, `main_vector<T>` before `vector<T>`.)
+  lwn = el_types::elem_name(e, in_t);
+  late_wrapper = !e.first_pass && in_t is TyReference && lwn != "" && (el::def_nr(e, "main_vector<{lwn}>") < 0 || el::def(e, el::def_nr(e, "main_vector<{lwn}>")).known_type == el_schema::NO_TYPE);
+  if len(xs) > 0 && !late_wrapper {
     vector_of(e, in_t);
   }
   // `Parser::type_placeholder_element` (`@FR-H-Move`): an element minted before any item was
