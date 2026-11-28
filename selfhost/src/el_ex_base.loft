@@ -2799,6 +2799,14 @@ pub fn start_loop(e: el::El, vars: el_vars::Vars) -> integer {
     }
   }
   n = base + vars.loops_started;
+  // (`start_loop`'s ordinal, loft#1145: the loop takes it, and every body local this loop bound
+  // on its own is named by its spelling again — pass 2 is handed pass 1's binding.)
+  vars.ord_stack += [el_vars::LoopOrd { ord: vars.loops_started, depth: len(vars.active_loops), lv: -1 }];
+  for bb in e.body_binds {
+    if bb.ctx == e.context && bb.ord == vars.loops_started {
+      el_vars::set_name(vars, bb.name, bb.nr);
+    }
+  }
   vars.loops_started += 1;
   n
 }
