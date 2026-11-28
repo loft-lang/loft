@@ -2358,7 +2358,9 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       refuse_known(e, x.tp, "a vector appended a vector of another element type: {type_kind(xelem)}");
       return ex(ir::NdNull, ir::TyVoid);
     }
-    if el_ir::reads_var(x.code, v) {
+    // (`a += a` appends the vector to itself — `OpAppendVector(a, a, <row>)`, which reads its
+    // length first; any other value reading it is not carried.)
+    if el_ir::reads_var(x.code, v) && el_ir::unspan(x.code) != ir::NdVar { n: v } {
       el::refuse(e, "a vector appended a value that reads it");
       return ex(ir::NdNull, ir::TyVoid);
     }
