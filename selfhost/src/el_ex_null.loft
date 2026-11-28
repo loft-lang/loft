@@ -2972,6 +2972,14 @@ pub fn jump(e: el::El, vars: el_vars::Vars, kind: text, x: integer?) -> Ex {
               e.b.data.definitions[e.context].returned = [el_types::with_deps(el_types::base(fpr), el_types::deps(fpr) + [fpa])];
             }
           }
+          // `parse_return`: the buffer renamed `__ref_1` (an argument) takes any vector local
+          // not already backed by it — copied in, `clear + append + Return(__ref_1)`.
+          lr1 = el_vars::var(vars, "__ref_1");
+          lrow = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
+          if !e.first_pass && !vars.vars[n].argument && el_types::base(el_vars::tp(vars, n)) is TyVector && lr1 >= 0 && vars.vars[lr1].argument && !el_types::deps(el_vars::tp(vars, n)).contains(lr1) && lrow >= 0 {
+            lb = ir::NdVar { n: lr1 };
+            return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [lb]), el_ir::cl(e, "OpAppendVector", [lb, v.code, ir::NdInt { n: lrow }]), ir::NdReturn { inner: lb }] }, ir::TyNever);
+          }
           if (!vars.vars[n].argument || e.first_pass) && el_types::base(el_vars::tp(vars, n)) is TyVector {
             return ex(ir::NdReturn { inner: v.code }, ir::TyNever);
           }
