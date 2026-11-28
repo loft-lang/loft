@@ -18,7 +18,6 @@ tests/scripts/2219-a-record-unwrapped-by-a-diverging-coalesce-in-a-loop-keeps-it
 tests/scripts/2245-a-captured-element-view-is-copied-when-its-container-moves.loft
 tests/scripts/2252-a-text-match-on-a-projected-subject-compiles-natively.loft
 tests/scripts/2255-a-text-tail-arm-that-ends-the-program-stays-a-statement.loft
-tests/scripts/2414-a-null-record-copied-into-a-fresh-slot-is-absent.loft
 tests/scripts/2432-a-halt-holding-a-borrowed-text-reports-its-assert.loft
 tests/scripts/2483-a-null-written-after-coalesce-return-is-the-return-types-null.loft
 tests/scripts/2484-a-walk-over-a-fresh-keyed-collection-views-its-records.loft
@@ -42,7 +41,6 @@ tests/scripts/a-generic-body-writes-a-narrow-element-as-its-vector-reads-it.loft
 tests/scripts/a-guarded-row-fill-writes-what-its-guard-admits.loft
 tests/scripts/a-hash-walked-unordered-repeats-its-order.loft
 tests/scripts/a-json-value-formats-as-its-json-on-every-backend.loft
-tests/scripts/a-kept-vector-field-follows-its-appends-across-calls.loft
 tests/scripts/a-keyed-insert-stages-its-values-before-the-entry-is-found.loft
 tests/scripts/a-lazy-reader-of-an-unbound-collection-answers-on-every-backend.loft
 tests/scripts/a-leaf-early-exit-is-decided-toward-its-access.loft
@@ -52,7 +50,6 @@ tests/scripts/a-loop-whose-one-growth-is-its-push-writes-through-the-record.loft
 tests/scripts/a-non-null-four-byte-element-reads-every-code-as-a-value.loft
 tests/scripts/a-null-key-orders-first-in-every-keyed-collection.loft
 tests/scripts/a-nullable-vector-result-returns-null-from-every-exit.loft
-tests/scripts/a-pooled-buffers-texts-are-refilled-in-their-slots.loft
 tests/scripts/a-pooled-buffers-vectors-are-emptied-in-place.loft
 tests/scripts/a-rebind-from-a-fresh-result-moves-on-both-backends.loft
 tests/scripts/a-reference-to-a-removed-record-compares-as-null.loft

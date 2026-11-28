@@ -953,9 +953,9 @@ impl Parser {
                 // preamble.  It chooses where an init lands, never whether a store is freed.
                 // A temp this body names NOWHERE takes no init either: pass 1 minted it at a site
                 // pass 2 builds another way (`e = b.items` through an `_elm_N` alias on pass 1
-                // only), so it is no variable of this body.  Its carried borrow used to skip it
-                // by the dep test alone; with pass 2's own lists (`@FR-O-Borrow-Final`) the init landed AFTER
-                // the tail match, which turned the match into a statement and returned null on C.
+                // only), so it is no variable of this body (`@FR-O-Borrow-Final`): an init for
+                // it would land after a tail match and make the match a statement, so the
+                // function would answer null on C.
                 for r in &inline_refs {
                     if !self.vars.is_argument(*r)
                         && self.vars.tp(*r).depend().is_empty()

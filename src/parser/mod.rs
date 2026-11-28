@@ -1090,8 +1090,7 @@ pub struct Parser {
     /// may not grow its signature; one at or above it (a generic instance, a lazy wrapper, a
     /// bound stub) first exists on pass 2, which is its only parse.  `u32::MAX` during pass 1.
     pub(crate) pass1_defs: u32,
-    /// @PLN233 phase 0 — each pass-1 definition's return dependencies, snapshotted as pass 1
-    /// ends, so `after_pass2` can report a function whose return protocol pass 2 changed
+    /// Each pass-1 definition's return dependencies (@PLN233), snapshotted as pass 1 ends, so `after_pass2` can report a function whose return protocol pass 2 changed
     /// (`LOFT_RETURN_DRIFT=1`).  Empty unless that switch is set.
     pub(crate) pass1_returns: Vec<Vec<u16>>,
     /// `@FR-N-Join` — pass 1's binds of an INFERRED local from a call whose callee was not yet

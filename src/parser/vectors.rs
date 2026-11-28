@@ -5917,7 +5917,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let loft_fn = |d: u32| {
             let def = self.data.def(d);
             !def.name().starts_with("Op")
-                && !(matches!(def.code(), Value::Null) && !def.rust().is_empty())
+                && (!matches!(def.code(), Value::Null) || def.rust().is_empty())
         };
         // A function argument naming a place that may hold the destination: a prefix of it.
         // An EXACT prefix of a destination named in full, inside a part that is itself a

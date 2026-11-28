@@ -220,7 +220,7 @@ impl Parser {
             self.check_subrule_wellformedness();
             self.assert_pass2_def_attr_stable(&pass1_attr_counts);
             self.after_pass2();
-            // @PLN233 phase 2a PROBE (`LOFT_PASS2_REPEAT=1`): pass 2 once more, so every
+            // `LOFT_PASS2_REPEAT=1` (a measurement for @PLN233): pass 2 once more, so every
             // caller reads the returns pass 2 settled; reports whether they are then stable.
             if std::env::var_os("LOFT_PASS2_REPEAT").is_some() {
                 let before: Vec<Vec<u16>> = (0..self.data.definitions())
@@ -563,14 +563,14 @@ impl Parser {
         self.report_return_drift();
     }
 
-    /// @PLN233 phase 0 (`LOFT_RETURN_DRIFT=1`) — each function whose return dependencies pass 2
-    /// changed from what pass 1 recorded, one line on stderr:
+    /// `LOFT_RETURN_DRIFT=1` — each function whose return dependencies pass 2 changed from what
+    /// pass 1 recorded, one line on stderr:
     /// `return-drift <name> <file>:<line> pass1=[…] pass2=[…] harmful|benign`.  HARMFUL is pass 1
     /// recording a borrow of a VISIBLE parameter that pass 2 dropped: a caller pass 2 reads
     /// BEFORE the callee's own pass-2 body (a callee declared below it) still types the call
     /// with pass 1's borrow, reads its owned result as a view, and never frees it (loft#2660's
-    /// class; `@FR-O-Borrow-Final` keeps no list across the passes, @PLN233 phase 2 settles
-    /// the return itself).
+    /// class; `@FR-O-Borrow-Final` keeps no list across the passes, and settling the return
+    /// itself is @PLN233's).
     fn report_return_drift(&mut self) {
         if self.pass1_returns.is_empty() {
             return;
