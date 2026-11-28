@@ -1238,7 +1238,8 @@ pub(crate) fn construction_temps_in(node: &Value, vars: &Function) -> HashMap<u1
 }
 
 /// loft#2594, `@FR-B-Copy` — the record locals a scope MOVES a literal's store into: bound two
-/// or more times (not counting the nulls that lead a single bind), every bind an owning one —
+/// or more times in their first binding (loft#2688: a bind after that binding's block ended is
+/// another binding, `(B-Scope)`) (not counting the nulls that lead a single bind), every bind an owning one —
 /// `null`, the local itself, a call (whose answer the bind copies or adopts), or a literal's
 /// construction.  Such a local owns its store on every path, so where it adopts a literal built
 /// in an outer-scope buffer (`scan_set`), the buffer hands it the store at the bind and is reset
@@ -1273,21 +1274,41 @@ fn literal_moves_in(
             _ => false,
         }
     }
-    fn walk(
-        n: &Value,
-        vars: &Function,
-        data: &Data,
-        candidate: &dyn Fn(u16) -> bool,
-        binds: &mut HashMap<u16, (usize, bool)>,
-    ) {
+    /// The walk's state: the blocks around the node (`path`, each by the order it was entered),
+    /// the next block's number, and per local the binds of its FIRST binding — the block path of
+    /// its first bind, how many binds lie inside that block, and whether all of the local's
+    /// binds own.
+    struct Walk<'a> {
+        candidate: &'a dyn Fn(u16) -> bool,
+        path: Vec<usize>,
+        next: usize,
+        binds: HashMap<u16, (Vec<usize>, usize, bool)>,
+    }
+    fn walk(n: &Value, vars: &Function, data: &Data, w: &mut Walk) {
         if let Value::Set(v, rhs) = n.unspan()
-            && candidate(*v)
+            && (w.candidate)(*v)
         {
-            let e = binds.entry(*v).or_insert((0, true));
-            e.0 += 1;
-            e.1 &= owning_bind(rhs, *v, vars, data);
+            let owning = owning_bind(rhs, *v, vars, data);
+            let path = w.path.clone();
+            let e = w.binds.entry(*v).or_insert((path, 0, true));
+            // loft#2688, `(B-Scope)` — a bind outside the block of the local's first bind starts
+            // a NEW binding of the name (`for … { x = P { … }; }  x = id(p)`): it is not a
+            // rebind of the first, so it does not count toward the first binding's binds.
+            // `LOFT_NO_MOVE_PER_BINDING=1` counts every bind of the name again.
+            if w.path.starts_with(&e.0) || !crate::keys::move_per_binding() {
+                e.1 += 1;
+            }
+            e.2 &= owning;
         }
-        n.for_each_child(&mut |c| walk(c, vars, data, candidate, binds));
+        let block = matches!(n.unspan(), Value::Block(_) | Value::Loop(_));
+        if block {
+            w.path.push(w.next);
+            w.next += 1;
+        }
+        n.for_each_child(&mut |c| walk(c, vars, data, w));
+        if block {
+            w.path.pop();
+        }
     }
     let candidate = |v: u16| {
         v < vars.count()
@@ -1301,11 +1322,16 @@ fn literal_moves_in(
     if !(0..vars.count()).any(candidate) {
         return HashSet::default();
     }
-    let mut binds = HashMap::default();
-    walk(code, vars, data, &candidate, &mut binds);
-    binds
+    let mut w = Walk {
+        candidate: &candidate,
+        path: Vec::new(),
+        next: 0,
+        binds: HashMap::default(),
+    };
+    walk(code, vars, data, &mut w);
+    w.binds
         .into_iter()
-        .filter(|&(v, (count, owning))| owning && count >= 2 && !null_led_first.contains(&v))
+        .filter(|(v, (_, count, owning))| *owning && *count >= 2 && !null_led_first.contains(v))
         .map(|(v, _)| v)
         .collect()
 }
