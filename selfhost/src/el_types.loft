@@ -399,12 +399,16 @@ pub fn nullable_scalar_elem(e: el::El, t: ir::TypeT) -> text {
   }
 }
 
-// `Type::without_deps`: the type with no borrows.
+// `Type::without_deps`: the type with no borrows — a vector's element, a tuple's members and what
+// a `&` or a `τ?` holds are emptied too.
 pub fn without_deps(t: ir::TypeT) -> ir::TypeT {
-  if len(deps(t)) == 0 {
-    return t;
+  match t {
+    TyVector { inner } => ir::TyVector { inner: without_deps(inner), dep: [] },
+    TyRefVar { inner } => ir::TyRefVar { inner: without_deps(inner) },
+    TyOptional { inner } => ir::TyOptional { inner: without_deps(inner) },
+    TyTuple { elems } => ir::TyTuple { elems: [for x in elems { without_deps(x) }] },
+    _ => if len(deps(t)) == 0 { t } else { with_deps(t, []) }
   }
-  with_deps(t, [])
 }
 
 // `Type::depend`: the variables a type borrows — through a `&` and a `τ?`, a tuple's the union of
