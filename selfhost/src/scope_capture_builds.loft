@@ -13,6 +13,7 @@ use scope_scan;
 use scope_backings;
 use scope_closure_keep;
 use scope_capture_adoption;
+use scope_handles;
 
 // port: capture_builds.rs fn inline_literal_work_ref — the `__ref_N` an inline record literal
 // built and answers, -1 for none.
@@ -282,6 +283,348 @@ pub fn has_owner_slot(b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
     }
   }
   false
+}
+
+// port: capture_builds.rs fn capture_adoption_owns_free — does a closure record's adoption take
+// over the frame-exit free of local `v`?  Only while `v` still names the store the build adopted
+// (`@FR-O-Latest`); a struct-enum is captured as an inline copy and adopted by no record.
+pub fn capture_adoption_owns_free(b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, v: integer) -> boolean {
+  copied = match scope_fn::base(scope_fn::tp(f, v)) {
+    TyEnum { is_ref } => is_ref,
+    _ => false
+  };
+  !scope_fn::has(builds.reassigned_after_build, v)
+    && !copied
+    && ((scope_fn::is_captured(f, v) && !captured_only_by_confined(b, f, builds, v))
+      || backs_an_adopted_capture(b, f, builds, v))
+    && (scope_fn::is_dbref(scope_fn::base(scope_fn::tp(f, v))) || fn_ref_half_captured(b, f, v))
+}
+
+// port: capture_builds.rs fn fn_ref_half_captured — loft#1869: is fn-ref local `v`'s closure
+// record captured, as the `<name>__clos` half, by a record this frame builds?
+fn fn_ref_half_captured(b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  if !(scope_fn::base(scope_fn::tp(f, v)) is TyFunction) {
+    return false;
+  }
+  half = "{scope_fn::name(f, v)}__clos";
+  for w in 0..scope_fn::count(f) {
+    if is_record_local(f, w) {
+      match scope_fn::base(scope_fn::tp(f, w)) {
+        TyReference { n: rec } => if attr(b, rec, half) >= 0 {
+          return true;
+        },
+        _ => {}
+      }
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn captured_only_by_confined — loft#1610: is every closure record that
+// captures `v` confined to one loop pass?  A `__cell_` is minted for its record and stays adopted.
+fn captured_only_by_confined(b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, v: integer) -> boolean {
+  if len(builds.pass_confined) == 0 {
+    return false;
+  }
+  match scope_fn::base(scope_fn::tp(f, v)) {
+    TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__cell_") {
+      return false;
+    },
+    _ => {}
+  }
+  nm = scope_fn::name(f, v);
+  any = false;
+  for w in 0..scope_fn::count(f) {
+    if !is_record_local(f, w) {
+      continue;
+    }
+    record = match scope_fn::base(scope_fn::tp(f, w)) {
+      TyReference { n } => n,
+      _ => -1
+    };
+    if record < 0 || !b.data.definitions[record]!.name.starts_with("__closure_") || attr(b, record, nm) < 0 {
+      continue;
+    }
+    if !scope_fn::has(builds.pass_confined, record) {
+      return false;
+    }
+    any = true;
+  }
+  any
+}
+
+// port: capture_builds.rs fn escaping_record_holds — does a closure record the declared return
+// names (`CalleeFrame`) hold the store of local `witness`, through a capture its cascade follows?
+pub fn escaping_record_holds(b: ir::Bundle, f: ir::Function, d_nr: integer, witness: integer) -> boolean {
+  if !scope_fn::is_captured(f, witness) {
+    return false;
+  }
+  nm = scope_fn::name(f, witness);
+  for raw in scope_fn::depend(b.data.definitions[d_nr]!.returned[0] ?? ir::TyVoid) {
+    if raw == scope_fn::NONE || (raw / 32768) % 2 != 1 {
+      continue;
+    }
+    w = raw - 32768;
+    if w >= scope_fn::count(f) {
+      continue;
+    }
+    match scope_fn::tp(f, w) {
+      TyReference { n: record } => if b.data.definitions[record]!.name.starts_with("__closure_") {
+        a = attr(b, record, nm);
+        if a >= 0 && scope_capture_adoption::capture_attr_is_cascade_relevant(b, record, a) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn escaping_record_holds_buffer — does a closure record that LEAVES this
+// frame adopt the store literal buffer `buffer` minted, through a capture its cascade follows?
+pub fn escaping_record_holds_buffer(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, buffer: integer) -> boolean {
+  for p in scope_scan::list_of(builds.buffer_adopted, buffer) {
+    record_var = p / 65536;
+    capture = p % 65536;
+    if !scope_capture_adoption::record_leaves_frame(s, b, f, record_var) {
+      continue;
+    }
+    match scope_fn::tp(f, record_var) {
+      TyReference { n: record } => if b.data.definitions[record]!.name.starts_with("__closure_") {
+        a = attr(b, record, scope_fn::name(f, capture));
+        if a >= 0 && scope_capture_adoption::record_adopts_capture(b, f, builds, record, a) && scope_capture_adoption::capture_attr_is_cascade_relevant(b, record, a) {
+          return true;
+        }
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn capture_join_candidates — the stores capture `c` may hold when its
+// value is a JOIN (every dep and the chain behind it, a `??` temp's default-arm owners), or empty
+// when it is not one (loft#1721, loft#1726).
+fn capture_join_candidates(f: ir::Function, c: integer) -> vector<integer> {
+  join = len(scope_fn::deps(f, c)) > 1 || len(scope_fn::join_owners(f, c)) > 0;
+  out: vector<integer> = [];
+  work: vector<integer> = [for d in scope_fn::deps(f, c) { d }];
+  work += scope_fn::join_owners(f, c);
+  seen: vector<integer> = [];
+  while len(work) > 0 {
+    v = work[len(work) - 1]!;
+    work.remove(len(work) - 1);
+    if v == c || v == scope_fn::NONE || scope_fn::is_argument(f, v) || scope_fn::has(seen, v) {
+      continue;
+    }
+    seen += [v];
+    out += [v];
+    owners = scope_fn::join_owners(f, v);
+    if len(owners) > 0 {
+      join = true;
+      work += owners;
+    }
+    work += scope_fn::deps(f, v);
+  }
+  if join { out } else { [] }
+}
+
+// port: capture_builds.rs fn backs_an_adopted_capture — is `v` the store behind a capture whose
+// closure record ADOPTS it: the backing the capture named at its build (`@FR-O-Latest`), or, with
+// no build point, its backing chain where the capture is no join.
+pub fn backs_an_adopted_capture(b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, v: integer) -> boolean {
+  for c in 0..scope_fn::count(f) {
+    if c == v || !scope_fn::is_captured(f, c) || scope_fn::base(scope_fn::tp(f, c)) is TyFunction {
+      continue;
+    }
+    if scope_fn::has(builds.rebound_in_loop, c) || !capture_is_adopted(b, f, builds, c) {
+      continue;
+    }
+    bk = scope_scan::get(builds.backing, c);
+    if bk >= 0 {
+      if bk == v || (env_variable("LOFT_NO_EVERY_BUILD_BACKING") == null && scope_fn::has(scope_scan::list_of(builds.backings_at_builds, c), v)) {
+        return true;
+      }
+    } else if scope_fn::has(backing_chain(f, c), v) && len(capture_join_candidates(f, c)) == 0 && !has_list(builds.join_arms_at_build, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// `map.contains_key(&c)` for a `VarList` map.
+fn has_list(m: vector<scope_scan::VarList>, c: integer) -> boolean {
+  for e in m {
+    if e.v == c {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn capture_is_adopted — would `mark_borrowed_captures` ADOPT the capture
+// named by local `c`, asked through the first record attribute that captures it?
+fn capture_is_adopted(b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, c: integer) -> boolean {
+  nm = scope_fn::name(f, c);
+  for w in 0..scope_fn::count(f) {
+    if !is_record_local(f, w) {
+      continue;
+    }
+    record = match scope_fn::tp(f, w) {
+      TyReference { n } => n,
+      _ => -1
+    };
+    if record < 0 || !b.data.definitions[record]!.name.starts_with("__closure_") {
+      continue;
+    }
+    for at in b.data.definitions[record]!.attributes {
+      a = at#index;
+      if capture_name(b, record, a) != nm {
+        continue;
+      }
+      if scope_fn::base(at.typedef[0] ?? ir::TyVoid) is TyFunction {
+        continue;
+      }
+      if !scope_capture_adoption::capture_attr_is_cascade_relevant(b, record, a) {
+        return false;
+      }
+      return scope_capture_adoption::record_adopts_capture(b, f, builds, record, a);
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn backing_chain — the locals that back `start`, nearest first.
+fn backing_chain(f: ir::Function, start: integer) -> vector<integer> {
+  chain: vector<integer> = [];
+  v = start;
+  for _ in 0..8 {
+    dep = scope_fn::deps(f, v);
+    if len(dep) != 1 || dep[0]! == v || scope_fn::is_argument(f, dep[0]!) {
+      break;
+    }
+    v = dep[0]!;
+    chain += [v];
+  }
+  chain
+}
+
+// port: capture_builds.rs fn join_capture_witness — the capture whose value may be `v`'s store
+// among others (a join) when its record adopts it: `v` is then released by store identity
+// against that capture (loft#1721).  -1 for none.
+pub fn join_capture_witness(b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, v: integer) -> integer {
+  for c in 0..scope_fn::count(f) {
+    if c != v && scope_fn::is_captured(f, c) && !scope_fn::has(builds.rebuilt_in_loop, c) && !scope_fn::has(builds.reassigned_after_build, c)
+      && (scope_fn::has(capture_join_candidates(f, c), v) || scope_fn::has(scope_scan::list_of(builds.join_arms_at_build, c), v))
+      && capture_is_adopted(b, f, builds, c) {
+      return c;
+    }
+  }
+  -1
+}
+
+// port: capture_builds.rs fn reassigned_join_capture_slot — `join_capture_witness` for a capture
+// REASSIGNED after its build, witnessed by the one leaving record's capture slot: `record local *
+// 65536 + slot position`, -1 for none (loft#1725).
+pub fn reassigned_join_capture_slot(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, v: integer) -> integer {
+  c = -1;
+  for x in 0..scope_fn::count(f) {
+    if c < 0 && x != v && scope_fn::is_captured(f, x) && scope_fn::has(builds.reassigned_after_build, x) && !scope_fn::has(builds.rebuilt_in_loop, x)
+      && scope_fn::has(scope_scan::list_of(builds.join_arms_at_build, x), v) && capture_is_adopted(b, f, builds, x) {
+      c = x;
+    }
+  }
+  if c < 0 {
+    return -1;
+  }
+  nm = scope_fn::name(f, c);
+  slot = -1;
+  for w in 0..scope_fn::count(f) {
+    if !is_record_local(f, w) {
+      continue;
+    }
+    record = match scope_fn::base(scope_fn::tp(f, w)) {
+      TyReference { n } => n,
+      _ => -1
+    };
+    if record < 0 || !b.data.definitions[record]!.name.starts_with("__closure_") {
+      continue;
+    }
+    if attr(b, record, nm) >= 0 {
+      if slot >= 0 || !scope_capture_adoption::record_store_leaves_frame(s, b, f, w) {
+        return -1;
+      }
+      slot = w * 65536 + scope_handles::position(b, b.data.definitions[record]!.known_type, nm);
+    }
+  }
+  slot
+}
+
+// port: capture_builds.rs fn rebound_capture_slots — `@FR-L-CapRebind` (loft#1862): the capture
+// slots of the PASS-CONFINED records built over keyed local `v` when `v` is rebound after the
+// build, as `record local * 65536 + slot position`.
+pub fn rebound_capture_slots(b: ir::Bundle, f: ir::Function, builds: CaptureBuilds, v: integer) -> vector<integer> {
+  slots: vector<integer> = [];
+  if !scope_fn::has(builds.reassigned_after_build, v) || !scope_fn::is_keyed(scope_fn::tp(f, v)) {
+    return slots;
+  }
+  nm = scope_fn::name(f, v);
+  for w in 0..scope_fn::count(f) {
+    if !is_record_local(f, w) {
+      continue;
+    }
+    match scope_fn::base(scope_fn::tp(f, w)) {
+      TyReference { n: record } => if b.data.definitions[record]!.name.starts_with("__closure_") && scope_fn::has(builds.pass_confined, record) && attr(b, record, nm) >= 0 {
+        slots += [w * 65536 + scope_handles::position(b, b.data.definitions[record]!.known_type, nm)];
+      },
+      _ => {}
+    }
+  }
+  slots
+}
+
+// port: capture_builds.rs fn adoption_build_is_conditional — does the build that adopted `v`'s
+// store sit in a branch (a struct capture naming `v`, or a collection capture backed by it)?
+pub fn adoption_build_is_conditional(builds: CaptureBuilds, v: integer) -> boolean {
+  if scope_fn::has(builds.built_conditionally, v) {
+    return true;
+  }
+  for bk in builds.backing {
+    if bk == v && scope_fn::has(builds.built_conditionally, bk#index) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_builds.rs fn free_unless_record_built — release `v`'s store unless one of the
+// closure records in `records` was built (`@FR-L-CapOwn`, loft#1464): through its owner witness
+// `witness` by store identity where it has one (-1: none), its drop `hook` first.
+pub fn free_unless_record_built(s: scope_scan::Scopes, v: integer, records: vector<integer>, witness: integer, hook: ir::Node?) -> ir::Node {
+  present: ir::Node = ir::NdBoolean { b: false };
+  i = len(records) - 1;
+  first = true;
+  while i >= 0 {
+    r = records[i]!;
+    one = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.ref_is_null, args: [ir::NdVar { n: r }] }, t: ir::NdBoolean { b: false }, f: ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: r }] } };
+    if first {
+      present = one;
+      first = false;
+    } else {
+      present = ir::NdIf { cond: one, t: ir::NdBoolean { b: true }, f: present };
+    }
+    i -= 1;
+  }
+  release: ir::Node = if witness >= 0 {
+    ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: witness }] }
+  } else {
+    ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: v }] }
+  };
+  if hook != null {
+    release = ir::NdInsert { items: [hook!, release] };
+  }
+  ir::NdIf { cond: present, t: ir::NdNull, f: release }
 }
 
 // Does the body capture a local or build a closure record?  Only then has it a closure-build

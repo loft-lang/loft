@@ -22,15 +22,25 @@ use binds;
 use scope_tuple_members;
 use scope_handles;
 use scope_witness;
+use scope_closure_keep;
+use scope_capture_builds;
+use scope_capture_adoption;
 
 // port: get_free_vars.rs fn get_free_vars
 pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_scope: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered) -> vector<ir::Node> {
   ls: vector<ir::Node> = [];
   // `fnref_releases`: each fn-ref this sweep released, with the records it carries.
   releases: vector<scope_scan::VarList> = [];
+  // The conditional releases of loft#1464, kept apart so they go FIRST: each reads a closure
+  // record the sweep's own release would destroy.  One hook per owner (`guarded_hooks`).
+  guarded: vector<ir::Node> = [];
+  guarded_hooks: vector<integer> = [];
   // `claimants_after_their_tuples`: the claimants are tuple members' buffers, and a tuple
   // local refuses below, so the registration order stands.
   vars = claimants_after_their_tuples(s, scope_scan::variables(s, to_scope));
+  // loft#1443's second half — the closure records this frame writes OUT through a `&fn(…)` link:
+  // delivered, as a `return` delivers.
+  link_delivered = scope_capture_adoption::link_written_closure_records(s, b, f);
   for v in vars {
     t = scope_fn::tp(f, v);
     if v == ret_var {
@@ -43,7 +53,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     // OUTER scope is released here, through the backing's hook, and emptied.  A captured local's
     // store is its closure record's (`capture_adoption_owns_free`), refused where it is released.
     backing = scope_backings::outer_collection_backing(f, v, vars, scope_scan::get(s.bind_backing, v));
-    if backing >= 0 && !scope_fn::is_captured(f, v) {
+    if backing >= 0 && !scope_capture_builds::capture_adoption_owns_free(b, f, s.capture_build_backing, v) {
       hook = scope_drops::scope_end_drop(s, b, f, backing);
       if hook != null {
         ls += [hook!];
@@ -86,6 +96,14 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     // the hook is guarded where the return hands the witnessed record out (`unless_moved`).
     w = scope_scan::get(s.owner_witness, v);
     if w >= 0 {
+      // @FR-L-CapOwn, loft#1464 — a witnessed local a closure record adopted under a CONDITIONAL
+      // build: released unless the record was built, by identity against the witness.
+      if scope_capture_builds::adoption_build_is_conditional(s.capture_build_backing, v) {
+        records = scope_capture_adoption::owning_record_locals(s, b, f, s.capture_build_backing, v);
+        if len(records) > 0 {
+          guarded += [scope_capture_builds::free_unless_record_built(s, v, records, w, null)];
+        }
+      }
       ls += [scope_witness::release_witness(s, w, scope_free_vars::unless_moved(s, b, delivered, w, scope_drops::witness_hook(s, b, f, v, w)))];
       continue;
     }
@@ -114,7 +132,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       continue;
     }
     if (scope_fn::is_record(t) || scope_fn::base(t) is TyVector || scope_fn::is_keyed(t)) && !(scope_fn::base(t) is TyRefVar) {
-      record_release(s, b, f, v, ret_var, delivered, ls);
+      record_release(s, b, f, v, ret_var, delivered, link_delivered, ls, guarded, guarded_hooks);
       continue;
     }
     // A generator HANDLE owns its coroutine frame (loft#835): released unless it is a view of a
@@ -131,7 +149,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     // A fn-ref local releases its closure store (`Type::Function`, asked BARE: a `fn(…)?`
     // matches none of the sweep's arms and is released by nobody).
     if t is TyFunction {
-      fnref_release(s, b, f, v, tp, ret_var, delivered, ls, releases);
+      fnref_release(s, b, f, v, tp, ret_var, delivered, link_delivered, ls, releases);
       continue;
     }
     if bt is TyFunction {
@@ -172,11 +190,108 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
   }
   fnref_stand_down(s, f, ls, releases);
   // `captured_record_stand_down` acts on a closure record that captures a fn-ref holding another
-  // frame record (`captured_fnref_sets`), refused where the phase sees one;
-  // `captured_view_stand_down` on the guarded releases of captured locals, refused where they
-  // are made.  The `view_rebind` snapshots are refused by the phase.
+  // frame record (`captured_fnref_sets`), refused where the phase sees one.  The `view_rebind`
+  // snapshots are refused by the phase.
+  captured_view_stand_down(s, f, guarded);
+  if len(guarded) > 0 {
+    guarded += ls;
+    ls.clear();
+    ls += guarded;
+  }
   pair_literal_buffers(s, b, f, ls);
   ls
+}
+
+// The `(condition, released variable, hook)` of a guarded release
+// `if <cond> null else { [hook;] OpFreeRef(x) }`, as `captured_view_stand_down` reads it.
+struct GuardShape {
+  cond: ir::Node,
+  key: text,
+  v: integer,
+  hook: vector<ir::Node>
+}
+
+fn guard_shape(s: scope_scan::Scopes, st: ir::Node) -> GuardShape? {
+  match scope_fn::unspan(st) {
+    NdIf { cond, t, f } => {
+      if !(scope_fn::unspan(t) is NdNull) {
+        return null;
+      }
+      match scope_fn::unspan(f) {
+        NdInsert { items } => if len(items) == 2 {
+          x = freed_var(s, items[1]!);
+          if x >= 0 {
+            return GuardShape { cond: cond, key: "{cond}", v: x, hook: [items[0]!] };
+          }
+          return null;
+        },
+        _ => {}
+      }
+      x = freed_var(s, f);
+      if x >= 0 { GuardShape { cond: cond, key: "{cond}", v: x, hook: [] } } else { null }
+    },
+    _ => null
+  }
+}
+
+// `OpFreeRef(Var(x))` → x, else -1.
+fn freed_var(s: scope_scan::Scopes, op: ir::Node) -> integer {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => if def_nr == s.ops.free_ref && len(args) == 1 {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n } => n,
+        _ => -1
+      }
+    } else {
+      -1
+    },
+    _ => -1
+  }
+}
+
+// port: get_free_vars.rs fn captured_view_stand_down — `@FR-H-FreeTwice`: a captured vector local
+// viewing its backing and that backing take the same guarded release under one condition; the
+// view's keeps its hook and gives up its free.  `LOFT_NO_CAPTURED_VIEW_STAND_DOWN=1`.
+fn captured_view_stand_down(s: scope_scan::Scopes, f: ir::Function, guarded: vector<ir::Node>) {
+  if env_variable("LOFT_NO_CAPTURED_VIEW_STAND_DOWN") != null || len(guarded) == 0 {
+    return;
+  }
+  // Built by a loop: a comprehension over a call answering `GuardShape?` loses elements
+  // (w17/repro/optvec2.loft, both backends).
+  shapes: vector<GuardShape?> = [];
+  for st in guarded {
+    shapes += [guard_shape(s, st)];
+  }
+  drop_at: vector<integer> = [];
+  for i in 0..len(guarded) {
+    sh = shapes[i];
+    if sh == null {
+      continue;
+    }
+    d = scope_fn::deps(f, sh!.v);
+    if len(d) != 1 || d[0]! == sh!.v || d[0]! >= scope_fn::count(f) {
+      continue;
+    }
+    backing_too = false;
+    for o in shapes {
+      if o != null && o!.v == d[0]! && o!.key == sh!.key {
+        backing_too = true;
+      }
+    }
+    if !backing_too {
+      continue;
+    }
+    if len(sh!.hook) > 0 {
+      guarded[i] = ir::NdIf { cond: sh!.cond, t: ir::NdNull, f: sh!.hook[0]! };
+    } else {
+      drop_at += [i];
+    }
+  }
+  k = len(drop_at) - 1;
+  while k >= 0 {
+    guarded.remove(drop_at[k]!);
+    k -= 1;
+  }
 }
 
 // port: get_free_vars.rs fn outer_tuple_backings — the members of a TUPLE local whose values
@@ -277,7 +392,7 @@ fn claim_add(m: vector<scope_scan::VarList>, w: integer, t: integer) {
 // scoped apart from it releases it.  The closure-keep stand-downs (`closure_keep_stand_down`,
 // `fnref_stand_down`) and a capturing record's adoption (`capture_adoption_owns_free`) act on a
 // frame's own closure records, which the phase refuses.
-fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>, releases: vector<scope_scan::VarList>) {
+fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered, link_delivered: vector<integer>, ls: vector<ir::Node>, releases: vector<scope_scan::VarList>) {
   def = b.data.definitions[s.d_nr]!;
   rt = def.returned[0] ?? ir::TyVoid;
   ret_carries = false;
@@ -290,14 +405,13 @@ fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
   }
   // `closure_records_of_source`: a fn-ref local's own type names the record it holds.
   carried: vector<integer> = [];
-  for w in scope_fn::deps(f, v) {
-    if !scope_fn::has(carried, w) {
-      carried += [w];
+  scope_capture_adoption::closure_records_of_source(b, f, v, carried);
+  // …and the fn-ref that carries a record OUT through a `&fn(…)` link (loft#1443).
+  link_carries = false;
+  for w in carried {
+    if scope_fn::has(link_delivered, w) && !scope_closure_keep::decides_link(s.closure_keep, w) {
+      link_carries = true;
     }
-  }
-  // `link_written_closure_records` — the records written out through a `&fn(…)` link.
-  if len(carried) > 0 && has_fn_link(f) {
-    scope_scan::refuse(s, "capture_adoption::link_written_closure_records: a fn-ref beside a `&fn` link");
   }
   holds_closure = match scope_fn::base(tp) {
     TyText => false,
@@ -313,7 +427,7 @@ fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
     _ => true
   };
   dep_delivers = scope_fn::has(scope_fn::depend(tp), v) && holds_closure;
-  leaves_frame = dep_delivers || ret_carries || v == ret_var || scope_fn::has(delivered.sources, v);
+  leaves_frame = dep_delivers || ret_carries || link_carries || v == ret_var || scope_fn::has(delivered.sources, v);
   vs = scope_scan::get(s.var_scope, v);
   record_outlives = false;
   for r in scope_fn::deps(f, v) {
@@ -321,7 +435,19 @@ fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
       record_outlives = true;
     }
   }
-  if !leaves_frame && !scope_fn::is_skip_free(f, v) && !record_outlives {
+  // loft#1869, `@FR-L-CapOwn` — a closure record that captured this fn-ref adopts the record it
+  // holds, and its cascade is the release.
+  adopted = scope_capture_builds::capture_adoption_owns_free(b, f, s.capture_build_backing, v);
+  // `@FR-H-FreeTwice` — the return being swept releases this fn-ref's local records inside its
+  // arms (`free_record_in_omitting_arms`).  `LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN=1`.
+  local_records = [for r in carried if r < scope_fn::count(f) && scope_fn::name(f, r).starts_with("___clos_") { r }];
+  arm_released = len(local_records) > 0 && env_variable("LOFT_NO_ARM_RELEASED_FNREF_STAND_DOWN") == null;
+  for r in local_records {
+    if !scope_fn::has(s.arm_released_records, r) {
+      arm_released = false;
+    }
+  }
+  if !leaves_frame && !scope_fn::is_skip_free(f, v) && !record_outlives && !adopted && !arm_released {
     if s.ops.any_closure_drop {
       ls += [ir::NdCall { def_nr: s.ops.drop_fn_ref, args: [ir::NdVar { n: v }] }];
     }
@@ -426,16 +552,6 @@ fn fnref_stand_down(s: scope_scan::Scopes, f: ir::Function, ls: vector<ir::Node>
   }
 }
 
-// A `&fn(…)` variable (bare `RefVar(Function)`): the frame may write a closure out through it.
-fn has_fn_link(f: ir::Function) -> boolean {
-  for x in f.variables {
-    match x.type_def[0] ?? ir::TyVoid {
-      TyRefVar { inner } => if inner is TyFunction { return true; },
-      _ => {}
-    }
-  }
-  false
-}
 
 // port: get_free_vars.rs fn owns_text_copy
 fn owns_text_copy(f: ir::Function, v: integer) -> boolean {
@@ -443,7 +559,7 @@ fn owns_text_copy(f: ir::Function, v: integer) -> boolean {
 }
 
 // The heap leg of `get_free_vars` for one RECORD or VECTOR local.
-fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>) {
+fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, ret_var: integer, delivered: scope_free_vars::Delivered, link_delivered: vector<integer>, ls: vector<ir::Node>, guarded: vector<ir::Node>, guarded_hooks: vector<integer>) {
   // `closure_keep`, `outer_collection_backing`, `outer_tuple_backings`: a closure record, a
   // vector, a tuple's members — refused where they are made.
   dep = scope_fn::deps(f, v);
@@ -483,10 +599,12 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
   promoted_by_identity = env_variable("LOFT_NO_PROMOTED_RETURN_IDENTITY_FREE") == null
     && ret_var != scope_fn::NONE && scope_fn::is_argument(f, ret_var)
     && (promoted_holds_v || ret_backs) && only_ret_backs;
-  // `link_written_closure_records` and `closure_record_leaves_frame` name closure records,
-  // which the phase refuses.
+  // A closure record written out through a `&fn(…)` link (loft#1443) or delivered by the return
+  // (`closure_record_leaves_frame`, loft#1474) leaves the frame.
   leaves_frame = ret_borrows_v || backs_return_source && !promoted_by_identity
-    || promoted_holds_v && !promoted_by_identity;
+    || (scope_fn::has(link_delivered, v) && !scope_closure_keep::decides_link(s.closure_keep, v))
+    || promoted_holds_v && !promoted_by_identity
+    || scope_capture_adoption::closure_record_leaves_frame(s, b, f, v);
   nm = scope_fn::name(f, v);
   // A KEYED work-ref's null init mints a store of its own: a record work-ref is not one.
   // …or a KEYED work-ref, whose null init mints a store of its own (`keyed_null_mints`).
@@ -499,11 +617,10 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
   // @P302 — a keyed local backed by its own store carries the self-dep `[v]`: an owner.
   owns = scope_fn::proxy_says_owned(f, v) || scope_fn::has(s.late_owners, v) || scope_scan::get(s.lift_join_witness, v) >= 0
     || (len(dep) == 1 && dep[0] == v && scope_fn::is_keyed(scope_fn::tp(f, v)));
-  // `capture_adoption_owns_free` — a captured local's store is its closure record's.
-  if scope_fn::is_captured(f, v) {
-    scope_scan::refuse(s, "capture_builds::capture_adoption_owns_free: a captured record local");
-  }
-  emit = (owns || is_work_ref) && !leaves_frame && !scope_fn::is_skip_free(f, v) && !scope_fn::has(s.free_transferred, v);
+  // Plan-57 Phase B, #323 — a captured heap store is OWNED by the closure record that adopted it
+  // (`capture_adoption_owns_free`): its cascade is the release, so the frame's is suppressed.
+  captured_ref = scope_capture_builds::capture_adoption_owns_free(b, f, s.capture_build_backing, v);
+  emit = (owns || is_work_ref) && !leaves_frame && !scope_fn::is_skip_free(f, v) && !scope_fn::has(s.free_transferred, v) && !captured_ref;
   // The identity-decided release of a local the returned argument may hold
   // (`promoted_by_identity` above): `OpFreeRefIfDistinct(v, ret)` frees it on the exits where
   // the buffer holds another store; a work-ref the returned argument names keeps its
@@ -514,10 +631,30 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     }
     return;
   }
+  // @FR-L-CapOwn, loft#1464 — where the build that adopted the store sits in a branch, the
+  // frame's release is kept, conditional on the record existing.  (`per_run_capture_owners`,
+  // loft#2281, needs a gated keep set, which the phase refuses.)
+  if !emit && captured_ref && scope_capture_builds::adoption_build_is_conditional(s.capture_build_backing, v) {
+    records = scope_capture_adoption::owning_record_locals(s, b, f, s.capture_build_backing, v);
+    if len(records) > 0 {
+      guarded += [scope_capture_builds::free_unless_record_built(s, v, records, -1, owner_hook(s, b, f, v, guarded_hooks))];
+    }
+  }
   if !emit {
     return;
   }
-  // `rebound_capture_slots` — a closure record's slots: none.
+  // `@FR-L-CapRebind` (loft#1862) — a pass-confined record's slot built over `v` before a rebind
+  // holds the build-time store: released by identity where the record was built.
+  for slot in scope_capture_builds::rebound_capture_slots(b, f, s.capture_build_backing, v) {
+    w = slot / 65536;
+    pos = slot % 65536;
+    held = ir::NdCall { def_nr: s.ops.get_dbref, args: [ir::NdVar { n: w }, ir::NdInt { n: pos }] };
+    release = ir::NdInsert { items: [
+      ir::NdCall { def_nr: s.ops.free_if_distinct, args: [held, ir::NdVar { n: v }] },
+      ir::NdCall { def_nr: s.ops.set_dbref, args: [ir::NdVar { n: w }, ir::NdInt { n: pos }, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }] }
+    ] };
+    ls += [ir::NdIf { cond: record_built(s, w), t: release, f: ir::NdNull }];
+  }
   is_buffer = is_work_ref && scope_scan::get(s.paired_witness, v) >= 0;
   if !is_buffer {
     for wb in s.witness_buffer {
@@ -557,9 +694,13 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     } else {
       ls += [scope_drops::free_ref(s, v)];
     }
-  } else if is_work_ref && lw >= 0 && (lw == ret_var || scope_fn::has(delivered.sources, lw)) {
+  } else if is_work_ref && scope_capture_builds::escaping_record_holds_buffer(s, b, f, s.capture_build_backing, v) {
+    // loft#1446 — a closure record that LEAVES this frame adopted the store this buffer minted:
+    // the record's cascade is its release.
+  } else if is_work_ref && lw >= 0 && (lw == ret_var || scope_fn::has(delivered.sources, lw)
+      || (scope_capture_builds::capture_adoption_owns_free(b, f, s.capture_build_backing, lw) && scope_capture_builds::escaping_record_holds(b, f, s.d_nr, lw))) {
     // loft#1317 — the buffer an inline record literal minted, handed to the caller by its
-    // adopter.  (`escaping_record_holds_buffer` and the capture clause are a closure's.)
+    // adopter; loft#1439 — or adopted by a record that leaves the frame.
     ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: lw }] }];
   } else if scope_scan::list_has_key(s.witness_buffer, v) {
     // @P378(a) — `v` is an inner-scoped witness whose store is an outer buffer.
@@ -579,10 +720,32 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
       }
       ls += [scope_drops::lift_viewer_guard(s, v, free)];
     }
+  } else if scope_capture_builds::join_capture_witness(b, f, s.capture_build_backing, v) >= 0 {
+    // loft#1721 — one arm of a join a closure record adopted: released unless the capture holds
+    // this store.
+    c = scope_capture_builds::join_capture_witness(b, f, s.capture_build_backing, v);
+    hook = scope_free_vars::unless_moved(s, b, delivered, v, scope_drops::scope_end_hook(s, b, f, v, delivered.arm_dropped));
+    if hook != null {
+      ls += [hook!];
+    }
+    ls += [ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, ir::NdVar { n: c }] }];
+  } else if scope_capture_builds::reassigned_join_capture_slot(s, b, f, s.capture_build_backing, v) >= 0 {
+    // loft#1725 — the same for a capture REASSIGNED after its build, witnessed by the record's
+    // slot; a record never built holds nothing.
+    slot = scope_capture_builds::reassigned_join_capture_slot(s, b, f, s.capture_build_backing, v);
+    w = slot / 65536;
+    pos = slot % 65536;
+    hook = scope_free_vars::unless_moved(s, b, delivered, v, scope_drops::scope_end_hook(s, b, f, v, delivered.arm_dropped));
+    if hook != null {
+      ls += [hook!];
+    }
+    held = ir::NdCall { def_nr: s.ops.get_dbref, args: [ir::NdVar { n: w }, ir::NdInt { n: pos }] };
+    unless_held = ir::NdCall { def_nr: s.ops.free_if_distinct, args: [ir::NdVar { n: v }, held] };
+    ls += [ir::NdIf { cond: record_built(s, w), t: unless_held, f: scope_drops::free_ref(s, v) }];
   } else {
-    // `join_capture_witness`, `reassigned_join_capture_slot`: a closure record's.  The type's
-    // scope-end hook, immediately before the free, unless `v` is a buffer whose witness ran it —
-    // or a collection buffer whose delivered binding's scope has ended (it ran the hook there).
+    // The type's scope-end hook, immediately before the free, unless `v` is a buffer whose
+    // witness ran it — or a collection buffer whose delivered binding's scope has ended (it ran
+    // the hook there).
     binding_ended = false;
     if scope_fn::base(scope_fn::tp(f, v)) is TyVector {
       db = scope_drops::delivered_binding(f, v);
@@ -599,6 +762,23 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
     }
     ls += [scope_drops::lift_viewer_guard(s, v, scope_drops::free_ref(s, v))];
   }
+}
+
+// `if OpRefIsNull(w) { false } else { OpConvBoolFromRef(w) }` — closure record `w` was built.
+fn record_built(s: scope_scan::Scopes, w: integer) -> ir::Node {
+  ir::NdIf { cond: ir::NdCall { def_nr: s.ops.ref_is_null, args: [ir::NdVar { n: w }] }, t: ir::NdBoolean { b: false }, f: ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: w }] } }
+}
+
+// The drop a conditional release of `v` carries (`@FR-H-Drop`): its OWNER's — `v`, or the one
+// local it views — once per owner (`guarded_hooks`).
+fn owner_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, guarded_hooks: vector<integer>) -> ir::Node? {
+  d = scope_fn::deps(f, v);
+  o = if len(d) == 0 { v } else if len(d) == 1 { d[0]! } else { -1 };
+  if o < 0 || scope_fn::has(guarded_hooks, o) {
+    return null;
+  }
+  guarded_hooks += [o];
+  scope_drops::scope_end_drop(s, b, f, o)
 }
 
 // A free of `w`, plain or behind the lift-view guard.

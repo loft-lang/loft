@@ -57,6 +57,7 @@ use scope_exit_vector;
 use scope_const_fn;
 use scope_exit_record;
 use scope_handles;
+use scope_capture_builds;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -155,7 +156,11 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     orig_code = scope_handles::retain_shared_handles(b, d_nr, orig_code, vars);
     why = program[d_nr] ?? "";
     stale = stale_callees(b, d_nr, orig_code, refused_nrs);
-    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], [], []);
+    // Rust reads the definition's code during a scan (`data.def(d_nr).code()`): the parsed body
+    // first, then each scan's result, installed before the next.
+    installed = d.code[0]!;
+    ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], [], [], installed);
+    installed = ph.code;
     late = ph.late;
     // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
     // that ran before the scan: rewrite exactly those and scan again.
@@ -170,7 +175,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       rw = scope_scan_set::rewrite_written_out(b, orig_code, vars, ph.written_v, ph.written_t, hit);
       if hit[0] {
         orig_code = rw;
-        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late, sunk);
+        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late, sunk, installed);
+        installed = ph.code;
         for v in ph.late {
           if !late.contains(v) {
             late += [v];
@@ -184,7 +190,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     // A local an early sweep skipped as a view and the scan then made an owner: scan again
     // with it read as an owner from the start.  The rescans below carry the set.
     if why == "" && len(late) > 0 {
-      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late, sunk);
+      ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, [], late, sunk, installed);
+      installed = ph.code;
       why = ph.why;
       for v in ph.late {
         if !late.contains(v) {
@@ -205,7 +212,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
             scope_scan::put(cmap, c.local, c.block);
           }
         }
-        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, cmap, late, sunk);
+        ph = scope_phase::run_scan_phase(b, ops, d_nr, orig_code, vars, stale, cmap, late, sunk, installed);
+        installed = ph.code;
         why = ph.why;
         for c in confined {
           ph.code = scope_confinement::relocate_null_init(ph.code, c.vdb, c.block);
@@ -342,6 +350,36 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       refused += ["{d.name}: host_result::rewrite_program: a recursion answering its own calls' results"];
     }
   }
+  // loft#2357 (`rebound_captures::release_rebound_captures`, and its let-go point 5
+  // `detach_staying_record_backings`) and loft#2363 (`owner_handover::hand_over_owned_captures`)
+  // rewrite a settled body where a capture is rebound in a loop, or held by two records through
+  // owner slots: not transcribed, refused where they fire.
+  for d in b.data.definitions {
+    if d.source == 0 || !(settled[d#index] ?? false) || d.def_type != 1 || len(d.code) == 0 {
+      continue;
+    }
+    if env_variable("LOFT_NO_REBOUND_CAPTURES") == null {
+      rb: vector<integer> = [];
+      scope_capture_builds::captures_rebound_in_a_loop(d.code[0]!, ops.set_dbref, rb);
+      if len(rb) > 0 && record_slot_of(d.code[0]!, d.variables, ops.set_dbref, rb) {
+        refused += ["{d.name}: rebound_captures::release_rebound_captures: a capture rebound in a loop"];
+        continue;
+      }
+    }
+    if env_variable("LOFT_NO_OWNER_HANDOVER") == null && owner_holds_shared(d.code[0]!, d.variables, ops.set_dbref) {
+      refused += ["{d.name}: owner_handover::hand_over_owned_captures: a capture two records hold through owner slots"];
+    }
+  }
+  // #682 — which closure captures a record ADOPTS, decided on the settled bodies
+  // (`mark_borrowed_captures`): the attributes marked borrowed, the cascades' walks over them and
+  // the displaced-record releases stripped.  A body whose strip reads a record type a refused
+  // frame builds is refused.
+  for i in scope_capture_adoption::mark_borrowed_captures(b, ops, settled) {
+    d = b.data.definitions[i]!;
+    if d.source != 0 {
+      refused += ["{d.name}: capture_adoption::mark_borrowed_captures: a closure record whose building frame this pass refused"];
+    }
+  }
   // After the loop: the cascades left with nothing to do are retired, and every call of one
   // dropped (`prune_empty_cascades`); `cascade_before_record_frees` runs a record's cascade
   // before each release of it.
@@ -361,6 +399,74 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     refused += ["{b.data.definitions[i]!.name}: text_replace::admit: a text field assigned through a parameter a refused caller decides"];
   }
   refused
+}
+
+// `rebound_facts`' slots, as a trigger: a closure record's slot `OpSetDbRef(___clos_N, off, c)`
+// filled from a capture `c` the loop rebinds (a superset of the slots it keeps).
+fn record_slot_of(n: ir::Node, f: ir::Function, set_dbref: integer, rebound: vector<integer>) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr: d, args } => if d == set_dbref && len(args) > 2 {
+      w = ir_pass_tree::var_of(args[0]!);
+      off = ir_pass_tree::int_of(args[1]!);
+      c = ir_pass_tree::var_of(args[2]!);
+      if w != null && off != null && c != null && scope_fn::has(rebound, c!) && scope_fn::name(f, w!).starts_with("___clos_") {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if record_slot_of(ch, f, set_dbref, rebound) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: owner_handover.rs fn owner_holds, as a trigger — is a captured local held by MORE THAN
+// ONE closure record through a capture slot with an owner slot beside it?
+fn owner_holds_shared(code: ir::Node, f: ir::Function, set_dbref: integer) -> boolean {
+  slots: vector<integer> = [];
+  owns: vector<text> = [];
+  owner_holds_walk(code, f, set_dbref, slots, owns);
+  holders: vector<scope_scan::VarList> = [];
+  for p in slots {
+    w = p / 65536;
+    c = p % 65536;
+    if owns.contains("{w}:{scope_fn::name(f, c)}") {
+      scope_scan::list_add(holders, c, w);
+    }
+  }
+  for h in holders {
+    if len(h.items) > 1 {
+      return true;
+    }
+  }
+  false
+}
+
+fn owner_holds_walk(n: ir::Node, f: ir::Function, set_dbref: integer, slots: vector<integer>, owns: vector<text>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr: d, args } => if d == set_dbref && len(args) > 2 {
+      w = ir_pass_tree::var_of(args[0]!);
+      off = ir_pass_tree::int_of(args[1]!);
+      x = ir_pass_tree::var_of(args[2]!);
+      if w != null && off != null && x != null && scope_fn::name(f, w!).starts_with("___clos_") {
+        xn = scope_fn::name(f, x!);
+        if xn.starts_with("__own_") {
+          owns += ["{w!}:{xn[6..]}"];
+        } else {
+          scope_scan::set_add(slots, w! * 65536 + x!);
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    owner_holds_walk(c, f, set_dbref, slots, owns);
+  }
 }
 
 // The callees and function values named in `code` whose ownership summary reaches, through

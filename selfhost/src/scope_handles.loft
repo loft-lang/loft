@@ -315,7 +315,7 @@ fn handle_field(cx: RetainCx, args: vector<ir::Node>) -> boolean {
 }
 
 // port: database/types.rs fn Stores::position — 65535 where the field is not there.
-fn position(b: ir::Bundle, tp: integer, field: text) -> integer {
+pub fn position(b: ir::Bundle, tp: integer, field: text) -> integer {
   t = b.types[tp];
   if tp < 0 || t == null {
     return 65535;
