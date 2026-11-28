@@ -1705,8 +1705,11 @@ fn borrow_base_guarded(b: ir::Bundle, ops: Ops, node: ir::Node, func: ir::Functi
         }
         at -= 1;
       }
+      // `(B-View)` — a projection reached through a block's tail views the local that tail
+      // names when the local's definitions view nothing deeper: the inline container
+      // `__ref_p2_N` of `f(x).inner` holds the call's store (loft#2608).
       if any {
-        return null;
+        return v;
       }
       vx = func.variables[v];
       if is_argument(func, v) && vx != null && has_heap_dep(vx.type_def[0]!) {
