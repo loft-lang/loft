@@ -463,7 +463,11 @@ the record the callee made leaks.  **`LOFT_NO_JOIN_ARG_LIFT=1`** leaves a `??`
 argument whose default the caller builds in a buffer unbound: an answer that is that default is
 adopted and freed again by the buffer.  **`LOFT_NO_SET_PREAMBLE_HOIST=1`** binds a
 call whose literal arguments were hoisted through its preamble (`o = { INSERT …; f(…) }`) instead
-of as the call: the bind adopts, and a second argument the callee answers is freed twice.
+of as the call: the bind adopts, and a second argument the callee answers is freed twice.  Since
+loft#2674 the hoist is reached only under `LOFT_NO_DELIVERED_FIRST_ADOPT=1`: a call no argument is
+delivered through is flattened by the bind itself (`scan_set`), and one that delivers adopts.  The
+2638 cell's double free (`s2_join`, which answers its second argument on an early `return`) is
+re-created by `LOFT_NO_DELIVERED_EVERY_RETURN=1` instead, which reads that callee as delivering.
 
 **`LOFT_NO_SHADOW_CELL_OWNER=1`** (`@FR-L-CapOwn`, scope pass, BOTH backends) stops naming the
 closure record that takes a mutated parameter's cell (`__bx_<name>`, whose record attribute keeps
