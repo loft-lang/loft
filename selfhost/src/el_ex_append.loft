@@ -558,10 +558,18 @@ pub fn field_append(e: el::El, vars: el_vars::Vars, p: Ex, n: integer) -> Ex {
       return ex(ir::NdNull, ir::TyVoid);
     }
     // An item handing the record's own local to a function is evaluated before the append
-    // (`parse_append_vector`'s staging into a `__ref_N`, minted on both passes) — not carried.
+    // (`parse_append_vector`'s staging into a `__ref_N`, a second-pass work ref): a scalar's or a
+    // text's value held there, the append pushing the hold.  Any other item is not carried.
     if el_ex_object::hands_to_call(e, x.code, rec) {
-      el::refuse(e, "a field append whose item hands its record to a call");
-      return ex(ir::NdNull, ir::TyVoid);
+      if !(el_ex_call::scalar(el_types::base(x.tp)) || el_types::base(x.tp) is TyText) {
+        el::refuse(e, "a field append whose item hands its record to a call");
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      if !e.first_pass {
+        htmp = el_vars::work_ref(vars, el_types::without_deps(x.tp));
+        ls += [el_ir::v_set(htmp, x.code)];
+        x = ex(ir::NdVar { n: htmp }, el_types::without_deps(x.tp));
+      }
     }
     if e.first_pass {
       // The first pass makes each item through the record (`OpNewRecord(<holder>, …)`), scalars
