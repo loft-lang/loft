@@ -236,6 +236,9 @@ struct Variable {
   // @PLN91 — the deps each earlier bind of it ended with (`Variable::viewed`, the parse's
   // record of what a rebind on one path leaves live on another): read by the scope pass
   viewed: vector<integer>,
+  // @PLN91 — the other stores a `??` temp or an arm-bound vector may deliver
+  // (`Function::join_owners`, loft#1721 / loft#1726): read by the scope pass's capture analysis
+  join_owners: vector<integer>,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

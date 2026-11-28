@@ -921,6 +921,7 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     let mut place_buffers = Vec::new();
     let mut ref_homes = Vec::new();
     let mut viewed: Vec<Vec<u16>> = Vec::new();
+    let mut join_owners: Vec<Vec<u16>> = Vec::new();
     for i in 0..vars_vec.len(stores) {
         let vr = vars_vec.get(i, stores);
         if vr.field_bool(stores, ds::VAR_ARM_CONSUMED) {
@@ -936,6 +937,7 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
             ref_homes.push(i as u16);
         }
         viewed.push(read_dep_list(stores, vr, ds::VAR_VIEWED));
+        join_owners.push(read_dep_list(stores, vr, ds::VAR_JOIN_OWNERS));
         vars.push(RestoredVar {
             name: vr.field_str(stores, ds::VAR_NAME).to_string(),
             type_def: read_type_child(stores, vr.field_recvec(ds::VAR_TYPE_DEF, ds::TYPET_STRIDE)),
@@ -987,6 +989,11 @@ fn read_function(stores: &Stores, parent: Record, base: u32) -> Function {
     }
     for (v, list) in viewed.into_iter().enumerate() {
         f.set_viewed(v as u16, list);
+    }
+    for (v, list) in join_owners.into_iter().enumerate() {
+        if !list.is_empty() {
+            f.add_join_owners(v as u16, &list);
+        }
     }
     f
 }
