@@ -704,6 +704,16 @@ pub struct Function {
     /// [`Self::pass2_rebuilt`] has for the same reason, kept separate because a shared set
     /// would make two unrelated decisions move together.  Reset per pass, in `copy`.
     tuple_backings_seen: std::collections::HashSet<u16>,
+    /// The locals some bind gave a dep on an ARGUMENT this pass, whatever their type says now.
+    ///
+    /// A type's dep list is the LAST bind's: `code = if c { body } else { … }; if d { code = fresh(code) }` leaves
+    /// `code` typed with no dep, while on the path where the `if` does not run it IS the
+    /// caller's argument.  The return-buffer rename asks whether the local views an argument
+    /// (`Parser::classify_ret_promotion`): renamed, the caller's buffer would be its own
+    /// argument store and the caller frees it twice.  So that question is asked of every bind
+    /// of the pass, not of the type it ended with.  Recorded where a dep enters
+    /// ([`Self::depend`], [`Self::depend_on_all`]); reset per pass, in `copy`.
+    viewed_argument: std::collections::HashSet<u16>,
     /// loft#1145 — a per-PASS ordinal for the loop now being parsed, and the body locals
     /// each loop binds.
     ///
@@ -984,6 +994,7 @@ impl Function {
             group_write_views: HashMap::new(),
             tuple_backings: HashMap::new(),
             tuple_backings_seen: std::collections::HashSet::new(),
+            viewed_argument: std::collections::HashSet::new(),
             loop_ord: 0,
             loop_ord_of: HashMap::new(),
             body_binds: HashMap::new(),
@@ -1323,6 +1334,7 @@ impl Function {
             group_write_views: other.group_write_views.clone(),
             tuple_backings: other.tuple_backings.clone(),
             tuple_backings_seen: std::collections::HashSet::new(),
+            viewed_argument: std::collections::HashSet::new(),
             // loft#1145 — the ordinal RESTARTS per pass (it is what makes the key stable),
             // but the maps it keys are CARRIED: they are how pass 2 hands each loop the
             // binding pass 1 gave it.  Cleared here, pass 2's third loop found the second
@@ -2424,6 +2436,9 @@ impl Function {
             0 => (),
             1 => self.depend(var_nr, incoming[0]),
             _ => {
+                if incoming.iter().any(|&d| self.is_argument_nr(d)) {
+                    self.viewed_argument.insert(var_nr);
+                }
                 let cur = &self.variables[var_nr as usize].type_def;
                 let new_tp = cur.with_deps(&crate::data::Deps::frame(incoming));
                 self.trace_type_change(var_nr, &new_tp, "depend_on_all");
@@ -2474,10 +2489,31 @@ impl Function {
     #[track_caller]
     pub fn depend(&mut self, var_nr: u16, on: u16) {
         if on != u16::MAX {
+            if self.is_argument_nr(on) {
+                self.viewed_argument.insert(var_nr);
+            }
             let new_tp = self.variables[var_nr as usize].type_def.depending(on);
             self.trace_type_change(var_nr, &new_tp, "depend");
             self.variables[var_nr as usize].type_def = new_tp;
         }
+    }
+
+    /// Is `d` a variable of this function that is an argument?  (`false` past the table.)
+    fn is_argument_nr(&self, d: u16) -> bool {
+        (d as usize) < self.variables.len() && self.variables[d as usize].argument
+    }
+
+    /// Did some bind of `v` give it a dep on an argument this pass — see
+    /// [`Self::viewed_argument`].
+    #[must_use]
+    pub fn has_viewed_argument(&self, v: u16) -> bool {
+        self.viewed_argument.contains(&v)
+    }
+
+    /// Undo [`Self::has_viewed_argument`]'s record for `v`, for a caller whose bind gave the
+    /// dep only for the length of the statement (a vector `+=`, which restores its own backing).
+    pub fn forget_viewed_argument(&mut self, v: u16) {
+        self.viewed_argument.remove(&v);
     }
 
     pub fn uses(&self, var_nr: u16) -> u16 {
@@ -3588,6 +3624,11 @@ impl Function {
         // type `Foo`) panics here instead of being diagnosed.
         if var_nr == u16::MAX || (var_nr as usize) >= self.variables.len() {
             return false;
+        }
+        // Every bind passes here: one that hands the local an argument's store is recorded
+        // whatever later binds leave in its type (`Self::viewed_argument`).
+        if type_def.depend().iter().any(|&d| self.is_argument_nr(d)) {
+            self.viewed_argument.insert(var_nr);
         }
         if self.variables[var_nr as usize].nullable_line == 0
             && matches!(type_def, Type::Optional(_))

@@ -13571,7 +13571,13 @@ impl Parser {
         // emission, and a second leg stripping the same borrow would leave that switch unable
         // to show it — a bisect control that cannot fire.  `is_marked_vector_borrow` is the one
         // home for which bindings are the pre-pass's.
-        let views_argument = self.var_views_an_argument(v) && !self.vars.is_marked_vector_borrow(v);
+        // …and asked of every bind of the pass, not only of the type the last one left: a
+        // conditional rebind to a fresh call (`code = if c { body } else { … }; if d { code = fresh(code) }`) types
+        // the local with no dep while the path that skips it still answers the argument
+        // (`Function::has_viewed_argument`).
+        let views_argument = (self.var_views_an_argument(v)
+            || (self.vars.has_viewed_argument(v) && !self.vars.is_argument(v)))
+            && !self.vars.is_marked_vector_borrow(v);
         // loft#1493 — a candidate may BE the return buffer only if it has the return's own
         // SHAPE.  `ls` is a BORROW list: it names the locals the tail's value is reached
         // THROUGH, and for a projection arm (`b.items`) that is the CONTAINER — a record.
