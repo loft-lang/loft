@@ -1758,6 +1758,14 @@ fn assignment_inner(e: el::El, vars: el_vars::Vars, at: integer, fixed: boolean,
           }
           return ex(ir::NdNull, ir::TyVoid);
         }
+        // `null` into a nullable vector member is the reference sentinel (`t.0 = null`): the
+        // member's store is the tuple's, read out by copy, so the slot is overwritten as it is.
+        if op == "=" && mt is TyOptional && el_types::base(mt) is TyVector && tx.tp is TyNull {
+          if e.first_pass {
+            return ex(ir::NdNull, ir::TyVoid);
+          }
+          return ex(ir::NdTuplePut { var: tvar, idx: tix, inner: el_ir::cl(e, "OpNullRefSentinel", []) }, ir::TyVoid);
+        }
         el::refuse(e, "a write to a tuple member that is no plain scalar, or a text member appended");
         return ex(ir::NdNull, ir::TyVoid);
       }

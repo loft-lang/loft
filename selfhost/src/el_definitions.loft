@@ -2894,6 +2894,10 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
           if (ubl.result[0] ?? ir::TyVoid) is TyVector {
             ubl.result = [el_types::without_deps(ubl.result[0]!)];
             code = ir::NdBlock { block: [ubl] };
+          } else if match ubl.result[0] ?? ir::TyVoid { TyOptional { inner: uoi } => uoi is TyVector, _ => false } {
+            // (…and through a `vector<T>?` answer's `?`.)
+            ubl.result = [ir::TyOptional { inner: el_types::without_deps(el_types::base(ubl.result[0]!)) }];
+            code = ir::NdBlock { block: [ubl] };
           }
         },
         _ => {}

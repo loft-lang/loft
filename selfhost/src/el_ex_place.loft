@@ -2640,7 +2640,8 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   match declared! {
     TyTuple { elems: dte } => {
       for dm in dte {
-        if match el_types::base(dm) { TyInteger { spec: ds } => el_types::narrow_width(ds) > 0 || ds.forced_size != 0, _ => !el_ex_call::scalar(el_types::base(dm)) && !(el_types::base(dm) is TyText) } && !vars.narrow_tuples.contains(v) {
+        // (A vector member is written as an inferred tuple's is: no range to check.)
+        if match el_types::base(dm) { TyInteger { spec: ds } => el_types::narrow_width(ds) > 0 || ds.forced_size != 0, TyVector { inner: _ } => false, _ => !el_ex_call::scalar(el_types::base(dm)) && !(el_types::base(dm) is TyText) } && !vars.narrow_tuples.contains(v) {
           vars.narrow_tuples += [v];
         }
       }
