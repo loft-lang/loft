@@ -115,9 +115,9 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 - `t += 8` through a `t: &text?` link (1827's `add_q`): Rust wraps the append in one more
   destination test, `if OpConvBoolFromText(t) { <the append> } else null`, whose source was not
   found; widening the port's `stack` to `&text?` alone gives a silent differ, so it stays refused.
-- `"{for _ in 0..2 {1}}"` at a text function's TAIL: Rust appends `[`/`,`/`]` with
-  `OpAppendText` into a work text, the port with `OpAppendStackText` (probe `us2`); bound to a
-  local both agree.
+- A text-returning function formatting a vector of TEXT (`"{for s in v {s}}"`, probe us4): Rust
+  types the element temp `_val_1` as a view of the loop variable (`text["s"]`) and marks `v`
+  user-named at its read (`parse_var_inner`); the port types it plain `text`.
 - A record-answering function whose tail is `t as Mix` (a text cast, probe `ca2`) and the
   record-return family in general (`a function returning a record from something other than a
   literal`, `a return of a record that is not a literal`): R-HostStore's recursive struct-enum
