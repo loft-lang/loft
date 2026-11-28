@@ -12,6 +12,7 @@
 use ir;
 use scope_fn;
 use scope_handles;
+use scope_tuple_members;
 use scope_scan;
 use binds;
 use own;
@@ -114,6 +115,13 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     vector_call_buffers: scope_backings::vector_call_buffers(orig_code, orig_vars),
     bind_backing: [],
     promoted_filled: [],
+    tuple_call_mint: [],
+    tuple_member_now: [],
+    tuple_moved: [],
+    tuple_depth: [],
+    written_tuple_members: scope_tuple_members::written_tuple_members_in(orig_code),
+    tuple_claimants: scope_tuple_members::tuple_claimants_in(b, orig_code, orig_vars),
+    owned_handle_members: [],
     stale_defs: stale,
     orig_code: orig_code,
     why: "",
@@ -132,6 +140,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   s.literal_moves = literal_moves_in(b, orig_code, orig_vars, s.null_led_first);
   function = scope_fn::copy_function(orig_vars);
   pre_scan_refusals(s, b, orig_code, function);
+  s.owned_handle_members = scope_handles::owned_handle_members(b, orig_code, function);
   // A nullable heap local that holds a PROJECTION VIEW owns no store it must free: marked
   // never-free (@FR-O-Override).  The displacing and witnessed locals it excludes are empty
   // here (`nullable_locals_that_displace` answers none while `τ?` has a buffer; the owner
@@ -189,6 +198,14 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
   }
   if s.rbuf_flag >= 0 {
     head += [scope_fn::v_set(s.rbuf_flag, ir::NdBoolean { b: false })];
+  }
+  // loft#1645 — every tuple member's move flag starts false: before the arm runs no move has
+  // taken the member's release.
+  if len(s.tuple_moved) > 0 {
+    flags = scope_handles::sorted([for x in s.tuple_moved[0]!.vals { x }]);
+    pre_m: vector<ir::Node> = [for fl in flags { scope_fn::v_set(fl, ir::NdBoolean { b: false }) }];
+    pre_m += head;
+    head = pre_m;
   }
   // @FR-O-Override — a temp whose store a consuming op takes over owns nothing at any later free.
   for v in s.free_transferred {
@@ -393,7 +410,6 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   }
   // `mixed_handle_views` — a handle local given a member's handle and one of its own: its
   // per-path flag (`mint_handoff_flag`) and the tagged leaves are not transcribed.
-  // (`owned_handle_members` answers only for a tuple, which refuses where it is bound.)
   if len(scope_handles::mixed_handle_views(b, code, f)) > 0 {
     scope_scan::refuse(s, "handles::mixed_handle_views: a handle view of a member and of its own (handle_views)");
   }

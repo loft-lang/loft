@@ -19,13 +19,15 @@ use scope_free_vars;
 use scope_drops;
 use scope_backings;
 use binds;
+use scope_tuple_members;
+use scope_handles;
 
 // port: get_free_vars.rs fn get_free_vars
 pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_scope: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered) -> vector<ir::Node> {
   ls: vector<ir::Node> = [];
   // `claimants_after_their_tuples`: the claimants are tuple members' buffers, and a tuple
   // local refuses below, so the registration order stands.
-  vars = scope_scan::variables(s, to_scope);
+  vars = claimants_after_their_tuples(s, scope_scan::variables(s, to_scope));
   for v in vars {
     t = scope_fn::tp(f, v);
     if v == ret_var {
@@ -45,14 +47,50 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
         ls += [ir::NdCall { def_nr: s.ops.clear_vector, args: [ir::NdVar { n: v }] }];
       }
     }
+    // The same clause for a TUPLE local's members (loft#1588): a vector member is released and
+    // emptied, a record member's backing released, freed and reset — declined where a
+    // variable of a scope that stays open views the backing.
+    for ob in outer_tuple_backings(f, v, vars) {
+      idx = ob / 65536;
+      backing = ob % 65536;
+      viewed = false;
+      for sc in s.var_scope {
+        x = sc#index;
+        if sc >= 0 && x != backing && x != v && !scope_fn::has(vars, x) && (scope_fn::has(s.stack, sc) || sc == s.scope) && scope_fn::has(scope_fn::deps(f, x), backing) {
+          viewed = true;
+        }
+      }
+      if viewed {
+        continue;
+      }
+      hook = scope_drops::scope_end_drop(s, b, f, backing);
+      if scope_fn::base(scope_fn::tp(f, backing)) is TyVector || scope_fn::name(f, backing).starts_with("__vdb_") {
+        if hook != null || scope_fn::has(s.drop_transferred, backing) {
+          if hook != null {
+            ls += [hook!];
+          }
+          ls += [ir::NdCall { def_nr: s.ops.clear_vector, args: [ir::NdTupleGet { var: v, idx: idx }] }];
+        }
+      } else if scope_fn::base(scope_fn::tp(f, backing)) is TyReference && hook != null {
+        ls += [hook!];
+        ls += [ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: backing }] }];
+        ls += [scope_fn::v_set(backing, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+      }
+    }
     if scope_fn::name(f, v).contains("hash_scratch") {
       ls += [ir::NdCall { def_nr: scope_fn::def_nr(b, "OpFreeScratch"), args: [ir::NdVar { n: v }] }];
       continue;
     }
     bt = scope_fn::base(t);
-    if bt is TyTuple {
-      scope_scan::refuse(s, "tuple_members::tuple_owned_elem_frees: a tuple local at a scope exit");
-      continue;
+    // T1.3: a tuple's owned elements in reverse index order, its handle members, its text.
+    match bt {
+      TyTuple { elems } => {
+        ls += scope_tuple_members::tuple_owned_elem_frees(b, elems, v, f, scope_tuple_members::facts_of(s, v), -1);
+        ls += scope_handles::tuple_handle_frees(b, s.owned_handle_members, v, f);
+        ls += scope_tuple_members::tuple_text_member_frees(b, elems, v, f);
+        continue;
+      },
+      _ => {}
     }
     if bt is TyText {
       if !scope_fn::is_skip_free(f, v) {
@@ -125,6 +163,99 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
   // `view_rebind` snapshots are refused by the phase.
   pair_literal_buffers(s, b, f, ls);
   ls
+}
+
+// port: get_free_vars.rs fn outer_tuple_backings — the members of a TUPLE local whose values
+// live in a backing registered in an outer scope, as `idx * 65536 + backing`.
+fn outer_tuple_backings(f: ir::Function, v: integer, exited: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  if scope_fn::is_compiler_generated(f, v) {
+    return out;
+  }
+  match scope_fn::base(scope_fn::tp(f, v)) {
+    TyTuple { elems } => for e in elems {
+      bk = scope_backings::member_backing(f, e);
+      if bk >= 0 && !scope_fn::has(exited, bk) && !scope_fn::is_argument(f, bk) {
+        out += [e#index * 65536 + bk];
+      }
+    },
+    _ => {}
+  }
+  out
+}
+
+// port: get_free_vars.rs fn claimants_after_their_tuples — a claimant work-ref registered
+// before one of its tuples moves to just after the last of them.
+fn claimants_after_their_tuples(s: scope_scan::Scopes, vars: vector<integer>) -> vector<integer> {
+  if env_variable("LOFT_NO_CLAIMANT_ORDER") != null {
+    return vars;
+  }
+  claims: vector<scope_scan::VarList> = [];
+  for t in vars {
+    at = scope_scan::tmap_at(s.tuple_call_mint, t);
+    if at >= 0 {
+      for w in s.tuple_call_mint[at]!.vals {
+        if w >= 0 {
+          claim_add(claims, w, t);
+        }
+      }
+    }
+  }
+  for e in s.tuple_claimants {
+    t = e.v / 65536;
+    if scope_fn::has(vars, t) {
+      for w in e.items {
+        claim_add(claims, w, t);
+      }
+    }
+  }
+  moved: vector<scope_scan::VarList> = [];
+  for c in claims {
+    at = scope_scan::position(vars, c.v);
+    last = -1;
+    for t in c.items {
+      p = scope_scan::position(vars, t);
+      if p > last {
+        last = p;
+      }
+    }
+    if at >= 0 && last >= 0 && at < last {
+      scope_scan::list_add(moved, vars[last]!, c.v);
+    }
+  }
+  if len(moved) == 0 {
+    return vars;
+  }
+  deferred: vector<integer> = [];
+  for m in moved {
+    deferred += m.items;
+  }
+  out: vector<integer> = [];
+  for v in vars {
+    if scope_fn::has(deferred, v) {
+      continue;
+    }
+    out += [v];
+    ws = scope_scan::list_of(moved, v);
+    if len(ws) > 0 {
+      ps: vector<integer> = [for w in ws { scope_scan::position(vars, w) * 65536 + w }];
+      for p in scope_tuple_members::sorted_ints(ps) {
+        out += [p % 65536];
+      }
+    }
+  }
+  out
+}
+
+// `claims.entry(w).or_default().push(t)` (a push even when present, as Rust's `Vec` does).
+fn claim_add(m: vector<scope_scan::VarList>, w: integer, t: integer) {
+  for e in m {
+    if e.v == w {
+      e.items += [t];
+      return;
+    }
+  }
+  m += [scope_scan::VarList { v: w, items: [t] }];
 }
 
 // The fn-ref leg of `get_free_vars`: `OpDropFnRef` (where some closure has a cascade) and

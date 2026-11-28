@@ -231,7 +231,7 @@ pub fn mixed_handle_views(b: ir::Bundle, code: ir::Node, f: ir::Function) -> vec
   sorted(out)
 }
 
-fn sorted(v: vector<integer>) -> vector<integer> {
+pub fn sorted(v: vector<integer>) -> vector<integer> {
   out: vector<integer> = [];
   for x in v {
     at = len(out);

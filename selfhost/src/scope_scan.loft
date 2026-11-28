@@ -24,6 +24,7 @@ use scope_args;
 use scope_inline_returns;
 use scope_free_vars;
 use scope_get_free_vars;
+use scope_tuple_members;
 use opt_names;
 use opt_vr_disturb;
 
@@ -241,6 +242,20 @@ pub struct Scopes {
   pub vector_call_buffers: vector<VarList>,
   pub bind_backing: vector<integer>,
   pub promoted_filled: vector<integer>,
+  // The tuple facts (`tuple_members.rs`): per tuple local, the members its latest assignment
+  // minted and their claimant (`tuple_call_mint`, a claim -1 for a sole owner) and the backing
+  // each vector member lives in (`tuple_member_now`); the per-path flag of a member a move in
+  // an arm took (`tuple_moved`, keyed `t * 65536 + i`); the loop depth a tuple was first bound
+  // at (`tuple_depth`); the members a member assignment writes (`written_tuple_members`), the
+  // work-refs each member's assignments make its claimant (`tuple_claimants`, keyed as
+  // `tuple_moved`) and the handle members a tuple owns (`owned_handle_members`).
+  pub tuple_call_mint: vector<TMap>,
+  pub tuple_member_now: vector<TMap>,
+  pub tuple_moved: vector<TMap>,
+  pub tuple_depth: vector<integer>,
+  pub written_tuple_members: vector<integer>,
+  pub tuple_claimants: vector<VarList>,
+  pub owned_handle_members: vector<integer>,
   // The callees named in this body whose ownership summary would read a body Rust laid out
   // before this function and this pass refused (`check::stale_callees`), and the body itself
   // (the oracle follows a variable to its binds there).
@@ -251,6 +266,130 @@ pub struct Scopes {
   // Every refusal met, in order (`LOFT_SCOPE_ALL_REASONS=1` reports them all: what ranks the
   // modules to transcribe next).
   pub whys: vector<text>
+}
+
+// A map from a variable to a map of member index to a number (`HashMap<u16, HashMap<u16, _>>`);
+// `tuple_moved` uses one entry, `t` 0, keyed `t * 65536 + i`.
+pub struct TMap {
+  pub t: integer,
+  pub keys: vector<integer>,
+  pub vals: vector<integer>
+}
+
+// `map.get(&t)`'s position, -1 for none.
+pub fn tmap_at(m: vector<TMap>, t: integer) -> integer {
+  for e in m {
+    if e.t == t {
+      return e#index;
+    }
+  }
+  -1
+}
+
+// `map.get(&t).and_then(|m| m.get(&k))`: -2 for none.
+pub fn tmap_get(m: vector<TMap>, t: integer, k: integer) -> integer {
+  at = tmap_at(m, t);
+  if at < 0 {
+    return -2;
+  }
+  e = m[at]!;
+  for x in e.keys {
+    if x == k {
+      return e.vals[x#index]!;
+    }
+  }
+  -2
+}
+
+// `map.entry(t).or_default().insert(k, x)`.
+pub fn tmap_put(m: vector<TMap>, t: integer, k: integer, x: integer) {
+  at = tmap_at(m, t);
+  if at < 0 {
+    m += [TMap { t: t, keys: [k], vals: [x] }];
+    return;
+  }
+  for y in m[at]!.keys {
+    if y == k {
+      m[at].vals[y#index] = x;
+      return;
+    }
+  }
+  m[at].keys += [k];
+  m[at].vals += [x];
+}
+
+// `map.insert(t, entry)`.
+pub fn tmap_set(m: vector<TMap>, e: TMap) {
+  at = tmap_at(m, e.t);
+  if at >= 0 {
+    m[at] = e;
+  } else {
+    m += [e];
+  }
+}
+
+// `map.remove(&t)`.
+pub fn tmap_drop(m: vector<TMap>, t: integer) {
+  out: vector<TMap> = [for e in m if e.t != t { e }];
+  m.clear();
+  m += out;
+}
+
+// `map.get_mut(&t).remove(&k)`.
+pub fn tmap_unput(m: vector<TMap>, t: integer, k: integer) {
+  at = tmap_at(m, t);
+  if at < 0 {
+    return;
+  }
+  e = m[at]!;
+  keys: vector<integer> = [];
+  vals: vector<integer> = [];
+  for x in e.keys {
+    if x != k {
+      keys += [x];
+      vals += [e.vals[x#index]!];
+    }
+  }
+  m[at] = TMap { t: t, keys: keys, vals: vals };
+}
+
+pub fn tmap_copy(m: vector<TMap>) -> vector<TMap> {
+  [for e in m { TMap { t: e.t, keys: [for x in e.keys { x }], vals: [for x in e.vals { x }] } }]
+}
+
+// Two inner maps equal as maps.
+pub fn tmap_eq(a: TMap, c: TMap) -> boolean {
+  if len(a.keys) != len(c.keys) {
+    return false;
+  }
+  for k in a.keys {
+    found = false;
+    for x in c.keys {
+      if x == k {
+        found = true;
+        if c.vals[x#index]! != a.vals[k#index]! {
+          return false;
+        }
+      }
+    }
+    if !found {
+      return false;
+    }
+  }
+  true
+}
+
+// `map.retain(|t, m| before.get(t) == Some(m))`.
+pub fn tmap_retain_same(m: vector<TMap>, before: vector<TMap>) {
+  out: vector<TMap> = [];
+  for e in m {
+    at = tmap_at(before, e.t);
+    if at >= 0 && tmap_eq(e, before[at]!) {
+      out += [e];
+    }
+  }
+  m.clear();
+  m += out;
 }
 
 // A map from a variable to a list of variables (`HashMap<u16, Vec<u16>>`).
@@ -502,12 +641,19 @@ pub fn register_binding(s: Scopes, v: integer, f: ir::Function) {
   collection = scope_fn::base(t) is TyVector || scope_fn::base(t) is TyTuple;
   // A fn-ref's closure record releases in the fn-ref's turn, just BEFORE it (loft#1606).
   fn_ref = scope_fn::base(t) is TyFunction;
-  if scope_fn::base(t) is TyTuple {
-    // the tuple members' backings: `backings::member_backing`
-    refuse(s, "scan::register_binding: a tuple binding (backings::member_backing)");
-  }
   records: vector<integer> = [];
-  for d in scope_fn::deps(f, v) {
+  backings = scope_fn::deps(f, v);
+  // A TUPLE local releases through its members' backings (loft#1588).
+  match scope_fn::base(t) {
+    TyTuple { elems } => for e in elems {
+      mb = scope_backings::member_backing(f, e);
+      if mb >= 0 {
+        backings += [mb];
+      }
+    },
+    _ => {}
+  }
+  for d in backings {
     nm = scope_fn::name(f, d);
     at = position(s.var_order, d);
     if fn_ref && nm.starts_with("___clos_") && at >= 0 {
@@ -731,6 +877,8 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       owned_before = copy_ints(s.owned_refs);
       views_before = copy_ints(s.view_backing);
       backing_before = copy_ints(s.construction_backing);
+      mints_before = tmap_copy(s.tuple_call_mint);
+      now_before = tmap_copy(s.tuple_member_now);
       // `collect_drop_transferred` on each statement: a hand-off of a drop-bearing record, which
       // the phase refuses (`any_droppable`) before it could be armed.
       ls = scope_convert::convert(s, b, lp, f, false);
@@ -744,6 +892,8 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       }
       retain_same(s.view_backing, views_before);
       retain_same(s.construction_backing, backing_before);
+      tmap_retain_same(s.tuple_call_mint, mints_before);
+      tmap_retain_same(s.tuple_member_now, now_before);
       k = len(s.loops);
       s.loops = s.loops[0..k - 1];
       exit_scope(s);
@@ -819,18 +969,23 @@ pub fn scan_inner(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> i
       owned_before = copy_ints(s.owned_refs);
       views_before = copy_ints(s.view_backing);
       backing_before = copy_ints(s.construction_backing);
+      mints_before = tmap_copy(s.tuple_call_mint);
+      now_before = tmap_copy(s.tuple_member_now);
       sn = scan(s, b, next, f);
       se = scan(s, b, init, f);
       retain_same(s.owned_refs, owned_before);
       retain_same(s.view_backing, views_before);
       retain_same(s.construction_backing, backing_before);
+      tmap_retain_same(s.tuple_call_mint, mints_before);
+      tmap_retain_same(s.tuple_member_now, now_before);
       ir::NdIter { var: idx, create: sc, next: sn, init: se }
     },
     NdTuple { items } => ir::NdTuple { items: [for x in items { scan(s, b, x, f) }] },
     NdTupleGet { var, idx } => ir::NdTupleGet { var: mapped(s, var), idx: idx },
     NdTuplePut { var, idx, inner } => {
-      refuse(s, "tuple_members::member_write: a tuple member written");
-      ir::NdTuplePut { var: mapped(s, var), idx: idx, inner: scan(s, b, inner, f) }
+      tv = mapped(s, var);
+      value = scan(s, b, inner, f);
+      scope_tuple_members::member_write(s, b, tv, idx, value, f)
     },
     NdFnRefDnr { n: var } => ir::NdFnRefDnr { n: mapped(s, var) },
     NdFnRef { def_nr, var: clos, t } => ir::NdFnRef { def_nr: def_nr, var: if clos == scope_fn::NONE { clos } else { mapped(s, clos) }, t: t },

@@ -26,6 +26,8 @@ use scope_capture_builds;
 use scope_drops;
 use scope_witness;
 use scope_buffers;
+use scope_handles;
+use scope_tuple_members;
 
 // port: scan_set.rs fn scan_set
 pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::Node, f: ir::Function) -> ir::Node {
@@ -63,8 +65,8 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   // legs, its `&`-ness carried as `publishes_through_ref`.  A generator handle binding takes
   // its frame release on a rebind (@FR-G-Hold); a handle view of a member and one of its own
   // (`handle_views`) refuses in the phase.
-  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !heap_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) && !scope_fn::is_keyed(t) && !(scope_fn::base(t) is TyIterator) {
-    // The rest of `scan_set` for this binding asks the passes of its kind: the tuple unbox.
+  if !scope_fn::is_plain(t) && !scope_fn::is_text(t) && !scope_fn::is_plain_link(t) && !heap_link(t) && !scope_fn::is_record(t) && !(scope_fn::base(t) is TyFunction) && !(scope_fn::base(t) is TyVector) && !scope_fn::is_keyed(t) && !(scope_fn::base(t) is TyIterator) && !(scope_fn::base(t) is TyTuple) {
+    // The rest of `scan_set` for this binding asks the passes of its kind.
     scope_scan::refuse(s, "scan_set: a {scope_fn::kind_name(t)} binding (drops, witness, backings)");
     if !scope_scan::in_scope(s, v) {
       scope_scan::register_binding(s, v, f);
@@ -76,6 +78,14 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   copy = copy_temp_held_bind(s, b, ov, v, value, f);
   if copy != null {
     return scope_scan::scan(s, b, copy!, f);
+  }
+  // `@FR-B-View` — a tuple local bound ONCE from a record's unbox (`tuple_unbox`) borrows the
+  // record its work-ref holds.  `LOFT_NO_UNBOX_MEMBER_DEPS=1` keeps it owning.
+  if !scope_fn::has(s.multi_assigned, ov) && env_variable("LOFT_NO_UNBOX_MEMBER_DEPS") == null && scope_fn::base(scope_fn::tp(f, v)) is TyTuple && len(scope_fn::deps(f, v)) == 0 {
+    uw = unbox_work_ref(value);
+    if uw >= 0 && uw != v {
+      set_deps(f, v, [uw]);
+    }
   }
   // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value branch is
   // written out per arm (`sink_set_into_arms`).  The droppable-owning first bind is refused by
@@ -136,7 +146,31 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     return ir::NdInsert { items: [] };
   }
   transition_free: ir::Node? = null;
-  // The TUPLE transition is reached only for a tuple, which refuses above.
+  // The same transition for a TUPLE: its previous turn's owned elements are released before
+  // the new elements land, and the move flags of its members reset.
+  if was_in_scope && !scope_fn::names_var(value, v) && !scope_fn::names_var(value, ov) {
+    match scope_fn::base(scope_fn::tp(f, v)) {
+      TyTuple { elems } => {
+        frees = scope_tuple_members::tuple_owned_elem_frees(b, elems, v, f, scope_tuple_members::facts_of(s, v), -1);
+        frees += scope_handles::tuple_handle_frees(b, s.owned_handle_members, v, f);
+        resets: vector<integer> = [];
+        if len(s.tuple_moved) > 0 {
+          for k in s.tuple_moved[0]!.keys {
+            if k / 65536 == v {
+              resets += [(k % 65536) * 65536 + s.tuple_moved[0]!.vals[k#index]!];
+            }
+          }
+        }
+        for r in scope_tuple_members::sorted_ints(resets) {
+          frees += [scope_fn::v_set(r % 65536, ir::NdBoolean { b: false })];
+        }
+        if len(frees) > 0 {
+          transition_free = ir::NdInsert { items: frees };
+        }
+      },
+      _ => {}
+    }
+  }
   // loft#1126 / @FR-O-Latest — `v = f(…, v, …)` with `v` at `f`'s hidden buffer position, where
   // `f` mints a store of its own.  `Function::entry_witness` is minted only for a hidden return
   // buffer, which the phase refuses.
@@ -252,7 +286,79 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
       scope_scan::put(s.view_backing, v, pr);
     }
   }
-  // The tuple member backings and call mints are a tuple's, which refuses above.
+  // loft#1588 — which backing each vector member of this value lives in, where the assignment
+  // runs in the variable's own scope.
+  if scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    now = tuple_member_backings_of(value, f);
+    vs = scope_scan::get(s.var_scope, v);
+    if now != null && (vs < 0 || vs == s.scope) {
+      n = now!;
+      scope_scan::tmap_set(s.tuple_member_now, scope_scan::TMap { t: v, keys: n.keys, vals: n.vals });
+    } else {
+      scope_scan::tmap_drop(s.tuple_member_now, v);
+    }
+  }
+  // loft#1511 — the elements of a tuple-literal RHS minted by their own call, for the element
+  // frees at reassignment and scope exit.
+  if scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    joined: scope_tuple_members::BranchMints? = null;
+    if scope_fn::unspan(value) is NdIf || (env_variable("LOFT_NO_MATCH_TUPLE_JOIN") == null && ends_in_branch(value)) {
+      joined = scope_tuple_members::branch_tuple_call_mints(b, value, f, s.ops.null_ref_sentinel);
+    } else {
+      plain = scope_tuple_members::tuple_call_mints(b, value, f);
+      if plain != null {
+        joined = scope_tuple_members::BranchMints { mints: plain!, disarms: [] };
+      }
+    }
+    if joined != null {
+      handoff_disarm += joined!.disarms;
+      m = joined!.mints;
+      // `@FR-H-FreeTwice` — a `null` member a later member write fills is the tuple's alone.
+      match scope_fn::unspan(value) {
+        NdTuple { items } => if env_variable("LOFT_NO_NULL_MEMBER_OWNED") == null {
+          for member in items {
+            idx = member#index;
+            is_null = match scope_fn::unspan(member) {
+              NdNull => true,
+              NdCall { def_nr, args } => len(args) == 0 && def_nr == s.ops.null_ref_sentinel,
+              _ => false
+            };
+            if is_null && scope_fn::has(s.written_tuple_members, ov * 65536 + idx) && !m.keys.contains(idx) {
+              m.keys += [idx];
+              m.vals += [-1];
+            }
+          }
+        },
+        _ => {}
+      }
+      // loft#1532 — an element a later member assignment writes is handed to the tuple ALONE.
+      match scope_fn::base(scope_fn::tp(f, v)) {
+        TyTuple { elems } => for idx in scope_tuple_members::sorted_ints([for k in m.keys { k }]) {
+          owned = len(scope_tuple_members::tuple_owned_elem_frees(b, elems, v, f, scope_tuple_members::no_facts(), idx)) > 0;
+          if owned && scope_fn::has(s.written_tuple_members, ov * 65536 + idx) {
+            for k in m.keys {
+              if k == idx && m.vals[k#index]! >= 0 {
+                handoff_disarm += [scope_fn::v_set(m.vals[k#index]!, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+                m.vals[k#index] = -1;
+              }
+            }
+          }
+        },
+        _ => {}
+      }
+      // The members this statement minted are the tuple's own.
+      if scope_scan::get(s.var_scope, v) == s.scope {
+        for mw in m.vals {
+          if mw >= 0 {
+            scope_scan::set_remove(s.drop_transferred, mw);
+          }
+        }
+      }
+      scope_scan::tmap_set(s.tuple_call_mint, scope_scan::TMap { t: v, keys: m.keys, vals: m.vals });
+    } else {
+      scope_scan::tmap_drop(s.tuple_call_mint, v);
+    }
+  }
   // remember the scope of the variable
   depend: vector<integer> = [];
   pending = scope_fn::deps(f, v);
@@ -276,6 +382,9 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     }
   }
   first_binding = !scope_scan::in_scope(s, v);
+  if first_binding && scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    scope_scan::put(s.tuple_depth, v, len(s.loops));
+  }
   if first_binding {
     scope_scan::register_binding(s, v, f);
   }
@@ -493,6 +602,24 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     k = len(s.binding_now);
     s.binding_now = s.binding_now[0..k - 1];
   }
+  // loft#1588 — the backings a tuple's vector members live in take the TUPLE's turn in the
+  // sweep, just ahead of it.
+  if scope_fn::base(scope_fn::tp(f, v)) is TyTuple {
+    now = tuple_member_backings_of(value, f);
+    if now != null {
+      for bk in scope_tuple_members::sorted_ints(now!.vals) {
+        bpos = scope_scan::position(s.var_order, bk);
+        if bpos >= 0 {
+          scope_scan::remove_at(s.var_order, bpos);
+          at = scope_scan::position(s.var_order, v);
+          if at < 0 {
+            at = bpos;
+          }
+          s.var_order.insert(at, bk);
+        }
+      }
+    }
+  }
   delivered = scope_backings::delivered_work_ref(b, value, f) >= 0;
   if !delivered {
     match scanned {
@@ -618,6 +745,54 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   all += witness_update;
   all += displaced.post;
   ir::NdInsert { items: all }
+}
+
+// port: scan_set.rs fn unbox_work_ref — the work-ref a `tuple_unbox` block binds first, -1 for none.
+fn unbox_work_ref(value: ir::Node) -> integer {
+  match scope_fn::unspan(value) {
+    NdBlock { block } => if block[0]!.name == "tuple_unbox" && len(block[0]!.operators) > 0 {
+      match scope_fn::unspan(block[0]!.operators[0]!) {
+        NdSet { var: w } => w,
+        _ => -1
+      }
+    } else { -1 },
+    _ => -1
+  }
+}
+
+// port: scan_set.rs fn ends_in_branch
+fn ends_in_branch(value: ir::Node) -> boolean {
+  match scope_fn::unspan(value) {
+    NdIf => true,
+    NdBlock { block } => {
+      k = len(block[0]!.operators);
+      k > 0 && ends_in_branch(block[0]!.operators[k - 1]!)
+    },
+    _ => false
+  }
+}
+
+// port: scan_set.rs fn tuple_member_backings_of — the backing each VECTOR member of a tuple
+// literal lives in, by member index; null where `rhs` is not a tuple literal.
+fn tuple_member_backings_of(rhs: ir::Node, f: ir::Function) -> scope_scan::TMap? {
+  items: vector<ir::Node> = match scope_fn::unspan(rhs) {
+    NdTuple { items } => items,
+    _ => return null
+  };
+  out = scope_scan::TMap { t: 0, keys: [], vals: [] };
+  for m in items {
+    match scope_fn::unspan(m) {
+      NdBlock { block } => if scope_fn::base(block[0]!.result[0] ?? ir::TyVoid) is TyVector {
+        bk = scope_backings::member_backing(f, block[0]!.result[0]!);
+        if bk >= 0 {
+          out.keys += [m#index];
+          out.vals += [bk];
+        }
+      },
+      _ => {}
+    }
+  }
+  out
 }
 
 // port: scan_set.rs fn delivers_into_buffer — `v` at the callee's buffer position and the
