@@ -667,7 +667,7 @@ impl Scopes<'_> {
             tp,
             ret_var,
             &Delivered {
-                sources: return_sources,
+                sources: return_sources.clone(),
                 arm_dropped,
                 moved_out,
             },
@@ -842,6 +842,27 @@ impl Scopes<'_> {
                     ),
                     _ => free,
                 });
+            }
+            // `@FR-O-Witness`, loft#2691 — a WITNESSED source of the join is never freed through
+            // itself, so the suppression above skipped its release wholesale, as if it were what
+            // the return hands out on every run: `alt(x) ?? x` answering `alt`'s fresh record left
+            // `x`'s own copy owned by nobody.  Its witness releases it wherever the value
+            // returned is another store.
+            let mut witnessed: Vec<(u16, u16)> = return_sources
+                .iter()
+                .filter_map(|&s| self.owner_witness.get(&s).map(|&w| (s, w)))
+                .collect();
+            witnessed.sort_unstable();
+            for (src, w) in witnessed {
+                result.push(v_if(
+                    Value::Call(distinct, vec![Value::Var(w), Value::Var(tmp)]),
+                    super::witness::release_witness(
+                        w,
+                        self.witness_hook(function, data, src, w),
+                        data,
+                    ),
+                    Value::Null,
+                ));
             }
             // A rebound parameter's own store (distinct from the one the caller handed, which
             // its entry witness names) is released unless it is the value returned.
