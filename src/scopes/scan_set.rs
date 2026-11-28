@@ -2212,6 +2212,22 @@ impl Scopes<'_> {
             } else {
                 free
             };
+            // `@FR-H-FreeTwice`, loft#2680 — the displaced store may be one of several record
+            // constructions' work-refs' (`lt = TyVoid; if c { lt = TyRef {…} }; lt = …`): the
+            // free releases it here, at the rebind, so whichever work-ref names it is disarmed
+            // first and the frame's exit does not release it again.  A work-ref naming another
+            // store keeps it.  Where the scan names the one construction it disarms that itself.
+            let distinct = data.def_nr("OpDistinctStore");
+            let sentinel = data.def_nr("OpNullRefSentinel");
+            for &t in self.construction_temps.get(&v).into_iter().flatten() {
+                if t != v {
+                    prefix.push(v_if(
+                        Value::Call(distinct, vec![Value::Var(v), Value::Var(t)]),
+                        Value::Null,
+                        v_set(t, Value::Call(sentinel, vec![])),
+                    ));
+                }
+            }
             prefix.push(free);
         }
         // …and the witness snapshot is written AFTER it, so the free compares against the
