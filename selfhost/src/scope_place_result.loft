@@ -1,0 +1,1895 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/place_result.rs` transcribed: `@FR-R-Place` and `@FR-R-MoveLast`, a call result
+// BUILT WHERE IT WILL LIVE.  A plain local bound once from a loft-defined callee that writes a
+// fresh literal into its hidden return buffer on every exit, read only as a native receiver and
+// stored once into a field of an element appended to a parameter's collection: the buffer's null
+// init becomes `OpPlaceRecord(host, tp)`, the field's copy `OpMoveRecord`, and each exit's free
+// pair one `OpFreeRecordIn` where the record is still held and nothing where it was stored.  The
+// loop clause (a decoder's shape: the bind at the top of a loop turn behind the lazy mint) places
+// the mint in the host's store and turns the store into the shallow `OpMoveField`.  Run by `check`
+// on the settled body after `insert_evacuations` and before `exit_vector`, as Rust's is.  Every
+// site is recorded by its path through the body (the child index taken at each step down, spans
+// transparent), the one enumeration the admission and the rewrite share.
+//
+// Only the rewrite is transcribed: the preview (`admits`, the copy notice's question) and
+// `callee_keeps_an_offered_record` (the parser's stored-reference placement) are asked outside
+// this pass.  A callee whose exits are read here and which this pass refused is refused by name:
+// Rust reads its settled body, the image holds its parser body.
+
+use ir;
+use scope_fn;
+use binds;
+use own;
+use ir_pass_tree;
+
+struct Ops {
+  copy: integer,
+  free_ref: integer,
+  free_if_distinct: integer,
+  new_record: integer,
+  get_field: integer,
+  place: integer,
+  move_rec: integer,
+  free_in: integer,
+  move_field: integer,
+  ref_is_null: integer,
+  database: integer,
+  clear: integer
+}
+
+// `keys::COPY_TP_MASK`, `keys::COPY_FREE_SOURCE`, `keys::POOL_TP_MASK`.
+COPY_TP_MASK = 16383;
+COPY_FREE_SOURCE = 32768;
+POOL_TP_MASK = 32767;
+
+// The walk's answer (`Verdict`): the state the path continues with, the path's end, or a decline
+// (its reason in the walker's `why`).
+HELD = 0;
+MOVED = 1;
+EXIT = 2;
+FAIL = -1;
+
+// Where a node stands (`Pos`).
+POS_STMT = 0;
+POS_RECV = 1;
+POS_ARG = 2;
+
+// One admitted bind (`Plan`); a path set holds each path as its text key.
+struct Plan {
+  v: integer,
+  buf: integer,
+  host: integer,
+  tp: integer,
+  moves: vector<text>,
+  frees_held: vector<text>,
+  frees_dropped: vector<text>
+}
+
+// One admitted loop bind (`LoopPlan`).
+struct LoopPlan {
+  buf: integer,
+  host: integer,
+  tp: integer,
+  move_tp: integer,
+  mint: vector<integer>,
+  mov: vector<integer>,
+  drops: vector<vector<integer>>,
+  host_outlives: boolean
+}
+
+// The bodies the admission reads: this function's own settled body and variables (a recursive
+// callee is this function), and the functions this pass refused, whose settled bodies the image
+// does not hold.
+struct Bodies {
+  d_nr: integer,
+  code: ir::Node,
+  f: ir::Function,
+  refused_nrs: vector<integer>,
+  stale: boolean = false
+}
+
+// What `rewrite` answers: the body, or the reason the function is refused.
+pub struct Res { pub code: ir::Node, pub why: text }
+
+// port: place_result.rs fn rewrite — every admitted bind of function `d_nr`, the loop clause
+// first; a no-op under `LOFT_NO_PLACE_RESULT`.
+pub fn rewrite(b: ir::Bundle, d_nr: integer, code: ir::Node, f: ir::Function, refused_nrs: vector<integer>) -> Res {
+  e = env_variable("LOFT_NO_PLACE_RESULT");
+  if e != null && e! != "0" {
+    return Res { code: code, why: "" };
+  }
+  found = lookup(b);
+  if found == null {
+    return Res { code: code, why: "" };
+  }
+  ops = found!;
+  bs = Bodies { d_nr: d_nr, code: code, f: f, refused_nrs: refused_nrs };
+  loop_plans = admitted_loops(b, bs, code, ops);
+  out = code;
+  for p in loop_plans {
+    out = apply_loop(out, p, ops);
+  }
+  bs.code = out;
+  plans = admitted(b, bs, out, ops);
+  if bs.stale {
+    return Res { code: code, why: "place_result::rewrite: a callee whose exits are read was refused (its exits read its settled body)" };
+  }
+  for p in plans {
+    out = apply(out, [], p, ops);
+  }
+  Res { code: out, why: "" }
+}
+
+// port: place_result.rs fn Ops::lookup — null where an operator is not defined.
+fn lookup(b: ir::Bundle) -> Ops? {
+  ops = Ops {
+    copy: scope_fn::def_nr(b, "OpCopyRecord"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    new_record: scope_fn::def_nr(b, "OpNewRecord"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    place: scope_fn::def_nr(b, "OpPlaceRecord"),
+    move_rec: scope_fn::def_nr(b, "OpMoveRecord"),
+    free_in: scope_fn::def_nr(b, "OpFreeRecordIn"),
+    move_field: scope_fn::def_nr(b, "OpMoveField"),
+    ref_is_null: scope_fn::def_nr(b, "OpRefIsNull"),
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    clear: scope_fn::def_nr(b, "OpClear")
+  };
+  for x in [ops.copy, ops.free_ref, ops.free_if_distinct, ops.new_record, ops.get_field, ops.place, ops.move_rec, ops.free_in, ops.move_field, ops.ref_is_null, ops.database, ops.clear] {
+    if x < 0 {
+      return null;
+    }
+  }
+  ops
+}
+
+// ---- small helpers ----------------------------------------------------------------------------
+
+fn key(path: vector<integer>) -> text {
+  "{path}"
+}
+
+fn has_key(set: vector<text>, k: text) -> boolean {
+  for x in set {
+    if x == k {
+      return true;
+    }
+  }
+  false
+}
+
+fn copy_path(path: vector<integer>) -> vector<integer> {
+  [for x in path { x }]
+}
+
+fn is_var(n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == w,
+    _ => false
+  }
+}
+
+fn int_of(n: ir::Node) -> integer? {
+  match scope_fn::unspan(n) {
+    NdInt { n: x } => x,
+    _ => null
+  }
+}
+
+fn var_of(n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x,
+    _ => -1
+  }
+}
+
+// `u16::try_from(x).is_ok()`.
+fn is_u16(x: integer) -> boolean {
+  x >= 0 && x <= 65535
+}
+
+fn defs_len(b: ir::Bundle) -> integer {
+  len(b.data.definitions)
+}
+
+// `Type::peel_optional`'s nullability.
+fn nullable(t: ir::TypeT) -> boolean {
+  t is TyOptional
+}
+
+// `peel_optional().0` is a `Type::Reference`.
+fn is_reference(t: ir::TypeT) -> boolean {
+  scope_fn::base(t) is TyReference
+}
+
+// `Type::peel_link`: `base()`, then every `&` and `Rewritten` marker peeled, each with its `base()`.
+fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  u = scope_fn::base(t);
+  while true {
+    match u {
+      TyRefVar { inner } => { u = scope_fn::base(inner); },
+      TyRewritten { inner } => { u = scope_fn::base(inner); },
+      _ => break
+    }
+  }
+  u
+}
+
+// `Type::heap_def_nr` — through `base()`, -1 for none.
+fn heap_def_nr(t: ir::TypeT) -> integer {
+  match scope_fn::base(t) {
+    TyReference { n } => n,
+    TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+    _ => -1
+  }
+}
+
+// `Data::source_nr(0, name)`.
+fn source_def(b: ir::Bundle, nm: text) -> integer {
+  for d in b.data.definitions {
+    if d.source == 0 && d.name == nm {
+      return d#index;
+    }
+  }
+  -1
+}
+
+// port: data.rs fn type_def_nr — -1 for `u32::MAX`.
+fn type_def_nr(b: ir::Bundle, t: ir::TypeT) -> integer {
+  match t {
+    TyRewritten { inner } => type_def_nr(b, inner),
+    TyOptional { inner } => type_def_nr(b, inner),
+    TyInteger => source_def(b, "integer"),
+    TyBoolean => source_def(b, "boolean"),
+    TyFloat => source_def(b, "float"),
+    TyText => source_def(b, "text"),
+    TySingle => source_def(b, "single"),
+    TyCharacter => source_def(b, "character"),
+    TyRoutine { n } => n,
+    TyEnum { n } => n,
+    TyReference { n } => n,
+    TyUnknown { n } => n,
+    TyVector => source_def(b, "vector"),
+    TyRefVar { inner } => if inner is TyReference { type_def_nr(b, inner) } else { source_def(b, "reference") },
+    TySorted => source_def(b, "sorted"),
+    TyIndex => source_def(b, "index"),
+    TyHash => source_def(b, "hash"),
+    TyRadix => source_def(b, "spatial"),
+    TyTrie => source_def(b, "trie"),
+    TyFunction => scope_fn::def_nr(b, "i32"),
+    TyIterator => source_def(b, "iterator"),
+    _ => -1
+  }
+}
+
+// port: place_result.rs fn scalar_like — a value the store hands out by value.
+fn scalar_like(t: ir::TypeT) -> boolean {
+  match scope_fn::base(t) {
+    TyVoid => true,
+    TyNull => true,
+    TyNever => true,
+    TyInteger => true,
+    TyBoolean => true,
+    TyFloat => true,
+    TySingle => true,
+    TyCharacter => true,
+    TyText => true,
+    TyEnum { is_ref } => !is_ref,
+    _ => false
+  }
+}
+
+fn returned_of(d: ir::Definition) -> ir::TypeT {
+  d.returned[0] ?? ir::TyVoid
+}
+
+// `Function::is_caller_hidden_buf`.
+fn is_caller_hidden_buf(f: ir::Function, v: integer) -> boolean {
+  x = f.variables[v];
+  if x == null { false } else { x.caller_hidden_buf }
+}
+
+// The code and variables of definition `nr` as Rust's `data.def(nr)` holds them at this point:
+// this function's own from the pass, a refused one's marked stale.
+fn code_of(b: ir::Bundle, bs: Bodies, nr: integer) -> ir::Node {
+  if nr == bs.d_nr {
+    return bs.code;
+  }
+  if scope_fn::has(bs.refused_nrs, nr) {
+    bs.stale = true;
+  }
+  b.data.definitions[nr]!.code[0] ?? ir::NdNull
+}
+
+fn vars_of(b: ir::Bundle, bs: Bodies, nr: integer) -> ir::Function {
+  if nr == bs.d_nr { bs.f } else { b.data.definitions[nr]!.variables }
+}
+
+// ---- the admission ----------------------------------------------------------------------------
+
+// port: place_result.rs fn admitted — the top-level binds of the body.
+fn admitted(b: ir::Bundle, bs: Bodies, code: ir::Node, ops: Ops) -> vector<Plan> {
+  plans: vector<Plan> = [];
+  top = match scope_fn::unspan(code) {
+    NdBlock { block } => block[0]!,
+    _ => return plans
+  };
+  for stmt in top.operators {
+    idx = stmt#index;
+    match scope_fn::unspan(stmt) {
+      NdSet { var: v, inner } => match scope_fn::unspan(inner) {
+        NdCall { def_nr: fn_nr, args } => {
+          if placeable_bind(b, bs.f, v, fn_nr) {
+            p = admit(b, bs, top, idx, v, fn_nr, args, ops);
+            if p != null {
+              plans += [p!];
+            }
+          }
+        },
+        _ => {}
+      },
+      _ => {}
+    }
+  }
+  plans
+}
+
+// port: place_result.rs fn placeable_bind — a plain local bound from a direct call to a
+// loft-defined callee that answers a bare dense record it minted.
+fn placeable_bind(b: ir::Bundle, f: ir::Function, v: integer, fn_nr: integer) -> boolean {
+  if fn_nr < 0 || fn_nr >= defs_len(b) {
+    return false;
+  }
+  def = b.data.definitions[fn_nr]!;
+  if !binds::is_loft_defined(def) {
+    return false;
+  }
+  rt = returned_of(def);
+  if nullable(rt) || !is_reference(rt) {
+    return false;
+  }
+  // `@FR-R-Place`'s callee clause (`@FR-O-Proxy`).
+  if own::returns_borrowed_view(def) {
+    return false;
+  }
+  if scope_fn::is_argument(f, v) || is_caller_hidden_buf(f, v) || scope_fn::is_skip_free(f, v) {
+    return false;
+  }
+  // `@FR-H-RefHome`.
+  if scope_fn::is_ref_home(f, v) {
+    return false;
+  }
+  !scope_fn::name(f, v).starts_with("__")
+}
+
+// The call's buffer argument and the variables its other arguments name (`admit`'s and
+// `admit_loop`'s shared head); `why` set where it declines.
+struct Head { buf: integer = -1, mentions: vector<integer>, why: text }
+
+fn call_head(b: ir::Bundle, bs: Bodies, f: ir::Function, v: integer, fn_nr: integer, args: vector<ir::Node>) -> Head {
+  h = Head { why: "", mentions: [] };
+  buf_idx = binds::hidden_return_buffer_attr(b.data.definitions[fn_nr]!);
+  if buf_idx == null {
+    h.why = "the callee has no hidden return buffer";
+    return h;
+  }
+  if !callee_writes_buffer_at_every_exit(b, bs, fn_nr, buf_idx!) {
+    h.why = "the callee does not build a fresh literal into its buffer on every exit";
+    return h;
+  }
+  a = args[buf_idx!];
+  buf = if a == null { -1 } else { var_of(a!) };
+  if buf < 0 {
+    h.why = "the buffer argument is not a variable";
+    return h;
+  }
+  if !scope_fn::name(f, buf).starts_with("__ref_") {
+    h.why = "the buffer argument is not a caller work-ref";
+    return h;
+  }
+  for x in args {
+    if x#index == buf_idx! {
+      continue;
+    }
+    if scope_fn::names_var(x, buf) || scope_fn::names_var(x, v) {
+      h.why = "an argument of the call names the buffer or the local";
+      return h;
+    }
+    collect_vars(x, h.mentions);
+  }
+  h.buf = buf;
+  h
+}
+
+// port: place_result.rs fn admit — null where it declines.
+fn admit(b: ir::Bundle, bs: Bodies, top: ir::Block, idx: integer, v: integer, fn_nr: integer, args: vector<ir::Node>, ops: Ops) -> Plan? {
+  f = bs.f;
+  // `@FR-N-Shape` — the nullability is read off the marker.
+  vt = scope_fn::tp(f, v);
+  if nullable(vt) || !is_reference(vt) {
+    return null;
+  }
+  h = call_head(b, bs, f, v, fn_nr, args);
+  if h.why != "" {
+    return null;
+  }
+  buf = h.buf;
+  buf_inits = 0;
+  v_inits = 0;
+  for stmt in top.operators {
+    if stmt#index >= idx {
+      break;
+    }
+    u = scope_fn::unspan(stmt);
+    match u {
+      NdSet { var: w, inner } => {
+        if w == buf {
+          if !(scope_fn::unspan(inner) is NdNull) {
+            return null;
+          }
+          buf_inits += 1;
+          continue;
+        }
+        if w == v {
+          if !(scope_fn::unspan(inner) is NdNull) {
+            return null;
+          }
+          v_inits += 1;
+          continue;
+        }
+      },
+      _ => {}
+    }
+    if scope_fn::names_var(u, buf) || scope_fn::names_var(u, v) {
+      return null;
+    }
+  }
+  // The rewrite requires exactly one top-level null init of the buffer.
+  if buf_inits != 1 || v_inits > 1 {
+    return null;
+  }
+  cx = Cx {
+    b: b, f: f, ops: ops, v: v, buf: buf, call_mentions: h.mentions,
+    own_retbuf: own_return_buffer(b, bs), path: [], moves: [], frees_held: [], frees_dropped: [],
+    elm_keys: [], elm_hosts: [], why: ""
+  };
+  st = HELD;
+  for stmt in top.operators {
+    i = stmt#index;
+    if i <= idx {
+      continue;
+    }
+    r = child(cx, i, stmt, st, POS_STMT);
+    if r == FAIL {
+      return null;
+    }
+    if r == EXIT {
+      break;
+    }
+    st = r;
+  }
+  if cx.host < 0 || cx.tp < 0 {
+    return null;
+  }
+  Plan { v: v, buf: buf, host: cx.host, tp: cx.tp, moves: cx.moves, frees_held: cx.frees_held, frees_dropped: cx.frees_dropped }
+}
+
+// port: place_result.rs fn own_return_buffer — `__retbuf` or the local promoted onto it, -1 for
+// none.
+fn own_return_buffer(b: ir::Bundle, bs: Bodies) -> integer {
+  d = b.data.definitions[bs.d_nr]!;
+  idx = binds::hidden_return_buffer_attr(d);
+  if idx == null {
+    return -1;
+  }
+  a = d.attributes[idx!];
+  if a == null {
+    return -1;
+  }
+  scope_fn::var(bs.f, a!.name)
+}
+
+// ---- the callee clause ------------------------------------------------------------------------
+
+// port: place_result.rs fn callee_writes_buffer_at_every_exit
+fn callee_writes_buffer_at_every_exit(b: ir::Bundle, bs: Bodies, fn_nr: integer, buf_idx: integer) -> boolean {
+  active: vector<integer> = [];
+  chain_writes_buffer(b, bs, fn_nr, buf_idx, active)
+}
+
+fn chain_writes_buffer(b: ir::Bundle, bs: Bodies, fn_nr: integer, buf_idx: integer, active: vector<integer>) -> boolean {
+  if scope_fn::has(active, fn_nr) {
+    return false;
+  }
+  active += [fn_nr];
+  answer = chain_writes_buffer_inner(b, bs, fn_nr, buf_idx, active);
+  active.remove(len(active) - 1);
+  answer
+}
+
+struct Exits { buf_var: integer, active: vector<integer>, count: integer = 0, ok: boolean = true }
+
+fn chain_writes_buffer_inner(b: ir::Bundle, bs: Bodies, fn_nr: integer, buf_idx: integer, active: vector<integer>) -> boolean {
+  def = b.data.definitions[fn_nr]!;
+  attr = def.attributes[buf_idx];
+  if attr == null {
+    return false;
+  }
+  nm = attr!.name;
+  if nm != "__retbuf" && !nm.starts_with("__ref_") {
+    return false;
+  }
+  vars = vars_of(b, bs, fn_nr);
+  buf_var = scope_fn::var(vars, nm);
+  if buf_var < 0 || !scope_fn::is_argument(vars, buf_var) {
+    return false;
+  }
+  body = code_of(b, bs, fn_nr);
+  bl = match scope_fn::unspan(body) {
+    NdBlock { block } => block[0]!,
+    _ => return false
+  };
+  n = len(bl.operators);
+  if n == 0 {
+    return false;
+  }
+  last = bl.operators[n - 1]!;
+  cx = Exits { buf_var: buf_var, active: active };
+  target = chain_block(b, last, buf_var);
+  if tail_object_yielding(last, buf_var) || target != null {
+    // The tail spelling, the parser's tail before the scope pass wraps it in a `Return`.
+    cx.count += 1;
+    if target != null {
+      exits_chain(b, bs, cx, target!);
+    }
+    for op in bl.operators {
+      if op#index < n - 1 {
+        exits_check(b, bs, cx, op);
+      }
+    }
+  } else {
+    if !exits_is_exit(b, bs, cx, last) {
+      return false;
+    }
+    exits_check(b, bs, cx, body);
+  }
+  cx.count > 0 && cx.ok
+}
+
+// A chain exit's target: the callee and its buffer index.
+struct Target { g: integer, idx: integer }
+
+// port: place_result.rs fn Exits::chain
+fn exits_chain(b: ir::Bundle, bs: Bodies, cx: Exits, t: Target) {
+  if !chain_writes_buffer(b, bs, t.g, t.idx, cx.active) {
+    cx.ok = false;
+  }
+}
+
+// port: place_result.rs fn Exits::is_exit
+fn exits_is_exit(b: ir::Bundle, bs: Bodies, cx: Exits, op: ir::Node) -> boolean {
+  match scope_fn::unspan(op) {
+    NdReturn { inner } => {
+      if tail_fresh_object_workref(inner) == cx.buf_var {
+        return true;
+      }
+      t = chain_block(b, inner, cx.buf_var);
+      if t != null {
+        exits_chain(b, bs, cx, t!);
+        return true;
+      }
+      false
+    },
+    NdBlock { block } => buffer_object_returning(block[0]!, cx.buf_var),
+    _ => false
+  }
+}
+
+// port: place_result.rs fn Exits::check
+fn exits_check(b: ir::Bundle, bs: Bodies, cx: Exits, node: ir::Node) {
+  u = scope_fn::unspan(node);
+  match u {
+    NdReturn { inner } => {
+      cx.count += 1;
+      if tail_fresh_object_workref(inner) != cx.buf_var {
+        t = chain_block(b, inner, cx.buf_var);
+        if t != null {
+          exits_chain(b, bs, cx, t!);
+        } else {
+          cx.ok = false;
+        }
+      }
+      return;
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      if buffer_object_returning(bl, cx.buf_var) {
+        cx.count += 1;
+        n = len(bl.operators);
+        for op in bl.operators {
+          if op#index < n - 1 {
+            exits_check(b, bs, cx, op);
+          }
+        }
+        return;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    exits_check(b, bs, cx, c);
+  }
+}
+
+// port: parser/control.rs fn tail_fresh_object_workref — the literal's destination, -1 for none.
+fn tail_fresh_object_workref(tail: ir::Node) -> integer {
+  node = scope_fn::unspan(tail);
+  while true {
+    match node {
+      NdReturn { inner } => { node = scope_fn::unspan(inner); },
+      NdBlock { block } => {
+        bl = block[0]!;
+        if bl.name != "Object" && bl.name != "EnumUnitLit" {
+          return -1;
+        }
+        n = len(bl.operators);
+        if n == 0 {
+          return -1;
+        }
+        return var_of(bl.operators[n - 1]!);
+      },
+      _ => return -1
+    }
+  }
+  -1
+}
+
+// port: place_result.rs fn chain_block — `{ one_buffer_chain: buf = g(…, buf); …; buf }`.
+fn chain_block(b: ir::Bundle, op: ir::Node, buf_var: integer) -> Target? {
+  bl = match scope_fn::unspan(op) {
+    NdBlock { block } => block[0]!,
+    _ => return null
+  };
+  n = len(bl.operators);
+  if !bl.name.starts_with("one_buffer_chain") || n == 0 || !is_var(bl.operators[n - 1]!, buf_var) {
+    return null;
+  }
+  target: Target? = null;
+  for o in bl.operators {
+    match scope_fn::unspan(o) {
+      NdSet { var: w, inner } => {
+        if w != buf_var {
+          continue;
+        }
+        g = -1;
+        gargs: vector<ir::Node> = [];
+        match scope_fn::unspan(inner) {
+          NdCall { def_nr, args } => {
+            g = def_nr;
+            gargs = args;
+          },
+          _ => return null
+        }
+        if g < 0 || g >= defs_len(b) || !binds::is_loft_defined(b.data.definitions[g]!) {
+          return null;
+        }
+        g_buf = binds::hidden_return_buffer_attr(b.data.definitions[g]!);
+        if g_buf == null {
+          return null;
+        }
+        a = gargs[g_buf!];
+        if a == null || !is_var(a!, buf_var) {
+          return null;
+        }
+        if target != null {
+          return null;
+        }
+        target = Target { g: g, idx: g_buf! };
+      },
+      _ => {}
+    }
+  }
+  target
+}
+
+// port: place_result.rs fn tail_object_yielding
+fn tail_object_yielding(op: ir::Node, buf_var: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdBlock { block } => {
+      bl = block[0]!;
+      n = len(bl.operators);
+      bl.name == "Object" && deps_are(bl, buf_var) && n > 0 && is_var(bl.operators[n - 1]!, buf_var)
+    },
+    _ => false
+  }
+}
+
+// `bl.result.depend() == [buf_var]`.
+fn deps_are(bl: ir::Block, buf_var: integer) -> boolean {
+  deps = scope_fn::depend(bl.result[0] ?? ir::TyVoid);
+  len(deps) == 1 && deps[0]! == buf_var
+}
+
+// port: place_result.rs fn buffer_object_returning
+fn buffer_object_returning(bl: ir::Block, buf_var: integer) -> boolean {
+  n = len(bl.operators);
+  if bl.name != "Object" || !deps_are(bl, buf_var) || n == 0 {
+    return false;
+  }
+  match scope_fn::unspan(bl.operators[n - 1]!) {
+    NdReturn { inner } => is_var(inner, buf_var),
+    _ => false
+  }
+}
+
+// port: place_result.rs fn collect_vars — every variable `node` names.
+fn collect_vars(node: ir::Node, into: vector<integer>) {
+  u = scope_fn::unspan(node);
+  x = match u {
+    NdVar { n } => n,
+    NdSet { var } => var,
+    NdTupleGet { var } => var,
+    NdTuplePut { var } => var,
+    NdCallRef { var } => var,
+    NdFnRefDnr { n } => n,
+    NdIter { var } => var,
+    NdFnRef { var } => var,
+    _ => -1
+  };
+  if x >= 0 && !scope_fn::has(into, x) {
+    into += [x];
+  }
+  for c in scope_fn::children(u) {
+    collect_vars(c, into);
+  }
+}
+
+// ---- the top-level walk -----------------------------------------------------------------------
+
+struct Cx {
+  b: ir::Bundle,
+  f: ir::Function,
+  ops: Ops,
+  v: integer,
+  buf: integer,
+  tp: integer = -1,
+  host: integer = -1,
+  in_loop: integer = 0,
+  call_mentions: vector<integer>,
+  // The `_elm_` element locals appended to a parameter's collection, each with its host.
+  elm_keys: vector<integer>,
+  elm_hosts: vector<integer>,
+  own_retbuf: integer,
+  path: vector<integer>,
+  moves: vector<text>,
+  frees_held: vector<text>,
+  frees_dropped: vector<text>,
+  why: text
+}
+
+fn fail(cx: Cx, why: text) -> integer {
+  if cx.why == "" {
+    cx.why = why;
+  }
+  FAIL
+}
+
+fn names_either(cx: Cx, n: ir::Node) -> boolean {
+  scope_fn::names_var(n, cx.v) || scope_fn::names_var(n, cx.buf)
+}
+
+fn walk_stmts(cx: Cx, stmts: vector<ir::Node>, st0: integer) -> integer {
+  st = st0;
+  for s in stmts {
+    r = child(cx, s#index, s, st, POS_STMT);
+    if r == FAIL || r == EXIT {
+      return r;
+    }
+    st = r;
+  }
+  st
+}
+
+// port: place_result.rs fn Cx::child
+fn child(cx: Cx, i: integer, node: ir::Node, st: integer, pos: integer) -> integer {
+  cx.path += [i];
+  r = walk(cx, node, st, pos);
+  cx.path.remove(len(cx.path) - 1);
+  r
+}
+
+// port: place_result.rs fn Cx::walk — a node the walk does not model declines where it names the
+// local or the buffer.
+fn walk(cx: Cx, node0: ir::Node, st: integer, pos: integer) -> integer {
+  node = scope_fn::unspan(node0);
+  match node {
+    NdBreak => return EXIT,
+    NdContinue => return EXIT,
+    NdVar { n: w } => {
+      if w == cx.v {
+        if pos == POS_RECV && st == HELD {
+          return st;
+        }
+        if st == MOVED {
+          return fail(cx, "the local is read after its move");
+        }
+        return fail(cx, "the local is used other than as the receiver of a native read");
+      }
+      if w == cx.buf {
+        return fail(cx, "the buffer is named outside its admitted sites");
+      }
+      return st;
+    },
+    NdSet { var: w, inner } => {
+      if w == cx.v {
+        return fail(cx, "the local is rebound");
+      }
+      if w == cx.buf {
+        return fail(cx, "the buffer is rebound");
+      }
+      note_element(cx, w, inner);
+      return child(cx, 0, inner, st, POS_ARG);
+    },
+    NdCall { def_nr, args } => return walk_call(cx, def_nr, args, st, pos),
+    NdIf { cond, t, f } => {
+      s = child(cx, 0, cond, st, POS_ARG);
+      if s == FAIL || s == EXIT {
+        return s;
+      }
+      ft = child(cx, 1, t, s, POS_STMT);
+      if ft == FAIL {
+        return FAIL;
+      }
+      fe = child(cx, 2, f, s, POS_STMT);
+      if fe == FAIL {
+        return FAIL;
+      }
+      if ft == EXIT {
+        return fe;
+      }
+      if fe == EXIT || ft == fe {
+        return ft;
+      }
+      // One arm stored the record and the other still holds it.
+      return fail(cx, "a path that stored the record rejoins one that holds it");
+    },
+    NdBlock { block } => return walk_stmts(cx, block[0]!.operators, st),
+    NdLoop { block } => {
+      // A destination inside the body is refused, so the state after the loop is the state before.
+      cx.in_loop += 1;
+      r = walk_stmts(cx, block[0]!.operators, st);
+      cx.in_loop -= 1;
+      if r == FAIL {
+        return FAIL;
+      }
+      return st;
+    },
+    NdReturn { inner } => {
+      if child(cx, 0, inner, st, POS_ARG) == FAIL {
+        return FAIL;
+      }
+      return EXIT;
+    },
+    NdDrop { inner } => return child(cx, 0, inner, st, POS_ARG),
+    _ => {}
+  }
+  if names_either(cx, node) {
+    return fail(cx, "the local or the buffer is named in a shape the rewrite does not model");
+  }
+  st
+}
+
+fn elm_host(keys: vector<integer>, hosts: vector<integer>, w: integer) -> integer {
+  for k in keys {
+    if k == w {
+      return hosts[k#index]!;
+    }
+  }
+  -1
+}
+
+// Insert or remove `w`'s host (`elm_host.insert` / `remove`).
+fn put_host(keys: vector<integer>, hosts: vector<integer>, w: integer, host: integer) {
+  for k in keys {
+    if k == w {
+      if host >= 0 {
+        hosts[k#index] = host;
+      } else {
+        hosts[k#index] = -1;
+      }
+      return;
+    }
+  }
+  if host >= 0 {
+    keys += [w];
+    hosts += [host];
+  }
+}
+
+// The element local `w` bound by `val`, when `val` appends a literal group to a host collection:
+// `OpNewRecord(X, …)` with `X` the first operand; -1 for any other bind.
+fn new_record_host(cx_f: ir::Function, ops: Ops, w: integer, val: ir::Node) -> integer {
+  match scope_fn::unspan(val) {
+    NdCall { def_nr, args } => {
+      if def_nr == ops.new_record && scope_fn::is_compiler_generated(cx_f, w) && scope_fn::name(cx_f, w).starts_with("_elm_") && len(args) > 0 {
+        return var_of(args[0]!);
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// port: place_result.rs fn Cx::note_element — a nullable host declines (`@FR-N-Shape`).
+fn note_element(cx: Cx, w: integer, val: ir::Node) {
+  x = new_record_host(cx.f, cx.ops, w, val);
+  host = -1;
+  if x >= 0 && scope_fn::is_argument(cx.f, x) {
+    t = scope_fn::tp(cx.f, x);
+    if !nullable(t) && t is TyReference {
+      host = x;
+    }
+  }
+  put_host(cx.elm_keys, cx.elm_hosts, w, host);
+}
+
+// port: place_result.rs fn Cx::walk_call
+fn walk_call(cx: Cx, d: integer, args: vector<ir::Node>, st0: integer, pos: integer) -> integer {
+  ops = cx.ops;
+  n = len(args);
+  first_v = n > 0 && is_var(args[0]!, cx.v);
+  if d == ops.copy && n == 3 && first_v {
+    return destination(cx, args, st0);
+  }
+  // The exit free of the local, in either spelling: one record free where the record is still
+  // held, nothing where the move consumed it.
+  own_exit_free = (d == ops.free_ref && n == 1 && first_v)
+    || (d == ops.free_if_distinct && n == 2 && first_v && cx.own_retbuf >= 0 && is_var(args[1]!, cx.own_retbuf));
+  if own_exit_free {
+    k = key(cx.path);
+    if st0 == HELD {
+      if !has_key(cx.frees_held, k) {
+        cx.frees_held += [k];
+      }
+    } else if !has_key(cx.frees_dropped, k) {
+      cx.frees_dropped += [k];
+    }
+    return st0;
+  }
+  if d == ops.free_if_distinct && n == 2 && is_var(args[0]!, cx.buf) && is_var(args[1]!, cx.v) {
+    // The buffer's witness-guarded free: the local's own free is the whole release.
+    k = key(cx.path);
+    if !has_key(cx.frees_dropped, k) {
+      cx.frees_dropped += [k];
+    }
+    return st0;
+  }
+  if d < 0 || d >= defs_len(cx.b) {
+    return fail(cx, "a call to an unknown definition");
+  }
+  named = false;
+  for a in args {
+    if names_either(cx, a) {
+      named = true;
+    }
+  }
+  if !named {
+    return st0;
+  }
+  def = cx.b.data.definitions[d]!;
+  if binds::is_loft_defined(def) {
+    return fail(cx, "the local or the buffer is handed to a loft-defined call");
+  }
+  if def.name.starts_with("OpFreeRef") {
+    return fail(cx, "a free names the local or the buffer outside the exit pair");
+  }
+  if st0 == MOVED {
+    return fail(cx, "the local is read after its move");
+  }
+  // A reference answered off the local must itself be a receiver.
+  if !scalar_like(returned_of(def)) && pos != POS_RECV && n > 0 && names_either(cx, args[0]!) {
+    return fail(cx, "a reference into the local leaves the receiver chain");
+  }
+  st = st0;
+  for a in args {
+    i = a#index;
+    r = child(cx, i, a, st, if i == 0 { POS_RECV } else { POS_ARG });
+    if r == FAIL || r == EXIT {
+      return r;
+    }
+    st = r;
+  }
+  st
+}
+
+// port: place_result.rs fn Cx::destination — `OpCopyRecord(v, OpGetField(_elm_N, off, tp), tp)`
+// where `_elm_N` was appended to a parameter's collection.
+fn destination(cx: Cx, args: vector<ir::Node>, st: integer) -> integer {
+  if cx.in_loop > 0 {
+    return fail(cx, "the destination is inside a loop");
+  }
+  if st == MOVED {
+    return fail(cx, "a second destination on one path");
+  }
+  raw = int_of(args[2]!);
+  if raw == null {
+    return fail(cx, "the copy's type operand is not a literal");
+  }
+  if !is_u16(raw!) {
+    return fail(cx, "the copy's type operand is out of range");
+  }
+  if raw! > COPY_TP_MASK {
+    return fail(cx, "the copy carries a flag");
+  }
+  ga: vector<ir::Node> = [];
+  match scope_fn::unspan(args[1]!) {
+    NdCall { def_nr: g, args: a } => {
+      if g != cx.ops.get_field || len(a) != 3 {
+        return fail(cx, "the destination is not a field");
+      }
+      ga = a;
+    },
+    _ => return fail(cx, "the destination is not a field")
+  }
+  elm = var_of(ga[0]!);
+  ftp = int_of(ga[2]!);
+  if elm < 0 || ftp == null {
+    return fail(cx, "the destination field is not on an element local");
+  }
+  if ftp! != raw! {
+    return fail(cx, "the destination field's type is not the record's");
+  }
+  host = elm_host(cx.elm_keys, cx.elm_hosts, elm);
+  if host < 0 {
+    return fail(cx, "the destination is not an element appended to a parameter's collection");
+  }
+  if scope_fn::has(cx.call_mentions, host) {
+    return fail(cx, "an argument of the call reaches the destination's store");
+  }
+  if cx.host >= 0 && cx.host != host {
+    return fail(cx, "the destinations name two hosts");
+  }
+  cx.host = host;
+  cx.tp = raw!;
+  k = key(cx.path);
+  if !has_key(cx.moves, k) {
+    cx.moves += [k];
+  }
+  MOVED
+}
+
+// ---- the rewrite ------------------------------------------------------------------------------
+
+// port: place_result.rs fn apply — the same child enumeration as `walk`.
+fn apply(node: ir::Node, path: vector<integer>, p: Plan, ops: Ops) -> ir::Node {
+  match node {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: apply(inner, path, p, ops) },
+    NdBlock { block } => return ir::NdBlock { block: [apply_block(block[0]!, path, p, ops)] },
+    NdLoop { block } => return ir::NdLoop { block: [apply_block(block[0]!, path, p, ops)] },
+    NdSet { var: w, inner } => {
+      if w == p.buf && scope_fn::unspan(inner) is NdNull {
+        return ir::NdSet { var: w, inner: ir::NdCall { def_nr: ops.place, args: [ir::NdVar { n: p.host }, ir::NdInt { n: p.tp }] } };
+      }
+      return ir::NdSet { var: w, inner: apply(inner, step(path, 0), p, ops) };
+    },
+    NdIf { cond, t, f } => return ir::NdIf {
+      cond: apply(cond, step(path, 0), p, ops),
+      t: apply(t, step(path, 1), p, ops),
+      f: apply(f, step(path, 2), p, ops)
+    },
+    NdReturn { inner } => return ir::NdReturn { inner: apply(inner, step(path, 0), p, ops) },
+    NdDrop { inner } => return ir::NdDrop { inner: apply(inner, step(path, 0), p, ops) },
+    NdCall { def_nr: d, args } => {
+      k = key(path);
+      if d == ops.copy && has_key(p.moves, k) {
+        return ir::NdCall { def_nr: ops.move_rec, args: [for a in args { if a#index == 2 { ir::NdInt { n: p.tp } } else { a } }] };
+      }
+      if (d == ops.free_ref || d == ops.free_if_distinct) && has_key(p.frees_held, k) {
+        return ir::NdCall { def_nr: ops.free_in, args: [ir::NdVar { n: p.v }, ir::NdInt { n: p.tp }] };
+      }
+      return ir::NdCall { def_nr: d, args: [for a in args { apply(a, step(path, a#index), p, ops) }] };
+    },
+    _ => {}
+  }
+  node
+}
+
+fn step(path: vector<integer>, i: integer) -> vector<integer> {
+  out = copy_path(path);
+  out += [i];
+  out
+}
+
+// port: place_result.rs fn apply_block — the frees that go are left out.
+fn apply_block(bl: ir::Block, path: vector<integer>, p: Plan, ops: Ops) -> ir::Block {
+  out: vector<ir::Node> = [];
+  for op in bl.operators {
+    here = step(path, op#index);
+    if has_key(p.frees_dropped, key(here)) {
+      continue;
+    }
+    out += [apply(op, here, p, ops)];
+  }
+  ir_pass_tree::with_operators(bl, out)
+}
+
+// ---- the loop clause --------------------------------------------------------------------------
+
+// port: place_result.rs fn admitted_loops
+fn admitted_loops(b: ir::Bundle, bs: Bodies, code: ir::Node, ops: Ops) -> vector<LoopPlan> {
+  plans: vector<LoopPlan> = [];
+  find_loop_binds(b, bs, code, ops, [], 0, plans, code);
+  plans
+}
+
+// port: place_result.rs fn find_loop_binds
+fn find_loop_binds(b: ir::Bundle, bs: Bodies, node0: ir::Node, ops: Ops, path: vector<integer>, loop_depth: integer, plans: vector<LoopPlan>, top: ir::Node) {
+  node = scope_fn::unspan(node0);
+  stmts: vector<ir::Node> = [];
+  depth = loop_depth;
+  match node {
+    NdBlock { block } => { stmts = block[0]!.operators; },
+    NdLoop { block } => {
+      stmts = block[0]!.operators;
+      depth += 1;
+    },
+    NdInsert { items } => { stmts = items; },
+    NdSet { inner } => {
+      find_loop_binds(b, bs, inner, ops, step(path, 0), loop_depth, plans, top);
+      return;
+    },
+    NdIf { cond, t, f } => {
+      find_loop_binds(b, bs, cond, ops, step(path, 0), loop_depth, plans, top);
+      find_loop_binds(b, bs, t, ops, step(path, 1), loop_depth, plans, top);
+      find_loop_binds(b, bs, f, ops, step(path, 2), loop_depth, plans, top);
+      return;
+    },
+    NdReturn { inner } => {
+      find_loop_binds(b, bs, inner, ops, step(path, 0), loop_depth, plans, top);
+      return;
+    },
+    NdDrop { inner } => {
+      find_loop_binds(b, bs, inner, ops, step(path, 0), loop_depth, plans, top);
+      return;
+    },
+    _ => return
+  }
+  for stmt in stmts {
+    i = stmt#index;
+    here = step(path, i);
+    if depth > 0 {
+      match scope_fn::unspan(stmt) {
+        NdSet { var: v, inner } => match scope_fn::unspan(inner) {
+          NdCall { def_nr: fn_nr, args } => {
+            if placeable_bind(b, bs.f, v, fn_nr) {
+              p = admit_loop(b, bs, top, stmts, here, i, v, fn_nr, args, ops);
+              if p != null {
+                plans += [p!];
+              }
+            }
+          },
+          _ => {}
+        },
+        _ => {}
+      }
+    }
+    find_loop_binds(b, bs, stmt, ops, here, depth, plans, top);
+  }
+}
+
+// port: place_result.rs fn one_heap_field — `v`'s record has one heap-owning field, of runtime
+// type `ftp`, every other field scalar.
+fn one_heap_field(b: ir::Bundle, f: ir::Function, v: integer, ftp: integer) -> boolean {
+  td = heap_def_nr(scope_fn::base(scope_fn::tp(f, v)));
+  if td < 0 || td >= defs_len(b) {
+    return false;
+  }
+  heap_fields = 0;
+  found = false;
+  for a in b.data.definitions[td]!.attributes {
+    if a.name.starts_with("__") {
+      continue;
+    }
+    at = a.typedef[0] ?? ir::TyVoid;
+    if scalar_like(at) && !(scope_fn::base(at) is TyText) {
+      continue;
+    }
+    heap_fields += 1;
+    ad = type_def_nr(b, at);
+    if ad >= 0 && ad < defs_len(b) && b.data.definitions[ad]!.known_type == ftp {
+      found = true;
+    }
+  }
+  heap_fields == 1 && found
+}
+
+// `node` is a call of `op` on the buffer; with `want_tp`, its second operand the record's type.
+fn is_call_on_buf(node: ir::Node, op: integer, want_tp: boolean, buf: integer, tp: integer) -> boolean {
+  match scope_fn::unspan(node) {
+    NdCall { def_nr, args } => {
+      if def_nr != op || len(args) == 0 || !is_var(args[0]!, buf) {
+        return false;
+      }
+      if !want_tp {
+        return true;
+      }
+      if len(args) < 2 {
+        return false;
+      }
+      t = int_of(args[1]!);
+      t != null && (t! & POOL_TP_MASK) == tp
+    },
+    _ => false
+  }
+}
+
+// An arm that is a one-statement block (or insert) around the call: the call, and 0; else the
+// arm itself and -1.
+fn unwrap_arm(node: ir::Node) -> ir::Node {
+  match scope_fn::unspan(node) {
+    NdBlock { block } => if len(block[0]!.operators) == 1 { return block[0]!.operators[0]!; },
+    NdInsert { items } => if len(items) == 1 { return items[0]!; },
+    _ => {}
+  }
+  node
+}
+
+fn arm_step(node: ir::Node) -> integer {
+  match scope_fn::unspan(node) {
+    NdBlock { block } => if len(block[0]!.operators) == 1 { return 0; },
+    NdInsert { items } => if len(items) == 1 { return 0; },
+    _ => {}
+  }
+  -1
+}
+
+// port: place_result.rs fn lazy_mint_path — the path of the `OpDatabase` in the lazy mint right
+// before the bind; null where there is none.
+fn lazy_mint_path(body: vector<ir::Node>, bind_path: vector<integer>, idx: integer, buf: integer, tp: integer, ops: Ops) -> vector<integer>? {
+  if idx == 0 {
+    return null;
+  }
+  match scope_fn::unspan(body[idx - 1]!) {
+    NdIf { cond, t, f } => {
+      if !is_call_on_buf(cond, ops.ref_is_null, false, buf, tp)
+        || !is_call_on_buf(unwrap_arm(t), ops.database, true, buf, tp)
+        || !is_call_on_buf(unwrap_arm(f), ops.clear, true, buf, tp) {
+        return null;
+      }
+      mint = [for x in bind_path if x#index < len(bind_path) - 1 { x }];
+      mint += [idx - 1];
+      mint += [1];
+      k = arm_step(t);
+      if k >= 0 {
+        mint += [k];
+      }
+      return mint;
+    },
+    _ => {}
+  }
+  null
+}
+
+// port: place_result.rs fn admit_loop — null where it declines.
+fn admit_loop(b: ir::Bundle, bs: Bodies, top: ir::Node, body: vector<ir::Node>, bind_path: vector<integer>, idx: integer, v: integer, fn_nr: integer, args: vector<ir::Node>, ops: Ops) -> LoopPlan? {
+  f = bs.f;
+  vt = scope_fn::tp(f, v);
+  td = match peel_link(vt) { TyReference { n } => n, _ => return null };
+  if nullable(vt) || td < 0 || td >= defs_len(b) {
+    return null;
+  }
+  tp = b.data.definitions[td]!.known_type;
+  if tp == scope_fn::NONE {
+    return null;
+  }
+  h = call_head(b, bs, f, v, fn_nr, args);
+  if h.why != "" {
+    return null;
+  }
+  buf = h.buf;
+  mint = lazy_mint_path(body, bind_path, idx, buf, tp, ops);
+  if mint == null {
+    return null;
+  }
+  // The rest of the turn.
+  cx = LoopCx {
+    b: b, f: f, ops: ops, v: v, buf: buf, tp: tp, call_mentions: h.mentions,
+    elm_keys: [], elm_hosts: [], view_keys: [], view_offs: [], view_tps: [],
+    path: [for x in bind_path if x#index < len(bind_path) - 1 { x }], mov: [], why: ""
+  };
+  for stmt in body {
+    i = stmt#index;
+    if i <= idx {
+      continue;
+    }
+    cx.path += [i];
+    ok = loop_stmt(cx, stmt);
+    cx.path.remove(len(cx.path) - 1);
+    if !ok {
+      return null;
+    }
+  }
+  if cx.host < 0 || cx.move_tp < 0 || !cx.moved {
+    return null;
+  }
+  drops: vector<vector<integer>> = [];
+  if !outside_the_turn(f, top, bind_path, v, buf, cx.host, ops, drops) {
+    return null;
+  }
+  LoopPlan {
+    buf: buf, host: cx.host, tp: tp, move_tp: cx.move_tp, mint: mint!, mov: cx.mov, drops: drops,
+    host_outlives: scope_fn::is_argument(f, cx.host)
+  }
+}
+
+// port: place_result.rs fn strip_turn — the turn (the loop body block that holds the bind)
+// blanked inside the loop's top-level statement.
+fn strip_turn(node: ir::Node, rel: vector<integer>, k: integer) -> ir::Node {
+  if k == len(rel) {
+    return ir::NdNull;
+  }
+  i = rel[k]!;
+  last = k + 1 == len(rel);
+  match node {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: strip_turn(inner, rel, k) },
+    NdBlock { block } => {
+      if last {
+        return ir::NdNull;
+      }
+      return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { if o#index == i { strip_turn(o, rel, k + 1) } else { o } }])] };
+    },
+    NdLoop { block } => {
+      if last {
+        return ir::NdNull;
+      }
+      return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { if o#index == i { strip_turn(o, rel, k + 1) } else { o } }])] };
+    },
+    NdInsert { items } => {
+      if last {
+        return ir::NdNull;
+      }
+      return ir::NdInsert { items: [for o in items { if o#index == i { strip_turn(o, rel, k + 1) } else { o } }] };
+    },
+    NdSet { var, inner } => return ir::NdSet { var: var, inner: strip_turn(inner, rel, k + 1) },
+    NdIf { cond, t, f } => return ir::NdIf {
+      cond: if i == 0 { strip_turn(cond, rel, k + 1) } else { cond },
+      t: if i == 1 { strip_turn(t, rel, k + 1) } else { t },
+      f: if i == 2 { strip_turn(f, rel, k + 1) } else { f }
+    },
+    NdReturn { inner } => return ir::NdReturn { inner: strip_turn(inner, rel, k + 1) },
+    NdDrop { inner } => return ir::NdDrop { inner: strip_turn(inner, rel, k + 1) },
+    NdCall { def_nr, args } => return ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == i { strip_turn(a, rel, k + 1) } else { a } }] },
+    _ => {}
+  }
+  node
+}
+
+// port: place_result.rs fn is_pair_free — `OpFreeRefIfDistinct(v, buf)`.
+fn is_pair_free(n: ir::Node, v: integer, buf: integer, ops: Ops) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => def_nr == ops.free_if_distinct && len(args) == 2 && is_var(args[0]!, v) && is_var(args[1]!, buf),
+    _ => false
+  }
+}
+
+// port: place_result.rs fn is_buf_free — `OpFreeRef(buf)` or `OpFreeRefIfDistinct(buf, …)`.
+fn is_buf_free(n: ir::Node, buf: integer, ops: Ops) -> boolean {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => (def_nr == ops.free_ref || def_nr == ops.free_if_distinct) && len(args) > 0 && is_var(args[0]!, buf),
+    _ => false
+  }
+}
+
+// port: place_result.rs fns strip_pair_frees and strip_buf_frees — the frees blanked (a pair free
+// where `pair`, else the buffer's).
+fn strip_frees(node: ir::Node, v: integer, buf: integer, ops: Ops, pair: boolean) -> ir::Node {
+  hit = if pair { is_pair_free(node, v, buf, ops) } else { is_buf_free(node, buf, ops) };
+  if hit {
+    return ir::NdNull;
+  }
+  match node {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: strip_frees(inner, v, buf, ops, pair) },
+    NdBlock { block } => return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { strip_frees(o, v, buf, ops, pair) }])] },
+    NdLoop { block } => return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { strip_frees(o, v, buf, ops, pair) }])] },
+    NdInsert { items } => return ir::NdInsert { items: [for o in items { strip_frees(o, v, buf, ops, pair) }] },
+    NdIf { cond, t, f } => return ir::NdIf { cond: strip_frees(cond, v, buf, ops, pair), t: strip_frees(t, v, buf, ops, pair), f: strip_frees(f, v, buf, ops, pair) },
+    NdSet { var, inner } => return ir::NdSet { var: var, inner: strip_frees(inner, v, buf, ops, pair) },
+    NdReturn { inner } => return ir::NdReturn { inner: strip_frees(inner, v, buf, ops, pair) },
+    NdDrop { inner } => return ir::NdDrop { inner: strip_frees(inner, v, buf, ops, pair) },
+    _ => {}
+  }
+  node
+}
+
+// port: place_result.rs fn collect_buf_frees — the paths of the buffer's frees; `path` is the
+// node's own, extended and restored on the way down.
+fn collect_buf_frees(node: ir::Node, path: vector<integer>, buf: integer, ops: Ops, out: vector<vector<integer>>) {
+  if is_buf_free(node, buf, ops) {
+    out += [copy_path(path)];
+    return;
+  }
+  kids: vector<ir::Node> = [];
+  match scope_fn::unspan(node) {
+    NdBlock { block } => { kids = block[0]!.operators; },
+    NdLoop { block } => { kids = block[0]!.operators; },
+    NdInsert { items } => { kids = items; },
+    NdIf { cond, t, f } => { kids = [cond, t, f]; },
+    NdSet { inner } => { kids = [inner]; },
+    NdReturn { inner } => { kids = [inner]; },
+    NdDrop { inner } => { kids = [inner]; },
+    _ => {}
+  }
+  for c in kids {
+    path += [c#index];
+    collect_buf_frees(c, path, buf, ops, out);
+    path.remove(len(path) - 1);
+  }
+}
+
+// port: place_result.rs fn outside_the_turn — the buffer's null init before the loop and its exit
+// frees (into `drops`); nothing else names the buffer or the local, and the host is bound before
+// the loop and never rebound.
+fn outside_the_turn(f: ir::Function, top: ir::Node, bind_path: vector<integer>, v: integer, buf: integer, host: integer, ops: Ops, drops: vector<vector<integer>>) -> boolean {
+  topbl = match scope_fn::unspan(top) {
+    NdBlock { block } => block[0]!,
+    _ => return false
+  };
+  loop_top = bind_path[0]!;
+  buf_inits = 0;
+  host_bound_before = scope_fn::is_argument(f, host);
+  rel = [for x in bind_path if x#index > 0 { x }];
+  for stmt in topbl.operators {
+    i = stmt#index;
+    if i == loop_top {
+      collect_buf_frees(stmt, [i], buf, ops, drops);
+      outer = strip_turn(stmt, rel, 0);
+      outer = strip_frees(outer, v, buf, ops, true);
+      outer = strip_frees(outer, v, buf, ops, false);
+      if scope_fn::names_var(outer, buf) || scope_fn::names_var(outer, v) {
+        return false;
+      }
+      continue;
+    }
+    match scope_fn::unspan(stmt) {
+      NdSet { var: w, inner } => {
+        if w == buf {
+          if !(scope_fn::unspan(inner) is NdNull) || i > loop_top {
+            return false;
+          }
+          buf_inits += 1;
+          continue;
+        }
+        if w == host {
+          if i < loop_top && !host_bound_before {
+            host_bound_before = true;
+          } else {
+            return false;
+          }
+        }
+      },
+      _ => {}
+    }
+    collect_buf_frees(stmt, [i], buf, ops, drops);
+    if scope_fn::names_var(strip_frees(stmt, v, buf, ops, false), buf) {
+      return false;
+    }
+    if scope_fn::names_var(stmt, v) {
+      return false;
+    }
+  }
+  buf_inits == 1 && host_bound_before
+}
+
+// The loop turn's walker (`LoopCx`).  The state: `LH` held, `LM` moved, or the byte offset of the
+// one heap-owning field that moved out (`LSt::FieldMoved`).
+LH = -1;
+LM = -2;
+
+struct LoopCx {
+  b: ir::Bundle,
+  f: ir::Function,
+  ops: Ops,
+  v: integer,
+  buf: integer,
+  tp: integer,
+  call_mentions: vector<integer>,
+  elm_keys: vector<integer>,
+  elm_hosts: vector<integer>,
+  // Locals bound to the one heap-owning field of `v` (`kv = kd.value`), with its offset and type.
+  view_keys: vector<integer>,
+  view_offs: vector<integer>,
+  view_tps: vector<integer>,
+  path: vector<integer>,
+  st: integer = -1,
+  host: integer = -1,
+  move_tp: integer = -1,
+  moved: boolean = false,
+  mov: vector<integer>,
+  why: text
+}
+
+fn lfail(cx: LoopCx, why: text) -> boolean {
+  if cx.why == "" {
+    cx.why = why;
+  }
+  false
+}
+
+fn view_at(cx: LoopCx, w: integer) -> integer {
+  for k in cx.view_keys {
+    if k == w {
+      return k#index;
+    }
+  }
+  -1
+}
+
+fn lnames_either(cx: LoopCx, n: ir::Node) -> boolean {
+  if scope_fn::names_var(n, cx.v) || scope_fn::names_var(n, cx.buf) {
+    return true;
+  }
+  for w in cx.view_keys {
+    if scope_fn::names_var(n, w) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: place_result.rs fn LoopCx::stmt — the turn's own free of the local against the buffer
+// stays as it is.
+fn loop_stmt(cx: LoopCx, node: ir::Node) -> boolean {
+  n = scope_fn::unspan(node);
+  if is_pair_free(n, cx.v, cx.buf, cx.ops) {
+    return true;
+  }
+  lnode(cx, n)
+}
+
+fn lchild(cx: LoopCx, i: integer, node: ir::Node) -> boolean {
+  cx.path += [i];
+  r = lnode(cx, node);
+  cx.path.remove(len(cx.path) - 1);
+  r
+}
+
+// The field read `OpGetField(v, off, ftp)` as `[off, ftp]`, empty for any other node.
+fn field_of_v(cx: LoopCx, n: ir::Node) -> vector<integer> {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr: g, args: ga } => {
+      if g == cx.ops.get_field && len(ga) == 3 && is_var(ga[0]!, cx.v) {
+        off = int_of(ga[1]!);
+        ftp = int_of(ga[2]!);
+        if off != null && ftp != null {
+          return [off!, ftp!];
+        }
+      }
+    },
+    _ => {}
+  }
+  []
+}
+
+// port: place_result.rs fn LoopCx::node
+fn lnode(cx: LoopCx, node0: ir::Node) -> boolean {
+  node = scope_fn::unspan(node0);
+  match node {
+    NdLoop => return lfail(cx, "a nested loop in the turn"),
+    NdBreak => return true,
+    NdContinue => return true,
+    NdVar { n: w } => {
+      if w == cx.v {
+        return lfail(cx, "the local is used other than as the receiver of a native read");
+      }
+      if w == cx.buf {
+        return lfail(cx, "the buffer is named outside its admitted sites");
+      }
+      if view_at(cx, w) >= 0 {
+        return lfail(cx, "a view of the local's payload is used other than as the move's source");
+      }
+      return true;
+    },
+    NdSet { var: w, inner } => {
+      if w == cx.v || w == cx.buf {
+        return lfail(cx, "the local or the buffer is rebound");
+      }
+      if view_at(cx, w) >= 0 {
+        return lfail(cx, "a view of the local's payload is rebound");
+      }
+      // `kv = kd.value` — a view of the one heap-owning field, to be the move's source.
+      fv = field_of_v(cx, inner);
+      if len(fv) == 2 && is_u16(fv[1]!) && one_heap_field(cx.b, cx.f, cx.v, fv[1]!) {
+        if cx.st != LH {
+          return lfail(cx, "the payload is viewed after its move");
+        }
+        cx.view_keys += [w];
+        cx.view_offs += [fv[0]!];
+        cx.view_tps += [fv[1]!];
+        return true;
+      }
+      lnote_element(cx, w, inner);
+      return lchild(cx, 0, inner);
+    },
+    NdCall { def_nr, args } => return lcall(cx, def_nr, args),
+    NdIf { cond, t, f } => {
+      if !lchild(cx, 0, cond) {
+        return false;
+      }
+      before = cx.st;
+      if !lchild(cx, 1, t) {
+        return false;
+      }
+      after_then = cx.st;
+      cx.st = before;
+      if !lchild(cx, 2, f) {
+        return false;
+      }
+      after_else = cx.st;
+      // A move on one arm makes the payload unreadable after the join.
+      if after_then == after_else {
+        cx.st = after_then;
+      } else if after_then == LH {
+        cx.st = after_else;
+      } else if after_else == LH {
+        cx.st = after_then;
+      } else {
+        return lfail(cx, "two arms move differently");
+      }
+      return true;
+    },
+    NdBlock { block } => {
+      for s in block[0]!.operators {
+        if !lchild(cx, s#index, s) {
+          return false;
+        }
+      }
+      return true;
+    },
+    NdInsert { items } => {
+      for s in items {
+        if !lchild(cx, s#index, s) {
+          return false;
+        }
+      }
+      return true;
+    },
+    NdReturn { inner } => {
+      if lnames_either(cx, inner) {
+        return lfail(cx, "the local or the buffer leaves through a return");
+      }
+      return lchild(cx, 0, inner);
+    },
+    NdDrop { inner } => {
+      if lnames_either(cx, inner) {
+        return lfail(cx, "the local or the buffer leaves through a return");
+      }
+      return lchild(cx, 0, inner);
+    },
+    _ => {}
+  }
+  if lnames_either(cx, node) {
+    return lfail(cx, "the local or the buffer is named in a shape the rewrite does not model");
+  }
+  true
+}
+
+// port: place_result.rs fn LoopCx::host_ok — a parameter that is a record or a collection, or a
+// local whose backing is its own `__vdb_N` store.
+fn host_ok(cx: LoopCx, x: integer) -> boolean {
+  t = scope_fn::tp(cx.f, x);
+  if scope_fn::is_argument(cx.f, x) {
+    return !nullable(t) && (t is TyReference || t is TyVector);
+  }
+  deps = scope_fn::depend(t);
+  len(deps) == 1 && scope_fn::name(cx.f, deps[0]!).starts_with("__vdb_")
+}
+
+// port: place_result.rs fn LoopCx::note_element
+fn lnote_element(cx: LoopCx, w: integer, val: ir::Node) {
+  x = new_record_host(cx.f, cx.ops, w, val);
+  put_host(cx.elm_keys, cx.elm_hosts, w, if x >= 0 && host_ok(cx, x) { x } else { -1 });
+}
+
+// port: place_result.rs fn LoopCx::call
+fn lcall(cx: LoopCx, d: integer, args: vector<ir::Node>) -> boolean {
+  ops = cx.ops;
+  n = len(args);
+  first_v = n > 0 && is_var(args[0]!, cx.v);
+  if d == ops.copy && n == 3 {
+    // The move's source: the local whole, a view of its heap field, or that field read.
+    field: vector<integer> = [];
+    vw = view_at(cx, var_of(args[0]!));
+    if vw >= 0 {
+      field = [cx.view_offs[vw]!, cx.view_tps[vw]!];
+    } else {
+      fv = field_of_v(cx, args[0]!);
+      if len(fv) == 2 {
+        field = [fv[0]!, if is_u16(fv[1]!) { fv[1]! } else { scope_fn::NONE }];
+      }
+    }
+    if first_v || len(field) == 2 {
+      return ldestination(cx, args, field);
+    }
+  }
+  if d < 0 || d >= defs_len(cx.b) {
+    return lfail(cx, "a call to an unknown definition");
+  }
+  named = false;
+  for a in args {
+    if lnames_either(cx, a) {
+      named = true;
+    }
+  }
+  if !named {
+    return true;
+  }
+  def = cx.b.data.definitions[d]!;
+  if d == ops.free_if_distinct && n == 2 && is_var(args[0]!, cx.v) && is_var(args[1]!, cx.buf) {
+    return true;
+  }
+  if def.name.starts_with("OpFreeRef") {
+    return lfail(cx, "a free names the local or the buffer outside the turn's end");
+  }
+  if binds::is_loft_defined(def) {
+    // A scalar read of the local may be an argument; the local itself may not.
+    for a in args {
+      if !lchild(cx, a#index, a) {
+        return false;
+      }
+    }
+    return true;
+  }
+  if first_v {
+    if !scalar_like(returned_of(def)) {
+      return lfail(cx, "a reference into the local leaves the receiver chain");
+    }
+    if cx.st == LM {
+      return lfail(cx, "the local is read after its move");
+    }
+    if cx.st >= 0 && n > 1 && int_of(args[1]!) == cx.st {
+      return lfail(cx, "the moved payload is read after its move");
+    }
+    for a in args {
+      if a#index > 0 && lnames_either(cx, a) {
+        return lfail(cx, "the local is named in its own read's operands");
+      }
+    }
+    return true;
+  }
+  if !scalar_like(returned_of(def)) {
+    return lfail(cx, "a reference into the local leaves the receiver chain");
+  }
+  // The local inside an operand: each operand walked.
+  for a in args {
+    if !lchild(cx, a#index, a) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: place_result.rs fn LoopCx::destination — `field` is `[off, ftp]` for a field move, empty
+// for the record whole.
+fn ldestination(cx: LoopCx, args: vector<ir::Node>, field: vector<integer>) -> boolean {
+  if cx.st != LH {
+    return lfail(cx, "a second destination on one path");
+  }
+  raw = int_of(args[2]!);
+  if raw == null {
+    return lfail(cx, "the copy's type operand is not a literal");
+  }
+  if !is_u16(raw!) {
+    return lfail(cx, "the copy's type operand is out of range");
+  }
+  if (raw! & COPY_FREE_SOURCE) != 0 {
+    return lfail(cx, "the copy frees its source");
+  }
+  copy_tp = raw! & COPY_TP_MASK;
+  move_tp = cx.tp;
+  if len(field) == 0 {
+    if copy_tp != cx.tp {
+      return lfail(cx, "the copy's type is not the record's");
+    }
+  } else {
+    if field[1]! != copy_tp || !one_heap_field(cx.b, cx.f, cx.v, field[1]!) {
+      return lfail(cx, "the moved field is not the record's one heap-owning field");
+    }
+    move_tp = field[1]!;
+  }
+  elm = -1;
+  match scope_fn::unspan(args[1]!) {
+    NdVar { n } => { elm = n; },
+    NdCall { def_nr: g, args: ga } => {
+      if g != cx.ops.get_field || len(ga) != 3 || int_of(ga[2]!) != move_tp {
+        return lfail(cx, "the destination is not an element local or a field of one");
+      }
+      elm = var_of(ga[0]!);
+      if elm < 0 {
+        return lfail(cx, "the destination field is not on an element local");
+      }
+    },
+    _ => return lfail(cx, "the destination is not an element local or a field of one")
+  }
+  host = elm_host(cx.elm_keys, cx.elm_hosts, elm);
+  if host < 0 {
+    return lfail(cx, "the destination is not an element appended to a host collection");
+  }
+  if scope_fn::has(cx.call_mentions, host) {
+    return lfail(cx, "an argument of the call reaches the destination's store");
+  }
+  for dp in scope_fn::deps(cx.f, host) {
+    if scope_fn::has(cx.call_mentions, dp) {
+      return lfail(cx, "an argument of the call reaches the destination's store");
+    }
+  }
+  cx.host = host;
+  cx.move_tp = move_tp;
+  cx.moved = true;
+  cx.mov = copy_path(cx.path);
+  cx.st = if len(field) == 0 { LM } else { field[0]! };
+  true
+}
+
+// port: place_result.rs fn node_at_mut with the edit: `node` with the node at `path` replaced by
+// `edit`'s answer (`how`: 0 the mint, 1 the move, 2 a buffer free).
+fn edit_at(node: ir::Node, path: vector<integer>, k: integer, how: integer, p: LoopPlan, ops: Ops) -> ir::Node {
+  match node {
+    NdSpan { pos, inner } => return ir::NdSpan { pos: pos, inner: edit_at(inner, path, k, how, p, ops) },
+    _ => {}
+  }
+  if k == len(path) {
+    return loop_edited(node, how, p, ops);
+  }
+  i = path[k]!;
+  match node {
+    NdBlock { block } => return ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { if o#index == i { edit_at(o, path, k + 1, how, p, ops) } else { o } }])] },
+    NdLoop { block } => return ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { if o#index == i { edit_at(o, path, k + 1, how, p, ops) } else { o } }])] },
+    NdInsert { items } => return ir::NdInsert { items: [for o in items { if o#index == i { edit_at(o, path, k + 1, how, p, ops) } else { o } }] },
+    NdSet { var, inner } => if i == 0 { return ir::NdSet { var: var, inner: edit_at(inner, path, k + 1, how, p, ops) }; },
+    NdIf { cond, t, f } => return ir::NdIf {
+      cond: if i == 0 { edit_at(cond, path, k + 1, how, p, ops) } else { cond },
+      t: if i == 1 { edit_at(t, path, k + 1, how, p, ops) } else { t },
+      f: if i == 2 { edit_at(f, path, k + 1, how, p, ops) } else { f }
+    },
+    NdReturn { inner } => if i == 0 { return ir::NdReturn { inner: edit_at(inner, path, k + 1, how, p, ops) }; },
+    NdDrop { inner } => if i == 0 { return ir::NdDrop { inner: edit_at(inner, path, k + 1, how, p, ops) }; },
+    NdCall { def_nr, args } => return ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == i { edit_at(a, path, k + 1, how, p, ops) } else { a } }] },
+    _ => {}
+  }
+  node
+}
+
+LOOP_MINT = 0;
+LOOP_MOVE = 1;
+LOOP_FREE = 2;
+
+fn loop_edited(n: ir::Node, how: integer, p: LoopPlan, ops: Ops) -> ir::Node {
+  if how == LOOP_MINT {
+    return ir::NdSet { var: p.buf, inner: ir::NdCall { def_nr: ops.place, args: [ir::NdVar { n: p.host }, ir::NdInt { n: p.tp }] } };
+  }
+  if how == LOOP_MOVE {
+    match n {
+      NdCall { args } => return ir::NdCall { def_nr: ops.move_field, args: [for a in args { if a#index == 2 { ir::NdInt { n: p.move_tp } } else { a } }] },
+      _ => return n
+    }
+  }
+  // A local host's store is released at the exit that already stands there; a parameter host's
+  // store is the caller's, so the block is released on its own (`@FR-R-Place`).
+  if p.host_outlives {
+    return ir::NdCall { def_nr: ops.free_in, args: [ir::NdVar { n: p.buf }, ir::NdInt { n: p.tp }] };
+  }
+  ir::NdNull
+}
+
+// port: place_result.rs fn apply_loop
+fn apply_loop(code: ir::Node, p: LoopPlan, ops: Ops) -> ir::Node {
+  out = edit_at(code, p.mint, 0, LOOP_MINT, p, ops);
+  out = edit_at(out, p.mov, 0, LOOP_MOVE, p, ops);
+  for d in p.drops {
+    out = edit_at(out, d, 0, LOOP_FREE, p, ops);
+  }
+  out
+}
