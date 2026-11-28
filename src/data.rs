@@ -1161,11 +1161,17 @@ pub struct Deps {
 /// Like the dep list it is not part of a function type's SHAPE — [`Type::is_equal`] ignores it —
 /// and the one question it answers, whether a function may stand where another signature is
 /// expected, is asked in one direction by [`ConstParams::stands_for`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct ConstParams {
     bits: u32,
     ret_ref: bool,
     ret_const: bool,
+}
+
+impl std::fmt::Debug for ConstParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "ConstParams({})", self.encode_i64())
+    }
 }
 
 impl ConstParams {
