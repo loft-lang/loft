@@ -62,7 +62,8 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if lhs is TyText {
     match x.code {
       NdVar { n: tv } => {
-        if !(el_types::base(d.tp) is TyText) {
+        // (A default that never finishes, a labelled `i#break`, fits too.)
+        if !(el_types::base(d.tp) is TyText) && !(d.tp is TyNever) {
           refuse_known(e, d.tp, "a `??` default of another type: {type_kind(d.tp)} for TyText");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
@@ -76,7 +77,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
         // Anything else is held in a `__ncc_N` that borrows what the subject borrows, never
         // freed, minted on both passes as the Rust mints it; the "ncc" block answers it or the
         // default.
-        if !(el_types::base(d.tp) is TyText) || d.tp is TyOptional {
+        if (!(el_types::base(d.tp) is TyText) || d.tp is TyOptional) && !(d.tp is TyNever) {
           refuse_known(e, d.tp, "a `??` default of another type: {type_kind(d.tp)} for TyText");
           return ex(ir::NdNull, ir::TyUnknown { n: 0 });
         }
@@ -280,7 +281,7 @@ pub fn coalesce_with(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   if lhs is TyInteger && d.tp is TyInteger && lhs != d.tp && !el_convert::value_fits(e, vars, d.code, lhs) {
     result = ir::TyInteger { spec: wide_spec() };
   }
-  dc = el_convert::convert_admitting(e, vars, d.code, d.tp, result);
+  dc = if d.tp is TyNever { ex_node(d.code) } else { el_convert::convert_admitting(e, vars, d.code, d.tp, result) };
   if dc == null {
     el::refuse(e, "a `??` default of another type: {type_kind(d.tp)} for {type_kind(result)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
@@ -4200,4 +4201,9 @@ fn match_subject_var(n: ir::Node) -> integer {
       -1
     }
   }
+}
+
+// A node as an optional node.
+fn ex_node(n: ir::Node) -> ir::Node? {
+  n
 }
