@@ -563,8 +563,8 @@ impl Parser {
         self.report_return_drift();
     }
 
-    /// `LOFT_RETURN_DRIFT=1` — each function whose return dependencies pass 2 changed from what
-    /// pass 1 recorded, one line on stderr:
+    /// `LOFT_RETURN_DRIFT=1` — each function whose return dependencies differ between pass 1 and
+    /// pass 2, one line on stderr:
     /// `return-drift <name> <file>:<line> pass1=[…] pass2=[…] harmful|benign`.  HARMFUL is pass 1
     /// recording a borrow of a VISIBLE parameter that pass 2 dropped: a caller pass 2 reads
     /// BEFORE the callee's own pass-2 body (a callee declared below it) still types the call

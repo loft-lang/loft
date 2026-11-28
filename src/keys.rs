@@ -560,8 +560,8 @@ pub fn uaf_check_enabled() -> bool {
     *UAF.get_or_init(|| env_set("LOFT_UAF"))
 }
 
-/// `LOFT_RETURN_DRIFT` — report each function whose return dependencies pass 2 changed from
-/// pass 1 (`Parser::report_return_drift`), the census `scripts/return_drift.py` reads for the
+/// `LOFT_RETURN_DRIFT` — report each function whose return dependencies differ between pass 1
+/// and pass 2 (`Parser::report_return_drift`), the census `scripts/return_drift.py` reads for the
 /// stale-borrow class of loft#2660 (@PLN233).  A measurement, off by default: one cached env read.
 pub fn return_drift_enabled() -> bool {
     static DRIFT: OnceLock<bool> = OnceLock::new();

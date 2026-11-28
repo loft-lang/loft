@@ -292,17 +292,17 @@ A literal built in a buffer the local adopts is freed only where the local moved
 **`LOFT_NO_LITERAL_BUFFER_PAIR=1`** keeps both plain frees — a re-free per evaluation.
 Where such a local is one answer of a join return (`if r != null { r! } else { node }`), the
 temps it views and the buffers guarded against it are released unless they hold the value
-returned (`@FR-O-Complete`, loft#2671); **`LOFT_NO_JOIN_RETURN_BACKINGS=1`** keeps them, keyed
+returned (`@FR-O-Complete`, loft#2671); **`LOFT_NO_JOIN_RETURN_BACKINGS=1`** keeps them, keyed <!-- doc-lint: ok -->
 on the local — a leak on the run answering the other arm, a double free where an always-fresh
 arm's buffer is the answer.  Guards `loft-suite/rules/ownership/O-Complete/`.
 A `??` tail (`palt(p) ?? p`) whose temp pass 1 renamed onto the return buffer is copied into
-that buffer only where the joined value is a different store (`@FR-F-Ret`, loft#2673):
+that buffer only where the joined value is a different store (`@FR-F-Ret`, loft#2673): <!-- doc-lint: ok -->
 **`LOFT_NO_SELF_COPY_GUARD=1`** copies it onto itself — the re-mint clears the record first,
 so the call's answer comes back zeroed.  That temp's rebind leaves the store the caller handed
 in to the rebind's entry-witnessed free (`@FR-O-Buffer`); **`LOFT_NO_NCC_ENTRY_GUARD=1`** frees
 it plainly, and the caller frees it a second time.  Guards `loft-suite/rules/calls/F-Ret/`.
 A call that hands its literal argument back (`x = id(P { … })`) delivers that construction to
-the binding, which adopts its store at a first bind as at a rebind (`@FR-O-Move`, loft#2674);
+the binding, which adopts its store at a first bind as at a rebind (`@FR-O-Move`, loft#2674); <!-- doc-lint: ok -->
 **`LOFT_NO_DELIVERED_FIRST_ADOPT=1`** copies at the first bind while the literal's buffer stays
 paired with the binding — one leaked record per first bind.  Only a callee whose EVERY return
 hands the parameter back delivers it; **`LOFT_NO_DELIVERED_EVERY_RETURN=1`** reads the tail
@@ -310,7 +310,7 @@ alone, so a rebind from `if p.v > 3 { return P { … }; } p` adopts plainly and 
 the fresh record leaves the literal to nobody.  Guards `loft-suite/rules/ownership/O-Move/`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
-the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the
+the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->
 span in place, and the record the callee minted is owned by nobody, one per evaluation.
 Guards `loft-suite/rules/ownership/O-Derived/`.
 

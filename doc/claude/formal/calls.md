@@ -604,7 +604,7 @@ measurement that closed it — is the companion [calls-history.md](calls-history
   beside a `null` and beside a literal, the walk that ends at null, eight nullable controls
   and the two dense twins — each read after a filler allocation, both backends
   (`D-call-8`, loft#1337).
-- **A coalesce tail answers the record its call answered (`F-Ret`, `O-Buffer`, loft#2673)** —
+- **A coalesce tail answers the record its call answered (`F-Ret`, `O-Buffer`, loft#2673)** — <!-- doc-lint: ok -->
   `fn w(p: P) -> P { palt(p) ?? p }` hands back `palt`'s record where it answered and a copy of
   `p` where it did not.  Its `??` temp IS the return buffer (pass 1 renamed it there), so the
   copy into the buffer runs only where the joined value is another store, and the temp's rebind

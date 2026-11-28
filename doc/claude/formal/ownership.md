@@ -838,7 +838,7 @@ analysis directly (the certifier sidesteps it).
   spellings of the same read score nothing. Statement context is an axis here.
 
 - **A joined local answered on one arm of a join return releases its stores on the other
-  (`O-Complete`, `O-Buffer`, loft#2671)** — `node = if c { f(n) } else { n }` owns nothing:
+  (`O-Complete`, `O-Buffer`, loft#2671)** — `node = if c { f(n) } else { n }` owns nothing: <!-- doc-lint: ok -->
   its arms' temps own what it holds.  Where a return answers `node` OR another value
   (`if r != null { r! } else { node }`), each of those temps, and each buffer whose free was
   guarded against `node`, is released unless it holds the value returned
@@ -847,7 +847,7 @@ analysis directly (the certifier sidesteps it).
   `loft-suite/rules/ownership/O-Complete/2671-…`, `@catches: LOFT_NO_JOIN_RETURN_BACKINGS`.
 
 - **A local bound from a call that hands its literal argument back owns one store (`O-Move`,
-  `O-Buffer`, loft#2674)** — `x = id(P { … })` adopts the literal's store at the first bind as
+  `O-Buffer`, loft#2674)** — `x = id(P { … })` adopts the literal's store at the first bind as <!-- doc-lint: ok -->
   at every rebind, and only a callee whose EVERY return hands its parameter back is read as
   delivering it; `if p.v > 3 { return P { … }; } p` copies its answer and the literal keeps its
   own free.  Guard `loft-suite/rules/ownership/O-Move/2674-…`.
