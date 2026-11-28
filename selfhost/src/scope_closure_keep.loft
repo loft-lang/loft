@@ -2,9 +2,13 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN91 — `src/scopes/closure_keep.rs` begun (scope-pass-port.md step 16):
-// `pass_confined_records`, the closure record types confined to one pass of a loop
-// (loft#1610, `@FR-L-CapOwn`), which `capture_build_backings` records.
+// @PLN91 — `src/scopes/closure_keep.rs` transcribed (scope-pass-port.md step 16):
+// `closure_keep_set` (`@FR-L-CapKeep`: which frames decide their closure records' releases per
+// run) and `pass_confined_records`, the closure record types confined to one pass of a loop
+// (loft#1610, `@FR-L-CapOwn`), which `capture_build_backings` records.  The `Scopes` methods a
+// GATED keep set drives (`closure_keep_live`, `_links`, `_unless_shared`, `_detach`,
+// `_pass_end`, `_stand_down`, `_backing`, `_rebind`, `fnref_call_rebind`) are not transcribed:
+// the phase refuses a gated frame by name.
 
 use ir;
 use scope_fn;
@@ -422,3 +426,245 @@ fn only_called_in(b: ir::Bundle, w: CWalk, callee: integer, arg: integer, asked:
   !escapes_in(b, w, def.code[0]!, arg, asked, false, false)
 }
 
+// port: closure_keep.rs struct ClosureKeep — `captures` as three parallel lists (the record,
+// the slot offset node, the captured local); `targets` per record, the holders it is bound to.
+pub struct ClosureKeep {
+  pub gated: boolean,
+  pub records: vector<integer>,
+  pub plain_rebound: boolean,
+  pub confined_records: vector<integer>,
+  pub holders: vector<integer>,
+  pub owning: vector<integer>,
+  pub capture_records: vector<integer>,
+  pub capture_offsets: vector<ir::Node>,
+  pub capture_locals: vector<integer>,
+  pub targets: vector<scope_scan::VarList>,
+  pub links: vector<integer>
+}
+
+pub fn no_closure_keep() -> ClosureKeep {
+  ClosureKeep {
+    gated: false, records: [], plain_rebound: false, confined_records: [], holders: [], owning: [],
+    capture_records: [], capture_offsets: [], capture_locals: [], targets: [], links: []
+  }
+}
+
+// port: closure_keep.rs fn ClosureKeep::decides_link
+pub fn decides_link(k: ClosureKeep, r: integer) -> boolean {
+  k.gated && len(k.links) > 0 && scope_fn::has(k.records, r)
+}
+
+// The facts `closure_keep_set`'s walk collects.
+struct KeepWalk {
+  built_in_loop: boolean,
+  shared: boolean,
+  foreign: vector<integer>
+}
+
+// port: closure_keep.rs fn closure_keep_set — a frame whose closure records' releases are
+// decided per run (`gated`): a record built in a loop, a fn-ref holder shared, one holder bound
+// to two records, or a holder rebound to a plain fn-ref.  Not gated, the set is empty.
+pub fn closure_keep_set(b: ir::Bundle, f: ir::Function, code: ir::Node) -> ClosureKeep {
+  out = no_closure_keep();
+  if env_variable("LOFT_NO_CLOSURE_KEEP") != null {
+    return out;
+  }
+  confined = pass_confined_records(b, f, code);
+  for v in 0..scope_fn::count(f) {
+    t = scope_fn::base(scope_fn::tp(f, v));
+    if scope_fn::is_argument(f, v) {
+      match t {
+        TyRefVar { inner } => if scope_fn::base(inner) is TyFunction { out.links += [v]; },
+        _ => {}
+      }
+      continue;
+    }
+    match t {
+      TyFunction => if !scope_fn::is_compiler_generated(f, v) { out.holders += [v]; },
+      TyReference { n: r } => if scope_fn::name(f, v).starts_with("___clos_") {
+        if scope_fn::has(confined, r) {
+          out.confined_records += [v];
+        } else {
+          out.records += [v];
+        }
+      },
+      _ => {}
+    }
+  }
+  database = scope_fn::def_nr(b, "OpDatabase");
+  kw = KeepWalk { built_in_loop: false, shared: false, foreign: [] };
+  keep_walk(b, code, false, out, database, kw);
+  loop_or_shared = (kw.built_in_loop && len(out.records) > 0) || (kw.shared && len(out.holders) > 0);
+  plain_holder = false;
+  if env_variable("LOFT_NO_PLAIN_REBIND_KEEP") == null {
+    for h in out.holders {
+      if sets_int(code, h) {
+        plain_holder = true;
+      }
+    }
+  }
+  if !loop_or_shared && len(out.records) < 2 && !plain_holder {
+    return no_closure_keep();
+  }
+  targets: vector<scope_scan::VarList> = [];
+  keep_targets(code, out.records, database, targets);
+  out.targets = targets;
+  // `bound_to`: per holder, the records bound to it.
+  bound: vector<scope_scan::VarList> = [];
+  for e in targets {
+    for h in e.items {
+      scope_scan::list_add(bound, h, e.v);
+    }
+  }
+  multi_bound = false;
+  for e in bound {
+    if len(e.items) > 1 {
+      multi_bound = true;
+    }
+  }
+  plain_rebound = false;
+  if plain_holder {
+    for e in bound {
+      if sets_int(code, e.v) {
+        plain_rebound = true;
+      }
+    }
+  }
+  out.gated = loop_or_shared || multi_bound || plain_rebound;
+  out.plain_rebound = plain_rebound;
+  if !out.gated {
+    return no_closure_keep();
+  }
+  keep_captures(b, code, out);
+  for h in out.holders {
+    if !scope_fn::has(kw.foreign, h) {
+      out.owning += [h];
+    }
+  }
+  out
+}
+
+// `targets.entry(*r).or_default().push(*h)`: repeats kept.
+fn push_target(m: vector<scope_scan::VarList>, r: integer, h: integer) {
+  for e in m {
+    if e.v == r {
+      e.items += [h];
+      return;
+    }
+  }
+  m += [scope_scan::VarList { v: r, items: [h] }];
+}
+
+fn keep_walk(b: ir::Bundle, n: ir::Node, in_loop: boolean, k: ClosureKeep, database: integer, kw: KeepWalk) {
+  u = scope_fn::unspan(n);
+  inner = in_loop || u is NdLoop;
+  match u {
+    NdCall { def_nr, args } => if in_loop && def_nr == database && len(args) > 0 && scope_fn::has(k.records, var_of(args[0])) {
+      kw.built_in_loop = true;
+    },
+    NdSet { var: p, inner: rhs0 } => {
+      rhs = scope_fn::unspan(rhs0);
+      if scope_fn::has(k.links, p) && scope_fn::has(k.holders, var_of(rhs)) {
+        kw.shared = true;
+      } else if scope_fn::has(k.holders, p) {
+        match rhs {
+          NdVar { n: x } => if scope_fn::has(k.holders, x) {
+            kw.shared = true;
+          } else {
+            scope_scan::set_add(kw.foreign, p);
+          },
+          NdCall { def_nr: d, args } => if !b.data.definitions[d]!.name.starts_with("Op") {
+            for a in args {
+              match scope_fn::unspan(a) {
+                NdVar { n: x } => if scope_fn::has(k.holders, x) { kw.shared = true; },
+                NdBlock { block } => if block[0].name == "fn_ref_with_closure" && env_variable("LOFT_NO_ARGUMENT_BUILD_SHARE") == null {
+                  kw.shared = true;
+                },
+                _ => {}
+              }
+            }
+          } else {
+            scope_scan::set_add(kw.foreign, p);
+          },
+          NdBlock { block } => if block[0].name != "fn_ref_with_closure" {
+            scope_scan::set_add(kw.foreign, p);
+          },
+          NdNull => {},
+          NdInt => {},
+          _ => scope_scan::set_add(kw.foreign, p)
+        }
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    keep_walk(b, ch, inner, k, database, kw);
+  }
+}
+
+// Does the body assign `h` a plain integer (`Set(h, Int(_))`, a plain fn-ref)?
+fn sets_int(n: ir::Node, h: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: x, inner } => if x == h && scope_fn::unspan(inner) is NdInt {
+      return true;
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if sets_int(ch, h) {
+      return true;
+    }
+  }
+  false
+}
+
+fn keep_targets(n: ir::Node, records: vector<integer>, database: integer, targets: vector<scope_scan::VarList>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: h, inner } => match scope_fn::unspan(inner) {
+      NdBlock { block } => if block[0].name == "fn_ref_with_closure" {
+        for op in block[0].operators {
+          match scope_fn::unspan(op) {
+            NdCall { def_nr, args } => if def_nr == database && len(args) > 0 {
+              r = var_of(args[0]);
+              if r >= 0 && scope_fn::has(records, r) {
+                push_target(targets, r, h);
+              }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    keep_targets(ch, records, database, targets);
+  }
+}
+
+fn keep_captures(b: ir::Bundle, n: ir::Node, k: ClosureKeep) {
+  set_dbref = scope_fn::def_nr(b, "OpSetDbRef");
+  keep_captures_walk(n, set_dbref, k);
+}
+
+fn keep_captures_walk(n: ir::Node, set_dbref: integer, k: ClosureKeep) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if def_nr == set_dbref && len(args) > 2 {
+      r = var_of(args[0]);
+      x = var_of(args[2]);
+      if r >= 0 && x >= 0 && scope_fn::has(k.records, r) {
+        k.capture_records += [r];
+        k.capture_offsets += [args[1]!];
+        k.capture_locals += [x];
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    keep_captures_walk(ch, set_dbref, k);
+  }
+}
