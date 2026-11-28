@@ -107,6 +107,10 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     owner_witness: [],
     handed_off: [],
     per_path_pairs: [],
+    caller_records: [],
+    witness_aliases: [],
+    join_holders: [],
+    loop_refills: [],
     handle_views: [],
     views_to_materialise: [],
     drop_transferred: [],
@@ -224,6 +228,68 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     scope_scan::set_scope_of(s, c, 0);
     s.var_order += [c];
   }
+  // `(H-Drop)` — the locals that hold the caller's record on every path, marked before any
+  // reader of `copy_moves_drop_from` runs.
+  s.caller_records = scope_handoff::caller_record_locals(b, orig_code, function);
+  // loft#1515 — the per-path hand-offs an author wrote, and a copy written in a LOOP body that
+  // stops its destination (per iteration): one flag per STOPPED variable, minted before the scan
+  // so its `false` initialiser can head the body.  The stopped side is the source for a copy
+  // that takes its release and the destination for a copy off a parameter (`per_path_stops`).
+  pairs = scope_handoff::per_path_handoffs(orig_code);
+  for p in scope_handoff::loop_self_stopping_copies(s, b, orig_code, function) {
+    scope_scan::set_add(pairs, p);
+  }
+  stopped: vector<integer> = [];
+  for p in pairs {
+    st = scope_handoff::per_path_stops(s, b, function, p / 65536, p % 65536);
+    if st >= 0 {
+      s.per_path_pairs += [p];
+      scope_scan::set_add(stopped, st);
+    }
+  }
+  for var in scope_handles::sorted(stopped) {
+    scope_handoff::mint_handoff_flag(s, function, var);
+  }
+  // D-heap-14 — the same per-path fact for a copy that hands a droppable to a CONTAINER inside a
+  // branch arm, recorded as the pair `(u16::MAX, source)`.
+  for src in scope_handoff::arm_container_handoffs(s, b, orig_code, function) {
+    scope_scan::set_add(s.per_path_pairs, scope_handoff::pair(scope_fn::NONE, src));
+    scope_handoff::mint_handoff_flag(s, function, src);
+  }
+  // D-heap-23 — the store behind a collection the function owns, whose elements a
+  // whole-collection copy moved elsewhere, stops releasing them on the path the copy ran.
+  for backing in scope_handoff::collection_handoffs(s, b, orig_code, function) {
+    scope_scan::set_add(s.per_path_pairs, scope_handoff::pair(scope_fn::NONE, backing));
+    scope_handoff::mint_handoff_flag(s, function, backing);
+  }
+  // loft#1336 / `(H-Drop)` — a witnessed local assigned a copy off a PARAMETER anywhere in the
+  // body gets the same flag; in the order of the locals.
+  witnessed: vector<integer> = [];
+  for w in s.owner_witness {
+    if w >= 0 {
+      witnessed += [w#index];
+    }
+  }
+  for v in witnessed {
+    if scope_handoff::assigns_a_self_stopping_copy(s, b, orig_code, function, v) {
+      scope_handoff::mint_handoff_flag(s, function, v);
+    }
+  }
+  // `(H-Drop)` — a local assigned a copy off a FLAGGED local inherits that flag at the copy, so
+  // it needs a flag of its own.  A fixpoint, in the order of the pairs.
+  copy_pairs = scope_handoff::local_copy_pairs(b, orig_code, function);
+  minted = true;
+  while minted {
+    minted = false;
+    for p in copy_pairs {
+      dst = p / 65536;
+      src = p % 65536;
+      if scope_scan::get(s.handed_off, src) >= 0 && scope_scan::get(s.handed_off, dst) < 0 {
+        scope_handoff::mint_handoff_flag(s, function, dst);
+        minted = true;
+      }
+    }
+  }
   code = scope_scan::scan(s, b, orig_code, function);
 
   // Each insert below goes at the head of the body block, the last one inserted first: in
@@ -243,6 +309,9 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     flags = scope_handles::sorted([for x in s.tuple_moved[0]!.vals { x }]);
     head = prepend_ops([for fl in flags { scope_fn::v_set(fl, ir::NdBoolean { b: false }) }], head);
   }
+  // loft#1515 — and every hand-off flag: before the branch runs no copy has taken the source's
+  // release.
+  head = prepend_ops([for fl in scope_handoff::handoff_flags(s) { scope_fn::v_set(fl, ir::NdBoolean { b: false }) }], head);
   head = prepend_ops([for c in slot_cells { scope_fn::v_set(c, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }) }], head);
   // An owner witness starts at the null SENTINEL: before the local's first owning assignment
   // there is no store of its own to release (@FR-H-FreeNull).
@@ -432,10 +501,6 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   if closure_keep_shared(b, code, f) {
     scope_scan::refuse(s, "closure_keep::closure_keep_set: a fn-ref holder shared (releases by store identity)");
   }
-  // A record type with a DROP cascade (a hook, or a droppable member) is carried where no COPY
-  // hands its drop on (`handoff.rs`): the copies that would mint a per-path flag or move a
-  // release refuse by name (`copy_handoff_refusals`), so `handed_off` stays empty.
-  scope_handoff::copy_handoff_refusals(s, b, code, f);
   // The same for a VECTOR whose element type has a collection cascade (`collection_def_nr`):
   // its rebind and scope-end releases, its call rebind, its hand-offs (`collection_handoffs`).
   for v in f.variables {
@@ -445,12 +510,6 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
       },
       _ => {}
     }
-  }
-  // A generator handle MOVED into a field or an element (`handoff::handle_handoff`, loft#1585):
-  // `collect_drop_transferred` and, in a branch arm, `arm_container_handoffs`' per-path flag are
-  // not transcribed.
-  if moves_a_handle(b, code, f) {
-    scope_scan::refuse(s, "handoff::handle_handoff: a generator handle moved into a container");
   }
   // `mixed_handle_views` — a handle local given a member's handle and one of its own: its
   // per-path flag (`mint_handoff_flag`) and the tagged leaves are not transcribed.
@@ -475,29 +534,6 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   if len(scope_view_walk::collect_views_to_materialise(b, code, f, s.ops.disturbed)) > 0 {
     scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a view used after a disturbance of its container (the materialise legs)");
   }
-}
-
-// port: handoff.rs fn handle_handoff, asked of every call: `OpSetDbRef(host, pos, g)` with `g` a
-// generator handle local.
-fn moves_a_handle(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
-  u = scope_fn::unspan(n);
-  match u {
-    NdCall { def_nr, args } => if len(args) > 2 && scope_args::def_name(b, def_nr) == "OpSetDbRef" {
-      match scope_fn::unspan(args[2]!) {
-        NdVar { n: g } => if scope_fn::base(scope_fn::tp(f, g)) is TyIterator {
-          return true;
-        },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(u) {
-    if moves_a_handle(b, c, f) {
-      return true;
-    }
-  }
-  false
 }
 
 // port: closure_keep.rs fn closure_keep_set, its `shared` answer over the holders and links

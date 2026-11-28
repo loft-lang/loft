@@ -84,10 +84,11 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     ls += rebuilt.pre;
     ls += rebind_pre;
     ls += promoted_refill.pre;
-    // The hand-offs a statement arms after it is scanned: `drop_handoff_node`'s construction arm
-    // (the copy arms are refused by the phase); the tuple member moves follow.
+    // The hand-offs a statement arms after it is scanned (`drop_handoff_node`, `@FR-O-Latest`):
+    // its own displaced release and its retirement read the facts of the assignments before
+    // it; the tuple member moves follow.
     handed: vector<integer> = [];
-    scope_handoff::construction_handoffs(b, v, f, handed);
+    scope_handoff::drop_handoff_walk(s, b, v, f, handed, s.arm_lift_temps);
     for w in handed {
       scope_scan::set_add(s.drop_transferred, w);
     }

@@ -105,16 +105,18 @@ fn type_holds_generator(b: ir::Bundle, t: ir::TypeT, path: vector<integer>) -> b
 // port: drops.rs fn witness_hook — the hook a release through witness `w` runs for witnessed
 // local `v`: the cascade over the record `w` names, unless a copy off a parameter (`v`'s
 // `__hoff_` flag) made that record's release the caller's.
+// Spelled so the hook local is never returned on one path and copied into a field on another:
+// that shape leaks the local's store on the copying path (w15/repro/p6.loft, both backends).
 pub fn witness_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, w: integer) -> ir::Node? {
+  flag = scope_scan::get(s.handed_off, v);
+  if flag < 0 {
+    return drop_hook(s, b, f, w);
+  }
   hook = drop_hook(s, b, f, w);
   if hook == null {
     return null;
   }
-  flag = scope_scan::get(s.handed_off, v);
-  if flag >= 0 {
-    return ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: hook! };
-  }
-  hook
+  ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: hook! }
 }
 
 // port: drops.rs fn scope_end_drop — the hook unless a move-copy took it; guarded on the
@@ -123,15 +125,16 @@ pub fn scope_end_drop(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: 
   if scope_fn::has(s.drop_transferred, v) {
     return null;
   }
+  // The hook local is only ever copied (`witness_hook` says why).
+  flag = scope_scan::get(s.handed_off, v);
+  if flag < 0 {
+    return drop_hook(s, b, f, v);
+  }
   d = drop_hook(s, b, f, v);
   if d == null {
     return null;
   }
-  flag = scope_scan::get(s.handed_off, v);
-  if flag >= 0 {
-    return ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: d! };
-  }
-  d
+  ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: d! }
 }
 
 // port: drops.rs fn scope_end_hook — `arm_dropped` is the per-arm hook placement of a returned

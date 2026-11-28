@@ -13,6 +13,7 @@ use loop_shape;
 use own;
 use el_ir;
 use cgen_types;
+use opt_names;
 
 // The DC statement IDs (`pos` of a line-0 span): clear of `opt_version`'s ID range (below
 // -1 000 000) and its site range (-900 000 to -500 000).
@@ -444,4 +445,91 @@ pub fn read_after(b: ir::Bundle, def: ir::Definition, site: integer, var: intege
   p = Pass { b: b, f: def.variables, var: var, uses: uses, target: site, exits: [], headers: [], found: 0 };
   before(p, def.code[0] ?? ir::NdNull, false);
   if p.found == 0 { -1 } else if p.found == 1 { 0 } else { 1 }
+}
+
+// port: lease.rs fn copy_hook_nr — the type's own `OpCopy` (`t_<LEN><Type>_OpCopy`), else NONE.
+pub fn copy_hook_nr(b: ir::Bundle, type_def: integer) -> integer {
+  if type_def < 0 || type_def >= len(b.data.definitions) {
+    return opt_names::NONE;
+  }
+  d = b.data.definitions[type_def]!;
+  opt_names::named(b, d.source, "t_{d.name.size()}{d.name}_OpCopy")
+}
+
+// port: data.rs fn drop_hook_nr — the type's own `OpDrop`, else NONE.
+fn drop_hook_nr(b: ir::Bundle, type_def: integer) -> integer {
+  if type_def < 0 || type_def >= len(b.data.definitions) {
+    return opt_names::NONE;
+  }
+  d = b.data.definitions[type_def]!;
+  opt_names::named(b, d.source, "t_{d.name.size()}{d.name}_OpDrop")
+}
+
+// port: lease.rs struct CopyReach — what a copy of a value meets inside it, at any depth: a
+// droppable with no `OpCopy` (`refused`, `(H-Copy-Refuse)`), a type that declares `OpCopy`
+// (`leases`, `(H-Copy-Lease)`).
+pub struct CopyReach {
+  pub refused: boolean,
+  pub leases: boolean
+}
+
+// port: lease.rs fn copy_reach
+pub fn copy_reach(b: ir::Bundle, t: ir::TypeT) -> CopyReach {
+  out = CopyReach { refused: false, leases: false };
+  path: vector<integer> = [];
+  reach_type(b, t, path, out);
+  out
+}
+
+fn reach_type(b: ir::Bundle, t: ir::TypeT, path: vector<integer>, out: CopyReach) {
+  match t {
+    TyReference { n } => reach_def(b, n, path, out),
+    TyEnum { n, is_ref } => if is_ref { reach_def(b, n, path, out); },
+    TySorted { n } => reach_def(b, n, path, out),
+    TyIndex { n } => reach_def(b, n, path, out),
+    TyRadix { n } => reach_def(b, n, path, out),
+    TyTrie { n } => reach_def(b, n, path, out),
+    TyHash { n } => reach_def(b, n, path, out),
+    TyVector { inner } => reach_type(b, inner, path, out),
+    TyOptional { inner } => reach_type(b, inner, path, out),
+    TyRefVar { inner } => reach_type(b, inner, path, out),
+    TyRewritten { inner } => reach_type(b, inner, path, out),
+    TyTuple { elems } => for e in elems {
+      reach_type(b, e, path, out);
+    },
+    // A generator handle owns its frame (loft#1585) and has no way to take a second one.
+    TyIterator => { out.refused = true; },
+    _ => {}
+  }
+}
+
+fn reach_def(b: ir::Bundle, d_nr: integer, path: vector<integer>, out: CopyReach) {
+  if d_nr < 0 || d_nr >= len(b.data.definitions) || path.contains(d_nr) {
+    return;
+  }
+  path += [d_nr];
+  drops = drop_hook_nr(b, d_nr) != opt_names::NONE;
+  copies = copy_hook_nr(b, d_nr) != opt_names::NONE;
+  if d_nr == opt_names::named(b, 0, "iterator") || (drops && !copies) {
+    out.refused = true;
+  }
+  if copies {
+    out.leases = true;
+  }
+  for a in b.data.definitions[d_nr]!.attributes {
+    reach_type(b, a.typedef[0] ?? ir::TyVoid, path, out);
+  }
+  // An enum's variants are its children, each with its own payload fields.
+  for c in b.data.definitions {
+    if c.parent == d_nr && c.def_type == 4 {
+      reach_def(b, c#index, path, out);
+    }
+  }
+}
+
+// port: lease.rs fn leases_whole — a copy of a value of type `d` takes a lease rather than
+// being refused.
+pub fn leases_whole(b: ir::Bundle, d: integer) -> boolean {
+  r = copy_reach(b, ir::TyReference { n: d, dep: [] });
+  r.leases && !r.refused
 }

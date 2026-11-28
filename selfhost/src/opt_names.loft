@@ -312,7 +312,7 @@ fn collect_fn_ref_literals(val: ir::Node, defs: vector<ir::Definition>, vars: ve
 
 // The definition named `key` in source `source`, else the one of the program's own source or
 // of the standard library (`Data::source_nr`, then `Data::def_nr`); `NONE` for none.
-fn named(b: ir::Bundle, source: integer, key: text) -> integer {
+pub fn named(b: ir::Bundle, source: integer, key: text) -> integer {
   fallback = NONE;
   for d in b.data.definitions {
     if d.name != key {

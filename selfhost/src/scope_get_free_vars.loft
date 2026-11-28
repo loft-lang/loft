@@ -80,12 +80,11 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     }
     // loft#1336 / @FR-O-Witness — a witnessed local's store is released through its witness,
     // which names it only while the local still holds it; the local itself is never-free.  A
-    // closure record's conditional adoption (loft#1464) is refused where the record is built,
-    // and `unless_moved` guards only a hook, which a witnessed type with a cascade (refused by
-    // the phase) would have.
+    // closure record's conditional adoption (loft#1464) is refused where the record is built;
+    // the hook is guarded where the return hands the witnessed record out (`unless_moved`).
     w = scope_scan::get(s.owner_witness, v);
     if w >= 0 {
-      ls += [scope_witness::release_witness(s, w, scope_drops::witness_hook(s, b, f, v, w))];
+      ls += [scope_witness::release_witness(s, w, scope_free_vars::unless_moved(s, b, delivered, w, scope_drops::witness_hook(s, b, f, v, w)))];
       continue;
     }
     if scope_fn::name(f, v).contains("hash_scratch") {
@@ -406,7 +405,7 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
   pw = scope_scan::get(s.paired_witness, v);
   lw = scope_scan::get(s.literal_buffer, v);
   if jw >= 0 {
-    hook = scope_drops::scope_end_hook(s, b, f, v, []);
+    hook = scope_free_vars::unless_moved(s, b, delivered, v, scope_drops::scope_end_hook(s, b, f, v, delivered.arm_dropped));
     if hook != null {
       ls += [hook!];
     }
@@ -440,7 +439,7 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
   } else if scope_scan::list_has_key(s.witness_buffer, v) {
     // @P378(a) — `v` is an inner-scoped witness whose store is an outer buffer.
     buffers = scope_scan::list_of(s.witness_buffer, v);
-    hook = scope_drops::scope_end_hook(s, b, f, v, []);
+    hook = scope_free_vars::unless_moved(s, b, delivered, v, scope_drops::scope_end_hook(s, b, f, v, delivered.arm_dropped));
     if hook != null {
       ls += [scope_drops::lift_viewer_guard(s, v, hook!)];
     }
@@ -468,7 +467,7 @@ fn record_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: inte
       }
     }
     if !is_buffer && !binding_ended {
-      hook = scope_drops::scope_end_hook(s, b, f, v, []);
+      hook = scope_free_vars::unless_moved(s, b, delivered, v, scope_drops::scope_end_hook(s, b, f, v, delivered.arm_dropped));
       if hook != null {
         ls += [scope_drops::lift_viewer_guard(s, v, hook!)];
       }
