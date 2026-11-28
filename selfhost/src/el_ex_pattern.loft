@@ -2754,6 +2754,16 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     if !e.unbacked.contains(key) {
       e.unbacked += [key];
     }
+    // (…on the local's type too: `vector<T>["v"]`.)
+    ubt = el_vars::tp(vars, v);
+    if el_types::base(ubt) is TyVector && !el_types::deps(ubt).contains(v) {
+      el_vars::set_var_type(vars, v, el_types::with_deps(ubt, el_types::deps(ubt) + [v]));
+    }
+  }
+  // (…and the return buffer renamed onto the local, emptied by `v = []`, borrows itself on the
+  // first pass too: `vector<T>["v"]`.)
+  if e.first_pass && !append && !value && !typed && v >= 0 && vars.vars[v].argument && len(items) == 0 && el_types::base(el_vars::tp(vars, v)) is TyVector && hidden_param(e, vars, v) {
+    el_vars::set_var_type(vars, v, el_types::with_deps(el_types::without_deps(el_vars::tp(vars, v)), [v]));
   }
   xs: vector<Ex> = [];
   // A struct literal item is built into the element itself (`parse_item` with `elm`): typed here,
@@ -3305,6 +3315,11 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     ls += [el_ir::cl(e, "OpFreeRefIfDistinct", [w, ir::NdVar { n: orig }])] + literal_store(e, vars, v, r, rebind: true);
   } else if !append && vars.vars[v].argument {
     ls += [el_ir::cl(e, "OpClearVector", [w])];
+    // (The return buffer renamed onto the local, emptied by `v = []`, keeps the store it is: the
+    // local borrows itself from here on, `vector<T>["v"]`.)
+    if len(items) == 0 && !typed && el_types::base(el_vars::tp(vars, v)) is TyVector && hidden_param(e, vars, v) {
+      el_vars::set_var_type(vars, v, el_types::with_deps(el_types::without_deps(el_vars::tp(vars, v)), [v]));
+    }
   } else if !append && !late_store && len(borrows) == 0 {
     ls += literal_store(e, vars, v, r);
   }

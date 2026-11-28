@@ -1027,6 +1027,14 @@ pub fn take_over(v: Vars, kept: ir::Function) {
   for x in kept.variables {
     y = x;
     y.uses = 0;
+    // (A vector local's pass-1 self-borrow — an untyped `v = []` — is the first pass's alone:
+    // the second starts without it and re-adds it only where its own rebind says so, the
+    // return buffer emptied in place.)
+    xt = x.type_def[0] ?? ir::TyVoid;
+    xi = len(v.vars);
+    if xt is TyVector && el_types::deps(xt).contains(xi) {
+      y.type_def = [el_types::with_deps(xt, [for xd in el_types::deps(xt) if xd != xi { xd }])];
+    }
     v.vars += [y];
     v.defined += [false];
   }
