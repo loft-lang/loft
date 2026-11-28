@@ -5991,6 +5991,19 @@ impl Function {
         }
     }
 
+    /// @PLN91 — `v`'s [`Variable::viewed`], for the image (`ir_store`).
+    #[must_use]
+    pub(crate) fn viewed_of(&self, v: u16) -> &[u16] {
+        self.variables.get(v as usize).map_or(&[][..], |x| &x.viewed[..])
+    }
+
+    /// @PLN91 — `v`'s [`Variable::viewed`] read back from the image (`ir_read`).
+    pub(crate) fn set_viewed(&mut self, v: u16, list: Vec<u16>) {
+        if let Some(x) = self.variables.get_mut(v as usize) {
+            x.viewed = list;
+        }
+    }
+
     /// The locals `v` views, directly or through another: its deps, their deps, and so on.
     pub fn viewed_by(&self, v: u16) -> Vec<u16> {
         let mut out: Vec<u16> = Vec::new();

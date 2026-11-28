@@ -7,10 +7,8 @@
 // built), B1.3c `construct_fresh_rewrite` (`a = Bag { items: base }`, `a`'s build hoisted) and
 // B1.3d `construct_replace_rewrite` (`a.field = base`, the clear moved ahead of the build).
 //
-// `Function::store_viewers` reads every earlier bind's deps (`Variable::viewed`), which the
-// image does not hold: the reorders' `touches_store` is asked twice, with the current deps and
-// with every multiply-bound local read as a possible viewer, and a reorder the two answers
-// disagree on refuses its function by name.
+// `Function::store_viewers` reads every earlier bind's deps (`Variable::viewed`) off the image
+// (`scope_fn::viewers_of`).
 
 use ir;
 use scope_fn;
@@ -489,11 +487,7 @@ fn try_fresh_one(ops: vector<ir::Node>, src: integer, co: ConstructOps, f: ir::F
   }
   // `@FR-O-Detach` — nothing the run is hoisted across names `a`, a view of its store, or
   // binds `a`.
-  t = touches_region(ops, 0, ps, [], a, f);
-  if t.maybe && !t.exact {
-    r.why = "construct_elide::try_fresh_one: a statement the build is hoisted across may view the container (Variable::viewed, not in the image)";
-  }
-  if t.exact || t.maybe {
+  if touches_region(ops, 0, ps, [], a, f) {
     return null;
   }
   out: vector<ir::Node> = [for i in ps..ci { ops[i]! }];
@@ -578,119 +572,6 @@ fn fresh_retarget(n: ir::Node, src: integer, dest: ir::Node, co: ConstructOps) -
 
 // ── store viewers and touches_store ──
 
-// The deps closure of `start` (current deps only).
-fn closure(f: ir::Function, start: integer) -> vector<integer> {
-  seen: vector<integer> = [];
-  stack: vector<integer> = [start];
-  while len(stack) > 0 {
-    v = stack[len(stack) - 1];
-    stack.remove(len(stack) - 1);
-    for d in scope_fn::deps(f, v) {
-      if d < scope_fn::count(f) && !scope_fn::has(seen, d) {
-        seen += [d];
-        stack += [d];
-      }
-    }
-  }
-  seen
-}
-
-fn has_heap_dep(t: ir::TypeT) -> boolean {
-  match scope_fn::base(t) {
-    TyReference => true,
-    TyVector => true,
-    TyEnum { is_ref } => is_ref,
-    TySorted => true,
-    TyHash => true,
-    TyIndex => true,
-    TyRadix => true,
-    TyTrie => true,
-    _ => false
-  }
-}
-
-// port: variables/mod.rs fn store_viewers, over the deps the frame carries now.
-fn store_viewers(f: ir::Function, root: integer) -> vector<integer> {
-  roots = closure(f, root);
-  roots += [root];
-  from_caller = false;
-  for r in roots {
-    if scope_fn::is_argument(f, r) {
-      from_caller = true;
-    }
-  }
-  foreign: vector<integer> = [];
-  if from_caller {
-    for w in 0..scope_fn::count(f) {
-      if w != root && scope_fn::is_argument(f, w) && has_heap_dep(scope_fn::tp(f, w)) {
-        foreign += [w];
-      }
-    }
-  }
-  out: vector<integer> = [];
-  for w in 0..scope_fn::count(f) {
-    if w == root {
-      continue;
-    }
-    hit = scope_fn::has(foreign, w);
-    if !hit {
-      for d in closure(f, w) {
-        if scope_fn::has(roots, d) || scope_fn::has(foreign, d) {
-          hit = true;
-        }
-      }
-    }
-    if hit {
-      out += [w];
-    }
-  }
-  out
-}
-
-// The locals an earlier bind may have left viewing `root`'s store (`Variable::viewed`): every
-// local bound more than once, and every local whose deps reach one; every local but `root` where
-// `root` or what it views was bound more than once.
-fn maybe_viewers(f: ir::Function, root: integer, multi: vector<integer>, exact: vector<integer>) -> vector<integer> {
-  rc = closure(f, root);
-  rc += [root];
-  wide = false;
-  for x in rc {
-    if scope_fn::has(multi, x) {
-      wide = true;
-    }
-  }
-  out: vector<integer> = [for x in exact { x }];
-  for w in 0..scope_fn::count(f) {
-    if w == root || scope_fn::has(out, w) {
-      continue;
-    }
-    hit = wide || scope_fn::has(multi, w);
-    if !hit {
-      for d in closure(f, w) {
-        if scope_fn::has(multi, d) {
-          hit = true;
-        }
-      }
-    }
-    if hit {
-      out += [w];
-    }
-  }
-  out
-}
-
-fn set_counts(n: ir::Node, counts: vector<integer>) {
-  match n {
-    NdSet { var: v, inner } => if !(scope_fn::unspan(inner) is NdNull) && v < len(counts) {
-      counts[v] = counts[v] + 1;
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    set_counts(c, counts);
-  }
-}
-
 // port: construct_elide.rs fn refs_var
 fn refs_var(n: ir::Node, v: integer) -> boolean {
   scope_move_elide::mentions_var(n, v)
@@ -723,39 +604,15 @@ fn touches_store(op: ir::Node, a: integer, viewers: vector<integer>) -> boolean 
   false
 }
 
-struct Touch {
-  exact: boolean,
-  maybe: boolean
-}
-
-// `touches_store` over `ops[from..to]` (but the indexes in `except`), asked with the current
-// viewers and with the possible ones.
-fn touches_region(ops: vector<ir::Node>, from: integer, to: integer, except: vector<integer>, a: integer, f: ir::Function) -> Touch {
-  exact = store_viewers(f, a);
-  counts: vector<integer> = [for _ in 0..scope_fn::count(f) { 0 }];
-  for op in ops {
-    set_counts(op, counts);
-  }
-  multi: vector<integer> = [];
-  for v in 0..len(counts) {
-    if counts[v] > 1 {
-      multi += [v];
-    }
-  }
-  maybe = maybe_viewers(f, a, multi, exact);
-  t = Touch { exact: false, maybe: false };
+// `touches_store` over `ops[from..to]` (but the indexes in `except`).
+fn touches_region(ops: vector<ir::Node>, from: integer, to: integer, except: vector<integer>, a: integer, f: ir::Function) -> boolean {
+  viewers = scope_fn::viewers_of(f, a, true);
   for i in from..to {
-    if scope_fn::has(except, i) {
-      continue;
-    }
-    if touches_store(ops[i]!, a, exact) {
-      t.exact = true;
-    }
-    if touches_store(ops[i]!, a, maybe) {
-      t.maybe = true;
+    if !scope_fn::has(except, i) && touches_store(ops[i]!, a, viewers) {
+      return true;
     }
   }
-  t
+  false
 }
 
 // ── B1.3d ──
@@ -904,11 +761,7 @@ fn try_replace_one(ops: vector<ir::Node>, c2: integer, field: ir::Node, rhs: int
     }
   }
   chain = [rhs_set, c2 - 2, c2 - 1, c2];
-  t = touches_region(ops, bs, c2, chain, a, f);
-  if t.maybe && !t.exact {
-    r.why = "construct_elide::try_replace_one: a statement the clear is moved across may view the container (Variable::viewed, not in the image)";
-  }
-  if t.exact || t.maybe {
+  if touches_region(ops, bs, c2, chain, a, f) {
     return null;
   }
   clear = ops[c2 - 1]!;

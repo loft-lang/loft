@@ -131,8 +131,6 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       program[i] = "capture_adoption::mark_borrowed_captures: a drop cascade the building frame's capture verdicts decide";
     }
   }
-  // `(R-Rebind)`'s callees, their parse-time variable tables (`scope_rebind_place`).
-  pv = scope_rebind_place::parse_vars(b);
   // The definitions with a settled body: the standard library's, and each one laid out below.
   settled: vector<boolean> = [for d in b.data.definitions { d.source == 0 }];
   // The functions refused so far: Rust laid each out before the ones after it, so a summary of
@@ -279,7 +277,7 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       parse_fn = scope_fn::copy_function(d.variables);
       b.data.definitions[d_nr].variables = ph.function;
       b.data.definitions[d_nr].code = [code];
-      rb = scope_rebind_place::rewrite(b, d_nr, code, ph.function, refused_nrs, pv);
+      rb = scope_rebind_place::rewrite(b, d_nr, code, ph.function, refused_nrs);
       if rb.why != "" {
         b.data.definitions[d_nr].code = parse_code;
         b.data.definitions[d_nr].variables = parse_fn;

@@ -402,6 +402,10 @@ fn write_function(stores: &mut Stores, parent: &Record, base: u32, f: &Function)
         r.set_field_bool(stores, ds::VAR_WAS_LOOP_VAR, f.was_loop_var(i as u16));
         r.set_field_bool(stores, ds::VAR_PLACE_BUFFER, f.is_place_buffer(i as u16));
         r.set_field_bool(stores, ds::VAR_REF_HOME, f.is_ref_home(i as u16));
+        let viewed = r.field_recvec(ds::VAR_VIEWED, ds::INT_STRIDE);
+        for d in f.viewed_of(i as u16) {
+            viewed.push(stores).set_field_int(stores, 0, i64::from(*d));
+        }
     }
     // names: name -> var_nr.  Store order is irrelevant — the reader collects
     // into a HashMap and the JSON oracle re-sorts on emit.

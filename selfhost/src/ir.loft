@@ -233,6 +233,9 @@ struct Variable {
   // scope pass, so the loft port reads them from the image
   place_buffer: boolean,
   ref_home: boolean,
+  // @PLN91 — the deps each earlier bind of it ended with (`Variable::viewed`, the parse's
+  // record of what a rebind on one path leaves live on another): read by the scope pass
+  viewed: vector<integer>,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,
