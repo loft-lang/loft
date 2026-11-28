@@ -747,7 +747,10 @@ fn led_by(nulls: vector<integer>, here: vector<integer>) -> boolean {
   false
 }
 
-// port: phase.rs fn literal_moves_in — the record locals a scope moves a literal's store into.
+// port: phase.rs fn literal_moves_in — the record locals a scope moves a literal's store into:
+// bound two or more times in their FIRST binding (loft#2688: a bind outside the block of the
+// local's first bind is another binding, `(B-Scope)`; `LOFT_NO_MOVE_PER_BINDING=1` counts every
+// bind of the name), every bind an owning one.
 pub fn literal_moves_in(b: ir::Bundle, code: ir::Node, f: ir::Function, null_led_first: vector<integer>) -> vector<integer> {
   any = false;
   for v in 0..scope_fn::count(f) {
@@ -758,40 +761,80 @@ pub fn literal_moves_in(b: ir::Bundle, code: ir::Node, f: ir::Function, null_led
   if !any {
     return [];
   }
-  counts: vector<integer> = [];
-  owning: vector<boolean> = [];
-  literal_walk(b, code, f, counts, owning);
+  w = LiteralWalk { path: [], next: 0, counts: [], owning: [], firsts: [], per_binding: env_variable("LOFT_NO_MOVE_PER_BINDING") == null };
+  literal_walk(b, code, f, w);
   out: vector<integer> = [];
-  for c in counts {
+  for c in w.counts {
     v = c#index;
-    if c >= 2 && owning[v]! && !scope_fn::has(null_led_first, v) {
+    if c >= 2 && w.owning[v]! && !scope_fn::has(null_led_first, v) {
       out += [v];
     }
   }
   out
 }
 
+// The walk's state: the blocks around the node (`path`, each by the order it was entered), the
+// next block's number, and per local its binds' count and ownership and the block path of its
+// first bind.
+struct LiteralWalk {
+  path: vector<integer>,
+  next: integer,
+  counts: vector<integer>,
+  owning: vector<boolean>,
+  firsts: vector<scope_scan::VarList>,
+  per_binding: boolean
+}
+
 fn literal_candidate(f: ir::Function, v: integer) -> boolean {
   v < scope_fn::count(f) && !scope_fn::is_argument(f, v) && !scope_fn::is_compiler_generated(f, v) && scope_fn::is_record(scope_fn::tp(f, v))
 }
 
-fn literal_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, counts: vector<integer>, owning: vector<boolean>) {
-  match scope_fn::unspan(n) {
+fn literal_walk(b: ir::Bundle, n: ir::Node, f: ir::Function, w: LiteralWalk) {
+  u = scope_fn::unspan(n);
+  match u {
     NdSet { var: v, inner } => if literal_candidate(f, v) {
-      while len(counts) <= v {
-        counts += [0];
-        owning += [true];
+      while len(w.counts) <= v {
+        w.counts += [0];
+        w.owning += [true];
       }
-      counts[v] = counts[v]! + 1;
+      first = scope_scan::list_of(w.firsts, v);
+      if !scope_scan::list_has_key(w.firsts, v) {
+        w.firsts += [scope_scan::VarList { v: v, items: [for p in w.path { p }] }];
+        first = [for p in w.path { p }];
+      }
+      if starts_with(w.path, first) || !w.per_binding {
+        w.counts[v] = w.counts[v]! + 1;
+      }
       if !literal_owning_bind(b, inner, v, f) {
-        owning[v] = false;
+        w.owning[v] = false;
       }
     },
     _ => {}
   }
-  for c in scope_fn::children(scope_fn::unspan(n)) {
-    literal_walk(b, c, f, counts, owning);
+  block = u is NdBlock || u is NdLoop;
+  if block {
+    w.path += [w.next];
+    w.next += 1;
   }
+  for c in scope_fn::children(u) {
+    literal_walk(b, c, f, w);
+  }
+  if block {
+    w.path.remove(len(w.path) - 1);
+  }
+}
+
+// `path.starts_with(prefix)`.
+fn starts_with(path: vector<integer>, prefix: vector<integer>) -> boolean {
+  if len(prefix) > len(path) {
+    return false;
+  }
+  for i in 0..len(prefix) {
+    if path[i]! != prefix[i]! {
+      return false;
+    }
+  }
+  true
 }
 
 fn literal_owning_bind(b: ir::Bundle, rhs: ir::Node, v: integer, f: ir::Function) -> boolean {

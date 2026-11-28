@@ -560,6 +560,19 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
       if av == v || v_scope == scope_fn::NONE {
         continue;
       }
+      // loft#2689, `@FR-O-Witness` — a WITNESSED local releases its stores through its owner
+      // witness alone.  Where this bind is a MINT the witness takes the store the call delivers
+      // (`x = id(P { … })` hands the literal's buffer back), so the store MOVES, as loft#2594's
+      // does: the buffer is reset behind the bind and the witness is its one owner.
+      // `LOFT_NO_WITNESS_DELIVERED_MOVE=1` leaves the buffer its free.
+      if scope_scan::get(s.owner_witness, v) >= 0 && env_variable("LOFT_NO_WITNESS_DELIVERED_MOVE") == null
+        && scope_backings::construction_work_ref(unspanned, f) < 0
+        && scope_backings::delivered_work_ref(b, unspanned, f) == av
+        && witness_takes(s, b, unspanned, v, ov, f) {
+        s.moved_local = ov;
+        s.moved_av = av;
+        continue;
+      }
       av_scope = scope_of(s, av);
       if v_scope <= av_scope {
         scope_scan::put_if_absent(s.literal_buffer, av, v);
@@ -1324,6 +1337,14 @@ fn disarms(s: scope_scan::Scopes, v: integer, temps: vector<integer>) -> vector<
     out += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: t }] }, t: ir::NdNull, f: scope_fn::v_set(t, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }) }];
   }
   out
+}
+
+// port: scan_set.rs fn witness_takes — does a bind of witnessed local `v` hand its witness the
+// store it delivers (`witness_set_kind`'s MINT arms)?
+fn witness_takes(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v: integer, ov: integer, f: ir::Function) -> boolean {
+  temps: vector<integer> = [];
+  k = scope_witness::witness_set_kind(s, b, value, v, ov, f, temps);
+  k == scope_witness::SET_MINT || k == scope_witness::SET_MINT_READING
 }
 
 // port: scan_set.rs fn captures_built_in_value — `(record, capture)` of every
