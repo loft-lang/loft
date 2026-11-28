@@ -52,6 +52,7 @@ use scope_host_result;
 use scope_rebind_place;
 use scope_stored_refs;
 use scope_return_field;
+use scope_exit_vector;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -259,6 +260,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     code = scope_stored_refs::keep_placed_results(b, ph.code, ph.function);
     // `@FR-H-RefHome` — a copied-out home's record is evacuated before each free of its owner.
     code = scope_stored_refs::insert_evacuations(b, code, d.ref_evacuations);
+    // `(R-ExitVector)` (after `place_result`, refused above where it would fire).
+    code = scope_exit_vector::rewrite(b, d, code, ph.function);
     // `(R-ForwardResult)` — a returned local bound from a call is built in the return buffer.
     code = scope_forward_result::rewrite(b, d_nr, code, ph.function);
     // `@FR-R-MoveLast`'s host clause, then `(R-LiteralAppend)`.  A literal it would place
@@ -445,30 +448,13 @@ fn join_rewrites(f: ir::Function) -> text {
 
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
-// is in the body: `keep_placed_results` … `rebind_place` (records), `const_fn`, `byte_copy`'s
-// vector clause.  `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
+// is in the body: `place_result`, `exit_record`, `const_fn`, `byte_copy`'s vector clause.
+// `exit_vector`, `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
 // `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`, `slice_text` and `slice_into`
 // are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
   hidden: vector<text> = [for a in d.attributes if a.hidden { a.name }];
-  // `(R-ExitVector)` — a local vector's wrapper (`__vdb_N`) is claimed in the hidden RECORD
-  // return buffer's store where the exit literal copies it in (`exit_vector::rewrite`).
-  rec_buffer = false;
-  for a in d.attributes {
-    if a.hidden && scope_fn::is_record(a.typedef[0] ?? ir::TyVoid) {
-      rec_buffer = true;
-    }
-  }
-  if rec_buffer {
-    built: vector<integer> = [];
-    database_targets(b, code, built);
-    for x in built {
-      if scope_fn::name(f, x).starts_with("__vdb_") {
-        note(w, "exit_vector::rewrite: a local vector's wrapper beside a record return buffer");
-      }
-    }
-  }
   placeable_binds(b, code, f, w.placeable);
   record_triggers(b, code, f, hidden, w);
   note(w, scope_byte_copy::refusal(b, code));
@@ -563,22 +549,6 @@ fn calls_const(n: ir::Node, twins: vector<boolean>) -> boolean {
     }
   }
   false
-}
-
-// The variables `OpDatabase(Var(v), …)` builds anywhere in `n`.
-fn database_targets(b: ir::Bundle, n: ir::Node, out: vector<integer>) {
-  match n {
-    NdCall { def_nr, args } => if scope_args::def_name(b, def_nr) == "OpDatabase" && len(args) > 0 {
-      match scope_fn::unspan(args[0]!) {
-        NdVar { n: x } => if !scope_fn::has(out, x) { out += [x]; },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    database_targets(b, c, out);
-  }
 }
 
 // A call of an operator whose name starts with `prefix` anywhere in `n`.

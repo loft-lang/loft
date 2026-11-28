@@ -1,0 +1,595 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/exit_vector.rs` transcribed: `(R-ExitVector)`, a local vector whose wrapper
+// (`__vdb_N`) is minted once, outside any loop, and whose only copy is into a field of the
+// function's own record return buffer at an exit literal is built in that buffer's store: the
+// mint becomes `OpPlaceRecord(buffer, wtp)` behind the exit's buffer guard, the copy a move
+// (`OpMoveVector`) and each free of the wrapper `OpFreeRecordIn`.  The admission walks the body
+// recording each site by its path, as Rust's does, and applies the plans by those paths.  Run
+// by `check` on the settled body after `insert_evacuations`, as Rust's is.
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use own;
+use ir_pass_tree;
+
+struct Ops {
+  database: integer,
+  get_field: integer,
+  set_int4: integer,
+  append: integer,
+  free_ref: integer,
+  free_if_distinct: integer,
+  place: integer,
+  free_in: integer,
+  move_vec: integer
+}
+
+struct Cand { vdb: integer, v: integer, wtp: integer, mint: vector<integer> }
+
+struct Plan {
+  vdb: integer,
+  wtp: integer,
+  mint: vector<integer>,
+  moves: vector<vector<integer>>,
+  frees: vector<vector<integer>>,
+  placed_buf: vector<integer>,
+  placed_tp: vector<integer>
+}
+
+// port: exit_vector.rs fn rewrite
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if env_variable("LOFT_NO_EXIT_VECTOR") != null || !binds::is_loft_defined(d) {
+    return code;
+  }
+  ops = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    set_int4: scope_fn::def_nr(b, "OpSetInt4"),
+    append: scope_fn::def_nr(b, "OpAppendVector"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    place: scope_fn::def_nr(b, "OpPlaceRecord"),
+    free_in: scope_fn::def_nr(b, "OpFreeRecordIn"),
+    move_vec: scope_fn::def_nr(b, "OpMoveVector")
+  };
+  if ops.database < 0 || ops.get_field < 0 || ops.set_int4 < 0 || ops.append < 0 || ops.free_ref < 0 || ops.free_if_distinct < 0 || ops.place < 0 || ops.free_in < 0 || ops.move_vec < 0 {
+    return code;
+  }
+  rb = own_return_buffer(d, f);
+  if rb < 0 {
+    return code;
+  }
+  cands: vector<Cand> = [];
+  find_mints(b, f, code, ops, false, [], cands);
+  if len(cands) == 0 {
+    return code;
+  }
+  guard = guard_template(code, rb, ops);
+  if guard == null {
+    return code;
+  }
+  plans: vector<Plan> = [];
+  for c in cands {
+    if scope_fn::is_ref_home(f, c.vdb) || scope_fn::is_ref_home(f, c.v) {
+      continue;
+    }
+    cx = Cx { b: b, f: f, ops: ops, rb: rb, vdb: c.vdb, v: c.v, mint: c.mint, path: [], moves: [], frees: [] };
+    if scan(cx, code) && cx.mints == 1 && cx.inits == 1 && len(cx.frees) > 0 {
+      p = Plan { vdb: c.vdb, wtp: c.wtp, mint: c.mint, moves: cx.moves, frees: cx.frees, placed_buf: [], placed_tp: [] };
+      placed_in(code, c.v, ops, p);
+      plans += [p];
+    }
+  }
+  out = code;
+  for p in plans {
+    out = apply(out, p, rb, guard!, ops);
+  }
+  out
+}
+
+// port: exit_vector.rs fn own_return_buffer
+fn own_return_buffer(d: ir::Definition, f: ir::Function) -> integer {
+  idx = binds::hidden_return_buffer_attr(d);
+  if idx == null {
+    return -1;
+  }
+  a = d.attributes[idx!];
+  if a == null {
+    return -1;
+  }
+  v = scope_fn::var(f, a!.name);
+  if v >= 0 && scope_fn::is_argument(f, v) { v } else { -1 }
+}
+
+// `path` with one more step.
+fn with_step(path: vector<integer>, i: integer) -> vector<integer> {
+  out = [for x in path { x }];
+  out += [i];
+  out
+}
+
+fn int_of(n: ir::Node) -> integer? {
+  match scope_fn::unspan(n) {
+    NdInt { n: x } => x,
+    _ => null
+  }
+}
+
+fn is_var(n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == w,
+    _ => false
+  }
+}
+
+// port: exit_vector.rs fn find_mints — the `OpDatabase(__vdb_N, wtp)` that a `v =
+// OpGetField(__vdb_N, 0, …)` follows, with its path; one inside a loop declines.
+fn find_mints(b: ir::Bundle, f: ir::Function, node: ir::Node, ops: Ops, in_loop0: boolean, path: vector<integer>, out: vector<Cand>) {
+  in_loop = in_loop0 || node is NdLoop;
+  stmts: vector<ir::Node> = [];
+  match node {
+    NdBlock { block } => { stmts = block[0]!.operators; },
+    NdLoop { block } => { stmts = block[0]!.operators; },
+    NdInsert { items } => { stmts = items; },
+    NdSpan { inner } => {
+      find_mints(b, f, inner, ops, in_loop, path, out);
+      return;
+    },
+    NdIf { cond, t, f: e } => {
+      find_mints(b, f, cond, ops, in_loop, with_step(path, 0), out);
+      find_mints(b, f, t, ops, in_loop, with_step(path, 1), out);
+      find_mints(b, f, e, ops, in_loop, with_step(path, 2), out);
+      return;
+    },
+    NdSet { inner } => {
+      find_mints(b, f, inner, ops, in_loop, with_step(path, 0), out);
+      return;
+    },
+    NdReturn { inner } => {
+      find_mints(b, f, inner, ops, in_loop, with_step(path, 0), out);
+      return;
+    },
+    NdDrop { inner } => {
+      find_mints(b, f, inner, ops, in_loop, with_step(path, 0), out);
+      return;
+    },
+    _ => return
+  }
+  for stmt in stmts {
+    i = stmt#index;
+    here = with_step(path, i);
+    c = mint_at(b, f, stmts, i, ops);
+    if c != null && !in_loop && wrapper_holds(b, f, c!.vdb, c!.v) {
+      out += [Cand { vdb: c!.vdb, v: c!.v, wtp: c!.wtp, mint: here }];
+    }
+    find_mints(b, f, stmt, ops, in_loop, here, out);
+  }
+}
+
+// The mint at statement `i`, the local's init right after it.
+fn mint_at(b: ir::Bundle, f: ir::Function, stmts: vector<ir::Node>, i: integer, ops: Ops) -> Cand? {
+  vdb = -1;
+  wtp = -1;
+  match scope_fn::unspan(stmts[i]!) {
+    NdCall { def_nr, args } => {
+      if def_nr != ops.database || len(args) != 2 {
+        return null;
+      }
+      vdb = match args[0]! { NdVar { n } => n, _ => return null };
+      wtp = match args[1]! { NdInt { n } => n, _ => return null };
+    },
+    _ => return null
+  }
+  if !scope_fn::name(f, vdb).starts_with("__vdb_") || wtp < 0 || wtp > 65535 {
+    return null;
+  }
+  next = stmts[i + 1];
+  if next == null {
+    return null;
+  }
+  match scope_fn::unspan(next!) {
+    NdSet { var: v, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr: g, args: ga } => {
+        if g != ops.get_field || len(ga) < 2 || !is_var(ga[0]!, vdb) || int_of(ga[1]!) != 0 {
+          return null;
+        }
+        deps = scope_fn::deps(f, v);
+        if len(deps) != 1 || deps[0]! != vdb {
+          return null;
+        }
+        Cand { vdb: vdb, v: v, wtp: wtp, mint: [] }
+      },
+      _ => null
+    },
+    _ => null
+  }
+}
+
+// `Type::peel_link`: `base()`, then every `&` peeled.
+fn peel_link(t: ir::TypeT) -> ir::TypeT {
+  u = scope_fn::base(t);
+  while true {
+    match u {
+      TyRefVar { inner } => { u = scope_fn::base(inner); },
+      _ => break
+    }
+  }
+  u
+}
+
+// port: exit_vector.rs fn wrapper_holds — the wrapper's one field is the local's vector.
+fn wrapper_holds(b: ir::Bundle, f: ir::Function, vdb: integer, v: integer) -> boolean {
+  td = match peel_link(scope_fn::tp(f, vdb)) { TyReference { n } => n, _ => return false };
+  if td < 0 || td >= len(b.data.definitions) {
+    return false;
+  }
+  fields = [for a in b.data.definitions[td]!.attributes if !a.name.starts_with("__") { a }];
+  if len(fields) != 1 {
+    return false;
+  }
+  "{unsized(scope_fn::without_deps(fields[0]!.typedef[0] ?? ir::TyVoid))}" == "{unsized(scope_fn::without_deps(peel_link(scope_fn::tp(f, v))))}"
+}
+
+// A type as `Type`'s equality reads it: an integer's `forced_size` is a storage hint, not part
+// of the type (`IntegerSpec::eq`).
+fn unsized(t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyInteger { spec } => ir::TyInteger { spec: ir::IntegerSpec { min: spec.min, max: spec.max, not_null: spec.not_null, forced_size: 0 } },
+    TyVector { inner, dep } => ir::TyVector { inner: unsized(inner), dep: dep },
+    TyOptional { inner } => ir::TyOptional { inner: unsized(inner) },
+    TyRefVar { inner } => ir::TyRefVar { inner: unsized(inner) },
+    _ => t
+  }
+}
+
+// port: exit_vector.rs fn guard_template — the first statement of the first exit literal that
+// names and mints the buffer.
+fn guard_template(code: ir::Node, rb: integer, ops: Ops) -> ir::Node? {
+  u = scope_fn::unspan(code);
+  match u {
+    NdBlock { block } => {
+      bl = block[0]!;
+      if is_exit_block(bl, rb) && len(bl.operators) > 0 {
+        first = bl.operators[0]!;
+        if mentions(first, rb) && mints_buffer(first, rb, ops) {
+          return first;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    g = guard_template(c, rb, ops);
+    if g != null {
+      return g;
+    }
+  }
+  null
+}
+
+fn mints_buffer(n: ir::Node, rb: integer, ops: Ops) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if def_nr == ops.database && len(args) > 0 && is_var(args[0]!, rb) { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if mints_buffer(c, rb, ops) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: exit_vector.rs fn is_exit_block — a literal built in the buffer and answering it.
+fn is_exit_block(bl: ir::Block, rb: integer) -> boolean {
+  if bl.name != "Object" {
+    return false;
+  }
+  deps = scope_fn::depend(bl.result[0] ?? ir::TyVoid);
+  if len(deps) != 1 || deps[0]! != rb {
+    return false;
+  }
+  n = len(bl.operators);
+  if n == 0 {
+    return false;
+  }
+  match scope_fn::unspan(bl.operators[n - 1]!) {
+    NdReturn { inner } => is_var(inner, rb),
+    NdVar { n: w } => w == rb,
+    _ => false
+  }
+}
+
+fn names_var(n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == w,
+    NdSet { var: x } => x == w,
+    NdTupleGet { var: x } => x == w,
+    NdTuplePut { var: x } => x == w,
+    NdCallRef { var: x } => x == w,
+    NdFnRefDnr { n: x } => x == w,
+    NdIter { var: x } => x == w,
+    NdFnRef { var: x } => x == w,
+    _ => false
+  }
+}
+
+fn mentions(n: ir::Node, w: integer) -> boolean {
+  scope_fn::names_var(n, w)
+}
+
+// port: exit_vector.rs fn rooted_at — the buffer, or a field path rooted at it.
+fn rooted_at(n: ir::Node, rb: integer, ops: Ops) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == rb,
+    NdCall { def_nr, args } => def_nr == ops.get_field && len(args) > 0 && rooted_at(args[0]!, rb, ops),
+    _ => false
+  }
+}
+
+struct Cx {
+  b: ir::Bundle,
+  f: ir::Function,
+  ops: Ops,
+  rb: integer,
+  vdb: integer,
+  v: integer,
+  mint: vector<integer>,
+  path: vector<integer>,
+  mints: integer = 0,
+  inits: integer = 0,
+  moves: vector<vector<integer>>,
+  frees: vector<vector<integer>>,
+  exit_depth: integer = 0,
+  after_move: boolean = false,
+  foreign_depth: integer = 0,
+  ok: boolean = true
+}
+
+fn same_path(a: vector<integer>, c: vector<integer>) -> boolean {
+  if len(a) != len(c) {
+    return false;
+  }
+  for x in a {
+    if c[x#index]! != x {
+      return false;
+    }
+  }
+  true
+}
+
+fn child(cx: Cx, i: integer, node: ir::Node) -> boolean {
+  cx.path += [i];
+  r = scan(cx, node);
+  cx.path = [for x in cx.path if x#index < len(cx.path) - 1 { x }];
+  r
+}
+
+// port: exit_vector.rs fn Cx::scan — true where every mention of the local and its wrapper is
+// one the rewrite can address.
+fn scan(cx: Cx, node: ir::Node) -> boolean {
+  if cx.after_move && (names_var(node, cx.v) || mentions(node, cx.v)) {
+    return false;
+  }
+  match node {
+    NdSpan { inner } => child(cx, 0, inner),
+    NdBlock { block } => scan_block(cx, block[0]!),
+    NdLoop { block } => scan_block(cx, block[0]!),
+    NdInsert { items } => {
+      for s in items {
+        if !child(cx, s#index, s) {
+          return false;
+        }
+      }
+      true
+    },
+    NdIf { cond, t, f } => child(cx, 0, cond) && child(cx, 1, t) && child(cx, 2, f),
+    NdSet { var: w, inner } => {
+      if w == cx.v {
+        if scope_fn::unspan(inner) is NdNull {
+          return true;
+        }
+        expect = [for x in cx.mint { x }];
+        if len(expect) > 0 {
+          expect[len(expect) - 1] = expect[len(expect) - 1]! + 1;
+        }
+        if same_path(cx.path, expect) {
+          cx.inits += 1;
+          return true;
+        }
+        return false;
+      }
+      if w == cx.vdb {
+        return scope_fn::unspan(inner) is NdNull;
+      }
+      if is_var(inner, cx.v) || is_var(inner, cx.vdb) {
+        return false;
+      }
+      child(cx, 0, inner)
+    },
+    NdReturn { inner } => !is_var(inner, cx.v) && !is_var(inner, cx.vdb) && child(cx, 0, inner),
+    NdDrop { inner } => !is_var(inner, cx.v) && !is_var(inner, cx.vdb) && child(cx, 0, inner),
+    NdCall { def_nr, args } => call(cx, def_nr, args),
+    NdVar { n: x } => x != cx.v && x != cx.vdb,
+    _ => {
+      if names_var(node, cx.v) || names_var(node, cx.vdb) {
+        return false;
+      }
+      cx.foreign_depth += 1;
+      r = true;
+      for c in scope_fn::children(node) {
+        if r && !child(cx, c#index, c) {
+          r = false;
+        }
+      }
+      cx.foreign_depth -= 1;
+      r
+    }
+  }
+}
+
+fn scan_block(cx: Cx, bl: ir::Block) -> boolean {
+  exit = is_exit_block(bl, cx.rb);
+  saved = cx.after_move;
+  if exit {
+    cx.exit_depth += 1;
+  }
+  r = true;
+  for s in bl.operators {
+    if !child(cx, s#index, s) {
+      r = false;
+      break;
+    }
+  }
+  if exit {
+    cx.exit_depth -= 1;
+  }
+  cx.after_move = saved;
+  r
+}
+
+// port: exit_vector.rs fn Cx::call
+fn call(cx: Cx, d: integer, args: vector<ir::Node>) -> boolean {
+  ops = cx.ops;
+  first = args[0];
+  first_vdb = first != null && is_var(first!, cx.vdb);
+  if d == ops.database && first_vdb {
+    if same_path(cx.path, cx.mint) {
+      cx.mints += 1;
+      return true;
+    }
+    return false;
+  }
+  if (d == ops.free_ref || d == ops.free_if_distinct) && first_vdb {
+    if cx.exit_depth == 0 || cx.foreign_depth > 0 {
+      return false;
+    }
+    cx.frees += [[for x in cx.path { x }]];
+    return true;
+  }
+  if d == ops.set_int4 && first_vdb {
+    return len(args) > 2 && int_of(args[1]!) == 0 && int_of(args[2]!) == 0;
+  }
+  if d == ops.append && len(args) > 1 && is_var(args[1]!, cx.v) {
+    if cx.exit_depth == 0 || first == null || !rooted_at(first!, cx.rb, ops) || cx.foreign_depth > 0 {
+      return false;
+    }
+    cx.moves += [[for x in cx.path { x }]];
+    cx.after_move = true;
+    return true;
+  }
+  loft_defined = d >= 0 && d < len(cx.b.data.definitions) && binds::is_loft_defined(cx.b.data.definitions[d]!);
+  for a in args {
+    i = a#index;
+    if is_var(a, cx.vdb) {
+      return false;
+    }
+    if is_var(a, cx.v) {
+      if i == 0 || loft_defined {
+        continue;
+      }
+      return false;
+    }
+    if !child(cx, i, a) {
+      return false;
+    }
+  }
+  true
+}
+
+// port: exit_vector.rs fn placed_in — the place buffers claimed in the local's store.
+fn placed_in(n: ir::Node, v: integer, ops: Ops, p: Plan) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: buf, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr, args } => if def_nr == ops.place && len(args) > 1 && is_var(args[0]!, v) {
+        tp = int_of(args[1]!);
+        if tp != null && tp! >= 0 && tp! <= 65535 {
+          dup = false;
+          for k in 0..len(p.placed_buf) {
+            if p.placed_buf[k]! == buf && p.placed_tp[k]! == tp! {
+              dup = true;
+            }
+          }
+          if !dup {
+            p.placed_buf += [buf];
+            p.placed_tp += [tp!];
+          }
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    placed_in(c, v, ops, p);
+  }
+}
+
+// `node_at_mut` and the edit in one: `node` with the node at `path` replaced by `edit`'s answer.
+fn edit_at(node: ir::Node, path: vector<integer>, k: integer, how: integer, p: Plan, rb: integer, guard: ir::Node, ops: Ops) -> ir::Node {
+  if k == len(path) {
+    return edited(node, how, p, rb, guard, ops);
+  }
+  i = path[k]!;
+  match node {
+    NdSpan { pos, inner } => if i == 0 { ir::NdSpan { pos: pos, inner: edit_at(inner, path, k + 1, how, p, rb, guard, ops) } } else { node },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { if o#index == i { edit_at(o, path, k + 1, how, p, rb, guard, ops) } else { o } }])] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, [for o in block[0]!.operators { if o#index == i { edit_at(o, path, k + 1, how, p, rb, guard, ops) } else { o } }])] },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { if o#index == i { edit_at(o, path, k + 1, how, p, rb, guard, ops) } else { o } }] },
+    NdIf { cond, t, f } => ir::NdIf {
+      cond: if i == 0 { edit_at(cond, path, k + 1, how, p, rb, guard, ops) } else { cond },
+      t: if i == 1 { edit_at(t, path, k + 1, how, p, rb, guard, ops) } else { t },
+      f: if i == 2 { edit_at(f, path, k + 1, how, p, rb, guard, ops) } else { f }
+    },
+    NdSet { var, inner } => if i == 0 { ir::NdSet { var: var, inner: edit_at(inner, path, k + 1, how, p, rb, guard, ops) } } else { node },
+    NdReturn { inner } => if i == 0 { ir::NdReturn { inner: edit_at(inner, path, k + 1, how, p, rb, guard, ops) } } else { node },
+    NdDrop { inner } => if i == 0 { ir::NdDrop { inner: edit_at(inner, path, k + 1, how, p, rb, guard, ops) } } else { node },
+    NdCall { def_nr, args } => ir::NdCall { def_nr: def_nr, args: [for a in args { if a#index == i { edit_at(a, path, k + 1, how, p, rb, guard, ops) } else { a } }] },
+    _ => node
+  }
+}
+
+EDIT_MINT = 0;
+EDIT_MOVE = 1;
+EDIT_FREE = 2;
+
+// The edit `apply` makes at one path; a call through spans.
+fn edited(n: ir::Node, how: integer, p: Plan, rb: integer, guard: ir::Node, ops: Ops) -> ir::Node {
+  if how == EDIT_MINT {
+    return ir::NdInsert { items: [guard, ir::NdSet { var: p.vdb, inner: ir::NdCall { def_nr: ops.place, args: [ir::NdVar { n: rb }, ir::NdInt { n: p.wtp }] } }] };
+  }
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: edited(inner, how, p, rb, guard, ops) },
+    NdCall { def_nr, args } => {
+      if how == EDIT_MOVE {
+        return ir::NdCall { def_nr: ops.move_vec, args: args };
+      }
+      wrapper = ir::NdCall { def_nr: ops.free_in, args: [args[0]!, ir::NdInt { n: p.wtp }] };
+      if len(p.placed_buf) == 0 {
+        return wrapper;
+      }
+      seq: vector<ir::Node> = [for k in 0..len(p.placed_buf) { ir::NdCall { def_nr: ops.free_in, args: [ir::NdVar { n: p.placed_buf[k]! }, ir::NdInt { n: p.placed_tp[k]! }] } }];
+      seq += [wrapper];
+      ir::NdInsert { items: seq }
+    },
+    _ => n
+  }
+}
+
+// port: exit_vector.rs fn apply
+fn apply(code: ir::Node, p: Plan, rb: integer, guard: ir::Node, ops: Ops) -> ir::Node {
+  out = edit_at(code, p.mint, 0, EDIT_MINT, p, rb, guard, ops);
+  for m in p.moves {
+    out = edit_at(out, m, 0, EDIT_MOVE, p, rb, guard, ops);
+  }
+  for fr in p.frees {
+    out = edit_at(out, fr, 0, EDIT_FREE, p, rb, guard, ops);
+  }
+  out
+}
