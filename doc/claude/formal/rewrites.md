@@ -1316,7 +1316,9 @@ vector, a hidden return buffer (a caller may hand a call its own destination).
                  the argument); a heap-owning
                  or nullable type, a second binding, a copy to another local, a
                  return, a capture, a native op taking it otherwise, `par` and
-                 `yield` decline.  A free on a `return`/`continue` path stays.
+                 `yield` decline.  A free on a `return`/`continue` path stays, and
+                 every `return` inside the nest frees the kept record (a pass may
+                 return before its own mint, holding an earlier pass's record).
                  THE NEST CLAUSE: the loop that keeps the record is the OUTERMOST loop
                  around its declaration — every pass of every loop in the nest reaches
                  the declaration's mint, which takes the clear arm, so the argument is
@@ -1352,7 +1354,9 @@ complete literal's mint becomes `if OpRefIsNull(v) { mint; its vector-field zero
 { OpClearVector of each vector field }` (the block named `loop record mint`): a kept pass mints
 nothing and empties the refill record's vectors in place, length 0, block kept.  A partial
 literal keeps its mint, which takes `OpDatabase`'s clear arm.  A free on an early exit
-(`continue`, `return`, `break`) stays and nulls the local, so the next pass mints afresh.  A
+(`continue`, `return`, `break`) stays and nulls the local, so the next pass mints afresh; a
+`return` anywhere in the nest that frees none (one the source wrote ahead of the declaration, or
+in an outer loop) frees the record first, since the free after the loop never runs on it.  A
 record another rule owns (`opt::buffer_owner`: an apart record, `@FR-R-Apart` instance 4) is
 left to it, and a function that calls a generator is skipped.  The writers spell the IR; neither
 carries a clause.  The first pass's mint sits in the guard's arm, away from the literal group

@@ -1,0 +1,92 @@
+diff --git b/src/opt/loop_record.rs a/src/opt/loop_record.rs
+index 9055fddd5..45d140e7a 100644
+--- b/src/opt/loop_record.rs
++++ a/src/opt/loop_record.rs
+@@ -20,9 +20,6 @@
+ //!   clears each vector instead (`OpClearVector`), keeping its block;
+ //! - a free on an early exit (`return`, `continue`) stays, and is followed by `p = null`, so a
+ //!   later pass mints afresh (the interpreter's free leaves the variable as it was).
+-//! - every `return` inside the nest that frees none of it frees the kept record first
+-//!   (`free_before_returns`): a pass can return before its own mint, still holding the record
+-//!   an earlier pass kept.
+ //!
+ //! A function that yields or calls a generator is declined (a live frame may hold the store).
+ //! `LOFT_NO_LOOP_RECORD=1` turns the rule off on every backend (and `LOFT_NO_LOOP_BUFFER_REUSE=1`
+@@ -255,8 +252,6 @@ fn rewrite(
+     hoisted: &mut HashMap<u16, u16>,
+     in_loop: bool,
+ ) {
+-    // The outermost loops of this block that keep a record, by their place in its list.
+-    let mut kept: Vec<(usize, Vec<u16>)> = Vec::new();
+     if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
+         let scope = bl.scope;
+         let old = std::mem::take(&mut bl.operators);
+@@ -283,9 +278,6 @@ fn rewrite(
+                 hoisted.insert(*r, scope);
+             }
+             statement(stmt, scope, recs, ops, &mut out);
+-            if !mine.is_empty() {
+-                kept.push((out.len() - 1, mine.clone()));
+-            }
+             for r in &mine {
+                 out.push(Value::Call(ops.free_ref, vec![Value::Var(*r)]));
+             }
+@@ -294,58 +286,6 @@ fn rewrite(
+     }
+     let inner = in_loop || matches!(v.unspan(), Value::Loop(_));
+     v.for_each_child_mut(&mut |c| rewrite(c, recs, ops, hoisted, inner));
+-    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
+-        for (at, mine) in kept {
+-            free_before_returns(&mut bl.operators[at], &mine, ops);
+-        }
+-    }
+-}
+-
+-/// Every `return` inside a loop that keeps records `mine` frees them first, unless its own
+-/// block already frees one ahead of it.  The record outlives the pass that minted it, so a
+-/// `return` the source wrote where the local was not yet declared — at the head of a later
+-/// pass, in an outer loop of the nest — holds the record kept from an earlier pass, and the
+-/// one free after the loop never runs on that path (loft#2681).  On the first pass the local
+-/// is null and the free does nothing.  `break` and `continue` need none: the first reaches
+-/// the free after the loop, the second the next pass, which keeps the record.  Enforces
+-/// @FR-H-FreeAll for @FR-R-LoopRecord.
+-fn free_before_returns(v: &mut Value, mine: &[u16], ops: &Ops) {
+-    let free_of = |r: u16| Value::Call(ops.free_ref, vec![Value::Var(r)]);
+-    if let Value::Block(bl) | Value::Loop(bl) = v.unspan_mut() {
+-        let old = std::mem::take(&mut bl.operators);
+-        let mut out: Vec<Value> = Vec::with_capacity(old.len() + mine.len());
+-        for mut stmt in old {
+-            if let Value::Return(inner) = stmt.unspan_mut() {
+-                free_before_returns(inner, mine, ops);
+-                for r in mine {
+-                    let freed = out.iter().any(|o| match o.unspan() {
+-                        Value::Call(op, a) => {
+-                            ops.frees.contains(op) && var_of(a.first()) == Some(*r)
+-                        }
+-                        _ => false,
+-                    });
+-                    if !freed {
+-                        out.push(free_of(*r));
+-                    }
+-                }
+-            } else {
+-                free_before_returns(&mut stmt, mine, ops);
+-            }
+-            out.push(stmt);
+-        }
+-        bl.operators = out;
+-        return;
+-    }
+-    if let Value::Return(inner) = v.unspan_mut() {
+-        // A `return` that is no statement of a block: a block of the frees and the return.
+-        free_before_returns(inner, mine, ops);
+-        let ret = std::mem::replace(v, Value::Null);
+-        let mut ops_list: Vec<Value> = mine.iter().map(|r| free_of(*r)).collect();
+-        ops_list.push(ret);
+-        *v = v_block(ops_list, Type::Never, "loop record return");
+-        return;
+-    }
+-    v.for_each_child_mut(&mut |c| free_before_returns(c, mine, ops));
+ }
+ 
+ /// Emit statement `stmt` of a block of `scope` (or what replaces it) into `out`.
