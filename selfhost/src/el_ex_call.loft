@@ -4324,8 +4324,11 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
     rdc = if !e.first_pass && rxv >= 0 && !vars.coalesce_is_bind { el_ex_null::own_join_arm(e, vars, d.code, rjt) } else { d.code };
     return ex(el_ir::v_if(el_ir::cl(e, "OpConvBoolFromRef", [x.code]), x.code, rdc), if d.tp is TyOptional { ir::TyOptional { inner: lhs } } else { lhs });
   }
-  // (A variant subject's holder is the second pass's alone: Rust's first pass mints none.)
-  if variant && e.first_pass {
+  // (A variant subject's holder is the second pass's alone: Rust's first pass mints none — for
+  // a VARIABLE's cast, `(n as Bin?)?`; a field's or an element's, `(v[0] as Circle?)?`, holds the
+  // read from the first pass on.)
+  var_cast = match el_ir::unspan(x.code) { NdIf { t: vct } => el_ir::unspan(vct) is NdVar, NdNull => true, _ => false };
+  if variant && e.first_pass && var_cast {
     return ex(ir::NdNull, lhs);
   }
   // (In a RECORD-answering lambda, whose `??` tail is materialised into its late buffer, the

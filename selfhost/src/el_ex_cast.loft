@@ -95,6 +95,18 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   // as the enum itself.
   ten = match el_types::base(to) { TyEnum { n: tn0, is_ref: tr0 } => if tr0 { -1 } else { tn0 }, _ => -1 };
   if ten >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    // (The UNCHECKED parse is `subparse_default`'s `(s as E?) ?? <first variant>`: held in
+    // `__ncc_N`, the first variant where it names none — unless a `??` is its fallback.)
+    // (A second-pass holder: Rust's first pass mints none.)
+    if !(to is TyOptional) && !coalesced && !(el_ir::unspan(x.code) is NdText) {
+      if e.first_pass {
+        return ex(ir::NdNull, el_types::base(to));
+      }
+      th = el_vars::create_unique(vars, "_ncc", el_types::base(to));
+      thv = ir::NdVar { n: th };
+      tparse = el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]);
+      return ex(el_ir::v_block([el_ir::v_set(th, tparse), el_ir::v_if(el_ir::cl(e, "OpConvBoolFromEnum", [thv]), thv, ir::NdEnum { ord: 1, tp: el::def(e, ten).known_type })], el_types::base(to), "ncc"), el_types::base(to));
+    }
     return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, el_types::base(to));
   }
   // A text to a vector (`"[1.0, 2.0]" as vector<float>`): `Parser::cast`'s two-parameter
@@ -266,7 +278,10 @@ fn variant_cast(e: el::El, vars: el_vars::Vars, x: Ex, to: ir::TypeT, ae: intege
   }
   // (A variable's cast is built on the first pass too: a tail reading it sees the parameter it
   // hands back, `MergeAttr`.)
-  if e.first_pass && !(el_ir::unspan(x.code) is NdVar) {
+  // (…and so is a field's or an element's: a `??` / `?` around it holds the read in its
+  // `__ncc_N` from the first pass on, as Rust numbers it.)
+  slot_read = match el_ir::unspan(x.code) { NdCall { def_nr: srd } => el::def(e, srd).name == "OpGetField" || el::def(e, srd).name == "OpGetVector", _ => false };
+  if e.first_pass && !(el_ir::unspan(x.code) is NdVar) && !slot_read {
     return ex(ir::NdNull, rt);
   }
   test = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [el_ir::cl(e, "OpGetEnum", [x.code, ir::NdInt { n: 0 }])]), ir::NdInt { n: disc }]);
