@@ -17,6 +17,8 @@ use scope_args;
 use scope_scan;
 use scope_backings;
 use scope_handles;
+use scope_phase;
+use scope_capture_builds;
 
 // port: witness.rs fn displaces_owned_through_fresh_callee
 pub fn displaces_owned_through_fresh_callee(b: ir::Bundle, value: ir::Node, v: integer, ov: integer) -> boolean {
@@ -168,16 +170,40 @@ fn witness_candidate(f: ir::Function, t: integer) -> boolean {
 
 // port: witness.rs fn owner_witness_locals — the locals whose assignments MIX ownership (one
 // mints a store of its own, another views), sorted.  The materialised views it excludes are
-// empty: the phase refuses a function with one.  The capture clauses (a captured local with an
-// owner slot, `reassigned_captures`, `capture_build_backings`' `reassigned_after_build`) are a
-// closure record's: a captured local that could take a witness refuses.
+// empty: the phase refuses a function with one.  A captured local takes part where its record
+// has an OWNER slot (loft#2131); one with an owner slot assigned more than once (loft#2132) and
+// one reassigned after a build the record adopted from (`@FR-O-Latest`) mix ownership by
+// construction.
 pub fn owner_witness_locals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir::Function) -> vector<integer> {
   minted: vector<integer> = [];
   viewed: vector<integer> = [];
   ow_walk(s, b, code, f, minted, viewed);
+  builds = scope_capture_builds::capture_build_backings(b, s.ops.set_dbref, f, code);
+  any_capture = false;
   for v in 0..scope_fn::count(f) {
-    if scope_fn::is_captured(f, v) && witness_candidate(f, v) {
-      scope_scan::refuse(s, "witness::owner_witness_locals: a captured record local (capture_builds::has_owner_slot)");
+    if scope_fn::is_captured(f, v) {
+      any_capture = true;
+    }
+  }
+  if any_capture {
+    for v in scope_phase::multi_assigned_in(code) {
+      if v < scope_fn::count(f) && scope_fn::is_captured(f, v) && scope_capture_builds::has_owner_slot(b, f, v) && witness_candidate(f, v) {
+        scope_scan::set_add(minted, v);
+        scope_scan::set_add(viewed, v);
+      }
+    }
+  }
+  for v in builds.reassigned_after_build {
+    backs = false;
+    for x in builds.backing {
+      if x == v {
+        backs = true;
+      }
+    }
+    if (scope_fn::is_captured(f, v) || backs) && !scope_fn::is_argument(f, v) && !scope_fn::name(f, v).starts_with("__")
+      && !scope_fn::was_loop_var(f, v) && own::heap_def_nr(scope_fn::base(scope_fn::tp(f, v))) != null {
+      scope_scan::set_add(minted, v);
+      scope_scan::set_add(viewed, v);
     }
   }
   scope_handles::sorted([for v in minted if scope_fn::has(viewed, v) { v }])
@@ -186,7 +212,7 @@ pub fn owner_witness_locals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node
 fn ow_walk(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function, minted: vector<integer>, viewed: vector<integer>) {
   u = scope_fn::unspan(n);
   match u {
-    NdSet { var: t, inner } => if witness_candidate(f, t) && !scope_fn::is_captured(f, t) {
+    NdSet { var: t, inner } => if witness_candidate(f, t) && (!scope_fn::is_captured(f, t) || scope_capture_builds::has_owner_slot(b, f, t)) {
       temps: vector<integer> = [];
       k = witness_set_kind(s, b, inner, t, t, f, temps);
       if k == SET_MINT || k == SET_MINT_READING {
