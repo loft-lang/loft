@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 799 of 1 189 programs agree; 105 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 14) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 14): 1 951 of 2 282 programs, 37 018 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 814 of 1 189 programs agree; 76 stop at the scope pass, 281 at the elaborator, 15 at the bytecode writer; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 15) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 15): 1 996 of 2 282 programs, 37 454 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -775,6 +775,73 @@ first refusal: closure records 133, the view walk 72, `copy_record_handoff` 21,
 pairs (`per_path_handoffs`, `loop_self_stopping_copies`, `caller_record_locals`,
 `arm_container_handoffs`, `local_copy_pairs`), `drop_handoff_node`'s copy arms, `scan_set`'s
 `stops_target` / inherited flag writes, then `arm_source_outlives_loop`; closures follow.
+
+**Step 15 (2026-11-28) — the drops arc finished: the hand-offs, the returned records, the
+collections of droppables.**  `scope_handoff.loft` is `handoff.rs` whole: `copy_moves_drop_from`
+with `caller_record_locals` (`Function::holds_caller_record`, kept as a `Scopes` field — read
+only inside the pass), `per_path_handoffs`, `loop_self_stopping_copies`, `per_path_stops`,
+`arm_container_handoffs`, `handle_handoff`, `local_copy_pairs`, `assigns_a_self_stopping_copy`,
+the collection hand-offs (`collection_copy_handoff`, `_ends`, `_backings`,
+`collection_handoffs`), `handoff_target`, `collect_drop_transferred`, `copy_record_handoff`,
+`drop_handoff_node` with all three arms, `arm_handoff_flags` and `mint_handoff_flag`.  A pair is
+`destination * 65536 + source`, Rust's `(u16::MAX, source)` with `scope_fn::NONE`.  The phase
+mints the `__hoff_` flags in Rust's order and heads the body with their `false` inits (sorted,
+not deduplicated, as Rust collects `handed_off.values()`); `convert` arms each statement's
+hand-offs with the arm-lift temps as the per-path set, and a loop arms its body's early;
+`scan`'s call arm sets an arm copy's flag (`arm_handoff_flags`) and gives a regrown collection
+its release back (`regrown_flag`); `scan_set` writes `stops_target`
+(`copy_flagged_on_target`, `witnessed_copy_stops_itself`), the inherited flag and the retire —
+`witness_update` nested as Rust nests it, `Insert([prev, write])` — mints the written-out arms'
+flags, and records loft#1628's `witness_aliases` with their rebind hooks (`__hdsp_`).
+`arm_source_outlives_loop` (with `loop_refills`) admits the droppable first bind written out per
+arm, `lift_join_arm_tails` moves a lifted copy's release per path and records `join_holders`, and
+`lease.rs`'s `copy_reach` / `leases_whole` join `opt_lease.loft`.
+
+The returned-record family of `returns.rs`: `move_join_hooks_into_arms` (the armed
+`materialized_view_return`, rewritten into the return), `return_copies_whole_local`,
+`return_copies_view_holders`, `return_moved_holders`, read through `Delivered`'s `arm_dropped`
+and `moved_out` (`unless_moved`) at every hook leg and the null-arm join.  The collections:
+`drop_hook`'s collection arm, `vector_call_rebind`, `promoted_vector_refill`,
+`remints_literal_backing`, `call_minted_member_handoff` and a tuple's vector member moved
+(`tuple_member_now`); `write_out_joined_copies` writes a join copied into a droppable container
+out per arm (`sink`).  `copy_hands_off` and `appends_to_element` read
+`type_owns_droppable_anywhere` / `owns_droppable` (`opt_vr_leaves::owns_droppable`) where a
+cascade stand-in had counted a vector element as droppable.
+
+One fact is still not in the image: a tuple member's backing (`tuple_member_backing` reads
+`Function::tuphold_origin` and `Vars::tuple_backings`).  It answers `None` where the image settles
+it — a parameter's member, a member that is no heap record, a member whose type names no dep
+(`tuple_backings` records the deps the members spelled, so it holds none there) — and refuses by
+name otherwise (2 programs).  Two port defects fixed on the way: `arm_bind` read the owner-witness
+map as a value set, and `scan_set` spread `witness_update` where Rust nests each write.
+
+A loft defect met, both backends: a nullable local returned on one path and copied into a field
+on another (`return N { f: d! }` beside `d`) leaks its store on the copying path.  The tool's
+`scope_end_drop` and `witness_hook` had that shape and leaked their own `NdIf` nodes on ten
+whole-path programs; they are spelled around it (the unflagged path answers the call itself).
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 14 | 1 951 / 2 282 | 37 018 / 40 088 | 0 | 799 |
+| + the hand-offs, the returned records | 1 971 | 37 271 | 0 | 811 |
+| + the collections, the joined copies | 1 996 / 2 282 | 37 454 / 40 088 | 0 | 814 |
+
+No definition that agreed was lost, nor a whole-path program; no whole-path leak.  The
+stale-callee cascade: 123 definitions refused for nothing else, in 29 programs.
+
+No drop refusal is left but the keyed collection's generator walk (1 program) and the tuple
+member's backing (2).  Sole refusal families now (programs): closures 119, the view walk 73,
+`use_analysis` 18 (`callref_collection_join_base` 11, `lease_calls` 6), `args` 10.  By first
+refusal: closure records 133, the view walk 73, `callref_collection_join_base` 16,
+`view_rebind_locals` 9.
+
+Closures are the next lever, and they are one transcription of about 5 500 lines:
+`capture_builds.rs` (1 505: `capture_build_backings` builds `CaptureBuilds`, twelve facts —
+the backing each capture named at its build, the builds in a loop or on some path, the adopted
+stores, the join arms — read only inside the pass), `capture_adoption.rs` (1 832, its decidable
+cascade parts ported), `closure_keep.rs` (1 347) and `rebound_captures.rs` (799), with
+`owner_slot_handoff`, `displaced_drop`'s closure rebuild and the owner witness's captured-local
+clauses.  133 programs stop first at `capture_build_backings`; 119 at closures alone.
 
 ## Passes
 
