@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 814 of 1 189 programs agree; 76 stop at the scope pass, 281 at the elaborator, 15 at the bytecode writer; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 15) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 15): 1 996 of 2 282 programs, 37 454 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 817 of 1 189 programs agree; 73 stop at the scope pass, 281 at the elaborator, 15 at the bytecode writer; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 16) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 16): 2 006 of 2 282 programs, 37 481 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -842,6 +842,60 @@ stores, the join arms — read only inside the pass), `capture_adoption.rs` (1 8
 cascade parts ported), `closure_keep.rs` (1 347) and `rebound_captures.rs` (799), with
 `owner_slot_handoff`, `displaced_drop`'s closure rebuild and the owner witness's captured-local
 clauses.  133 programs stop first at `capture_build_backings`; 119 at closures alone.
+
+**Step 16 (2026-11-28) — loft#2684 followed; the closures begun: the capture builds, the keep
+set, the owner slot, the witness's capture clauses.**  Re-taken first on a binary frozen from
+97319770e: `get_free_vars` follows loft#2684 (a202c48ad) — a local only the returned ARGUMENT
+names is released at the exit by store identity, `OpFreeRefIfDistinct(local, buffer)`
+(`LOFT_NO_PROMOTED_RETURN_IDENTITY_FREE`; the attic's `h9-tail-field-of-call` agrees with the
+switch on and off).  loft#2681 is the IR passes' (already ported); c549e0df5 and fa74668d5 change
+comments only.  The gates were unchanged by the new binary: 1 996 programs, 37 454 definitions,
+whole path 814.
+
+The image now carries `Function::join_owners` (`Variable.join_owners` at byte 52, the stride 80;
+`scope_fn::join_owners`), which the capture analysis reads.  The loft elaborator does not set it
+yet (its two Rust sites are `parser/expressions.rs`'s sunk vector arms and
+`parser/operators.rs`'s owned-vector `??`), so on the whole path it reads empty.
+
+`scope_capture_builds.loft` is `capture_builds.rs`'s facts: `CaptureBuilds` and
+`capture_build_backings` with every walk it runs.  Rust keys `null_slot_sets` and
+`arm_written_joins` by node address; the port keys them by the node's position in the same
+pre-order walk (`Value::walk`, spans not counted).  `Function::materialised_views` reads as empty
+(a frame with a view to materialise is refused before the scan).  `scope_closure_keep.loft` holds
+`pass_confined_records` (the confinement walk, `returns_or_calls` over the stripped callee body,
+`only_called_in`) and `closure_keep_set`; a GATED keep set is refused by the phase by name (its
+per-run releases, `closure_keep_live` … `fnref_call_rebind`, are not transcribed).
+`get_free_vars` runs `fnref_stand_down`; `captured_record_stand_down` is refused by name.
+`scope_capture_adoption.loft` gains `record_adopts_capture`, `frame_owns_capture_store`,
+`owner_slot_takes`, `join_arm_holders`; `scan`'s call arm carries `owner_slot_handoff`'s three
+legs (loft#2131); `owner_witness_locals` its three capture clauses; `displaced_drop` its
+closure-record clause (`closure_cascade_has_hooks`).
+
+The capture facts were checked against Rust's fact by fact: a probe printed both sides
+(`LOFT_TRACE_CAPTURE_BUILDS=1` — kept in the loft tool, the Rust half was a throwaway build) over
+the 143 programs that build a closure: 792 definitions, identical but for 5 definitions of 2
+programs where Rust drops a materialised view's backing — both refused by the view walk.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 15, re-taken on the new binary | 1 996 / 2 282 | 37 454 / 40 088 | 0 | 814 |
+| + loft#2684 | 1 996 | 37 454 | 0 | — |
+| + `capture_build_backings` | 1 998 | 37 458 | 0 | — |
+| + `closure_keep_set`, `fnref_stand_down` | 2 006 | 37 477 | 0 | — |
+| + the witness's capture clauses | 2 006 | 37 477 | 0 | — |
+| + `owner_slot_handoff` | 2 006 | 37 481 | 0 | — |
+| + `closure_cascade_has_hooks` | 2 006 / 2 282 | 37 481 / 40 088 | 0 | 817 |
+
+No definition that agreed was lost, nor a whole-path program.
+
+What stops the closure programs now, by first refusal: `free_record_in_omitting_arms` 63
+(loft#1476: it needs `capture_store_adopters`, `link_written_closure_records`,
+`record_store_leaves_frame`, `record_capture_slots` and the parser's `widen_bare_fn_ref`),
+`capture_adoption_owns_free` 38 (the get_free_vars consumers: `escaping_record_holds`,
+`_buffer`, `per_run_capture_owners`, `adoption_build_is_conditional` with
+`free_unless_record_built` / `free_unless_leaver_holds`, `owning_record_locals`), the gated keep
+set 11.  Behind them every closure record's drop cascade waits on `mark_borrowed_captures`
+(1 072 definitions), and `rebound_captures.rs` is not begun.
 
 ## Passes
 
