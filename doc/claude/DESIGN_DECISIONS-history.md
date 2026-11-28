@@ -1437,6 +1437,12 @@ cheaper guard.
 > and the write-through for a whole write through a link to an out-of-line field: the refusal
 > left the Rust twin's `remove_key` without a loft spelling.
 
+> **AMENDED (2026-11-27, owner, loft#2659 / @PLN232).** `&` also marks a function's return
+> (`fn first(s: State) -> &Enemy { s.enemies[0] }`, `formal/binding.md` `(B-RefType-Return)`):
+> the call stands for the returned place in one parameter's lifetime, lifting `(F-Ret)`'s
+> unimplemented `&T` exception (`D-call-32`) so accessors can be written through as well as
+> read through.
+
 ---
 
 ## C78 — The Rust-engine ↔ loft-library boundary: mechanism not genre, and no black boxes above the engine
