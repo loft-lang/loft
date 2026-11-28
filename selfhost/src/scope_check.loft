@@ -51,6 +51,7 @@ use scope_host_store;
 use scope_host_result;
 use scope_rebind_place;
 use scope_stored_refs;
+use scope_return_field;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -270,6 +271,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     }
     code = scope_literal_host::rewrite(b, d, code, ph.function);
     code = scope_literal_append::rewrite(b, d, code, ph.function);
+    // `@FR-R-ReturnField`.
+    code = scope_return_field::rewrite(b, d, code, ph.function);
     // `@FR-R-Rebind` (after `return_field`, refused above where it would fire), on the body as
     // it stands: the oracle it asks reads the definition's own code.
     if scope_rebind_place::has_candidate(b, code) {
@@ -499,9 +502,6 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
           _ => {}
         }
       }
-    },
-    NdBlock { block } => if block[0].name == "materialized_view_return" {
-      note(w, "return_field::rewrite: a field of a local returned through the buffer");
     },
     _ => {}
   }

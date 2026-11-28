@@ -1,0 +1,450 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/return_field.rs` transcribed: `@FR-R-ReturnField`, a function that answers a
+// FIELD of a record local it owns through its return buffer (`materialized_view_return`:
+// `OpDatabase(buf); OpCopyRecord(root.f, buf, tp); frees; return buf`) answers the field
+// itself and hands the root's store over (`return_field_handover`): the root's own free goes,
+// every other free is made distinct from the root.  The presence-tested spelling (`if
+// OpRefIsNull(x) null else <copy>` bound to the returned temp) is admitted the same way.  Run
+// by `check` on the settled body after `literal_append`, as Rust's is.
+
+use ir;
+use scope_fn;
+use scope_args;
+use binds;
+use types;
+use ir_pass_tree;
+
+HANDOVER = "return_field_handover";
+
+struct Ops {
+  database: integer,
+  copy: integer,
+  get_field: integer,
+  free_ref: integer,
+  free_if_distinct: integer,
+  free_text: integer,
+  is_null: integer,
+  null_sentinel: integer,
+  distinct_store: integer
+}
+
+struct Cx {
+  b: ir::Bundle,
+  f: ir::Function,
+  ops: Ops,
+  rb: integer,
+  // `binds`: every variable's binds, each its field path's root (-1 for none).
+  bind_var: vector<integer>,
+  bind_root: vector<integer>
+}
+
+// port: return_field.rs fn rewrite — every admitted field return of `d`.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if env_variable("LOFT_NO_RETURN_FIELD") != null || !binds::is_loft_defined(d) {
+    return code;
+  }
+  ops = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    copy: scope_fn::def_nr(b, "OpCopyRecord"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    free_text: scope_fn::def_nr(b, "OpFreeText"),
+    is_null: scope_fn::def_nr(b, "OpRefIsNull"),
+    null_sentinel: scope_fn::def_nr(b, "OpNullRefSentinel"),
+    distinct_store: scope_fn::def_nr(b, "OpDistinctStore")
+  };
+  if ops.database < 0 || ops.copy < 0 || ops.get_field < 0 || ops.free_ref < 0 || ops.free_if_distinct < 0 || ops.free_text < 0 || ops.is_null < 0 || ops.null_sentinel < 0 || ops.distinct_store < 0 {
+    return code;
+  }
+  rb = own_return_buffer(d, f);
+  if rb < 0 || !ir_pass_tree::has_block(code, "materialized_view_return") {
+    return code;
+  }
+  cx = Cx { b: b, f: f, ops: ops, rb: rb, bind_var: [], bind_root: [] };
+  collect_binds(cx, code);
+  walk(cx, code)
+}
+
+// port: return_field.rs fn own_return_buffer — the hidden return buffer, where it is a parameter
+// of this function's own.
+fn own_return_buffer(d: ir::Definition, f: ir::Function) -> integer {
+  idx = binds::hidden_return_buffer_attr(d);
+  if idx == null {
+    return -1;
+  }
+  a = d.attributes[idx!];
+  if a == null {
+    return -1;
+  }
+  v = scope_fn::var(f, a!.name);
+  if v >= 0 && scope_fn::is_argument(f, v) { v } else { -1 }
+}
+
+fn collect_binds(cx: Cx, n: ir::Node) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: v, inner } => {
+      cx.bind_var += [v];
+      cx.bind_root += [field_path_root(cx.ops, inner)];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    collect_binds(cx, c);
+  }
+}
+
+// port: return_field.rs fn field_path_root — the root variable of an `OpGetField` chain, -1 for
+// none.
+fn field_path_root(ops: Ops, v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdCall { def_nr, args } => if def_nr == ops.get_field && len(args) == 3 {
+      match scope_fn::unspan(args[0]!) {
+        NdVar { n: root } => root,
+        _ => field_path_root(ops, scope_fn::unspan(args[0]!))
+      }
+    } else {
+      -1
+    },
+    _ => -1
+  }
+}
+
+fn var_of(v: ir::Node) -> integer {
+  match scope_fn::unspan(v) {
+    NdVar { n } => n,
+    _ => -1
+  }
+}
+
+fn block_of(n: ir::Node) -> ir::Block? {
+  match scope_fn::unspan(n) {
+    NdBlock { block } => block[0]!,
+    _ => null
+  }
+}
+
+// `n` (a block, spanned or not) with its block replaced.
+fn with_block(n: ir::Node, bl: ir::Block) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_block(inner, bl) },
+    _ => ir::NdBlock { block: [bl] }
+  }
+}
+
+// port: return_field.rs fn Cx::walk
+fn walk(cx: Cx, node: ir::Node) -> ir::Node {
+  m = node;
+  bl = block_of(node);
+  if bl != null && bl!.name == "materialized_view_return" && admit(cx, bl!) >= 0 {
+    return with_block(node, apply(cx, bl!, admit(cx, bl!)));
+  }
+  if bl != null {
+    t = tested_exit(cx, bl!.operators);
+    if t != null {
+      root = admit(cx, t!.exit);
+      if root >= 0 {
+        exit = apply(cx, t!.exit, root);
+        ops = [for o in bl!.operators if o#index < t!.at { o }];
+        ops += [ir::NdBlock { block: [exit] }];
+        m = with_block(node, ir_pass_tree::with_operators(bl!, ops));
+      }
+    }
+  }
+  kids = scope_fn::children(m);
+  if len(kids) == 0 {
+    return m;
+  }
+  ir_pass_tree::with_children(m, [for c in kids { walk(cx, c) }])
+}
+
+struct Tested { at: integer, exit: ir::Block }
+
+// port: return_field.rs fn tested_exit
+fn tested_exit(cx: Cx, ops: vector<ir::Node>) -> Tested? {
+  n = len(ops);
+  if n == 0 {
+    return null;
+  }
+  ret = match scope_fn::unspan(ops[n - 1]!) {
+    NdReturn { inner } => var_of_bare(inner),
+    _ => -1
+  };
+  if ret < 0 {
+    return null;
+  }
+  at = -1;
+  for k in 0..n - 1 {
+    match scope_fn::unspan(ops[k]!) {
+      NdSet { var: v, inner } => if v == ret && tested_copy(cx, inner) != null { at = k; },
+      _ => {}
+    }
+  }
+  if at < 0 {
+    return null;
+  }
+  val = match scope_fn::unspan(ops[at]!) { NdSet { inner } => inner, _ => return null };
+  copy = tested_copy(cx, val);
+  if copy == null {
+    return null;
+  }
+  cn = len(copy!.operators);
+  if cn == 0 || var_of_bare(copy!.operators[cn - 1]!) != cx.rb {
+    return null;
+  }
+  operators = [for o in copy!.operators if o#index < cn - 1 { o }];
+  for k in at + 1..n - 1 {
+    if !guards_own_buffer(cx, ops[k]!) {
+      operators += [ops[k]!];
+    }
+  }
+  operators += [ir::NdReturn { inner: ir::NdVar { n: cx.rb } }];
+  Tested { at: at, exit: ir_pass_tree::with_operators(copy!, operators) }
+}
+
+// `Value::Var(x)` through spans.
+fn var_of_bare(v: ir::Node) -> integer {
+  var_of(v)
+}
+
+// port: return_field.rs fn tested_copy — `if OpRefIsNull(x) <null> else <copy of x into the
+// buffer>`: the copy block.
+fn tested_copy(cx: Cx, val: ir::Node) -> ir::Block? {
+  match scope_fn::unspan(val) {
+    NdIf { cond, t: absent, f: copy } => {
+      tested = match scope_fn::unspan(cond) {
+        NdCall { def_nr, args } => if def_nr == cx.ops.is_null && len(args) == 1 { args[0]! } else { return null },
+        _ => return null
+      };
+      null_arm = match scope_fn::unspan(absent) {
+        NdCall { def_nr, args } => def_nr == cx.ops.null_sentinel && len(args) == 0,
+        _ => false
+      };
+      bl = block_of(copy);
+      if !null_arm || bl == null || bl!.name != "materialized_view_return" {
+        return null;
+      }
+      want = "{scope_fn::unspan(tested)}";
+      for op in bl!.operators {
+        match scope_fn::unspan(op) {
+          NdCall { def_nr, args } => if def_nr == cx.ops.copy && len(args) == 3 && "{scope_fn::unspan(args[0]!)}" == want {
+            return bl;
+          },
+          _ => {}
+        }
+      }
+      null
+    },
+    _ => null
+  }
+}
+
+// port: return_field.rs fn guards_own_buffer — `if OpDistinctStore(buf, …)
+// OpFreeRefIfDistinct(buf, …)`.
+fn guards_own_buffer(cx: Cx, op: ir::Node) -> boolean {
+  match scope_fn::unspan(op) {
+    NdIf { cond, t: free } => {
+      c = match scope_fn::unspan(cond) {
+        NdCall { def_nr, args } => def_nr == cx.ops.distinct_store && len(args) > 0 && var_of(args[0]!) == cx.rb,
+        _ => false
+      };
+      c && match scope_fn::unspan(free) {
+        NdCall { def_nr, args } => def_nr == cx.ops.free_if_distinct && len(args) > 0 && var_of(args[0]!) == cx.rb,
+        _ => false
+      }
+    },
+    _ => false
+  }
+}
+
+// port: return_field.rs fn source_root — the root of the copy's source, -1 for a decline.
+fn source_root(cx: Cx, src: ir::Node) -> integer {
+  r = field_path_root(cx.ops, src);
+  if r >= 0 {
+    return r;
+  }
+  v = match scope_fn::unspan(src) { NdVar { n } => n, _ => return -1 };
+  if scope_fn::is_argument(cx.f, v) {
+    return -1;
+  }
+  deps = scope_fn::deps(cx.f, v);
+  if len(deps) != 1 || deps[0]! >= scope_fn::count(cx.f) {
+    return -1;
+  }
+  any = false;
+  for k in 0..len(cx.bind_var) {
+    if cx.bind_var[k]! == v {
+      any = true;
+      if cx.bind_root[k]! != deps[0]! {
+        return -1;
+      }
+    }
+  }
+  if any { deps[0]! } else { -1 }
+}
+
+// port: return_field.rs fn owned_local
+fn owned_local(cx: Cx, root: integer) -> boolean {
+  if scope_fn::is_argument(cx.f, root) || root == cx.rb || scope_fn::is_skip_free(cx.f, root) {
+    return false;
+  }
+  x = cx.f.variables[root];
+  if x == null || x!.caller_hidden_buf {
+    return false;
+  }
+  match scope_fn::tp(cx.f, root) {
+    TyReference { dep } => len(dep) == 0,
+    TyEnum { is_ref, dep } => is_ref && len(dep) == 0,
+    _ => false
+  }
+}
+
+// port: return_field.rs fn free_subject
+fn free_subject(cx: Cx, op: ir::Node) -> integer {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr, args } => if (def_nr == cx.ops.free_ref || def_nr == cx.ops.free_if_distinct) && len(args) > 0 { var_of(args[0]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// port: return_field.rs fn before_copy — a bind, or the guarded mint of a caller-handed buffer.
+fn before_copy(cx: Cx, op: ir::Node) -> boolean {
+  match scope_fn::unspan(op) {
+    NdSet => true,
+    NdIf { cond } => match scope_fn::unspan(cond) {
+      NdCall { def_nr, args } => {
+        if def_nr != cx.ops.is_null || len(args) != 1 {
+          return false;
+        }
+        b = var_of(args[0]!);
+        if b < 0 || b == cx.rb {
+          return false;
+        }
+        x = cx.f.variables[b];
+        x != null && x!.caller_hidden_buf
+      },
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// port: return_field.rs fn admit — the root whose field is returned, -1 for a decline.
+fn admit(cx: Cx, bl: ir::Block) -> integer {
+  ops = bl.operators;
+  n = len(ops);
+  if n < 4 {
+    return -1;
+  }
+  mints = match scope_fn::unspan(ops[0]!) {
+    NdCall { def_nr, args } => def_nr == cx.ops.database && len(args) > 0 && var_of(args[0]!) == cx.rb,
+    _ => false
+  };
+  returns = match scope_fn::unspan(ops[n - 1]!) {
+    NdReturn { inner } => var_of(inner) == cx.rb,
+    _ => false
+  };
+  if !mints || !returns {
+    return -1;
+  }
+  i = 1;
+  while i < n - 1 && before_copy(cx, ops[i]!) {
+    i += 1;
+  }
+  src = ir::NdNull;
+  tp = -1;
+  match scope_fn::unspan(ops[i]!) {
+    NdCall { def_nr, args } => {
+      if def_nr != cx.ops.copy || len(args) != 3 || var_of(args[1]!) != cx.rb {
+        return -1;
+      }
+      tp = match scope_fn::unspan(args[2]!) { NdInt { n: t } => t, _ => return -1 };
+      src = args[0]!;
+    },
+    _ => return -1
+  }
+  root = source_root(cx, src);
+  if root < 0 || !owned_local(cx, root) {
+    return -1;
+  }
+  if tp < 0 || tp > 65535 || !types::owns_heap(cx.b.types, tp) {
+    return -1;
+  }
+  frees_root = false;
+  for k in i + 1..n - 1 {
+    op = ops[k]!;
+    ok = match scope_fn::unspan(op) {
+      NdCall { def_nr, args } => (def_nr == cx.ops.free_text && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar)
+        || (def_nr == cx.ops.free_if_distinct && len(args) == 2 && scope_fn::unspan(args[0]!) is NdVar && scope_fn::unspan(args[1]!) is NdVar)
+        || (def_nr == cx.ops.free_ref && len(args) == 1 && scope_fn::unspan(args[0]!) is NdVar),
+      _ => false
+    };
+    if !ok {
+      return -1;
+    }
+    if free_subject(cx, op) == root {
+      frees_root = true;
+    }
+  }
+  if frees_root { root } else { -1 }
+}
+
+// `op` (a call, spanned or not) with its definition and arguments replaced.
+fn with_call(op: ir::Node, d: integer, args: vector<ir::Node>) -> ir::Node {
+  match op {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: with_call(inner, d, args) },
+    _ => ir::NdCall { def_nr: d, args: args }
+  }
+}
+
+// port: return_field.rs fn apply — the field answered, the root's store handed over.
+fn apply(cx: Cx, bl: ir::Block, root: integer) -> ir::Block {
+  ops = bl.operators;
+  n = len(ops);
+  out: vector<ir::Node> = [];
+  source: ir::Node? = null;
+  for op in ops {
+    k = op#index;
+    if k == 0 || k == n - 1 {
+      continue;
+    }
+    if source == null {
+      if before_copy(cx, op) {
+        out += [op];
+        continue;
+      }
+      match scope_fn::unspan(op) {
+        NdCall { args } => { source = args[0]!; },
+        _ => {}
+      }
+      continue;
+    }
+    match scope_fn::unspan(op) {
+      NdCall { def_nr, args } => {
+        if def_nr == cx.ops.free_text {
+          out += [op];
+        } else if def_nr == cx.ops.free_if_distinct {
+          if var_of(args[0]!) != root {
+            out += [with_call(op, def_nr, [args[0]!, ir::NdVar { n: root }])];
+          }
+        } else if def_nr == cx.ops.free_ref {
+          if var_of(args[0]!) != root {
+            out += [with_call(op, cx.ops.free_if_distinct, [args[0]!, ir::NdVar { n: root }])];
+          }
+        }
+      },
+      _ => {}
+    }
+  }
+  out += [ir::NdReturn { inner: source! }];
+  res = bl.result[0] ?? ir::TyVoid;
+  result = match res {
+    TyReference { n } => ir::TyReference { n: n, dep: [] },
+    TyEnum { n, is_ref } => if is_ref { ir::TyEnum { n: n, is_ref: true, dep: [] } } else { res },
+    _ => res
+  };
+  ir::Block { name: HANDOVER, operators: out, result: [result], scope: bl.scope, var_size: bl.var_size }
+}
