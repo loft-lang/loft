@@ -820,6 +820,7 @@ pub fn add_def(el: El, name: text, position: ir::Position, def_type: integer) ->
     operator_form: false,
     returned_fact: "",
     returned_const: false,
+    returned_ref: false,
     native_answer_tp: NO_TYPE,
     op_hot: false,
     op_cold: false

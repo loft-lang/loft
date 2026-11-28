@@ -34,7 +34,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F18](F18.md) | `const` parameters |
 | [@F19](F19.md) | Method dispatch via `self` / `both` |
 | [@F20](F20.md) | Variant-based dynamic dispatch |
-| [@F21](F21.md) | References `&T` — parameters + write-back bindings |
+| [@F21](F21.md) | References `&T` — parameters, bindings + place returns |
 | [@F22](F22.md) | Closures & lambdas (value capture, cross-scope) |
 | [@F23](F23.md) | Function references as first-class values |
 | [@F24](F24.md) | Higher-order functions (map / filter / reduce) |

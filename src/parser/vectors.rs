@@ -1903,16 +1903,19 @@ or build a local and use that."
         self.mark_template_lambda(outer_context, d_nr);
 
         // Parse optional return type annotation.
-        let result = if self.lexer.has_token("->") {
-            self.parse_type_full(d_nr, true).unwrap_or(Type::Void)
+        let (result, ret_ref, ret_const) = if self.lexer.has_token("->") {
+            let (tp, rr, rc, _) = self.parse_return_type(d_nr);
+            (tp, rr, rc)
         } else {
-            Type::Void
+            (Type::Void, false, false)
         };
         // A lifetime-bearing tuple return is boxed exactly as a named function's is
         // (loft#1349) — see `Parser::boxed_tuple_return`.
         let result = self.boxed_tuple_return(result);
         if self.first_pass {
             self.data.set_returned(d_nr, result);
+            self.data.definitions[d_nr as usize].returned_ref = ret_ref;
+            self.data.definitions[d_nr as usize].returned_const = ret_const;
         }
 
         self.vars
@@ -2082,7 +2085,11 @@ or build a local and use that."
         } else {
             Deps::frame1(self.last_closure_work_var)
         };
-        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant))
+            .with_ret_ref(
+                self.data.def(d_nr).returned_ref,
+                self.data.def(d_nr).returned_const,
+            );
         Type::Function(arg_types, Box::new(ret_type), dep, consts)
     }
 
@@ -2099,17 +2106,18 @@ or build a local and use that."
         let mut arguments = Vec::new();
         self.parse_arguments("__lambda", &mut arguments);
         self.lexer.token(")");
-        let result = if self.lexer.has_token("->") {
-            self.parse_type_full(self.context, true)
-                .unwrap_or(Type::Void)
+        let (result, ret_ref, ret_const) = if self.lexer.has_token("->") {
+            let (tp, rr, rc, _) = self.parse_return_type(self.context);
+            (tp, rr, rc)
         } else {
-            Type::Void
+            (Type::Void, false, false)
         };
         let result = self.boxed_tuple_return(result);
         self.read_lambda_body(&arguments);
         self.vars = outer_vars;
         let arg_types: Vec<Type> = arguments.iter().map(|a| a.typedef.clone()).collect();
-        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant))
+            .with_ret_ref(ret_ref, ret_const);
         Type::Function(arg_types, Box::new(result), Deps::none(), consts)
     }
 
@@ -2532,7 +2540,11 @@ or build a local and use that."
         } else {
             Deps::frame1(self.last_closure_work_var)
         };
-        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant))
+            .with_ret_ref(
+                self.data.def(d_nr).returned_ref,
+                self.data.def(d_nr).returned_const,
+            );
         Type::Function(arg_types, Box::new(ret_type), dep, consts)
     }
 

@@ -425,6 +425,8 @@ pub struct Parser {
     /// bind sets the value and is not a write `const` forbids (`@FR-Const-ConstructExempt`).
     /// `u16::MAX` outside one.
     pub(crate) declaring_const: u16,
+    /// True while parsing a `const x = …` statement.
+    pub(crate) in_const_decl: bool,
     /// @PLN86 — the host-supplied sandbox policy (profiles + designations).
     /// Empty by default; set by the embedder before parsing.  A script cannot
     /// designate itself — the designation is read from here, not the source.
@@ -2210,6 +2212,7 @@ impl Parser {
             in_tuple_lhs: false,
             preset_rhs: None,
             declaring_const: u16::MAX,
+            in_const_decl: false,
             sandbox: crate::sandbox::SandboxConfig::default(),
             def_sandbox: HashMap::new(),
             sandbox_unbounded_loops: HashMap::new(),

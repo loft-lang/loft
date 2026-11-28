@@ -97,9 +97,10 @@ emission diff), so a phase that changes more than its census predicts goes red b
 - loft#2660 closes with phase 3, and its cell flips there.
 - The self-host port (@PLN91) owns phase 5.  Its scope pass ports the same analysis, so the
   stream that owns the scope-pass port is the natural builder of 2–4 too.
-- @PLN232 (`-> &T` returns) reads `returned().depend()` to decide that a return names one
-  parameter (its Q4).  It builds on settled answers, so this plan landing first removes a class
-  of wrong `Deps` it would otherwise inherit.
+- @PLN232 (`-> &T` returns, shipped — `@FR-B-RefType-Return` in
+  [formal/binding.md](../formal/binding.md)) reads `returned().depend()` to check that a return
+  names one parameter (its Q4), so settling `returned()` removes a class of stale `Deps` its check
+  would otherwise read.
 - The store-records checker (`STORE_RECORDS.md`, @PLN228): each phase-3 shape updates the
   records and must read CAUGHT with its cure off.
 

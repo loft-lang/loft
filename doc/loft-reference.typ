@@ -2250,6 +2250,16 @@ fn dimmed(self: Colour) -> Colour {
 }
 ```
 
+=== Returning a struct in place
+
+Write '-\> &StructName' when a helper should return an existing record inside one of its parameters instead of a fresh copy. Every exit of the body must name a place in that same parameter. Calling the helper then reaches the element itself: writing a field or passing the call to another function updates the container in place, and a plain bind 'p = first\_product(shelf)' views that element just as 'p = shelf\[0\]' does. Changing an existing '-\> Product' helper to '-\> &Product' turns callers' plain binds from independent copies into views, so use '-\> &Product' when reaching the stored record is what callers want.
+
+```rust
+fn first_product(items: vector<Product>) -> &Product {
+  items[0]
+}
+```
+
 === Defaults and Computed Fields
 
 Write '= expression' after the type to set a stored default, filled at construction. Use 'computed(expression)' for a field that recalculates every time you read it — it takes no space in the record and always reflects the current state. Inside both, '\$' refers to the struct.
@@ -2521,6 +2531,25 @@ Write '&' to get a live link where a bind would otherwise copy.
   linked = &item;
   linked.stock = 1;
   assert(item.stock == 1, "'&' binds a live link");
+```
+
+A '-\> &Product' helper reaches the element inside 'shelf' directly.
+
+```rust
+  first_product(shelf).stock = 12;
+  assert(shelf[0].stock == 12, "writing through a -> &Product call updates shelf[0]");
+  viewed = first_product(shelf);
+  viewed.stock -= 2;
+  assert(shelf[0].stock == 10, "a plain bind of -> &Product views the element");
+  linked_first = &first_product(shelf);
+  linked_first.stock = 6;
+  assert(shelf[0].stock == 6, "'&' on a -> &Product call links the element");
+```
+
+Restore 'spare' and 'item' alignment for the comparison section below.
+
+```rust
+  item.stock = 1;
 ```
 
 A tree: children are fields of the struct's own type, nullable so a branch can end.
@@ -7211,7 +7240,7 @@ The catalogue is generated from the `loft-lang/features` issue tracker, which is
 - \*\*\@F18\*\* — `const` parameters
 - \*\*\@F19\*\* — Method dispatch via `self` / `both`
 - \*\*\@F20\*\* — Variant-based dynamic dispatch
-- \*\*\@F21\*\* — References `&T` — parameters + write-back bindings
+- \*\*\@F21\*\* — References `&T` — parameters, bindings + place returns
 - \*\*\@F22\*\* — Closures & lambdas (value capture, cross-scope)
 - \*\*\@F23\*\* — Function references as first-class values
 - \*\*\@F24\*\* — Higher-order functions (map / filter / reduce)

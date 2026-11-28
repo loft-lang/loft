@@ -888,6 +888,7 @@ pub fn state_report(b: ir::Bundle, from: integer) -> text {
     df = " purity={d.purity}" + identity_state(b, d);
     if d.returned_not_null { df += " returned_not_null"; }
     if d.returned_const { df += " returned_const"; }
+    if d.returned_ref { df += " returned_ref"; }
     if d.null_safe { df += " null_safe"; }
     if d.width32 { df += " width32"; }
     if d.no_prefill != "" { df += " no_prefill={d.no_prefill}"; }

@@ -809,7 +809,7 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
     // `fn(T, …) -> R`: the argument types, a `const` one's bit in `consts` (`ConstParams`), and
     // the result (`void` when none is written).  A `&T` argument is `Parser::ref_var_type`'s
     // link to `T`, as a declared `&` parameter is; a `&` tuple argument is refused by name.
-    STyFn { at: _, args, ret } => {
+    STyFn { at: _, args, ret, ret_amp, ret_const } => {
       ts: vector<ir::TypeT> = [];
       bits = 0;
       for a in args {
@@ -844,6 +844,22 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
           return null;
         }
         rt = r!;
+        // @FR-B-RefType-Return — `fn(…) -> &T` wraps scalar/text returns in `TyRefVar` and
+        // records `ret_ref` / `ret_const` in `ConstParams` bits 32 and 33.
+        if ret_amp {
+          rb = base(rt);
+          if rb is TyTuple {
+            el::refuse(e, "a function type with a `&` tuple return");
+            return null;
+          }
+          if rb is TyInteger || rb is TyFloat || rb is TySingle || rb is TyBoolean || rb is TyCharacter || rb is TyText || match rb { TyEnum { is_ref } => !is_ref, _ => false } {
+            rt = ir::TyRefVar { inner: rt };
+          }
+          bits += 1 << 32;
+        }
+        if ret_const {
+          bits += 1 << 33;
+        }
       }
       ir::TyFunction { args: ts, result: rt, dep: [], consts: bits }
     },
@@ -867,6 +883,12 @@ pub fn function_value_type(e: el::El, d: integer) -> ir::TypeT {
       bits += 1 << len(ts);
     }
     ts += [a.typedef[0] ?? ir::TyVoid];
+  }
+  if el::def(e, d).returned_ref {
+    bits += 1 << 32;
+  }
+  if el::def(e, d).returned_const {
+    bits += 1 << 33;
   }
   ir::TyFunction { args: ts, result: el::def(e, d).returned[0] ?? ir::TyVoid, dep: [], consts: bits }
 }

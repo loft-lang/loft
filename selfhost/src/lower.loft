@@ -3023,7 +3023,8 @@ fn set_first(l: Lowering, b: ir::Bundle, var: integer, x: ir::Node) {
       init_ref_under(l, slot);
       emit(l, BindOrCopy, KRef, slot, copy_operand(b, known_type(b, sd2!)));
       recheck_join_witnesses(l, b, slot, jb!, rest, copy_operand(b, known_type(b, sd2!)));
-    } else if binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
+    // @FR-B-RefType-Return — a `-> &Record` call views its place without copying.
+    } else if binds::def(b, callee!).returned_ref || binds::return_adopts_fresh_store(binds::def(b, callee!)) || v.view_elided || binds::adopts_minted_at_bind(b, l.own_ops, f, var, x) {
       note_first(l, b, f, var, x, "", "F9b");
       value(l, b, x, KRef);
       emit(l, Store, KRef, slot, 0);

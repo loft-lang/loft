@@ -1378,14 +1378,25 @@ impl Scopes<'_> {
                     && (crate::parser::vectors::is_collection(function.tp(ret_var))
                         || function.is_argument(ret_var))
                     && return_has_null_arm(expr, data.def_nr("OpNullRefSentinel"));
+                let wrap_ret_var = |v: u16, func: &Function| -> Value {
+                    if data.def(self.d_nr).returned_ref
+                        && (v as usize) < func.count() as usize
+                        && matches!(func.tp(v).base(), Type::RefVar(_))
+                    {
+                        Value::Call(data.def_nr("OpVarRef"), vec![Value::Var(v)])
+                    } else {
+                        Value::Var(v)
+                    }
+                };
                 if null_arm_needs_the_value {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
+                    let wrapped = wrap_ret_var(tmp, function);
                     ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
-                    ls.push(Value::Return(Box::new(Value::Var(tmp))));
+                    ls.push(Value::Return(Box::new(wrapped)));
                 } else if ret_var != u16::MAX {
-                    ls.push(Value::Return(Box::new(Value::Var(ret_var))));
+                    ls.push(Value::Return(Box::new(wrap_ret_var(ret_var, function))));
                 } else if frees_follow
                     && *tp != Type::Void
                     && !expr_is_terminal
@@ -1450,8 +1461,9 @@ impl Scopes<'_> {
                     self.ret_temp_counter += 1;
                     let name = format!("__ret_tail_{}", self.ret_temp_counter);
                     let tmp = function.add_temp_var(&name, tp);
+                    let wrapped = wrap_ret_var(tmp, function);
                     ls.splice(0..1, self.bind_return_temp(tmp, expr, function, data));
-                    ls.push(Value::Return(Box::new(Value::Var(tmp))));
+                    ls.push(Value::Return(Box::new(wrapped)));
                 } else {
                     ls.push(Value::Return(Box::new(Value::Null)));
                 }

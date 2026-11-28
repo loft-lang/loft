@@ -122,8 +122,9 @@ pub fn boxed_tail_into(e: el::El, vars: el_vars::Vars, n: ir::Node, w: integer, 
 pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   vars.body = body;
   result = el::def(e, e.context).returned[0];
+  place_ret = el::def(e, e.context).returned_ref;
   vars.boxed_tail = -1;
-  if match el_types::base(result) { TyReference { n: rn } => starts_with(el::def(e, rn).name, "__tuple<"), _ => false } {
+  if !place_ret && match el_types::base(result) { TyReference { n: rn } => starts_with(el::def(e, rn).name, "__tuple<"), _ => false } {
     match e.p.nodes[body] {
       SBlock { stmts } => {
         if len(stmts) > 0 {
@@ -234,7 +235,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // pass 2 binds only where pass 1 did (the attribute it minted).
   // The `___tret_N` a `return` at the tail was bound to: what the body then answers.
   ret_bound = -1;
-  if el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && (e.first_pass || def_has_tret_attr(el::def(e, e.context))) {
+  if !place_ret && el_types::base(result) is TyText && el::def(e, e.context).def_type != el::DT_GENERIC && (e.first_pass || def_has_tret_attr(el::def(e, e.context))) {
     match b.code {
       NdBlock { block } => {
         bl = block[0];
@@ -265,7 +266,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   tret_made = false;
   match b.code { NdBlock { block } => { tret_made = len(block[0].operators) > 0 && match el_ir::unspan(el_ir::last(block[0].operators)) { NdVar { n } => starts_with(el_vars::name_of(vars, n), "___tret_"), _ => false }; }, _ => {} }
   dd = el::def(e, e.context);
-  if !tret_made && el_types::base(result) is TyText && dd.def_type != el::DT_GENERIC && (e.first_pass || def_has_attr_prefix(dd, "___acc")) {
+  if !place_ret && !tret_made && el_types::base(result) is TyText && dd.def_type != el::DT_GENERIC && (e.first_pass || def_has_attr_prefix(dd, "___acc")) {
     match b.code {
       NdBlock { block } => {
         bl = block[0];
@@ -344,7 +345,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
     },
     _ => {}
   }
-  text_return(e, vars, tt);
+  if !place_ret {
+    text_return(e, vars, tt);
+  }
   code = b.code;
   // `block_result` converts the tail to `result`, the declared return as this pass met it —
   // on the second pass the borrows the first gathered, by number (a promoted local's by its
@@ -372,7 +375,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // `rewrite_tail_tuple_with_work_ref`: a function answering a boxed tuple builds its tail's
   // tuple literal into a work ref of the `__tuple<…>` record (`synthetic_tuple_return`): a
   // record member copied into its slot, a scalar set.  Any other tail is refused by name.
-  btd = match el_types::base(result) { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 };
+  btd = if place_ret { -1 } else { match el_types::base(result) { TyReference { n: bn } => if starts_with(el::def(e, bn).name, "__tuple<") { bn } else { -1 }, _ => -1 } };
   // (A tail CALL answering the same boxed tuple is delivered as a record's tail call is: the
   // buffer renamed onto the one handed to it, `ref_return`'s `Rename`.)
   btail_syn = el_ex_deliver::tail_syntax(e, vars.body);
@@ -411,7 +414,7 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   rb = if btd >= 0 { -1 } else { el_vars::var(vars, "__retbuf") };
   // A lambda answering a record has no buffer on the first pass (it is reserved between the
   // passes): a parameter at its tail is what the result borrows, by attribute number.
-  lambda = starts_with(el::def(e, e.context).name, "n___lambda_");
+  lambda = !place_ret && starts_with(el::def(e, e.context).name, "n___lambda_");
   if rb < 0 && e.first_pass && el_types::base(result) is TyReference && lambda {
     r0 = el::def(e, e.context).returned[0];
     ds = el_types::deps(r0);
@@ -656,9 +659,9 @@ pub fn parse_code(e: el::El, vars: el_vars::Vars, body: integer) -> ir::Node {
   // A lambda with no buffer yet whose vector tail is a buffered call grows one (`Grow`).  Not
   // for a `vector<T>?` result: Rust's ladder answers `AwaitReservedBuffer` there, the call left
   // building into its own `__ref_N`.
-  if rb < 0 && e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) {
+  if !place_ret && rb < 0 && e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) {
     el_ex_deliver::lambda_grow(e, vars, code, result);
-  } else if rb < 0 && !e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) && e.declared_lambdas.contains(el::def(e, e.context).name) {
+  } else if !place_ret && rb < 0 && !e.first_pass && el_types::base(result) is TyVector && !(result is TyOptional) && e.declared_lambdas.contains(el::def(e, e.context).name) {
     code = el_ex_deliver::grown_tail(e, vars, code);
   }
   // A vector result has its own delivery; the record delivery below does not apply to it.

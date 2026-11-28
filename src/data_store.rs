@@ -377,6 +377,8 @@ pub(crate) const DEF_VALUE_STRUCT: u32 = 213; // @PLN91 a `value struct` (`Data:
 /// @PLN91 `Definition::literal_const != u32::MAX`: the function's constant twin
 /// (`__const_<name>`, `@FR-R-Const`) is linked; the scope pass reads it.
 pub(crate) const DEF_CONST_LINKED: u32 = 214;
+/// `@FR-B-RefType-Return` — `Definition::returned_ref`: declared `-> &T`, returning a caller place.
+pub(crate) const DEF_RETURNED_REF: u32 = 215;
 /// @PLN91 `Function::ref_evacuations` (`@FR-H-RefHome`), flattened: holder, field, owner, type.
 pub(crate) const DEF_REF_EVACUATIONS: u32 = 200;
 
@@ -1817,6 +1819,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "value_struct"), DEF_VALUE_STRUCT);
         assert_eq!(pos(ids.definition, "ref_evacuations"), DEF_REF_EVACUATIONS);
         assert_eq!(pos(ids.definition, "const_linked"), DEF_CONST_LINKED);
+        assert_eq!(pos(ids.definition, "returned_ref"), DEF_RETURNED_REF);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

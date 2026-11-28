@@ -260,6 +260,67 @@ impl Parser {
         matches!(tmpl_returned.base(), Type::Reference(d, _) if *d == tv_nr)
     }
 
+    /// `@FR-B-RefType-Return` — map a substituted `-> &T` return type to its concrete carrier
+    /// (`__tuple<…>` for tuples, `RefVar(T)` for scalars and `text`, `T` for heap records and
+    /// collections).
+    pub(super) fn apply_place_return_carrier(&mut self, mut tp: Type) -> Type {
+        if matches!(tp.base(), Type::Tuple(_)) {
+            tp = self.boxed_tuple_return(tp);
+        } else if matches!(
+            tp.base(),
+            Type::Integer(..)
+                | Type::Single
+                | Type::Float
+                | Type::Boolean
+                | Type::Character
+                | Type::Enum(_, false, _)
+                | Type::Text(_)
+        ) {
+            tp = Type::RefVar(Box::new(tp));
+        }
+        tp
+    }
+
+    /// `@FR-B-RefType-Return` — run `finalize_place_return_body` on a freshly instantiated
+    /// generic monomorph `d_nr`.
+    fn finalize_monomorph_place_return(&mut self, d_nr: u32) {
+        let mut code =
+            std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        let outer_ctx = std::mem::replace(&mut self.context, d_nr);
+        let pos = self.data.def(d_nr).position;
+        if let Value::Block(bl) = &mut code {
+            let expected = self.data.def(d_nr).returned().clone();
+            for op in &mut bl.operators {
+                if let Value::Return(inner) = op.unspan_mut() {
+                    let _ = self.prepare_place_return_expr(inner, &Type::Unknown(0), &expected);
+                }
+            }
+            let mut tail_tp = bl.result.clone();
+            if let Some(last) = bl
+                .operators
+                .iter_mut()
+                .rev()
+                .find(|o| !matches!(o.unspan(), Value::Line(_)))
+                && !matches!(last.unspan(), Value::Return(_))
+                && let Some(tt) = self.prepare_place_return_expr(last, &tail_tp, &expected)
+            {
+                tail_tp = tt;
+                bl.result = tail_tp.clone();
+            }
+            self.finalize_place_return_body(&mut bl.operators, &tail_tp, &pos);
+        }
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = outer_ctx;
+        self.data.definitions[d_nr as usize].code = code;
+    }
+
     /// `@FR-F-Ret` / loft#2190 — a function TYPE whose return a substitution made a
     /// lifetime-bearing tuple names the boxed `__tuple<…>` record, exactly as the declared type
     /// `fn(…) -> (integer, text)` does (`parse_fn_type` boxes it there, and defers a return
@@ -499,11 +560,16 @@ impl Parser {
         let open = self.open_instance_bindings(&bindings, g_nr);
         bindings.extend(open);
         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
+        let tmpl_ret_ref = self.data.definitions[g_nr as usize].returned_ref;
         let from_tv = bindings
             .iter()
             .any(|(tv, _)| Self::return_is_the_type_var(&tmpl_returned, *tv));
-        let predicted =
-            self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
+        let sub_ret = Self::substitute_all(tmpl_returned, &bindings);
+        let predicted = if tmpl_ret_ref {
+            self.apply_place_return_carrier(sub_ret)
+        } else {
+            self.tuple_return_rewrite(sub_ret, from_tv)
+        };
         // Trace point: predicted return type for first-pass type
         // inference of generic call sites.  Used during plan-17 (A)
         // debugging.  Enable with `LOFT_TRACE=generic`.
@@ -917,9 +983,15 @@ impl Parser {
         let from_tv = tvs
             .iter()
             .any(|tv| Self::return_is_the_type_var(&tmpl_returned, *tv));
+        let tmpl_ret_ref = self.data.definitions[g_nr as usize].returned_ref;
+        let tmpl_ret_const = self.data.definitions[g_nr as usize].returned_const;
         let tmpl_ret_deps: Vec<u16> = tmpl_returned.depend();
-        let mut new_returned =
-            self.tuple_return_rewrite(Self::substitute_all(tmpl_returned, &bindings), from_tv);
+        let sub_ret = Self::substitute_all(tmpl_returned, &bindings);
+        let mut new_returned = if tmpl_ret_ref {
+            self.apply_place_return_carrier(sub_ret)
+        } else {
+            self.tuple_return_rewrite(sub_ret, from_tv)
+        };
         // @FR-F-Ret — the template's RETURN DEPS come along.  `substitute_all` replaces the
         // type variable and drops the deps it carried, and those deps are what say *this
         // result borrows argument N*: without them a `fn g<T>(x: T) -> T { x }` instance
@@ -968,6 +1040,8 @@ impl Parser {
             self.data.definitions[d_nr as usize].attributes[a_nr].hidden = *hidden;
         }
         self.data.set_returned(d_nr, new_returned.clone());
+        self.data.definitions[d_nr as usize].returned_ref = tmpl_ret_ref;
+        self.data.definitions[d_nr as usize].returned_const = tmpl_ret_const;
         // Trace point: full instantiation result.  Used during plan-17
         // (A) debugging when verifying that the second-pass def
         // creation produced the right monomorphised signature.
@@ -1004,15 +1078,11 @@ impl Parser {
         self.derive_monomorph_return_deps(d_nr, g_nr);
         // loft#2179 — what the deps could not name, the body now copies: an instance declared
         // fresh returns no parameter's store.
-        self.copy_param_returns_of_fresh_instance(d_nr);
-        // The body's text-return promotion ran while its tail call still named the nested
-        // TEMPLATE (`inner(s, c)` in `outer<S>(s: S) -> S?`): not a text call, nothing to
-        // promote.  Now that the call names `inner`'s monomorph, ask again — a `-> text?`
-        // forwarder that stays unpromoted copies the callee's result into a frame-local
-        // `__ret_N` and hands up a view of it, one orphan per call (loft#1357).  Only where
-        // nothing was promoted: a second hidden buffer would move the ABI.
-        if self.data.def(d_nr).text_work_buffers() == 0 {
-            self.promote_monomorph_text_return(d_nr);
+        if !self.data.def(d_nr).returned_ref {
+            self.copy_param_returns_of_fresh_instance(d_nr);
+            if self.data.def(d_nr).text_work_buffers() == 0 {
+                self.promote_monomorph_text_return(d_nr);
+            }
         }
         self.warn_instance_tail(d_nr, g_nr, &bindings);
         d_nr
@@ -1524,6 +1594,10 @@ impl Parser {
         }
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "runs full monomorph body substitution and return finalisation"
+    )]
     pub(super) fn fill_monomorph_body(
         &mut self,
         d_nr: u32,
@@ -1661,25 +1735,21 @@ impl Parser {
         // path skips for IR-substituted monomorphs, so a `-> text` monomorph
         // delivers through a hidden `&text` buffer (no orphaned owned String).
         // Runs BEFORE returning `d_nr` so the call site sees the promoted ABI.
-        self.promote_monomorph_text_return(d_nr);
-        // @FR-F-Ret — and its tuple twin: a `-> (T, …)` whose shape the declaration deferred
-        // is boxed by `tuple_return_rewrite` above, and the body's tuple tails are rewritten
-        // into that synthetic record here, so signature and body agree on both passes.
-        self.promote_monomorph_tuple_return(d_nr);
-        // @PLN165 D5 — and the record twin, for a return an open instance became.
-        let from_open = matches!(self.data.def(d_nr).returned().base(),
-            Type::Reference(td, _) if bindings.iter().any(|(h, b)|
-                self.data.is_open_instance(*h)
-                    && matches!(b.base(), Type::Reference(c, _) if c == td)));
-        self.promote_monomorph_record_return(d_nr, from_open);
-        // @FR-F-Ret / @FR-B-Copy — and the vector twin: a `T`-typed local bound from another
-        // vector COPIES, and a `-> T` that hands a vector argument up returns a copy of it.
-        let holders: Vec<u32> = bindings.iter().map(|(h, _)| *h).collect();
-        self.promote_monomorph_vector_return(d_nr, tmpl_vars, &holders);
-        // loft#1387 — and the two-source join twin: a return whose tail is a value branch
-        // over two parameters is FRESH (`@FR-F-Ret`), which the non-generic path gets in
-        // `parse_block` and a monomorph can only get here.
-        self.bind_monomorph_join_return(d_nr);
+        if self.data.def(d_nr).returned_ref {
+            // @FR-B-RefType-Return — validate and record the place-return deps on the monomorph.
+            self.finalize_monomorph_place_return(d_nr);
+        } else {
+            self.promote_monomorph_text_return(d_nr);
+            self.promote_monomorph_tuple_return(d_nr);
+            let from_open = matches!(self.data.def(d_nr).returned().base(),
+                Type::Reference(td, _) if bindings.iter().any(|(h, b)|
+                    self.data.is_open_instance(*h)
+                        && matches!(b.base(), Type::Reference(c, _) if c == td)));
+            self.promote_monomorph_record_return(d_nr, from_open);
+            let holders: Vec<u32> = bindings.iter().map(|(h, _)| *h).collect();
+            self.promote_monomorph_vector_return(d_nr, tmpl_vars, &holders);
+            self.bind_monomorph_join_return(d_nr);
+        }
         // loft#845 — a `"{v}"` on a `vector<T>` was emitted against the row the TEMPLATE
         // could see, which is a vector over the type variable's own storage.  Substitution
         // replaces the type and leaves that row behind, so the dump walked a

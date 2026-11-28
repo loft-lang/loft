@@ -42,8 +42,18 @@ impl Cx<'_> {
 
     /// The shapes of the visible parameters — each with whether it is a `&` link, passed as
     /// the address of the caller's variable — and the result of `d`, when each has one.
-    fn value_signature(&self, d: u32) -> Option<(Vec<(CType, bool)>, CType)> {
+    fn value_signature(&self, d: u32, vis_places: u64) -> Option<(Vec<(CType, bool)>, CType)> {
         let def = self.data.def(d);
+        let mut attr_places = 0u64;
+        let mut vis = 0usize;
+        for (i, a) in def.attributes().iter().enumerate() {
+            if !a.hidden && a.name != "__closure" {
+                if vis < 64 && vis_places & (1 << vis) != 0 && i < 64 {
+                    attr_places |= 1 << i;
+                }
+                vis += 1;
+            }
+        }
         let params = def
             .attributes()
             .iter()
@@ -59,7 +69,7 @@ impl Cx<'_> {
                     .map(|c| (c, false)),
             })
             .collect::<Option<Vec<_>>>()?;
-        Some((params, self.ctype(def.returned())?))
+        Some((params, self.return_ctype(d, attr_places)?))
     }
 
     /// Every dispatcher, after the prototypes of `fns`, the functions the unit writes.
@@ -141,8 +151,13 @@ impl Cx<'_> {
             // A place is a link the arm hands to the place twin.
             let linked: Vec<(CType, bool)> = params.iter().map(|(c, m)| (*c, *m > 0)).collect();
             let places: Vec<bool> = params.iter().map(|(_, m)| *m == 2).collect();
+            let vis_places: u64 = places
+                .iter()
+                .enumerate()
+                .filter(|&(i, &p)| i < 64 && p)
+                .fold(0u64, |m, (i, _)| m | (1 << i));
             for &d in &values {
-                if self.value_signature(d).as_ref() != Some(&(linked.clone(), *ret)) {
+                if self.value_signature(d, vis_places).as_ref() != Some(&(linked.clone(), *ret)) {
                     continue;
                 }
                 if places.contains(&true) && !fns.contains(&d) {

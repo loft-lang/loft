@@ -252,7 +252,7 @@ pub fn read_type(stores: &Stores, slot: Record) -> Type {
                 slot.field_child(stores, ds::TYFUNC_RESULT),
             )),
             read_deps(stores, slot, ds::TYFUNC_DEP),
-            crate::data::ConstParams::from_bits(slot.field_int(stores, ds::TYFUNC_CONSTS) as u32),
+            crate::data::ConstParams::decode_i64(slot.field_int(stores, ds::TYFUNC_CONSTS)),
         ),
         TypeKind::Rewritten => Type::Rewritten(Box::new(read_type(
             stores,
@@ -811,6 +811,9 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         returned_fact: crate::data::AliasFact::decode(r.field_str(stores, ds::DEF_RETURNED_FACT)),
         no_prefill: crate::data::NoPrefill::decode(r.field_str(stores, ds::DEF_NO_PREFILL)),
         returned_const: r.field_bool(stores, ds::DEF_RETURNED_CONST), // @FR-Const-Foreign
+        returned_ref: r.field_bool(stores, ds::DEF_RETURNED_REF),     // @FR-B-RefType-Return
+        returned_ref_param: u16::MAX,
+        returned_ref_ool: false,
         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
         mutated_captures: read_name_list(
             stores,

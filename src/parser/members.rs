@@ -252,7 +252,7 @@ impl Parser {
 
     /// `@FR-L-OutOfLine` — the content row of an out-of-line field of type `tp`: what its
     /// child record holds.  `u16::MAX` on the first pass, before any layout exists.
-    fn out_of_line_kt(&self, tp: &Type) -> i32 {
+    pub(super) fn out_of_line_kt(&self, tp: &Type) -> i32 {
         if self.first_pass {
             return i32::from(u16::MAX);
         }
@@ -292,7 +292,13 @@ impl Parser {
         let Value::Call(g, gargs) = field.unspan() else {
             return None;
         };
-        if self.data.def(*g).name() != "OpGetField" {
+        let gdef = self.data.def(*g);
+        if gdef.returned_ref && gdef.returned_ref_ool {
+            // @FR-B-RefType-Return — a place-returning function returning an out-of-line field.
+            let kt = self.out_of_line_kt(gdef.returned());
+            return (kt != 0).then(|| (field.clone(), kt));
+        }
+        if gdef.name() != "OpGetField" {
             return None;
         }
         match gargs.get(2) {

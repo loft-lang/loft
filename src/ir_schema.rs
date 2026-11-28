@@ -231,7 +231,7 @@ fn write_type(out: &mut String, ty: &Type) {
             write_type(out, result);
             out.push_str(",\"dep\":");
             write_u16_list(out, dep);
-            let _ = write!(out, ",\"consts\":{}", consts.bits());
+            let _ = write!(out, ",\"consts\":{}", consts.encode_i64());
             out.push('}');
         }
         Type::Rewritten(inner) => {
@@ -440,7 +440,7 @@ fn type_from_parsed(p: &Parsed) -> Result<Type, TypeDecodeError> {
             type_list(field(p, "args")?)?,
             Box::new(type_from_parsed(field(p, "result")?)?),
             deps(field(p, "dep")?)?,
-            crate::data::ConstParams::from_bits(as_u32(field(p, "consts")?)?),
+            crate::data::ConstParams::decode_i64(as_i64(field(p, "consts")?)?),
         ),
         "Rewritten" => Type::Rewritten(Box::new(type_from_parsed(field(p, "t")?)?)),
         "Tuple" => Type::Tuple(type_list(field(p, "elems")?)?),
@@ -1123,6 +1123,7 @@ fn write_definition(out: &mut String, d: &Definition) {
     out.push_str(",\"no_prefill\":"); // @FR-R-CompleteWrite
     write_str(out, &d.no_prefill.encode());
     let _ = write!(out, ",\"returned_const\":{}", d.returned_const);
+    let _ = write!(out, ",\"returned_ref\":{}", d.returned_ref);
     // forced_size: Option<u8>, n ∈ {1,2,4,8}; 0 is never valid → encodes None.
     let _ = write!(out, ",\"forced_size\":{}", d.forced_size.unwrap_or(0));
     out.push_str(",\"purity\":");
@@ -1433,6 +1434,12 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
             Ok(f) => as_bool(f)?,
             Err(_) => false,
         }, // @FR-Const-Foreign
+        returned_ref: match field(p, "returned_ref") {
+            Ok(f) => as_bool(f)?,
+            Err(_) => false,
+        }, // @FR-B-RefType-Return
+        returned_ref_param: u16::MAX,
+        returned_ref_ool: false,
         forced_size: if forced == 0 { None } else { Some(forced) },
         purity: purity_from_parsed(field(p, "purity")?)?,
         field_groups: field_group_list(field(p, "field_groups")?)?,
@@ -2480,6 +2487,9 @@ mod tests {
             returned_fact: crate::data::AliasFact::Alias(9),
             no_prefill: crate::data::NoPrefill::decode("l3,5;m7"),
             returned_const: true,
+            returned_ref: true,
+            returned_ref_param: u16::MAX,
+            returned_ref_ool: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: Some(4),
@@ -2568,6 +2578,9 @@ mod tests {
             returned_fact: crate::data::AliasFact::Plain,
             no_prefill: crate::data::NoPrefill::default(),
             returned_const: false,
+            returned_ref: false,
+            returned_ref_param: u16::MAX,
+            returned_ref_ool: false,
             const_ref: None,
             literal_const: u32::MAX,
             forced_size: None,

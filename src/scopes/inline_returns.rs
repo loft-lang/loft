@@ -706,6 +706,20 @@ impl Scopes<'_> {
         outer_call: u32,
         function: &Function,
     ) -> Option<Type> {
+        if match val.unspan() {
+            Value::Call(fn_nr, _) => {
+                (*fn_nr as usize) < data.definitions.len() && data.def(*fn_nr).returned_ref
+            }
+            Value::CallRef(fv, _) => function
+                .tp(*fv)
+                .function_consts()
+                .is_some_and(crate::data::ConstParams::ret_ref),
+            _ => false,
+        } {
+            // @FR-B-RefType-Return — a place-returning call yields a DbRef into a caller store,
+            // never a callee-minted record temporary to lift and free.
+            return None;
+        }
         // loft#721 — a closure call is lifted only when its target definition is
         // known AND that definition does not return a borrowed view.
         if let Some(tp) = self.callref_owned_return(val, data, function, outer_call) {

@@ -135,6 +135,29 @@ impl Parser {
             // A heap member of a tuple local handed to a `&` parameter: the local is built as its
             // record, whose field the parameter then links (`record_heap_member_link`).
             if matches!(tp.base(), Type::RefVar(_))
+                && let Some((setup, call, tail)) = Self::peel_place_ref_call(&actual_code)
+            {
+                if !self.first_pass
+                    && !self
+                        .data
+                        .def(d_nr)
+                        .attributes()
+                        .get(nr)
+                        .is_some_and(|a| a.value_const)
+                    && self.call_is_const_place_ref(&call)
+                {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot pass a `const &` return place to mutable `&` parameter '{}' — \
+                         declare the parameter `const &` or pass a local copy",
+                        self.data.attr_name(d_nr, nr)
+                    );
+                }
+                self.pending_arg_pres.extend(setup);
+                actual_code = tail;
+            }
+            if matches!(tp.base(), Type::RefVar(_))
                 && let Value::TupleGet(t, i) = actual_code.unspan()
             {
                 self.record_heap_member_link(*t, *i);
@@ -175,10 +198,36 @@ impl Parser {
                     continue;
                 }
             }
+            if matches!(&tp, Type::RefVar(_))
+                && !self.first_pass
+                && !self
+                    .data
+                    .def(d_nr)
+                    .attributes()
+                    .get(nr)
+                    .is_some_and(|a| a.value_const)
+                && matches!(actual_code.unspan(), Value::Call(cd, _)
+                    if (*cd as usize) < self.data.definitions.len()
+                        && self.data.def(*cd).returned_ref
+                        && self.data.def(*cd).returned_const)
+            {
+                // @FR-B-RefType-Return, @FR-Const-Value — a `-> const &T` place cannot be handed
+                // to a mutable `&T` parameter.
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "Cannot pass a `const &` return place to mutable `&` parameter '{}' — \
+                     declare the parameter `const &` or pass a local copy",
+                    self.data.attr_name(d_nr, nr)
+                );
+            }
+            let callref_place = matches!(&actual_code.unspan(), Value::CallRef(v, _)
+                if self.vars.tp(*v).function_consts().is_some_and(crate::data::ConstParams::ret_ref));
             if let Type::RefVar(inner) = &tp
                 && !matches!(inner.as_ref(), Type::Text(_))
                 && !matches!(&actual_code, Value::Var(_))
                 && !scalar_place
+                && !callref_place
                 && !Self::is_addressable(&actual_code, &self.data)
                 && !Self::stored_tuple_dest(&actual_code)
                     .is_some_and(|d| d.is_place_read(&self.data))
@@ -584,6 +633,12 @@ impl Parser {
             ))
         } else if let Type::Radix(to, key, d) = tp {
             reopt(Type::Radix(
+                to,
+                key,
+                Deps::frame(Self::resolve_deps(types, d.as_attr_indices())),
+            ))
+        } else if let Type::Trie(to, key, d) = tp {
+            reopt(Type::Trie(
                 to,
                 key,
                 Deps::frame(Self::resolve_deps(types, d.as_attr_indices())),

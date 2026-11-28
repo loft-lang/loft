@@ -192,9 +192,10 @@ Parameter modifiers:
 - Omit modifier — pass by value/copy (heap values still alias: field/element mutation propagates)
 
 A local reference is bound with `a = &b` (or `a: &T = b`); the operand must be addressable (a
-variable / struct field / vector element). Full model: [LOFT_DECLARATIONS.md § References](../../../doc/claude/LOFT_DECLARATIONS.md).
+variable / struct field / vector element / `-> &T` call). Full model: [LOFT_DECLARATIONS.md § References](../../../doc/claude/LOFT_DECLARATIONS.md).
 
 A function body ending in an expression (no `;`) returns that value. Functions without `->` return `void`.
+A function declared `-> &T` (or `-> const &T`) returns a **place** inside one parameter (`fn first(s: State) -> &Enemy { s.enemies[0] }`): `first(s).hp -= 10`, `hurt(first(s), 10)`, and `e = &first(s)` reach the element directly, and every exit of the body must root in that same single parameter.
 
 ### `self` — one name, both call spellings
 
@@ -349,7 +350,9 @@ v[i];                // index read
 other view cases are `(B-View-Base)` and `(B-View-Depth)` there).
 
 - `e = v[i]` or `s = o.inner`, where the element or field IS a struct, names that slot: writes
-  through `e` reach `v[i]`.  So **never swap `vector<STRUCT>` elements via a temp** —
+  through `e` reach `v[i]`.  A `-> &Struct` accessor (`e = first(s)`) views the same way, whereas a
+  `-> Struct` helper returns an independent copy (`get_enemy(s).hp = 3` writes a discarded copy and
+  triggers `lost-write`).  **Never swap `vector<STRUCT>` elements via a temp** —
   `tmp = v[j]; v[j] = v[k]; v[k] = tmp;` copies k into j while `tmp` still views j, losing j's
   record and duplicating k's.  Swap scalar fields one by one, or build a fresh vector.
 - `w = v` or `w = r.v` (a collection field) is an independent copy, so **never capture a vector

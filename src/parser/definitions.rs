@@ -3319,21 +3319,15 @@ impl Parser {
         }
         let mut returned_not_null = false;
         let mut returned_const = false;
+        let mut returned_ref = false;
         self.pending_forward_return = None;
         self.type_fact = AliasFact::Plain;
         let mut result = if self.lexer.has_token("->") {
-            // `@FR-Const-Foreign` — `-> const T`: the value handed out is value-const (@C139).
-            returned_const = self.lexer.has_keyword("const");
-            // Will be the correct def_nr on the second pass
-            if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
-                if self.has_deprecated_not_null() {
-                    returned_not_null = true;
-                }
-                tp
-            } else {
-                // message
-                Type::Void
-            }
+            let (tp, rr, rc, rnn) = self.parse_return_type(self.data.def_nr(&fn_name));
+            returned_ref = rr;
+            returned_const = rc;
+            returned_not_null = rnn;
+            tp
         } else {
             Type::Void
         };
@@ -3557,6 +3551,7 @@ impl Parser {
             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
             self.data.definitions[self.context as usize].returned_fact = returned_fact;
             self.data.definitions[self.context as usize].returned_const = returned_const;
+            self.data.definitions[self.context as usize].returned_ref = returned_ref;
             if let Some((stub, args)) = self.pending_forward_return.take() {
                 self.forward_generic_returns
                     .push((self.context, stub, args));
@@ -3639,6 +3634,7 @@ impl Parser {
                     DefType::Function | DefType::Generic
                 )
                 && self.data.def(self.context).rust().is_empty()
+                && !self.data.def(self.context).returned_ref
                 // loft#938 gate 1 of 5 — `ret_promo_base` peels `Optional(Vector)` so a
                 // NULLABLE collection return gets the buffer too.  Identity while
                 // `LOFT_NULLABLE_RETBUF` is off, which is the default.
@@ -4755,26 +4751,51 @@ impl Parser {
             }
         }
         self.lexer.token(")");
-        if self.lexer.has_token("->")
-            && let Some(tp2) = self.parse_type_full(d_nr, false)
-        {
-            // A function declared `-> (integer, text)` returns the BOXED `__tuple<…>` record
-            // (`boxed_tuple_return`), so the TYPE `fn(…) -> (integer, text)` must name the same
-            // result, or no function of exactly that type converts to it and a call through it
-            // would read a tuple where the callee hands back a record (loft#2190,
-            // `@FR-L-FnRef`: a function name in a fn-typed context is a value of its type).  A result
-            // shaped by a generic type variable is the template's to box at instantiation.
-            r_type = if self.return_shape_depends_on_type_var(&tp2) {
-                tp2
-            } else {
-                self.boxed_tuple_return(tp2)
-            };
+        let mut ret_ref = false;
+        let mut ret_const = false;
+        if self.lexer.has_token("->") {
+            let (tp2, rr, rc, _) = self.parse_return_type(d_nr);
+            ret_ref = rr;
+            ret_const = rc;
+            if !matches!(tp2, Type::Void) {
+                r_type = if self.return_shape_depends_on_type_var(&tp2) {
+                    tp2
+                } else {
+                    self.boxed_tuple_return(tp2)
+                };
+            }
+            if ret_ref {
+                // @FR-B-RefType-Return — record candidate place-bearing parameters in `r_type`'s
+                // attr-space deps so `CallRef` translates the borrow to the caller's argument.
+                let cand: Vec<u16> = args
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(i, a)| {
+                        let b = a.base();
+                        (!matches!(
+                            b,
+                            Type::Integer(..)
+                                | Type::Single
+                                | Type::Float
+                                | Type::Boolean
+                                | Type::Character
+                                | Type::Enum(_, false, _)
+                                | Type::Text(_)
+                                | Type::Tuple(_)
+                        ))
+                        .then_some(i as u16)
+                    })
+                    .collect();
+                if !cand.is_empty() {
+                    r_type = r_type.rewrap_deps(&crate::data::Deps::attrs(cand));
+                }
+            }
         }
         Type::Function(
             args,
             Box::new(r_type),
             crate::data::Deps::none(),
-            crate::data::ConstParams::from_flags(consts),
+            crate::data::ConstParams::from_flags(consts).with_ret_ref(ret_ref, ret_const),
         )
     }
 
@@ -5289,6 +5310,51 @@ impl Parser {
         }
     }
 
+    /// `@FR-B-RefType-Return` — parse a `-> ...` return type, accepting `-> &T`, `-> const &T`,
+    /// `-> &const T`, `-> const T`, or `-> T` (`@FR-Const-Foreign`, @C139 when `const`).
+    /// Returns `(tp, returned_ref, returned_const, returned_not_null)`.
+    pub(crate) fn parse_return_type(&mut self, on_d: u32) -> (Type, bool, bool, bool) {
+        let mut returned_const = self.lexer.has_keyword("const");
+        let returned_ref = !self.lexer.peek_token("&&") && self.lexer.has_token("&");
+        if returned_ref && !returned_const {
+            returned_const = self.lexer.has_keyword("const");
+        }
+        let mut returned_not_null = false;
+        let Some(mut tp) = self.parse_type_full(on_d, true) else {
+            return (Type::Void, returned_ref, returned_const, false);
+        };
+        if self.has_deprecated_not_null() {
+            returned_not_null = true;
+        }
+        if returned_ref {
+            if !self.first_pass && matches!(tp.base(), Type::Iterator(_, _)) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "a generator cannot return a place (`-> &{}`) — an iterator produces values \
+                     lazily and lives in no caller store; return `-> {}` instead",
+                    tp.source_name(&self.data),
+                    tp.source_name(&self.data)
+                );
+            }
+            if matches!(tp.base(), Type::Tuple(_)) && !self.return_shape_depends_on_type_var(&tp) {
+                tp = self.boxed_tuple_return(tp);
+            } else if matches!(
+                tp.base(),
+                Type::Integer(..)
+                    | Type::Single
+                    | Type::Float
+                    | Type::Boolean
+                    | Type::Character
+                    | Type::Enum(_, false, _)
+                    | Type::Text(_)
+            ) {
+                tp = Type::RefVar(Box::new(tp));
+            }
+        }
+        (tp, returned_ref, returned_const, returned_not_null)
+    }
+
     /// Parse a type expression that may be a tuple `(T1, T2, ...)` or an identifier-based type.
     /// This is the entry point for type positions (return types, parameter types, annotations).
     /// @FR-B-RefType-OfVar — `&τ` is the type of a VARIABLE or PARAMETER linked to a place;
@@ -5303,8 +5369,8 @@ impl Parser {
             diagnostic!(
                 self.lexer,
                 Level::Error,
-                "`&` marks a variable or a parameter as a link to a place (`fn f(x: &T)`, \
-                 `x = &a`); a return type, a field, an element or a tuple member holds a \
+                "`&` marks a variable, a parameter or a return type as a link to a place \
+                 (`fn f(x: &T) -> &T`, `x = &a`); a field, an element or a tuple member holds a \
                  value and cannot be a link — drop the `&` (a field that points into another \
                  store is `reference<T>`)"
             );
@@ -7042,33 +7108,22 @@ impl Parser {
             // it carries that method's `const` (a `self: const Self` answered a plain `self`).
             self.data.definitions[t_stub_nr as usize].attributes[stub_a].value_const = a_const;
         }
+        let child_ret_ref = self.data.def(child_nr).returned_ref;
+        let child_ret_const = self.data.def(child_nr).returned_const;
+        self.data.definitions[t_stub_nr as usize].returned_ref = child_ret_ref;
+        self.data.definitions[t_stub_nr as usize].returned_const = child_ret_const;
+        if child_ret_ref {
+            self.data.definitions[t_stub_nr as usize].returned_ref_param = 0;
+        }
         let ret_type = self.data.def(child_nr).returned().clone();
-        let t_ret_type = Self::substitute_type(ret_type, self_nr, &holder);
+        let mut t_ret_type = Self::substitute_type(ret_type, self_nr, &holder);
+        if child_ret_ref && attrs_count > 0 {
+            t_ret_type = t_ret_type.rewrap_deps(&crate::data::Deps::attrs(vec![0]));
+        }
         // `set_returned` asserts the slot is still unknown (it guards the signature-time
         // write), so a re-derivation writes the field directly.
         self.data.definitions[t_stub_nr as usize].returned = t_ret_type.clone();
-        // I9-text: if the interface method returns text, add the hidden
-        // __work_1 parameter that text_return would add for concrete
-        // implementations.  Without this, the call-site argument count
-        // won't match after re_resolve_call substitutes the concrete
-        // text-returning method (which has the hidden param).
-        //
-        // loft#733 — `.base()` peels `Optional`: a `-> text?` method uses
-        // the SAME buffered-text ABI as `-> text` (@PLN25 slice (c) — the
-        // sentinel layout is shared, so `text_return` converts both), but
-        // the bare `Type::Text(_)` match here saw only the unwrapped form.
-        // The stub then carried one attribute fewer than the impl
-        // `re_resolve_call` substitutes, and the result was read from a
-        // slot nobody wrote: the call returned EMPTY on `--interpret` —
-        // exit 0, no diagnostic — and did not compile on `--native`.
-        //
-        // HIDDEN, as the concrete method's buffer is (`text_return` marks it) and as the
-        // `__retbuf` below is: a signature's arity counts only what a caller writes, and
-        // `(G-Sat)` compares the stub's against the interface method's.  Left visible, a
-        // bounded generic calling another bounded generic at a variable spelled differently
-        // (`outer<U: Named>` → `inner<T: Named>(x)`) read the stub of every text-returning
-        // method as one parameter too many and refused `U` as "missing" it.
-        if matches!(t_ret_type.base(), crate::data::Type::Text(_)) {
+        if !child_ret_ref && matches!(t_ret_type.base(), crate::data::Type::Text(_)) {
             let a = self.data.add_attribute(
                 &mut self.lexer,
                 t_stub_nr,
@@ -7079,30 +7134,15 @@ impl Parser {
             );
             self.data.definitions[t_stub_nr as usize].attributes[a].hidden = true;
         }
-        // The @PLAN59 twin of the I9-text arm: a concrete method
-        // returning Reference / Vector / struct-Enum carries the
-        // hidden `__retbuf` attribute (the H1 heap-return ABI,
-        // added at signature parse), so the stub must carry it
-        // too — otherwise the template call site parses one
-        // argument short of the concrete implementation that
-        // `re_resolve_call` substitutes, and byte_code's arity
-        // assert fires ("Too few parameters … got 2, need 3").
-        // `add_defaults` fills the slot with a caller-side
-        // work-ref exactly like a direct call; when T
-        // instantiates to a primitive whose operator has no
-        // `__retbuf` (a `#rust` op), the trailing-argument trim
-        // in `substitute_type_in_value` drops it again.
-        // Through `ret_promo_base`, as the concrete implementation's signature is: a `-> Self?`
-        // stub takes the buffer its `-> S?` implementation takes (loft#1934, `@FR-N-Road`), and
-        // a stub one short of its implementation leaves the instance a work-ref with no slot.
-        // The buffer is the BASE; the return keeps its `?`.
         let buf_tp = t_ret_type.ret_promo_base().clone();
-        if matches!(
-            buf_tp,
-            crate::data::Type::Reference(_, _)
-                | crate::data::Type::Vector(_, _)
-                | crate::data::Type::Enum(_, true, _)
-        ) {
+        if !child_ret_ref
+            && matches!(
+                buf_tp,
+                crate::data::Type::Reference(_, _)
+                    | crate::data::Type::Vector(_, _)
+                    | crate::data::Type::Enum(_, true, _)
+            )
+        {
             let a = self
                 .data
                 .add_attribute(&mut self.lexer, t_stub_nr, "__retbuf", buf_tp.clone());
@@ -7429,10 +7469,11 @@ impl Parser {
                 self.parse_arguments(&method_name, &mut args);
                 self.lexer.token(")");
             }
-            let return_tp = if self.lexer.has_token("->") {
-                self.parse_type_full(d_nr, true)
+            let (return_tp, ret_ref, ret_const) = if self.lexer.has_token("->") {
+                let (tp, rr, rc, _) = self.parse_return_type(d_nr);
+                (Some(tp), rr, rc)
             } else {
-                None
+                (None, false, false)
             };
             // I6/I9-stub: register method stubs as children of the interface.
             // Use interface-scoped names (`__iface_{d_nr}_{method}`) to avoid
@@ -7465,6 +7506,11 @@ impl Parser {
                     }
                     self.data.set_parent(stub_nr, d_nr);
                     self.data.definitions[stub_nr as usize].operator_form = member_is_operator;
+                    self.data.definitions[stub_nr as usize].returned_ref = ret_ref;
+                    self.data.definitions[stub_nr as usize].returned_const = ret_const;
+                    if ret_ref && !args.is_empty() {
+                        self.data.definitions[stub_nr as usize].returned_ref_param = 0;
+                    }
                     // loft#734 — a method with NO `->` returns Void, and the stub
                     // has to say so. Leaving it unset kept the definition's
                     // default `Unknown`, which the native generator renders as

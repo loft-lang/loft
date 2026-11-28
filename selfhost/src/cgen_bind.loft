@@ -381,8 +381,8 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     flush(w, ind);
     return;
   }
-  // `call_copy`.
-  if (first || arm == "R2b" || arm == "R1") && record >= 0 && callee != null && binds::is_loft_defined(b.data.definitions[callee!]!) && !(binds::return_adopts_fresh_store(b.data.definitions[callee!]!) || v.view_elided || binds::adopts_minted_at_bind(b, x.ops, f, var, value)) {
+  // `call_copy` (`@FR-B-RefType-Return`: skipped for `-> &Record` place-returning calls).
+  if (first || arm == "R2b" || arm == "R1") && record >= 0 && callee != null && binds::is_loft_defined(b.data.definitions[callee!]!) && !(b.data.definitions[callee!]!.returned_ref || binds::return_adopts_fresh_store(b.data.definitions[callee!]!) || v.view_elided || binds::adopts_minted_at_bind(b, x.ops, f, var, value)) {
     bytes = b.data.definitions[record]!.known_type;
     frees = binds::call_return_frees_source(b, x.ops, d, w.defs, value);
     e = cgen_fn::expr(x, w, value, ind);

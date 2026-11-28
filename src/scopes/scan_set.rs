@@ -1407,7 +1407,11 @@ impl Scopes<'_> {
                     function.make_independent(v, d);
                 }
             }
-            if record_shaped && !adopts_fresh_store && !publishes_through_ref {
+            if record_shaped
+                && !adopts_fresh_store
+                && !publishes_through_ref
+                && !data.def(fn_nr).returned_ref
+            {
                 if let Some(base) = crate::use_analysis::view_elision_bind(
                     data,
                     self.d_nr,

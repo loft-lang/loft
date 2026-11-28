@@ -207,6 +207,15 @@ pub fn instantiate(e: el::El, g: integer, types: vector<ir::TypeT>) -> integer {
       why = "a generic result over the type variable in another shape";
     }
   }
+  if tmpl.returned_ref && why == "" {
+    for bh2 in b!.vars {
+      btt2 = b!.types[bh2#index] ?? ir::TyVoid;
+      rb2 = el_types::base(btt2);
+      if type_mentions(tmpl.returned[0] ?? ir::TyVoid, bh2) && (el_convert::plain_scalar(rb2) || rb2 is TyText || rb2 is TyTuple || match rb2 { TyEnum { is_ref } => !is_ref, _ => false }) {
+        why = "a `&` scalar, text or tuple return";
+      }
+    }
+  }
   if why != "" {
     if nm != "" && el::def_nr(e, nm) < 0 {
       e.refused_instances += [signature_instance(e, g, b!, nm)];
@@ -258,6 +267,14 @@ fn signature_instance(e: el::El, g: integer, b: el_ex_object::Binding, nm: text)
   for hv in b.vars {
     rt = substitute(rt, hv, b.types[hv#index] ?? ir::TyVoid);
   }
+  if el::def(e, g).returned_ref {
+    rb = el_types::base(rt);
+    if el_convert::plain_scalar(rb) || rb is TyText || match rb { TyEnum { is_ref } => !is_ref, _ => false } {
+      rt = ir::TyRefVar { inner: rt };
+    }
+  }
+  e.b.data.definitions[d].returned_const = el::def(e, g).returned_const;
+  e.b.data.definitions[d].returned_ref = el::def(e, g).returned_ref;
   el::set_returned(e, d, rt);
   d
 }
@@ -2267,6 +2284,10 @@ fn call_args_at(e: el::El, vars: el_vars::Vars, d: integer, given: vector<ir::No
   // callee answering a borrow of an argument, a native answering a store of its own: each
   // declared dep, an attribute number, names what that argument's type borrows
   // (`resolve_deps`); a record's hidden attributes are left out.  A `τ?` is peeled and put back.
+  if el_types::base(ret) is TyRefVar {
+    el::refuse(e, "a call of a `&` scalar or text function");
+    return null;
+  }
   rb = el_types::base(ret);
   ref_enum = match rb { TyEnum { is_ref } => is_ref, _ => false };
   record = rb is TyReference || ref_enum;

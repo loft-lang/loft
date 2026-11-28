@@ -69,7 +69,7 @@ pub fn report(e: el::El, vars: el_vars::Vars, code: ir::Node, body: integer, end
   // (Rust traces the program's files only: a library function's body is never reported, also
   // where this port elaborates it under the program's source.)
   // (A generic TEMPLATE is no function the ladder places: Rust asks on its instances only.)
-  if !el_trace::on() || e.source == el::STD_SOURCE || e.context < 0 || el::def(e, e.context).source == el::STD_SOURCE || el::def(e, e.context).def_type == el::DT_GENERIC {
+  if !el_trace::on() || e.source == el::STD_SOURCE || e.context < 0 || el::def(e, e.context).source == el::STD_SOURCE || el::def(e, e.context).def_type == el::DT_GENERIC || el::def(e, e.context).returned_ref {
     return;
   }
   ret = el::def(e, e.context).returned[0] ?? ir::TyVoid;
