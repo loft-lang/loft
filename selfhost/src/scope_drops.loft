@@ -187,6 +187,36 @@ pub fn is_promoted_ret_buffer(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Funct
   false
 }
 
+// port: drops.rs fn closure_cascade_has_hooks — does the drop cascade of closure record `d`
+// do more than release (a call outside the release ops, or a loop)?
+fn closure_cascade_has_hooks(b: ir::Bundle, d: integer) -> boolean {
+  cascade = opt_names::drop_cascade_nr(b, d);
+  if cascade == opt_names::NONE {
+    return false;
+  }
+  release_only: vector<integer> = [];
+  for nm in ["OpFreeRef", "OpGetDbRef", "OpConvBoolFromRef", "OpStoreLive"] {
+    release_only += [scope_fn::def_nr(b, nm)];
+  }
+  code = b.data.definitions[cascade]!.code;
+  len(code) > 0 && runs_hooks(code[0]!, release_only)
+}
+
+fn runs_hooks(n: ir::Node, release_only: vector<integer>) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr } => if !scope_fn::has(release_only, def_nr) { return true; },
+    NdLoop => { return true; },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if runs_hooks(c, release_only) {
+      return true;
+    }
+  }
+  false
+}
+
 // port: drops.rs fn displaced_drop — the snapshot and release of the droppable record `v`
 // displaces.  Without a cascade there is nothing to release; with one the function is refused.
 pub fn displaced_drop(s: scope_scan::Scopes, b: ir::Bundle, v: integer, rhs_owned: boolean, f: ir::Function) -> PrePost {
@@ -204,9 +234,9 @@ pub fn displaced_drop(s: scope_scan::Scopes, b: ir::Bundle, v: integer, rhs_owne
   if d == null || opt_names::drop_cascade_nr(b, d!) == opt_names::NONE {
     return no_pre_post();
   }
-  // `rebuild_releases_displaced`: a closure record (`___clos_`) is refused by the phase.
-  if scope_fn::name(f, v).starts_with("___clos_") {
-    scope_scan::refuse(s, "drops::displaced_drop: a closure record rebuilt (closure_cascade_has_hooks)");
+  // `rebuild_releases_displaced`: a closure record's displaced store is released only where its
+  // cascade runs a hook.
+  if scope_fn::name(f, v).starts_with("___clos_") && !closure_cascade_has_hooks(b, d!) {
     return no_pre_post();
   }
   kt = b.data.definitions[d!]!.known_type;
