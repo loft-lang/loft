@@ -639,17 +639,8 @@ fn scope_of(s: scope_scan::Scopes, v: integer) -> integer {
 
 // `function.depend(v, dep)` — the dep list replaced.
 fn set_deps(f: ir::Function, v: integer, deps: vector<integer>) {
-  f.variables[v].type_def = [with_deps(scope_fn::tp(f, v), deps)];
-}
-
-fn with_deps(t: ir::TypeT, d: vector<integer>) -> ir::TypeT {
-  match t {
-    TyReference { n } => ir::TyReference { n: n, dep: d },
-    TyEnum { n, is_ref } => ir::TyEnum { n: n, is_ref: is_ref, dep: d },
-    TyVector { inner } => ir::TyVector { inner: inner, dep: d },
-    TyOptional { inner } => ir::TyOptional { inner: with_deps(inner, d) },
-    _ => t
-  }
+  t = scope_inline_returns::with_deps(scope_fn::tp(f, v), deps);
+  f.variables[v].type_def = [t];
 }
 
 // `def.attributes().iter().any(|a| a.hidden && a.name == nm)`

@@ -98,6 +98,8 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     // hook away from the sweep: for a record return no source has one (the phase refuses a
     // record type with a cascade, and a vector source's elements are asked here).  A VECTOR
     // return's sources are vectors and records, none with a cascade (the phase refuses both).
+    // A keyed or fn-ref return builds no `materialized_view_return` copy, which all four read,
+    // so none of them applies to it.
     if (scope_fn::is_record(tp) || scope_fn::base(tp) is TyVector) && !(scope_fn::base(tp) is TyRefVar) {
       for v in 0..scope_fn::count(f) {
         match scope_fn::base(scope_fn::tp(f, v)) {
@@ -110,7 +112,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
           _ => {}
         }
       }
-    } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) {
+    } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) && !(scope_fn::base(tp) is TyFunction) && !scope_fn::is_keyed(tp) {
       scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a {scope_fn::kind_name(tp)} return");
     }
   }
@@ -181,8 +183,25 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
         }
       }
     }
-    // loft#1142's keyed join is a keyed return's, refused above.  loft#1022 — a record return
-    // with an arm that is no source.
+    // loft#1142 — a keyed join: each arm's keyed buffer is minted before the branch is tested,
+    // so more than one owned keyed source (or an arm that is no source) leaves the ones not
+    // returned to the runtime comparison.
+    if scope_fn::is_keyed(tp) && (len(sources) > 1 || return_has_non_source_arm(expr, sources, false)) {
+      keyed_join = false;
+      for v in sources {
+        if owned_keyed_source(s, b, f, v) {
+          keyed_join = true;
+        }
+      }
+      if keyed_join {
+        for v in sources {
+          if !scope_fn::has(null_arm, v) && owned_keyed_source(s, b, f, v) {
+            null_arm += [v];
+          }
+        }
+      }
+    }
+    // loft#1022 — a record return with an arm that is no source.
     if scope_fn::is_record(tp) && return_has_non_source_arm(expr, sources, false) {
       for v in sources {
         if scope_fn::has(null_arm, v) || !bare_record(scope_fn::tp(f, v)) || !owns_freeable_store(s, b, f, v) {
@@ -494,6 +513,11 @@ fn rekey_guard(op: ir::Node, witnesses: vector<integer>, ret: integer, free_if: 
 // port: free_vars.rs fn owns_freeable_store
 fn owns_freeable_store(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
   scope_fn::proxy_says_owned(f, v) && (!scope_fn::is_argument(f, v) || scope_drops::is_promoted_ret_buffer(s, b, f, v))
+}
+
+// The keyed join leg's `owned_keyed_source`.
+fn owned_keyed_source(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  scope_fn::is_keyed(scope_fn::tp(f, v)) && owns_freeable_store(s, b, f, v)
 }
 
 // The null-arm leg's `store_is_the_callers`: a parameter (not the promoted buffer), or a view
@@ -1146,9 +1170,6 @@ fn insert_free(s: scope_scan::Scopes, b: ir::Bundle, block: ir::Block, free: vec
     is_text_result = scope_fn::is_text(result);
     is_heap_ref_result = match scope_fn::base(result) { TyReference => true, TyVector => true, TyEnum { is_ref } => is_ref, _ => false };
     is_fnref_result = scope_fn::base(result) is TyFunction;
-    if is_fnref_result {
-      scope_scan::refuse(s, "insert_free: a block answering a {scope_fn::kind_name(result)}");
-    }
     hoist_tmp = -1;
     if is_return && (len(free) > 0 || len(trailing_frees) > 0) && (is_value_return_type(result) || is_text_result || is_heap_ref_result || is_fnref_result) && tail_needs_eval && !expr_ends_in_return(o) && !(is_text_result && is_argument_text_view(b, o, f) && any_text_return_buffer(b, f, s.d_nr) < 0) {
       pending: vector<ir::Node> = [for x in trailing_frees { x }];
