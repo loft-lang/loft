@@ -70,7 +70,10 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   (c035ae98 scratchpad) counts the differing `#N` headers, `defbody.py BASE NEW FILE…` the
   definitions whose BODY equals Rust's on BASE but not on NEW.  `score_par.sh BASE NEW LIST [J]`
   is the same check on J workers (12 → ~1 min for 600 programs, the serial `score.sh` an hour
-  or more).  `score.sh BASE NEW LIST` runs
+  or more).  None of these reads the STATE layer (`v2.sh`'s `st=`) or the pass-1 rows (`p1=`):
+  `st3.sh BASE NEW FILE` (xargs -P8 over the list) prints both per program, and a try is clean
+  only where neither count rises — a pass-1 type fact leaking into pass 2's final state (via
+  `take_over`) passed score_par and turned 141 programs UNALIGNED.  `score.sh BASE NEW LIST` runs
   both and prints `CLEAN` only where no verdict worsens (refused → differ included), no program
   gains differing headers and no body is lost — proven on 1990's `n_j20` (a body, 2026-11-27)
   and H-Free/a-discharged-call-answer's refused → differ (a verdict).  Build the base from a detached worktree of
