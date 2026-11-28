@@ -4435,7 +4435,10 @@ pub fn enum_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
       el_ex_base::nullable_arith(e, plain, true)
     };
     absent = el_ir::v_if(el_ir::cl(e, "OpRefIsNull", [hv]), ir::NdBoolean { b: true }, el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpGetInt4", [hv, ir::NdInt { n: 0 }]), ir::NdInt { n: 0 }]));
-    return ex(el_ir::v_block([el_ir::v_set(ph, read), el_ir::v_if(el_ir::cl(e, "OpNot", [absent]), hv, d.code)], pt, "ncc"), pt);
+    // The join VIEWS the slot's root, so a call default gets its home in this frame
+    // (`join-arm-owner`, the call's own buffer reused: `materialise_owned_call`), a bind's too.
+    pdc = el_ex_null::own_join_arm(e, vars, d.code, pt);
+    return ex(el_ir::v_block([el_ir::v_set(ph, read), el_ir::v_if(el_ir::cl(e, "OpNot", [absent]), hv, pdc)], pt, "ncc"), pt);
   }
   if !match el_ir::unspan(x.code) { NdCall { def_nr } => !starts_with(el::def(e, def_nr).name, "Op"), _ => false } {
     el::refuse(e, "a struct-enum `??` on something other than a local or a loft call: {node_kind(e, x.code)}");
