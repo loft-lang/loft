@@ -110,8 +110,6 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   nullable keyed local's link (`h: hash<…>? ; a = &h`) is refused too.
 - A keyed field returned off a local bound to a parameter (`b = x; b.fr_h`): Rust's body keeps
   `["x"]`, the port's derivation is not found — refused by name (2562's `fr2562_alias`).
-- A struct literal's empty `[]` vector field in `main` (`S { h: [], w: [] }`): `vector<E>` made
-  at another position and `main_vector<E>` left untyped (`al_2` in the session's `p/`).
 - The N-Join deviation mirrored in `el_ex_match.loft` (`null_arm && !enum_subject && sd < 0`):
   drop the clause once Rust is fixed.
 - `t += 8` through a `t: &text?` link (1827's `add_q`): Rust wraps the append in one more
