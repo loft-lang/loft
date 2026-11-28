@@ -167,6 +167,10 @@ pub struct Scopes {
   // bound to as text) — Rust keys the value by its address in the scanned body.
   pub written_out_v: vector<integer>,
   pub written_out_t: vector<text>,
+  // How deep the scan is inside a value `scan_set` built itself (a written-out branch, a
+  // copied bind): Rust keys `written_out` by the address of a node of the code it was handed,
+  // which a built value's nodes never are.
+  pub built_depth: integer,
   pub assigned: vector<integer>,
   // The ownership oracle's operators (`own::ops_of`) and the function's definitions, asked
   // once (`Scopes::fn_defs`: empty until the first question).

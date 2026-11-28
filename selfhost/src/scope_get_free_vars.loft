@@ -517,11 +517,16 @@ fn pair_literal_buffers(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, l
   if !any {
     return;
   }
-  // A rebound parameter and a local renamed onto the return buffer (refused by the phase)
-  // release at exit through their entry witness.
+  // A rebound parameter releases at exit through its entry witness, and so does a local renamed
+  // onto the return buffer (`__rbw_<name>` is its witness).
   rebound_params: vector<integer> = [];
   for p in 0..scope_fn::count(f) {
     if scope_fn::is_argument(f, p) && scope_fn::rebind_orig(f, p) >= 0 {
+      rebound_params += [p];
+    }
+  }
+  for p in 0..scope_fn::count(f) {
+    if scope_drops::is_promoted_ret_buffer(s, b, f, p) {
       rebound_params += [p];
     }
   }

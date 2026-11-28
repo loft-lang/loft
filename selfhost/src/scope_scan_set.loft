@@ -87,7 +87,10 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
   }
   copy = copy_temp_held_bind(s, b, ov, v, value, f);
   if copy != null {
-    return scope_scan::scan(s, b, copy!, f);
+    s.built_depth += 1;
+    out = scope_scan::scan(s, b, copy!, f);
+    s.built_depth -= 1;
+    return out;
   }
   // `@FR-B-View` — a tuple local bound ONCE from a record's unbox (`tuple_unbox`) borrows the
   // record its work-ref holds.  `LOFT_NO_UNBOX_MEMBER_DEPS=1` keeps it owning.
@@ -104,18 +107,13 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     && scope_args::is_value_branch(value)
     && !(t is TyRefVar)
     && scope_fn::is_record(t);
-  if writes_out && sink_set_into_arms(b, v, ov, value, f, true) != null {
+  if writes_out && s.built_depth == 0 && sink_set_into_arms(b, v, ov, value, f, true) != null {
     s.written_out_v += [ov];
     s.written_out_t += ["{value}"];
   }
   sunk = if writes_out { sink_set_into_arms(b, v, ov, value, f, false) } else { null };
-  // A reassignment kept in its value form beside the written-out rule is carried, but where the
-  // binding is the frame's promoted return buffer (its arms' construction work-refs are the
-  // buffer's) or an arm is a `??` chain (whose arms' ownership decides the sink): those read
-  // facts this transcription does not yet settle.
-  if writes_out && sunk == null && (scope_fn::is_argument(f, ov) || has_ncc_arm(value)) {
-    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a record reassigned from a value branch kept in its value form (a promoted buffer, a `??` arm)");
-  }
+  // A reassignment kept in its value form beside the written-out rule takes the generic legs
+  // below, as in Rust.
   if sunk != null {
     for src in branch_tail_vars(value) {
       // The identity arm hands nothing over, and the binding does not view itself.
@@ -130,7 +128,10 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
         scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a written-out arm that moves a drop (handoff::per_path_stops)");
       }
     }
-    return scope_scan::scan(s, b, sunk!, f);
+    s.built_depth += 1;
+    out = scope_scan::scan(s, b, sunk!, f);
+    s.built_depth -= 1;
+    return out;
   }
   // #316 — capture BEFORE put_scope below: an ownership-transition free only applies to a
   // REassignment.
@@ -1326,20 +1327,6 @@ fn ends_in_if(v: ir::Node) -> boolean {
   }
 }
 
-// Does an arm tail of the value branch `n` end in a `??` chain's block?
-fn has_ncc_arm(n: ir::Node) -> boolean {
-  match scope_fn::unspan(n) {
-    NdIf { t, f } => has_ncc_arm(t) || has_ncc_arm(f),
-    NdBlock { block } => {
-      bl = block[0]!;
-      k = len(bl.operators);
-      bl.name == "ncc" || (k > 0 && has_ncc_arm(bl.operators[k - 1]!))
-    },
-    NdInsert { items } => len(items) > 0 && has_ncc_arm(items[len(items) - 1]!),
-    _ => false
-  }
-}
-
 // port: arm_lift.rs fn sink_set_into_arms — the statement form of `Set(v, <value branch>)`:
 // every arm tail `t` becomes `Set(ov, t)`, or null where an arm tail is not one a plain bind can
 // take as it is.
@@ -1473,18 +1460,25 @@ fn sink(n: ir::Node, v: integer, ov: integer) -> ir::Node {
 }
 
 // port: join_rewrite.rs fn rewrite_written_out — each reassignment the scan wrote out, written
-// out in the body the analyses before the scan read (keyed by its binding and its value's text).
+// out in the body the analyses before the scan read (keyed by its binding and the text of the
+// value the scan saw; a value the scan built itself is never recorded, `built_depth`).
 pub fn rewrite_written_out(b: ir::Bundle, code: ir::Node, f: ir::Function, wv: vector<integer>, wt: vector<text>, hit: vector<boolean>) -> ir::Node {
   kids = scope_fn::children(code);
   n = code;
   if len(kids) > 0 {
     n = ir_pass_tree::with_children(code, [for c in kids { rewrite_written_out(b, c, f, wv, wt, hit) }]);
   }
+  // The key is the value as the scan saw it, before its children were rewritten here: Rust
+  // keys by the node's address, which a rewrite of a child leaves in place.
+  key = match code {
+    NdSet { inner: orig } => "{orig}",
+    _ => ""
+  };
   match n {
     NdSet { var: t, inner: val } => {
       found = false;
       for i in 0..len(wv) {
-        if wv[i] == t && !found && wt[i] == "{val}" {
+        if wv[i] == t && !found && wt[i] == key {
           found = true;
         }
       }

@@ -73,6 +73,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     sunk: [for x in sunk { x }],
     written_out_v: [],
     written_out_t: [],
+    built_depth: 0,
     assigned: assigned_in(orig_code),
     own_ops: own::ops_of(b),
     fn_defs: [],
