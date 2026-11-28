@@ -1427,7 +1427,10 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   }
   // (A `_` binds its own fresh `___N` in a comprehension as in a loop, a fill included: the
   // number is taken although the fill names no walk.)
-  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ranged || sliced || keyed || texted { elem } else { el_types::with_deps(elem, [vec]) });
+  // (P189b, `for_type`: a tuple element of a walked vector is a reference to its `__tuple<…>`
+  // record, borrowing the hold, as a statement walk's is.)
+  ctd = if !(ranged || sliced || keyed || texted) && elem is TyTuple { el_types::tuple_def_of(e, match elem { TyTuple { elems: ctes } => ctes, _ => [] }) } else { -1 };
+  lv = loop_var(vars, src_id, if src_id == "_" { "_" } else { id }, if ctd >= 0 { ir::TyReference { n: ctd, dep: [vec] } } else if ranged || sliced || keyed || texted { elem } else { el_types::with_deps(elem, [vec]) });
   ttv = -1;
   tres = -1;
   if texted {
