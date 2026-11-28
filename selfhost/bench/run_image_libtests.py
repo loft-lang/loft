@@ -17,7 +17,8 @@ interpreter is printed beside it.
 
     python3 selfhost/bench/run_image_libtests.py [--libs DIR] [--repo loft-libs-core …] [--jobs N]
 """
-import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, os, re, shutil, subprocess, sys
+import scratch  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from run_image_survey import STORE_REPORT, proc  # noqa: E402  one verdict for both tools
@@ -132,7 +133,7 @@ def main():
     repos = [] if o.in_tree_only else (o.repo or REPOS)
     here = os.path.join(root, "lib") if (o.in_tree or o.in_tree_only) else None
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
-    tmp = tempfile.mkdtemp(prefix="loft-libtests-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-libtests-")
     try:
         # Every repository mirrored, so each test is written into its package without writing
         # into the repository; the in-tree lib/ too.

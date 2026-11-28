@@ -26,7 +26,8 @@ The survey runs `--jobs` programs at a time; the `--top` largest run ratios and 
 are then measured again one at a time on one core, best of `--repeat`, and those are the numbers
 printed.  The rows go to target/selfhost-slowest.tsv.
 """
-import argparse, concurrent.futures as cf, glob, os, re, shutil, statistics, subprocess, sys, tempfile
+import argparse, concurrent.futures as cf, glob, os, re, shutil, statistics, subprocess, sys
+import scratch  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402  the corpus and the plain-program filter are the census's own
@@ -102,7 +103,7 @@ def main():
     loft = o.loft if os.path.isabs(o.loft) else os.path.join(root, o.loft)
     suite = os.environ.get("LOFT_SUITE_DIR") or os.path.join(os.path.dirname(root), "loft-suite")
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
-    tmp = tempfile.mkdtemp(prefix="loft-slowest-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-slowest-")
     try:
         out = os.path.join(tmp, "runner")
         os.makedirs(out, exist_ok=True)

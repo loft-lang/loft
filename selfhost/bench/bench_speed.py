@@ -15,7 +15,8 @@ the best time per routine kept.  A routine is ranked only where both print the s
 `--runner DIR` reuses a runner built there (DIR/run_image_run) and builds it when absent.
 The geometric mean of the ratios is the last line; under 1.00 the runner is the faster one.
 """
-import argparse, glob, math, os, shutil, subprocess, sys, tempfile
+import argparse, glob, math, os, shutil, subprocess, sys
+import scratch  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -64,7 +65,7 @@ def main():
     ap.add_argument("--only", nargs="*", default=[])
     ap.add_argument("--timeout", type=int, default=300)
     a = ap.parse_args()
-    tmp = tempfile.mkdtemp(prefix="loft-bench-speed-")
+    tmp = scratch.run_dir("loft-bench-speed-")
     out = a.runner or os.path.join(tmp, "runner")
     env = {**os.environ, "LOFT_NO_WARNINGS": "1"}
     if not os.path.exists(os.path.join(out, "run_image_run")):

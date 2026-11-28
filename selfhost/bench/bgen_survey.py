@@ -28,7 +28,8 @@ or a stream that DIFFERS, or a program with another operator, shared-body or ent
 whether or not it is listed: those are wrong bytes.  `unwritten` and `natives` (a natives table
 loft's does not hold yet) are listed until they agree.
 """
-import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys, tempfile
+import argparse, collections, concurrent.futures as cf, hashlib, os, re, shutil, subprocess, sys
+import scratch  # noqa: E402
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cover"))
 import census  # noqa: E402
@@ -99,7 +100,7 @@ def main():
     # Rust side, each by its own switch, so the bytes compared are one named form of the
     # writer: no text local is a view (`LOFT_NO_TEXT_BORROW`).
     env = {**os.environ, "LOFT_NO_WARNINGS": "1", "LOFT_NO_TEXT_BORROW": "1"}
-    tmp = tempfile.mkdtemp(prefix="loft-bgen-", dir=os.environ.get("TMPDIR"))
+    tmp = scratch.run_dir("loft-bgen-")
     try:
         out = os.path.join(tmp, "checker")
         os.makedirs(out, exist_ok=True)
