@@ -35,6 +35,9 @@ use opt_lease;
 
 // port: scan_set.rs fn scan_set
 pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::Node, f: ir::Function) -> ir::Node {
+  // Did THIS bind start a new binding of a name whose earlier one has ended (`(B-Scope)`)?
+  // Read by the written-out join below (loft#2687).
+  split_here = false;
   sc = scope_scan::get(s.var_scope, ov);
   if sc >= 0 && s.scope != sc && !scope_fn::has(s.stack, sc) {
     existing = scope_scan::get(s.var_mapping, ov);
@@ -43,10 +46,12 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
       if cs >= 0 && cs != s.scope && !scope_fn::has(s.stack, cs) {
         nv = scope_branches::split_variable(s, f, ov, [value]);
         scope_scan::put(s.var_mapping, ov, nv);
+        split_here = true;
       }
     } else {
       nv = scope_branches::split_variable(s, f, ov, [value]);
       scope_scan::put(s.var_mapping, ov, nv);
+      split_here = true;
     }
   }
   v = scope_scan::mapped(s, ov);
@@ -114,7 +119,12 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     && scope_args::is_value_branch(value)
     && !(t is TyRefVar)
     && scope_fn::is_record(t);
-  if writes_out && s.built_depth == 0 && sink_set_into_arms(b, v, ov, value, f, true) != null {
+  // A join that starts a NEW binding of an ended name (`split_here`) is not recorded: the
+  // rewrite turns it into the author's per-arm spelling, where `(B-Scope)` makes each arm's bind
+  // a local of that arm (loft#2687).  Left in its value form, the rescan splits it at the
+  // statement, as this scan does.  `LOFT_NO_SPLIT_JOIN_STATEMENT_SCOPE=1` records it.
+  new_binding = split_here && env_variable("LOFT_NO_SPLIT_JOIN_STATEMENT_SCOPE") == null;
+  if writes_out && !new_binding && s.built_depth == 0 && sink_set_into_arms(b, v, ov, value, f, true) != null {
     s.written_out_v += [ov];
     s.written_out_t += ["{value}"];
   }
@@ -148,6 +158,16 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
         flag = scope_handoff::mint_handoff_flag(s, f, ov);
         scope_scan::put(s.handed_off, v, flag);
       }
+    }
+    // `@FR-B-Scope` — the new binding belongs to the STATEMENT's block, so it is declared here,
+    // ahead of the written-out arms (loft#2687).
+    if new_binding {
+      scope_scan::register_binding(s, v, f);
+      init: ir::Node = if scope_fn::is_text_bare(scope_fn::tp(f, v)) { ir::NdText { s: "" } } else { ir::NdNull };
+      s.built_depth += 1;
+      scanned = scope_scan::scan(s, b, sunk!, f);
+      s.built_depth -= 1;
+      return ir::NdInsert { items: [scope_fn::v_set(v, init), scanned] };
     }
     s.built_depth += 1;
     out = scope_scan::scan(s, b, sunk!, f);
