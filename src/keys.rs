@@ -3795,6 +3795,15 @@ pub fn temp_held_view() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_TEMP_HELD_VIEW"))
 }
 
+/// `LOFT_NO_NCC_WITNESS_HANDOVER=1` — a witnessed local rebound in a loop from a `??` keeps viewing
+/// the subject temp's store, as before loft#2699: the temp releases it at its re-entry, before the
+/// next pass's value reads the local (`for … { x = alt(x) ?? x }`).
+#[must_use]
+pub fn ncc_witness_handover() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NCC_WITNESS_HANDOVER"))
+}
+
 /// `LOFT_NO_RETURNED_ADOPTER_DISARM=1` — a literal buffer whose adopter is a RETURN SOURCE of the
 /// exit, an owner assigned more than once, keeps its exit free guarded against that adopter
 /// (`Scopes::pair_literal_buffers`): the adopter's rebind and the buffer both release the store.
