@@ -4284,6 +4284,12 @@ pub fn record_coalesce(e: el::El, vars: el_vars::Vars, x: Ex, d: Ex) -> Ex {
   // variant or a value of its enum: `(n as Bin?)?`'s `EnumUnitLit`.)
   variant = rd > 0 && el::def(e, rd).def_type == el::DT_ENUM_VALUE;
   variant_fits = variant && (dd == rd || el_types::struct_enum_def(el_types::base(d.tp)) == el::def(e, rd).parent);
+  // (A default that never finishes — a labelled `i#break` / `k#continue` — fits any subject: the
+  // `??` answers the subject where it is present.)
+  never_d = d.tp is TyNever;
+  if never_d && rd > 0 && el::def(e, rd).def_type == el::DT_STRUCT {
+    dd = rd;
+  }
   if rd <= 0 || (!variant_fits && (el::def(e, rd).def_type != el::DT_STRUCT || dd != rd)) {
     refuse_known(e, d.tp, "a `??` on a record with a default of another type: {type_kind(d.tp)}");
     return ex(ir::NdNull, ir::TyUnknown { n: 0 });
