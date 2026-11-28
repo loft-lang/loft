@@ -193,6 +193,13 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   the FIRST pass (the result names `__retbuf` there).  A pass-2 branch is in the c035ae98
   scratchpad (held-tuple-shadow-vector-tail.patch); its pass-1 half does not fire — the first
   pass's tail is not the `__tp_` shadow read — and the program then goes refused → DIFF: held.
+- A slice `match` over a NARROW element (`vector<u8>`, `u16`, `i32`): read with the width's
+  getter at its start (`elem_read`), a rest's elements written with `OpSetByte` / `OpSetShortRaw`
+  and typed `ref(integer)` — agreeing on probes vm8–vm11, held (patch held-narrow-vector-match.patch
+  in the c035ae98 scratchpad): R-SameRead/a-slice-match-reads-its-subject-once's n_nb then agrees,
+  but the program goes refused → DIFF through an older `main` gap — `nest([], [1])` mints the
+  untyped `[]` argument's store (read against the parameter's `vector<Tok>`) as Rust parses it,
+  before the next argument's literal; the port converts it after every argument is read.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
