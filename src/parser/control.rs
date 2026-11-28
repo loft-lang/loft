@@ -4946,9 +4946,16 @@ impl Parser {
         //     answer the ONE local renamed onto the buffer (`if c { r } else { r }`) is the same
         //     delivery spread over arms: that local's single top-level defining call still
         //     fills the buffer (loft#2672).  With two renamed locals both calls would write
-        //     the one store, so that declines.
+        //     the one store, so that declines.  And only a local the ladder RENAMED onto the
+        //     buffer (it IS the buffer, or its deps name it): one it copied (`Bind`, `x = later(p)` borrowing
+        //     `p`) keeps its call's own buffer, and folded onto `x` the call was handed an unset
+        //     local to fill — a nullable tail's join arms answered `null` (loft#2692).
         let Some(cv) = Self::tail_var(&l[last]) else {
-            if let [cv] = ls {
+            if let [cv] = ls
+                && self
+                    .return_buffer()
+                    .is_some_and(|(_, buf)| *cv == buf || self.vars.tp(*cv).depend().contains(&buf))
+            {
                 let collapsed = self.nrvo_collapse_defining_call(l, *cv);
                 self.suppress_collapsed_workrefs(l, collapsed);
             }
@@ -12374,13 +12381,42 @@ impl Parser {
             Value::Var(o)
                 if self.vars.exists(*o)
                     && !self.vars.is_argument(*o)
-                    && (self.var_views_local(*o) || self.var_defined_by_projection(body, *o))
+                    && (self.var_views_local(*o)
+                        || self.var_defined_by_projection(body, *o)
+                        || self.call_bound_view_of_argument(body, *o))
                     && matches!(self.vars.tp(*o).ret_promo_base(), Type::Vector(_, _)) =>
             {
                 Some(vec![*o])
             }
             _ => None,
         }
+    }
+
+    /// `@FR-F-Ret`, loft#2692 — does local `o`'s dep list name a VISIBLE argument?  Such a
+    /// local may be a view of the caller's store (`x = later(p)`, `later` publishing a borrow
+    /// of its argument), so it is no fresh owner whose deps can be renamed onto the buffer:
+    /// handed over as `["p"]`, the explicit `return x` was published as a borrow of `p` while
+    /// the run that answered a fresh vector returned a store the frame then freed.  A hidden
+    /// argument (the return buffer itself) is not a view of anything the caller passed.
+    ///
+    /// Only a local some assignment binds from a CALL: a projection or an alias of the argument
+    /// itself (`e = v[i]`, `x = p`) is a definite view and keeps its borrow (`@FR-O-Move`); the
+    /// call is what may answer a store of this frame's instead.
+    fn call_bound_view_of_argument(&self, body: &[Value], o: u16) -> bool {
+        fn any_call_def(node: &Value, v: u16) -> bool {
+            match node.unspan() {
+                Value::Set(w, rhs) if *w == v => matches!(rhs.unspan(), Value::Call(_, _)),
+                Value::Insert(ops) => ops.iter().any(|x| any_call_def(x, v)),
+                Value::Block(bl) => bl.operators.iter().any(|x| any_call_def(x, v)),
+                Value::If(_, t, e) => any_call_def(t, v) || any_call_def(e, v),
+                Value::Set(_, rhs) => any_call_def(rhs, v),
+                _ => false,
+            }
+        }
+        let attrs = self.data.def(self.context).attributes();
+        matches!(self.vars.tp(o).ret_promo_base(), Type::Vector(_, d) if d.iter().any(|&a| {
+            self.vars.is_argument(a) && attrs.get(a as usize).is_some_and(|at| !at.hidden)
+        })) && body.iter().any(|s| any_call_def(s, o))
     }
 
     /// #448 — is the fn's `returned` type already classified to deliver into the
