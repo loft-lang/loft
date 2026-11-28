@@ -1876,6 +1876,11 @@ pub fn unary(e: el::El, vars: el_vars::Vars, op: text, n: integer?) -> Ex {
       return ex(el_ir::cl(e, "OpNot", [c!]), ir::TyBoolean);
     }
   }
+  // (A `&` link to a record, `r: &MD = null`, is tested as the record it names: the link holds
+  // the record's reference itself.)
+  if op == "!" && match x.tp { TyRefVar { inner: rli } => struct_ref(e, el_types::base(rli)) >= 0, _ => false } {
+    return ex(el_ir::cl(e, "OpNot", [el_ir::cl(e, "OpConvBoolFromRef", [x.code])]), ir::TyBoolean);
+  }
   // A record that is not declared nullable is tested the same way (it may hold the sentinel);
   // a struct enum, nullable or not, by its own null test (`null_test`'s enum arm).
   if op == "!" && (variant_ref || struct_ref(e, el_types::base(x.tp)) >= 0 && !starts_with(el::def(e, struct_ref(e, el_types::base(x.tp))).name, "__tuple<")) {
