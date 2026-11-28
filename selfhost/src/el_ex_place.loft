@@ -652,8 +652,9 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   vars.self_stage = outer_stage;
   pt = p.tp;
   // `o.v += w` of two vectors appends `w`'s elements into the place (`OpAppendVector`, the
-  // element's row), as a local's `v += w` does.
-  if op == "+=" && el_types::base(pt) is TyVector && el_types::base(x.tp) is TyVector && !(x.tp is TyOptional) {
+  // element's row), as a local's `v += w` does — a `vector<T>?` source as the vector it holds
+  // (`(Col-Insert)`: the place keeps its own type and backing).
+  if op == "+=" && el_types::base(pt) is TyVector && el_types::base(x.tp) is TyVector && !(pt is TyOptional) {
     elem = match el_types::base(pt) { TyVector { inner } => inner, _ => ir::TyVoid };
     xelem = match el_types::base(x.tp) { TyVector { inner } => inner, _ => ir::TyVoid };
     if !el_types::is_equal(e, elem, xelem) {
