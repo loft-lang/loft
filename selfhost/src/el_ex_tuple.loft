@@ -60,7 +60,18 @@ pub fn tuple_lit(e: el::El, vars: el_vars::Vars, elems: vector<integer>) -> Ex {
     }
     // (A member read off a PARAMETER is left alone, `@FR-B-Ref-Alias`: the tuple holds a view.)
     param_member = match el_ir::unspan(x.code) { NdVar { n: pmv } => vars.vars[pmv].argument, _ => false };
-    if !in_boxed_tail && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && el_ir::unspan(x.code) is NdVar && !param_member {
+    // (…and so is a FIELD of one, `(d.items, k)`: a projection rooted at a local.  Rooted at a
+    // PARAMETER it is a view of the parameter, as the parameter member itself is.)
+    field_member = match el_ir::unspan(x.code) { NdCall { def_nr: fmd } => el::def(e, fmd).name == "OpGetField" && place_root(e, el_ir::unspan(x.code)) >= 0, _ => false };
+    // (Not in a LAMBDA's boxed tail — its tuple answer, returned through its `__retbuf` — whose
+    // members are the box's own copies, `test_lambda_tuple_is_boxed`.)
+    in_lambda_box = in_boxed_tail && starts_with(el::def(e, e.context).name, "n___lambda_");
+    if field_member && !in_lambda_box && vars.vars[place_root(e, el_ir::unspan(x.code))].argument && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) {
+      items += [x.code];
+      tps += [el_types::with_deps(el_types::without_deps(x.tp), [place_root(e, el_ir::unspan(x.code))])];
+      continue;
+    }
+    if !in_boxed_tail && !(x.tp is TyOptional) && (x.tp is TyReference || x.tp is TyVector) && (el_ir::unspan(x.code) is NdVar || field_member) && !param_member {
       c = tuple_member_copy(e, vars, x);
       if c == null {
         return ex(ir::NdNull, ir::TyUnknown { n: 0 });
