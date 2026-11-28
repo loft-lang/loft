@@ -384,6 +384,26 @@ pub fn object_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer) -> Ex
           // in a view of its own first, the copy made from it.
           if el::def(e, def_nr).name == "OpCopyRecord" && len(args) == 3 && place_root(e, el_ir::unspan(args[1])) == v {
             cvw = match el_ir::unspan(args[0]) { NdVar { n: cvn } => cvn, _ => -1 };
+            // (`b: o.b`, a struct PROJECTION of a viewer — a heap parameter the caller may have
+            // handed this destination's store — is staged as a view, `__ref_N: ref(Inner)["o"]`,
+            // which owns nothing: `parse_object_field`'s skip_free, loft#1683.)
+            prj_root = if cvw < 0 { place_root(e, el_ir::unspan(args[0])) } else { -1 };
+            prj_kt = match el_ir::unspan(args[2]) { NdInt { n: pkn } => pkn, _ => -1 };
+            prj_def = -1;
+            if prj_root >= 0 && prj_root != v && viewers.contains(prj_root) && prj_kt >= 0 && match el_ir::unspan(args[0]) { NdCall { def_nr: pgd } => el::def(e, pgd).name == "OpGetField", _ => false } {
+              for pdd in e.b.data.definitions {
+                if prj_def < 0 && pdd.known_type == prj_kt && pdd.def_type == el::DT_STRUCT {
+                  prj_def = pdd#index;
+                }
+              }
+            }
+            if prj_def >= 0 {
+              ptmp = el_vars::work_ref(vars, ir::TyReference { n: prj_def, dep: [prj_root] });
+              el_vars::set_var_type(vars, ptmp, ir::TyReference { n: prj_def, dep: [prj_root] });
+              el_vars::set_skip_free(vars, ptmp, "parse_object_field");
+              staged += [el_ir::v_set(ptmp, args[0]!)];
+              ops[op#index] = ir::NdCall { def_nr: def_nr, args: [ir::NdVar { n: ptmp }, args[1]!, args[2]!] };
+            }
             if cvw >= 0 && cvw != v && viewers.contains(cvw) {
               cvt = el_types::with_deps(el_types::without_deps(el_types::base(el_vars::tp(vars, cvw))), [cvw]);
               // (No `skip_free`: `parse_object_field` marks a staged VIEW only where the staged
