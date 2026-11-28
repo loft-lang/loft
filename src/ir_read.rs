@@ -434,6 +434,22 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
         data.definitions.push(read_definition(stores, dr, bodies));
     }
     data.restore_body_width32(&width32);
+    // @PLN91 — a linked constant twin is the function's `__const_<name>` of its own source.
+    for i in 0..defs.len(stores) {
+        if defs.get(i, stores).field_bool(stores, ds::DEF_CONST_LINKED) {
+            let (name, source) = (
+                format!("__const_{}", data.definitions[i as usize].name),
+                data.definitions[i as usize].source,
+            );
+            if let Some(c) = data
+                .definitions
+                .iter()
+                .position(|c| c.name == name && c.source == source)
+            {
+                data.definitions[i as usize].literal_const = c as u32;
+            }
+        }
+    }
     // The import tables go in BEFORE the rebuild: `rebuild_indices` replays
     // them to recreate the cross-source `def_names` bindings (loft#1359).
     let imports = r.field_recvec(ds::DATA_IMPORTS, ds::IMPORT_STRIDE);

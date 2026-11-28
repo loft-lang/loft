@@ -371,6 +371,9 @@ pub(crate) const DEF_NO_PREFILL: u32 = 196; // @FR-R-CompleteWrite text: `NoPref
 pub(crate) const DEF_INSTANCE_ARGS: u32 = 188; // @PLN165 D3 vector<TypeT>
 pub(crate) const DEF_WIDTH32: u32 = 212; // @PLN204 the body is under the 32-bit regime
 pub(crate) const DEF_VALUE_STRUCT: u32 = 213; // @PLN91 a `value struct` (`Data::is_value_struct`)
+/// @PLN91 `Definition::literal_const != u32::MAX`: the function's constant twin
+/// (`__const_<name>`, `@FR-R-Const`) is linked; the scope pass reads it.
+pub(crate) const DEF_CONST_LINKED: u32 = 214;
 /// @PLN91 `Function::ref_evacuations` (`@FR-H-RefHome`), flattened: holder, field, owner, type.
 pub(crate) const DEF_REF_EVACUATIONS: u32 = 200;
 
@@ -1809,6 +1812,7 @@ mod tests {
         assert_eq!(pos(ids.definition, "width32"), DEF_WIDTH32);
         assert_eq!(pos(ids.definition, "value_struct"), DEF_VALUE_STRUCT);
         assert_eq!(pos(ids.definition, "ref_evacuations"), DEF_REF_EVACUATIONS);
+        assert_eq!(pos(ids.definition, "const_linked"), DEF_CONST_LINKED);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

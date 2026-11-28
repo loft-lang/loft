@@ -53,6 +53,7 @@ use scope_rebind_place;
 use scope_stored_refs;
 use scope_return_field;
 use scope_exit_vector;
+use scope_const_fn;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -63,7 +64,6 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   ops = scope_scan::ops_of(b);
   iops = scope::ops_of(b);
   free = scope_pure::effect_free(b);
-  twins = const_twins(b);
   // `@FR-R-PureReuse` — on the parser's bodies, before any of this pass's own rewrites; the
   // clauses not carried refuse their function.
   reuse = scope_pure_reuse::rewrite_program(b, free);
@@ -218,20 +218,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       drop_bearing = scope_last_use::drop_bearing_stores(b, ph.function);
       ph.code = scope_last_use::lastuse_reclaim(ph.code, ph.function, ops.database, ops.get_field, ops.free_ref, drop_bearing, ops.free_if_distinct);
     }
-    // `const_fn::rewrite` (`@FR-R-Const`): a literal-bodied function's body is copied from its
-    // twin, and a call of one whose result is only read answers a view of the constant.
-    const_why = if twins[d_nr] ?? false {
-      "const_fn::rewrite: a literal-bodied function (copy_from_twin)"
-    } else if calls_const(ph.code, twins) {
-      "const_fn::rewrite: a call of a literal-bodied function (read_only_uses)"
-    } else {
-      ""
-    };
     if why == "" {
       why = settled_rewrites(b, d, ph.code, ph.function);
-    }
-    if why == "" {
-      why = const_why;
     }
     if why != "" {
       if all_reasons {
@@ -245,9 +233,6 @@ pub fn check(b: ir::Bundle) -> vector<text> {
         r = settled_rewrites(b, d, ph.code, ph.function);
         if r != "" {
           all += [r];
-        }
-        if const_why != "" {
-          all += [const_why];
         }
         why = all.join(" | ");
       }
@@ -276,6 +261,13 @@ pub fn check(b: ir::Bundle) -> vector<text> {
     code = scope_literal_append::rewrite(b, d, code, ph.function);
     // `@FR-R-ReturnField`.
     code = scope_return_field::rewrite(b, d, code, ph.function);
+    // `@FR-R-Const`'s one refused case, asked before `rebind_place` puts the body in place.
+    cf = scope_const_fn::refusal(b, d_nr);
+    if cf != "" {
+      refused += ["{d.name}: {cf}"];
+      refused_nrs += [d_nr];
+      continue;
+    }
     // `@FR-R-Rebind` (after `return_field`, refused above where it would fire), on the body as
     // it stands: the oracle it asks reads the definition's own code.
     if scope_rebind_place::has_candidate(b, code) {
@@ -293,6 +285,8 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       }
       code = rb.code;
     }
+    // `@FR-R-Const` (after `rebind_place`).
+    code = scope_const_fn::rewrite(b, d_nr, code, ph.function);
     // `@FR-R-CopyView` (after `return_field`, `rebind_place` and `const_fn`, refused above
     // where they would fire).
     code = scope_copy_view::rewrite(b, code, ph.function);
@@ -448,8 +442,8 @@ fn join_rewrites(f: ir::Function) -> text {
 
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
-// is in the body: `place_result`, `exit_record`, `const_fn`, `byte_copy`'s vector clause.
-// `exit_vector`, `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
+// is in the body: `place_result`, `exit_record`, `byte_copy`'s vector clause.
+// `exit_vector`, `const_fn`, `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
 // `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`, `slice_text` and `slice_into`
 // are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
@@ -523,32 +517,6 @@ fn root_var(b: ir::Bundle, n: ir::Node) -> integer {
     NdCall { def_nr, args } => if scope_args::def_name(b, def_nr).starts_with("OpGet") && len(args) > 0 { root_var(b, args[0]!) } else { -1 },
     _ => -1
   }
-}
-
-// `@FR-R-Const` — the functions with a constant twin `__const_<name>`
-// (`Definition::literal_const`, read off the twin the parser made, `synthetic == "literal_const"`).
-fn const_twins(b: ir::Bundle) -> vector<boolean> {
-  keys: vector<text> = [];
-  for d in b.data.definitions {
-    if d.synthetic == "literal_const" && d.name.starts_with("__const_") {
-      keys += ["{d.source}:{d.name[8..]}"];
-    }
-  }
-  [for d in b.data.definitions { d.def_type == 1 && len(keys) > 0 && keys.contains("{d.source}:{d.name}") }]
-}
-
-// A call of a function with a constant twin anywhere in `n` (`const_fn::rewrite`'s `calls_one`).
-fn calls_const(n: ir::Node, twins: vector<boolean>) -> boolean {
-  match n {
-    NdCall { def_nr } => if twins[def_nr] ?? false { return true; },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    if calls_const(c, twins) {
-      return true;
-    }
-  }
-  false
 }
 
 // A call of an operator whose name starts with `prefix` anywhere in `n`.

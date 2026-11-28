@@ -787,6 +787,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "value_struct", t4);
     let vec_ref_evacuations = db.vector(t0);
     db.field(t80, "ref_evacuations", vec_ref_evacuations);
+    db.field(t80, "const_linked", t4);
     let t134 = db.vector(t76);
     let _ = t134; // may be unused
     let t135 = db.vector(t79);

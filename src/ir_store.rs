@@ -433,6 +433,7 @@ fn write_definition(
 ) {
     r.set_field_bool(stores, ds::DEF_WIDTH32, width32); // @PLN204
     r.set_field_bool(stores, ds::DEF_VALUE_STRUCT, value_struct); // @PLN91
+    r.set_field_bool(stores, ds::DEF_CONST_LINKED, d.literal_const != u32::MAX); // @PLN91
     // @PLN91 `Function::ref_evacuations`, four integers each.
     let evs = r.field_recvec(ds::DEF_REF_EVACUATIONS, ds::INT_STRIDE);
     for e in d.variables.ref_evacuations() {

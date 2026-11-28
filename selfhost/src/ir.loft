@@ -312,6 +312,8 @@ struct Definition {
   // @PLN91 `Function::ref_evacuations` (`@FR-H-RefHome`), four integers each — holder, field,
   // owner, type — read by the scope pass's `insert_evacuations`
   ref_evacuations: vector<integer>,
+  // @PLN91 the constant twin `__const_<name>` is linked (`Definition::literal_const`, @FR-R-Const)
+  const_linked: boolean,
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can
