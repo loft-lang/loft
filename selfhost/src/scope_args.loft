@@ -211,6 +211,39 @@ struct Lifted {
   called: vector<integer>
 }
 
+// port: arm_lift.rs fn rewrite_keyed_replace_branch — loft#1320: a KEYED branch value lowers to
+// `OpReplaceKeyed(if …, r, tp)`, which copies the chosen arm into `r`'s store and leaves the arm
+// that minted with no owner; the per-arm rewrite `scan_set` gives a vector branch is applied to
+// that first argument, the temps homed where `r` lives.  Null where it does not apply.
+pub fn rewrite_keyed_replace_branch(s: scope_scan::Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> ir::Node? {
+  d = -1;
+  args: vector<ir::Node> = [];
+  match scope_fn::unspan(val) {
+    NdCall { def_nr, args: a } => {
+      d = def_nr;
+      args = a;
+    },
+    _ => return null
+  }
+  if def_name(b, d) != "OpReplaceKeyed" || len(args) < 2 {
+    return null;
+  }
+  target = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => return null };
+  if !is_value_branch(args[0]!) || !arm_tails_need_binding(s, b, args[0]!, target, f) {
+    return null;
+  }
+  home = scope_scan::get(s.var_scope, target);
+  if home < 0 {
+    home = s.scope;
+  }
+  branch = lift_join_arm_tails(s, b, args[0]!, home, target, f);
+  call = ir::NdCall { def_nr: d, args: [for a in args { if a#index == 0 { branch } else { a } }] };
+  match val {
+    NdSpan { pos } => ir::NdSpan { pos: pos, inner: call },
+    _ => call
+  }
+}
+
 // port: arm_lift.rs fn lift_join_arm_tails — every arm tail `arm_bind` answers for rewritten
 // into the bound spelling on a `__lift_N` temp declared at `home`, and the joined binding's deps
 // rewritten to name the temps.

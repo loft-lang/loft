@@ -655,12 +655,10 @@ pub fn is_loft_defined(d: ir::Definition) -> boolean {
 
 // port: scan.rs fn scan
 pub fn scan(s: Scopes, b: ir::Bundle, val: ir::Node, f: ir::Function) -> ir::Node {
-  // loft#1320 — `rewrite_keyed_replace_branch`: a keyed branch value's per-arm rewrite.
-  match val {
-    NdCall { def_nr, args } => if def_nr == s.ops.replace_keyed && scope_fn::unspan(args[0] ?? ir::NdNull) is NdIf {
-      refuse(s, "scan::rewrite_keyed_replace_branch: a keyed branch value");
-    },
-    _ => {}
+  // loft#1320 — a KEYED branch value's per-arm rewrite (`rewrite_keyed_replace_branch`).
+  rewritten = scope_args::rewrite_keyed_replace_branch(s, b, val, f);
+  if rewritten != null {
+    return scan(s, b, rewritten!, f);
   }
   s.scan_depth += 1;
   result = scan_inner(s, b, val, f);
