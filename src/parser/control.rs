@@ -10774,6 +10774,33 @@ impl Parser {
         matches!(tested, Value::Var(t) if t == *x).then_some(*x)
     }
 
+    /// loft#2673, `@FR-F-Ret` — a return copy runs only where its source is not the destination: a bound
+    /// join one arm of which is the local pass 1 renamed onto the buffer (`palt(p) ?? p`, the `??`
+    /// temp) is already where the copy would put it on that run.  Copied anyway, `OpDatabase(w)`
+    /// cleared the record and the copy read the cleared record back: a zeroed `P`, silently.  The
+    /// join's deps are not known yet here, so the fact read is the one `ref_return` has: the
+    /// buffer is a local the body assigns (`ret_copy_may_alias`).
+    fn unless_source_is_buffer(&mut self, source: Option<u16>, w: u16, copy: Value) -> Value {
+        match source {
+            Some(src) => crate::data::v_if(
+                self.cl("OpDistinctStore", &[Value::Var(src), Value::Var(w)]),
+                copy,
+                Value::Var(w),
+            ),
+            None => copy,
+        }
+    }
+
+    /// The source of [`Self::unless_source_is_buffer`]'s guard, where there is one.
+    fn copy_source_may_be_buffer(&self, orig: &Value) -> Option<u16> {
+        match orig.unspan() {
+            Value::Var(src) if self.ret_copy_may_alias && crate::keys::self_copy_guard() => {
+                Some(*src)
+            }
+            _ => None,
+        }
+    }
+
     fn materialize_return_into(&mut self, td: u32, tail: &mut Value, w: u16) {
         let td = self.return_copy_type(td);
         if let Value::Return(inner) = tail {
@@ -10886,12 +10913,7 @@ impl Parser {
             }
             _ => None,
         };
-        let self_source = match orig.unspan() {
-            Value::Var(src) if self.ret_copy_may_alias && crate::keys::self_copy_guard() => {
-                Some(*src)
-            }
-            _ => None,
-        };
+        let self_source = self.copy_source_may_be_buffer(&orig);
         let copy = crate::data::v_block(
             vec![
                 crate::data::v_set(w, Value::Null),
@@ -10902,21 +10924,7 @@ impl Parser {
             Type::Reference(td, Deps::frame1(w)),
             "materialized_view_return",
         );
-        // loft#2673, `@FR-F-Ret` — a source that may BE the destination (a bound join one arm of
-        // which is the local pass 1 renamed onto the buffer: `palt(p) ?? p`, the `??` temp) is
-        // already where the copy would put it on that run.  Copied anyway, `OpDatabase(w)`
-        // cleared the record and the copy read the cleared record back: a zeroed `P`, silently.
-        // So the copy runs only where the two are distinct stores.  The join's deps are not
-        // known yet here, so the fact read is the one `ref_return` has: the buffer is a local
-        // the body assigns (`ret_copy_may_alias`).
-        let copy = match self_source {
-            Some(src) => crate::data::v_if(
-                self.cl("OpDistinctStore", &[Value::Var(src), Value::Var(w)]),
-                copy,
-                Value::Var(w),
-            ),
-            None => copy,
-        };
+        let copy = self.unless_source_is_buffer(self_source, w, copy);
         let tested = match absent_guard {
             Some(v) => crate::data::v_if(
                 self.cl("OpRefIsNull", &[v]),
