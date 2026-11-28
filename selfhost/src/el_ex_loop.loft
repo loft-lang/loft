@@ -889,16 +889,6 @@ fn par_keyed(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex, par: integer, lo
     ptok = match e.p.nodes[par] { SPar { at: pat } => pat, _ => 0 };
     el_schema::make_vector_def(e, ir::TyReference { n: el_d, dep: [] }, nm, el::pos_at(e, ptok + 1), true);
   }
-  // (The wrapper's field is the element as the walk types it, borrowing the collection — set
-  // after the layout, which reads a borrowing reference as a pointer field.)
-  pmd = el::def_nr(e, "main_vector<{nm}>");
-  if !e.first_pass && pmd >= 0 && el::def(e, pmd).source == 0 && len(el::def(e, pmd).attributes) > 0 && len(el_types::deps(match el_types::base(el::def(e, pmd).attributes[0]!.typedef[0] ?? ir::TyVoid) { TyVector { inner: pi } => pi, _ => ir::TyVoid })) == 0 && el::def(e, pmd).position.file == e.file {
-    e.b.data.definitions[pmd].attributes[0].typedef = [ir::TyVector { inner: elem, dep: [] }];
-    pvd = el::def_nr(e, "vector<{nm}>");
-    if pvd >= 0 {
-      e.b.data.definitions[pvd].returned = [ir::TyVector { inner: elem, dep: [] }];
-    }
-  }
   mat = el_vars::create_unique(vars, "__par_mat", ir::TyVector { inner: elem, dep: [] });
   el_vars::set_defined(vars, mat);
   mx = ex(ir::NdNull, ir::TyVector { inner: elem, dep: [] });
