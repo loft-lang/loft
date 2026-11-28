@@ -2751,10 +2751,16 @@ impl<'a> Ownership<'a> {
                     self.classify(seen, func, defs)
                 }
             }
-            // A block's value is its tail; passthrough wrappers forward.
+            // A block's value is its tail before trailing scope-exit releases and line markers
+            // (`scalar_match` ends with `OpFreeRef(___arm_call_N)` after the arm `if`).
             Value::Block(b) => b
                 .operators
-                .last()
+                .iter()
+                .rev()
+                .find(|o| {
+                    !matches!(o.unspan(), Value::Line(_))
+                        && !crate::op_sets::is_release_statement(self.data, o)
+                })
                 .map_or(Own::Owned, |t| self.classify(t, func, defs)),
             Value::Insert(ops) => ops
                 .last()

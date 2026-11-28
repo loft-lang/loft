@@ -6242,8 +6242,13 @@ impl<'a> FnWriter<'a> {
                 && !crate::env_once!(std::env::var_os("LOFT_C_FIRST_CHOICE_JOIN_ANY").is_some())
             {
                 crate::bind_lowering::first_bind_choice_join(data, self.d, self.vars, v, x)
-            } else {
+            } else if first {
                 crate::bind_lowering::choice_var_arm(data, self.d, self.vars, x, v)
+            } else if !matches!(x.unspan(), Value::Var(_)) {
+                crate::bind_lowering::join_base_c(data, self.d, self.vars, x, v)
+                    .filter(|&b| b != u16::MAX && b != v)
+            } else {
+                None
             };
             return base.map(|base| (data.def(d).known_type(), base));
         };
@@ -6365,11 +6370,19 @@ impl<'a> FnWriter<'a> {
             self.line(ind, &format!("}} else {{ {name} = {r}; }}"));
             if rebind_owned {
                 // Native's guard (`dispatch.rs`'s `_old_<v>` free, @FR-O-NoDiverge): kept only
-                // where the new value or the call's pooled buffer (`@FR-O-Buffer`) is that store.
+                // where the new value, the entry witness (`@FR-O-Buffer`, when `var` is a
+                // promoted return buffer), or the call's pooled buffer is that store.
                 // Not the base or another argument: the variable owns what it displaces, so an
                 // argument naming that store is a view of the variable itself (`f(c ?? d)`'s
                 // `__lift`), and keeping it there leaked the displaced record on every rebind.
                 let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
+                if let Some(w) = self
+                    .vars
+                    .entry_witness(var)
+                    .filter(|_| self.vars.is_argument(var))
+                {
+                    keep.push(format!("{old}.store_nr != {}.store_nr", self.var(w)));
+                }
                 if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
                     keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
                 }
@@ -6407,6 +6420,23 @@ impl<'a> FnWriter<'a> {
         if (first && witnessed) || (!first && !self.vars.owns_displaced_store(var, x, self.cx.data))
         {
             self.line(ind, &format!("{name} = loft_ref_null(cx);"));
+        }
+    }
+
+    /// `@FR-O-Buffer` — a promoted return buffer still holding its caller's entry witness must
+    /// not be passed live to `loft_bind_copy`, whose null arm frees `*dst`.
+    fn keep_entry_on_null(&mut self, var: u16, src: &str, name: &str, first: bool, ind: usize) {
+        if !first
+            && let Some(witness) = self.vars.entry_witness(var)
+            && !crate::keys::c_null_frees_entry()
+        {
+            let w = self.var(witness);
+            self.line(
+                ind,
+                &format!(
+                    "if ({src}.store_nr == 0xFFFF && {name}.store_nr != 0xFFFF && {name}.store_nr == {w}.store_nr) {name} = loft_ref_null(cx);"
+                ),
+            );
         }
     }
 
@@ -7070,6 +7100,7 @@ impl<'a> FnWriter<'a> {
             let r = self.temp(CType::Ref);
             self.line(ind, &format!("{r} = {};", as_ref(e)?));
             self.fresh_unless_owned(var, x, first, &name, ind);
+            self.keep_entry_on_null(var, &r, &name, first, ind);
             self.line(
                 ind,
                 &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});"),
@@ -7115,6 +7146,7 @@ impl<'a> FnWriter<'a> {
             let bytes = self.copyable(tp)?;
             let src = self.var(src);
             self.fresh_unless_owned(var, x, first, &name, ind);
+            self.keep_entry_on_null(var, &src, &name, first, ind);
             self.line(
                 ind,
                 &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {src});"),
