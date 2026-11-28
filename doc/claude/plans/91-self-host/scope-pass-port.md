@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 747 of 1 189 programs agree; 156 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 12) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 12): 1 834 of 2 282 programs, 36 238 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 769 of 1 189 programs agree; 135 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 13) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 13): 1 872 of 2 282 programs, 36 359 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -675,6 +675,55 @@ with other families).  Its Rust: `drops.rs` (770 lines, about half ported) and `
 cascade parts), `capture_builds.rs` (1 505), `closure_keep.rs` (1 347) and
 `rebound_captures.rs` (799): about 7 000 lines.  The drop machinery comes first, because the
 closure records ride on it; the closures can then be taken module by module.
+
+**Step 13 (2026-11-28) — `place_result`, loft#2677.**  `scope_place_result.loft` is
+`src/place_result.rs`'s rewrite whole (`@FR-R-Place`, `@FR-R-MoveLast`): the top-level bind
+(`placeable_bind`, `admit`, the walk with its `St`/`Pos`/`Flow` states, `destination`, `apply`),
+the callee clause (`callee_writes_buffer_at_every_exit` with the chain exits and the four exit
+spellings, `tail_fresh_object_workref`), and the loop clause (`admitted_loops`, `admit_loop`,
+`lazy_mint_path`, `outside_the_turn`, the turn's `LoopCx`, `apply_loop`).  Sites are recorded by
+their path through the body, spans transparent, as Rust's are; the loop plans are applied first
+and the top-level admission reads their result.  `check` runs it after `insert_evacuations` and
+before `exit_vector`; the refusal in `record_triggers` and the `placeable_binds` superset are
+gone.  One case is refused by name: a callee whose exits the admission reads and which this pass
+refused (Rust reads its settled body; the image holds its parser body) — it fires on no corpus
+program.  The preview (`admits`, asked by the copy notice) and `callee_keeps_an_offered_record`
+(the parser's stored-reference placement) are asked outside the pass and are not transcribed.
+
+The Rust fix for loft#2677 (`17ccb4ca9`) is beneath, with the parser fixes for loft#2678 and
+loft#2679 (`611224532`), and the port follows its scope-pass half: `scan`'s `Drop` arm peels the
+statement's `Span` off a lifted argument's `Insert` before looking for the discarded call at its
+end (`LOFT_NO_DROP_SPAN_PEEL`).  The loft#2677 cell agrees with the switch on and off.  The
+binary is re-frozen from that tree.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 12 | 1 834 / 2 282 | 36 238 / 40 088 | 0 | 747 |
+| + `place_result` | 1 872 | 36 359 | 0 | 767 |
+| + loft#2677 and the port's half | 1 872 / 2 282 | 36 359 / 40 088 | 0 | 768 |
+| + the loop-record workaround in `ir_ctor_literal` | 1 872 / 2 282 | 36 359 / 40 088 | 0 | 769 |
+
+No definition that agreed was lost, nor a whole-path program.  The whole path's leak on
+`B-Scope/2591-…` (the loft-written tool's own `NdIf`s, loft#2677's subject) is gone with the
+fix.  `157-a-constructor-call-builds-its-literal-in-place` reached the runner with
+`place_result` and leaked one store of the tool's own (`ir_ctor_literal::Pairs`): a loft defect, both backends — a record local
+made fresh in a loop body is a loop record (`@FR-R-LoopRecord`), and a `return` at the head of
+the body, before its mint, does not release the record the previous turn kept.  Worked around in
+`ir_ctor_literal::rewrite_gated` (the empty set ends the rounds in the loop's condition), and the
+program agrees.
+
+Sole refusal families now (programs): the view walk 61, the owner witness 38, drop cascades 37,
+`arm_lift` 33, closures 16.  By first refusal: closure records 143, closure cascades 121, drop
+hooks 86, the stale callee 71, the view walk 69, the owner witness 50.
+
+The view walk is the next lever but not one transcription.  Of the 76 programs it refuses, Rust's
+walk answers a view in 65 (`LOFT_DEBUG_F8`), so making the walk exact frees at most 10 of the 61
+it alone stops; the rest need the materialise legs (`scan_set`'s dep strip, respell and copy, the
+arm lift's copy, the split's order copy in `branches`, `scan`'s use, the phase's materialise
+buffers and `materialised_views`).  An exact walk is `view_walk.rs` (2 088 lines),
+`disturbance.rs` (1 109) and `places.rs` (381), and reads five facts the image does not carry:
+`is_iteration_source`, `text_payload_views`, `group_write_views`, `is_amp_container_link` and
+`keyed_views`.
 
 ## Passes
 
