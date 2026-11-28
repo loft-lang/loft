@@ -123,6 +123,29 @@ a / b ?? 0      // 0
 a / b?          // null   ← reading `?` as "loose like ??" predicts 0
 ```
 
+### A number before a dot is a number, then the dot
+
+```
+  (G-Lex-Num)       a number directly followed by `..` or `.` lexes as the NUMBER, then that
+                    operator as a token of its own — never a float, never one token — and it
+                    reads the same spaced or not, wherever the expression stands:
+                        0..n           ≡  0 .. n
+                        t.0.1          ≡  (t.0).1
+                        5.abs()        ≡  (5).abs()
+```
+
+**In words.** Spacing around `..` and `.` never changes what a number next to them means. That
+includes the places the parser reads twice: a literal of a struct declared further down is
+stepped over token by token in the first pass, and it parses alike with or without spaces.
+
+**Falsifying program** (a lexer that merges or misplaces the dot fails the unspaced lines):
+
+```loft
+fn make(n: integer) -> Ro { Ro { ok: [for _ in 0..n { true }] } }   // Ro is declared below
+struct Ro { ok: vector<boolean> }
+fn main() { assert(len(make(3).ok) == 3); t = ((1, 2), 3); assert(t.0.1 == 2); }
+```
+
 ### Prefix `&` is NOT an operator — it is the reference annotation
 
 ```

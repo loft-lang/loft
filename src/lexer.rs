@@ -2549,11 +2549,11 @@ impl Lexer {
         // never a float.  `n.v.0.0` must lex as `n`, `.`, `v`, `.`,
         // `0`, `.`, `0` instead of `n`, `.`, `v`, `.`, `0.0`.
         let prev_was_field_dot = matches!(&self.peek.has, LexItem::Token(t) if *t == ".");
-        // Where the dot after the number starts: the position of the token queued for it.
-        // Every token sits where its text starts, so no two tokens share a position — a scan
-        // that steps token by token measures its progress by that (pass 1's skip over the
-        // braces of a type declared below: queued at the number's own position, `0..n` read
-        // as no progress and stopped inside the literal, loft#2679).
+        // @FR-G-Lex-Num: the `..` or `.` after a number is a token of its own, queued at the
+        // position where its text starts, so no two tokens share a position.  A scan that
+        // steps token by token measures its progress by that: pass 1's skip over the braces
+        // of a type declared below read a shared position as no progress and stopped inside
+        // the literal (loft#2679).
         let dot_at = self.position;
         if let Some('.') = self.iter.peek() {
             self.next_char();
