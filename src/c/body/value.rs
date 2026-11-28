@@ -615,8 +615,31 @@ impl FnWriter<'_> {
         }) {
             return Ok(false);
         }
-        // The parser's staged reads: the statements the literal reads before its writes.
-        for op in &bl.operators {
+        let buf =
+            bl.result
+                .depend()
+                .first()
+                .copied()
+                .or_else(|| match bl.operators.last()?.unspan() {
+                    Value::Var(w) => Some(*w),
+                    Value::Return(x) => match x.unspan() {
+                        Value::Var(w) => Some(*w),
+                        _ => None,
+                    },
+                    _ => None,
+                });
+        let data = self.cx.data;
+        let split = buf
+            .and_then(|p| {
+                bl.operators
+                    .iter()
+                    .rposition(|op| Self::vr_builds_at(data, op, p))
+            })
+            .map_or(0, |i| i + 1);
+        // The parser's staged reads: the statements the literal reads before its writes —
+        // never a post-free reset (`@FR-R-LoopRecord` places `x = null` after the return's
+        // free in `bl.operators[split..]`).
+        for op in &bl.operators[..split] {
             if matches!(op.unspan(), Value::Set(..)) {
                 self.stmt(op, ind)?;
             }
@@ -663,8 +686,8 @@ impl FnWriter<'_> {
                 parts.join(", ")
             ),
         );
-        if let Some(p) = crate::opt::value_records::leaves::object_own_return(bl) {
-            self.vr_object_releases(bl, p, ind)?;
+        if crate::opt::value_records::leaves::object_own_return(bl).is_some() {
+            self.vr_object_releases(&bl.operators[split..], ind)?;
             self.ret_held(target, ind);
         }
         Ok(true)
@@ -743,34 +766,34 @@ impl FnWriter<'_> {
         Ok((slots, fill))
     }
 
-    /// The statements of an `Object` that returns what it builds which are no part of the build,
-    /// the yield or the return: the releases its return owes, run before the struct returns.
-    fn vr_object_releases(&mut self, bl: &Block, p: u16, ind: usize) -> Result<(), String> {
-        let data = self.cx.data;
-        // Every statement that is no part of the build, the yield or the return is a
-        // release the return owes, and runs; then the struct is returned.
+    /// Does `op` build into `Object` buffer `p`: its mint, a field write, a sub-record copy
+    /// into it, or a view field's vector copy?
+    fn vr_builds_at(data: &crate::data::Data, op: &Value, p: u16) -> bool {
         let at_buffer = |place: &Value| {
             crate::opt::writes::vector_path(data, place).is_some_and(|(r, _)| r == p)
         };
-        let builds = |op: &Value| {
-            op.any_node(&mut |n| {
-                matches!(n, Value::Call(d, args)
-                        if (*d as usize) < data.definitions.len()
-                            && {
-                                let nm = data.def(*d).name();
-                                nm.starts_with("OpSet")
-                                    || nm.starts_with("OpDatabase")
-                                    || nm == "OpCopyRecord" && args.get(1).is_some_and(at_buffer)
-                                    || nm == "OpAppendVector"
-                            }
-                            && (data.def(*d).name() == "OpCopyRecord"
-                                || args.first().is_some_and(at_buffer)))
-            })
-        };
-        for op in &bl.operators {
+        op.any_node(&mut |n| {
+            matches!(n, Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && {
+                            let nm = data.def(*d).name();
+                            nm.starts_with("OpSet")
+                                || nm.starts_with("OpDatabase")
+                                || nm == "OpCopyRecord" && args.get(1).is_some_and(at_buffer)
+                                || nm == "OpAppendVector"
+                        }
+                        && (data.def(*d).name() == "OpCopyRecord"
+                            || args.first().is_some_and(at_buffer)))
+        })
+    }
+
+    /// The statements after the build of an `Object` that returns what it builds: the releases
+    /// its return owes and any post-free resets (`@FR-R-LoopRecord`), run in IR order before the
+    /// struct returns.
+    fn vr_object_releases(&mut self, after: &[Value], ind: usize) -> Result<(), String> {
+        for op in after {
             match op.unspan() {
-                Value::Return(_) | Value::Var(_) | Value::Line(_) | Value::Set(..) => {}
-                o if builds(o) => {}
+                Value::Return(_) | Value::Var(_) | Value::Line(_) => {}
                 _ => self.stmt(op, ind)?,
             }
         }
