@@ -1,0 +1,627 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/exit_record.rs` transcribed: `(R-ExitVector)`'s RECORD clause, a local record
+// returned inside the exit literal is built in its field of the return buffer.  Its mint becomes
+// the buffer's guard, the local bound to the field's place (`OpGetField`) and a release of what
+// the place held (`OpClear`); the exit's copy and the local's frees go, and the local is typed a
+// view of the buffer.  Admitted only where the local is minted once in the body's own statement
+// list, named only as a receiver, copied once into a field of the buffer in the one exit, freed
+// only there, and its construction writes every leaf field before it reads one.  Run by `check`
+// on the settled body after `exit_vector`, as Rust's is.
+
+use ir;
+use scope_fn;
+use scope_exit_vector;
+use scope_move_elide;
+use binds;
+
+struct Ops {
+  database: integer,
+  get_field: integer,
+  copy: integer,
+  clear: integer,
+  free_ref: integer,
+  free_if_distinct: integer
+}
+
+// An admitted local: its mint at body statement `mint`, its field at `off` of type `ftp`.
+struct Plan { local: integer, tp: integer, mint: integer, off: integer, ftp: integer }
+
+// port: exit_record.rs fn rewrite — every admitted record local of the function.
+pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> ir::Node {
+  if !enabled() {
+    return code;
+  }
+  found = lookup(b);
+  if found == null || !binds::is_loft_defined(d) {
+    return code;
+  }
+  ops = found!;
+  rb = scope_exit_vector::own_return_buffer(d, f);
+  if rb < 0 {
+    return code;
+  }
+  stmts: vector<ir::Node> = match scope_fn::unspan(code) {
+    NdBlock { block } => block[0]!.operators,
+    _ => return code
+  };
+  plans: vector<Plan> = [];
+  // Built at the first candidate: most functions with a return buffer mint no record local.
+  guard: ir::Node? = null;
+  for stmt in stmts {
+    idx = stmt#index;
+    local = -1;
+    tp = -1;
+    match scope_fn::unspan(stmt) {
+      NdCall { def_nr, args } => {
+        if def_nr != ops.database || len(args) != 2 {
+          continue;
+        }
+        local = match args[0]! { NdVar { n } => n, _ => -1 };
+        tp = match args[1]! { NdInt { n } => n, _ => -1 };
+      },
+      _ => continue
+    }
+    if local < 0 || local == rb || scope_fn::is_argument(f, local) || tp < 0 || tp > 65535 {
+      continue;
+    }
+    if guard == null {
+      guard = scope_exit_vector::exit_guard(b, code, rb);
+      if guard == null {
+        return code;
+      }
+    }
+    at = admit(b, f, ops, code, stmts, idx, local, tp, rb);
+    if len(at) == 2 {
+      plans += [Plan { local: local, tp: tp, mint: idx, off: at[0]!, ftp: at[1]! }];
+    }
+  }
+  if len(plans) == 0 {
+    return code;
+  }
+  apply(code, f, plans, rb, guard!, ops)
+}
+
+// `LOFT_NO_EXIT_RECORD=1` (anything but "0") — every local keeps its own store and its copy.
+fn enabled() -> boolean {
+  e = env_variable("LOFT_NO_EXIT_RECORD");
+  e == null || e! == "0"
+}
+
+// port: exit_record.rs fn Ops::lookup — null where an operator is not defined.
+fn lookup(b: ir::Bundle) -> Ops? {
+  ops = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    copy: scope_fn::def_nr(b, "OpCopyRecord"),
+    clear: scope_fn::def_nr(b, "OpClear"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct")
+  };
+  if ops.database < 0 || ops.get_field < 0 || ops.copy < 0 || ops.clear < 0 || ops.free_ref < 0 || ops.free_if_distinct < 0 {
+    return null;
+  }
+  ops
+}
+
+// port: exit_record.rs fn apply — each admitted local becomes a view of its field: the mint the
+// buffer's guard, the bind of the place and the release of what it held; the copy and the frees
+// go.
+fn apply(code: ir::Node, f: ir::Function, plans: vector<Plan>, rb: integer, guard: ir::Node, ops: Ops) -> ir::Node {
+  out = code;
+  for p in plans {
+    out = replace_mint(out, p, rb, guard, ops);
+    out = drop_sites(out, p.local, ops);
+  }
+  // Each local is now a VIEW of the buffer's field, never an owner: typed so, a bind of the
+  // place is no copy (B-View-Base) and no exit releases it.
+  for p in plans {
+    // Bound first: a vector literal stored through `f.variables[p.local]` is built in place,
+    // its destination cleared before the call inside it reads the old type.
+    viewed = scope_move_elide::with_deps(scope_fn::tp(f, p.local), [rb]);
+    f.variables[p.local].type_def = [viewed];
+  }
+  out
+}
+
+// The body's statement `p.mint` replaced, through the spans around the body.
+fn replace_mint(n: ir::Node, p: Plan, rb: integer, guard: ir::Node, ops: Ops) -> ir::Node {
+  match n {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: replace_mint(inner, p, rb, guard, ops) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: [for o in bl.operators {
+        if o#index == p.mint {
+          ir::NdInsert { items: [
+            guard,
+            ir::NdSet { var: p.local, inner: ir::NdCall { def_nr: ops.get_field, args: [ir::NdVar { n: rb }, ir::NdInt { n: p.off }, ir::NdInt { n: p.ftp }] } },
+            ir::NdCall { def_nr: ops.clear, args: [ir::NdVar { n: p.local }, ir::NdInt { n: p.tp }] }
+          ] }
+        } else {
+          o
+        }
+      }], result: [for t in bl.result { t }], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    _ => n
+  }
+}
+
+fn is_var(n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x == w,
+    _ => false
+  }
+}
+
+fn int(n: ir::Node?) -> integer? {
+  if n == null {
+    return null;
+  }
+  match scope_fn::unspan(n!) {
+    NdInt { n: x } => x,
+    _ => null
+  }
+}
+
+// The call's first argument is `Var(w)`.
+fn first_is(args: vector<ir::Node>, w: integer) -> boolean {
+  len(args) > 0 && is_var(args[0]!, w)
+}
+
+// `OpGetField(Var(w), …)`: its arguments, null for anything else.
+fn field_of(n: ir::Node, w: integer, ops: Ops) -> vector<ir::Node>? {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => if def_nr == ops.get_field && first_is(args, w) { args } else { null },
+    _ => null
+  }
+}
+
+// port: exit_record.rs fn exit_copy — the copy `OpCopyRecord(v, OpGetField(rb, off, ftp), tp)`:
+// `[off, ftp]`, empty for anything else.
+fn exit_copy(n: ir::Node, local: integer, rb: integer, tp: integer, ops: Ops) -> vector<integer> {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr, args } => {
+      if def_nr != ops.copy || len(args) != 3 || !is_var(args[0]!, local) || int(args[2]) != tp {
+        return [];
+      }
+      ga = field_of(args[1]!, rb, ops);
+      if ga == null {
+        return [];
+      }
+      off = int(ga![1]);
+      ftp = int(ga![2]);
+      if off == null || ftp == null { [] } else { [off!, ftp!] }
+    },
+    _ => []
+  }
+}
+
+// What `admit`'s walk over the body counts.
+struct Census {
+  returns: integer = 0,
+  copies: vector<integer>,
+  exit_frees: integer = 0,
+  frees: integer = 0,
+  mints: integer = 0,
+  rebinds: integer = 0
+}
+
+fn census(c: Census, n: ir::Node, local: integer, rb: integer, tp: integer, ops: Ops) {
+  match n {
+    NdSpan { inner } => {
+      census(c, inner, local, rb, tp, ops);
+      return;
+    },
+    NdReturn => { c.returns += 1; },
+    NdBlock { block } => if scope_exit_vector::is_exit_block(block[0]!, rb) {
+      for stmt in block[0]!.operators {
+        at = exit_copy(stmt, local, rb, tp, ops);
+        if len(at) == 2 {
+          c.copies += at;
+        }
+        match scope_fn::unspan(stmt) {
+          NdCall { def_nr, args } => if (def_nr == ops.free_ref || def_nr == ops.free_if_distinct) && first_is(args, local) {
+            c.exit_frees += 1;
+          },
+          _ => {}
+        }
+      }
+    },
+    NdCall { def_nr, args } => if first_is(args, local) {
+      if def_nr == ops.free_ref || def_nr == ops.free_if_distinct {
+        c.frees += 1;
+      }
+      if def_nr == ops.database {
+        c.mints += 1;
+      }
+    },
+    NdSet { var, inner } => if var == local && !(scope_fn::unspan(inner) is NdNull) {
+      c.rebinds += 1;
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    census(c, ch, local, rb, tp, ops);
+  }
+}
+
+// port: exit_record.rs fn admit — `[off, ftp]` for an admitted local, empty for a decline.
+fn admit(b: ir::Bundle, f: ir::Function, ops: Ops, code: ir::Node, stmts: vector<ir::Node>, mint: integer, local: integer, tp: integer, rb: integer) -> vector<integer> {
+  if !is_struct(b, tp) {
+    return [];
+  }
+  // The one exit, and the one copy of the local into a field of the buffer inside it.
+  c = Census { copies: [] };
+  census(c, code, local, rb, tp, ops);
+  if c.returns != 1 || len(c.copies) != 2 || c.mints != 1 || c.frees != c.exit_frees {
+    return [];
+  }
+  off = c.copies[0]!;
+  ftp = c.copies[1]!;
+  if ftp != tp || off < 0 {
+    return [];
+  }
+  // Every mention of the local is a receiver, and it is bound only by its null init.
+  if !receivers_only(b, code, local, ops, f) || c.rebinds != 0 {
+    return [];
+  }
+  // Nothing else writes the field's bytes.
+  if writes_region(b, code, rb, off, off + b.types[tp]!.size, local, ops) {
+    return [];
+  }
+  // The construction writes every leaf field before it reads one.
+  leaves: vector<integer> = [];
+  if !leaf_offsets(b, tp, 0, leaves, 0) {
+    return [];
+  }
+  written: vector<integer> = [];
+  for stmt in stmts {
+    if stmt#index <= mint {
+      continue;
+    }
+    if all_in(leaves, written) {
+      break;
+    }
+    at = group_write(b, stmt, local, ops);
+    if at != null {
+      written += at!;
+    } else if !(on_written_field(stmt, local, ops, written) || reads_only_written(stmt, local, rb, ops, written)) {
+      break;
+    }
+  }
+  if !all_in(leaves, written) {
+    return [];
+  }
+  [off, ftp]
+}
+
+fn all_in(leaves: vector<integer>, written: vector<integer>) -> boolean {
+  for l in leaves {
+    if !written.contains(l) {
+      return false;
+    }
+  }
+  true
+}
+
+fn parts(b: ir::Bundle, tp: integer) -> ir::DbParts? {
+  t = b.types[tp];
+  if tp < 0 || t == null { null } else { t!.parts[0] }
+}
+
+fn is_struct(b: ir::Bundle, tp: integer) -> boolean {
+  p = parts(b, tp);
+  p != null && p! is PtStruct
+}
+
+// port: exit_record.rs fn leaf_offsets — the positions of every leaf field of `tp`, an embedded
+// record's fields flattened in; false where a field declines.
+fn leaf_offsets(b: ir::Bundle, tp: integer, base: integer, out: vector<integer>, depth: integer) -> boolean {
+  if depth > 8 {
+    return false;
+  }
+  fields: vector<ir::DbField> = match parts(b, tp) {
+    PtStruct { fields } => fields,
+    _ => return false
+  };
+  for fld in fields {
+    at = base + fld.position;
+    match parts(b, fld.content) {
+      PtStruct => if !leaf_offsets(b, fld.content, at, out, depth + 1) {
+        return false;
+      },
+      PtEnumValue => return false,
+      PtEnum { values } => {
+        for v in values {
+          if parts(b, v.nr) is PtEnumValue {
+            return false;
+          }
+        }
+        out += [at];
+      },
+      _ => { out += [at]; }
+    }
+  }
+  true
+}
+
+// Does `n` name `Var(local)` anywhere?
+fn names(n: ir::Node, local: integer) -> boolean {
+  scope_fn::reads_var(n, local)
+}
+
+fn def_name(b: ir::Bundle, d: integer) -> text {
+  x = b.data.definitions[d];
+  if d < 0 || x == null { "" } else { x!.name }
+}
+
+// port: exit_record.rs fn group_write — one statement of the construction: the leaf offsets a
+// write of the local covers (empty for a statement that neither reads nor writes it), null for
+// anything else, the end of the scan.
+fn group_write(b: ir::Bundle, stmt: ir::Node, local: integer, ops: Ops) -> vector<integer>? {
+  if !names(stmt, local) {
+    return [];
+  }
+  match scope_fn::unspan(stmt) {
+    NdCall { def_nr, args } => {
+      // A sub-record written whole by a copy into it.
+      if def_nr == ops.copy {
+        if len(args) < 2 {
+          return null;
+        }
+        ga = field_of(args[1]!, local, ops);
+        if ga == null || names(args[0]!, local) {
+          return null;
+        }
+        base = int(ga![1]);
+        sub = int(ga![2]);
+        if base == null || sub == null || sub! < 0 || sub! > 65535 {
+          return null;
+        }
+        out: vector<integer> = [];
+        if !leaf_offsets(b, sub!, base!, out, 1) {
+          return null;
+        }
+        return out;
+      }
+      if !def_name(b, def_nr).starts_with("OpSet") {
+        return null;
+      }
+      for a in args {
+        if a#index > 0 && names(a, local) {
+          return null;
+        }
+      }
+      pos = int(args[1]);
+      if pos == null || len(args) == 0 {
+        return null;
+      }
+      if is_var(args[0]!, local) {
+        return [pos!];
+      }
+      ga = field_of(args[0]!, local, ops);
+      if ga == null {
+        return null;
+      }
+      at = int(ga![1]);
+      if at == null { null } else { [at! + pos!] }
+    },
+    _ => null
+  }
+}
+
+// Every `Var(local)` in `n`.
+fn count_names(n: ir::Node, local: integer) -> integer {
+  k = if is_var_here(n, local) { 1 } else { 0 };
+  for c in scope_fn::children(n) {
+    k += count_names(c, local);
+  }
+  k
+}
+
+fn is_var_here(n: ir::Node, w: integer) -> boolean {
+  match n {
+    NdVar { n: x } => x == w,
+    _ => false
+  }
+}
+
+// port: exit_record.rs fn on_written_field — a statement whose only mention of the local is the
+// receiver `OpGetField(v, at, _)` of a native op, `at` a field the construction already wrote:
+// an append into its vector.
+fn on_written_field(stmt: ir::Node, local: integer, ops: Ops, written: vector<integer>) -> boolean {
+  match scope_fn::unspan(stmt) {
+    NdCall { args } => {
+      if len(args) == 0 {
+        return false;
+      }
+      ga = field_of(args[0]!, local, ops);
+      if ga == null {
+        return false;
+      }
+      at = int(ga![1]);
+      if at == null {
+        return false;
+      }
+      rest = 0;
+      for a in args {
+        if a#index > 0 {
+          rest += count_names(a, local);
+        }
+      }
+      rest == 0 && written.contains(at!)
+    },
+    _ => false
+  }
+}
+
+struct ReadCount { names: integer = 0, through_written: integer = 0, buffer: boolean = false }
+
+fn read_count(c: ReadCount, n: ir::Node, local: integer, rb: integer, ops: Ops, written: vector<integer>) {
+  match n {
+    NdSpan { inner } => {
+      read_count(c, inner, local, rb, ops, written);
+      return;
+    },
+    NdVar { n: x } => {
+      if x == local {
+        c.names += 1;
+      }
+      if x == rb {
+        c.buffer = true;
+      }
+    },
+    NdCall { def_nr, args } => if def_nr == ops.get_field && first_is(args, local) {
+      at = int(args[1]);
+      if at != null && written.contains(at!) {
+        c.through_written += 1;
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    read_count(c, ch, local, rb, ops, written);
+  }
+}
+
+// port: exit_record.rs fn reads_only_written — does `stmt` read none of the local's bytes it has
+// not written?  It names the local only as `OpGetField(local, at)` with `at` written, and the
+// return buffer, where the local's place is, not at all.
+fn reads_only_written(stmt: ir::Node, local: integer, rb: integer, ops: Ops, written: vector<integer>) -> boolean {
+  c = ReadCount {};
+  read_count(c, stmt, local, rb, ops, written);
+  !c.buffer && c.names == c.through_written
+}
+
+struct Receivers { total: integer = 0, direct: integer = 0, fields: integer = 0, received: integer = 0 }
+
+fn receivers(b: ir::Bundle, c: Receivers, n: ir::Node, local: integer, ops: Ops, f: ir::Function) {
+  match n {
+    NdSpan { inner } => {
+      receivers(b, c, inner, local, ops, f);
+      return;
+    },
+    NdVar { n: x } => if x == local {
+      c.total += 1;
+    },
+    // A field handed to a call as its return buffer (`@FR-R-Place`): the compiler's buffer
+    // variable, never freed, takes the field's place.
+    NdSet { var: w, inner } => if binds::is_inline_ref(f, w) && scope_fn::is_compiler_generated(f, w) && field_of(inner, local, ops) != null && is_call(inner) {
+      c.received += 1;
+    },
+    NdCall { def_nr, args } => if native(b, def_nr) {
+      if first_is(args, local) {
+        c.direct += 1;
+        if def_nr == ops.get_field {
+          c.fields += 1;
+        }
+      }
+      if def_nr != ops.copy && len(args) > 0 && is_call(args[0]!) && field_of(args[0]!, local, ops) != null {
+        c.received += 1;
+      }
+      // A sub-record of the local written whole: `OpCopyRecord(src, OpGetField(v, …), tp)`.
+      if def_nr == ops.copy && len(args) > 1 && is_call(args[1]!) && field_of(args[1]!, local, ops) != null {
+        c.received += 1;
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(n) {
+    receivers(b, c, ch, local, ops, f);
+  }
+}
+
+// `val.unspan()` is a call (the shapes `receivers_only` matches name the call unspanned).
+fn is_call(n: ir::Node) -> boolean {
+  scope_fn::unspan(n) is NdCall
+}
+
+// port: exit_record.rs fn receivers_only — every `Var(v)` is the first argument of a native op,
+// and each such `OpGetField` is in turn the first argument of a native op other than a copy.
+fn receivers_only(b: ir::Bundle, code: ir::Node, local: integer, ops: Ops, f: ir::Function) -> boolean {
+  c = Receivers {};
+  receivers(b, c, code, local, ops, f);
+  c.direct == c.total && c.fields == c.received
+}
+
+fn native(b: ir::Bundle, d: integer) -> boolean {
+  d >= 0 && d < len(b.data.definitions) && def_name(b, d).starts_with("Op")
+}
+
+// The ops that only read, compare or release a handle (or claim a new record) write no field's
+// bytes.
+fn reads_only(nm: text) -> boolean {
+  for p in ["OpGet", "OpFree", "OpDistinct", "OpRefIsNull", "OpConv", "OpEq", "OpNe", "OpLength", "OpSize", "OpPlaceRecord"] {
+    if nm.starts_with(p) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: exit_record.rs fn writes_region — does any statement other than the local's own copy
+// write into `rb`'s bytes `lo..hi`?
+fn writes_region(b: ir::Bundle, n: ir::Node, rb: integer, lo: integer, hi: integer, local: integer, ops: Ops) -> boolean {
+  match n {
+    NdSpan { inner } => return writes_region(b, inner, rb, lo, hi, local, ops),
+    NdCall { def_nr, args } => if native(b, def_nr) && def_nr != ops.get_field && def_nr != ops.database && !(def_nr == ops.copy && first_is(args, local)) {
+      nm = def_name(b, def_nr);
+      if !reads_only(nm) {
+        for a in args {
+          match scope_fn::unspan(a) {
+            // The buffer itself: as the receiver, its write position is the next argument.
+            NdVar { n: w } => if w == rb {
+              pos = int(args[1]);
+              if !(a#index == 0 && nm.starts_with("OpSet") && pos != null && (pos! < lo || pos! >= hi)) {
+                return true;
+              }
+            },
+            // A field of the buffer: outside the region it is another field's.
+            NdCall { def_nr: g, args: ga } => if g == ops.get_field && first_is(ga, rb) {
+              off = int(ga[1]);
+              if !(off != null && (off! < lo || off! >= hi)) {
+                return true;
+              }
+            },
+            _ => {}
+          }
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    if writes_region(b, c, rb, lo, hi, local, ops) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: exit_record.rs fn drop_sites — the exit's copy of the local and its frees become nothing.
+fn drop_sites(n: ir::Node, local: integer, ops: Ops) -> ir::Node {
+  match n {
+    NdCall { def_nr, args } => {
+      if (def_nr == ops.copy || def_nr == ops.free_ref || def_nr == ops.free_if_distinct) && first_is(args, local) {
+        return ir::NdNull;
+      }
+      ir::NdCall { def_nr: def_nr, args: [for a in args { drop_sites(a, local, ops) }] }
+    },
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: drop_sites(inner, local, ops) },
+    NdBlock { block } => {
+      bl = block[0]!;
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: [for o in bl.operators { drop_sites(o, local, ops) }], result: [for t in bl.result { t }], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdLoop { block } => {
+      bl = block[0]!;
+      ir::NdLoop { block: [ir::Block { name: bl.name, operators: [for o in bl.operators { drop_sites(o, local, ops) }], result: [for t in bl.result { t }], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => ir::NdInsert { items: [for o in items { drop_sites(o, local, ops) }] },
+    NdIf { cond, t, f } => ir::NdIf { cond: drop_sites(cond, local, ops), t: drop_sites(t, local, ops), f: drop_sites(f, local, ops) },
+    NdSet { var, inner } => ir::NdSet { var: var, inner: drop_sites(inner, local, ops) },
+    NdReturn { inner } => ir::NdReturn { inner: drop_sites(inner, local, ops) },
+    NdDrop { inner } => ir::NdDrop { inner: drop_sites(inner, local, ops) },
+    _ => n
+  }
+}

@@ -45,20 +45,11 @@ pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function
   if env_variable("LOFT_NO_EXIT_VECTOR") != null || !binds::is_loft_defined(d) {
     return code;
   }
-  ops = Ops {
-    database: scope_fn::def_nr(b, "OpDatabase"),
-    get_field: scope_fn::def_nr(b, "OpGetField"),
-    set_int4: scope_fn::def_nr(b, "OpSetInt4"),
-    append: scope_fn::def_nr(b, "OpAppendVector"),
-    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
-    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
-    place: scope_fn::def_nr(b, "OpPlaceRecord"),
-    free_in: scope_fn::def_nr(b, "OpFreeRecordIn"),
-    move_vec: scope_fn::def_nr(b, "OpMoveVector")
-  };
-  if ops.database < 0 || ops.get_field < 0 || ops.set_int4 < 0 || ops.append < 0 || ops.free_ref < 0 || ops.free_if_distinct < 0 || ops.place < 0 || ops.free_in < 0 || ops.move_vec < 0 {
+  found = lookup(b);
+  if found == null {
     return code;
   }
+  ops = found!;
   rb = own_return_buffer(d, f);
   if rb < 0 {
     return code;
@@ -91,8 +82,36 @@ pub fn rewrite(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function
   out
 }
 
+// port: exit_vector.rs fn Ops::lookup — null where an operator is not defined.
+fn lookup(b: ir::Bundle) -> Ops? {
+  ops = Ops {
+    database: scope_fn::def_nr(b, "OpDatabase"),
+    get_field: scope_fn::def_nr(b, "OpGetField"),
+    set_int4: scope_fn::def_nr(b, "OpSetInt4"),
+    append: scope_fn::def_nr(b, "OpAppendVector"),
+    free_ref: scope_fn::def_nr(b, "OpFreeRef"),
+    free_if_distinct: scope_fn::def_nr(b, "OpFreeRefIfDistinct"),
+    place: scope_fn::def_nr(b, "OpPlaceRecord"),
+    free_in: scope_fn::def_nr(b, "OpFreeRecordIn"),
+    move_vec: scope_fn::def_nr(b, "OpMoveVector")
+  };
+  if ops.database < 0 || ops.get_field < 0 || ops.set_int4 < 0 || ops.append < 0 || ops.free_ref < 0 || ops.free_if_distinct < 0 || ops.place < 0 || ops.free_in < 0 || ops.move_vec < 0 {
+    return null;
+  }
+  ops
+}
+
+// port: exit_vector.rs fn exit_guard — the exit literal's buffer guard, for `exit_record`.
+pub fn exit_guard(b: ir::Bundle, code: ir::Node, rb: integer) -> ir::Node? {
+  ops = lookup(b);
+  if ops == null {
+    return null;
+  }
+  guard_template(code, rb, ops!)
+}
+
 // port: exit_vector.rs fn own_return_buffer
-fn own_return_buffer(d: ir::Definition, f: ir::Function) -> integer {
+pub fn own_return_buffer(d: ir::Definition, f: ir::Function) -> integer {
   idx = binds::hidden_return_buffer_attr(d);
   if idx == null {
     return -1;
@@ -286,7 +305,7 @@ fn mints_buffer(n: ir::Node, rb: integer, ops: Ops) -> boolean {
 }
 
 // port: exit_vector.rs fn is_exit_block — a literal built in the buffer and answering it.
-fn is_exit_block(bl: ir::Block, rb: integer) -> boolean {
+pub fn is_exit_block(bl: ir::Block, rb: integer) -> boolean {
   if bl.name != "Object" {
     return false;
   }

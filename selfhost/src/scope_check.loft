@@ -54,6 +54,7 @@ use scope_stored_refs;
 use scope_return_field;
 use scope_exit_vector;
 use scope_const_fn;
+use scope_exit_record;
 
 // port: scopes.rs fn check — every function not laid out yet: the program's and its libraries'
 // (every source but the standard library's, which arrives scoped), each laid out or refused by
@@ -240,13 +241,15 @@ pub fn check(b: ir::Bundle) -> vector<text> {
       refused_nrs += [d_nr];
       continue;
     }
-    // `@FR-H-RefHome` — the frees of a placed call result go (before `place_result`,
-    // `(R-ExitVector)` and `exit_record`, refused above where they would fire).
+    // `@FR-H-RefHome` — the frees of a placed call result go (before `place_result`, refused
+    // above where it would fire, and `(R-ExitVector)`).
     code = scope_stored_refs::keep_placed_results(b, ph.code, ph.function);
     // `@FR-H-RefHome` — a copied-out home's record is evacuated before each free of its owner.
     code = scope_stored_refs::insert_evacuations(b, code, d.ref_evacuations);
-    // `(R-ExitVector)` (after `place_result`, refused above where it would fire).
+    // `(R-ExitVector)` (after `place_result`, refused above where it would fire), then its
+    // record clause.
     code = scope_exit_vector::rewrite(b, d, code, ph.function);
+    code = scope_exit_record::rewrite(b, d, code, ph.function);
     // `(R-ForwardResult)` — a returned local bound from a call is built in the return buffer.
     code = scope_forward_result::rewrite(b, d_nr, code, ph.function);
     // `@FR-R-MoveLast`'s host clause, then `(R-LiteralAppend)`.  A literal it would place
@@ -442,24 +445,23 @@ fn join_rewrites(f: ir::Function) -> text {
 
 
 // The rewrites `check` runs on the settled IR after the scan, each refused where its trigger
-// is in the body: `place_result`, `exit_record`, `byte_copy`'s vector clause.
-// `exit_vector`, `const_fn`, `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
+// is in the body: `place_result`, `byte_copy`'s vector clause.
+// `exit_vector`, `exit_record`, `const_fn`, `literal_host`, `literal_append`, `copy_view`, `compact`, `take_local`,
 // `loop_kernel_rewrite`, `byte_copy`, `repeat_run`, `vec_copy`, `slice_text` and `slice_into`
 // are transcribed and run by `check`.
 fn settled_rewrites(b: ir::Bundle, d: ir::Definition, code: ir::Node, f: ir::Function) -> text {
   w = Trigger { why: "" };
-  hidden: vector<text> = [for a in d.attributes if a.hidden { a.name }];
   placeable_binds(b, code, f, w.placeable);
-  record_triggers(b, code, f, hidden, w);
+  record_triggers(b, code, f, w);
   note(w, scope_byte_copy::refusal(b, code));
   note(w, scope_repeat_run::refusal(b, code, f));
   w.why
 }
 
-// The settled-IR record rewrites, each refused where its trigger is in the body:
-// `place_result` (an element appended to a parameter's collection) and `exit_record`.
-// `insert_evacuations`, `literal_append`, `rebind_place` and `copy_view` are transcribed.
-fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<text>, w: Trigger) {
+// The settled-IR record rewrite refused where its trigger is in the body: `place_result` (an
+// element appended to a parameter's collection).  `insert_evacuations`, `exit_record`,
+// `literal_append`, `rebind_place` and `copy_view` are transcribed.
+fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, w: Trigger) {
   match n {
     NdCall { def_nr, args } => {
       nm = scope_args::def_name(b, def_nr);
@@ -471,22 +473,12 @@ fn record_triggers(b: ir::Bundle, n: ir::Node, f: ir::Function, hidden: vector<t
         if er >= 0 && scope_fn::name(f, er).starts_with("_elm_") && scope_fn::has(w.placeable, root_var(b, args[0]!)) {
           note(w, "place_result::rewrite: a call's record copied into an appended element");
         }
-        match scope_fn::unspan(args[1]!) {
-          NdCall { def_nr: g, args: ga } => {
-            src = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
-            host = if len(ga) > 0 { match scope_fn::unspan(ga[0]!) { NdVar { n: x } => x, _ => -1 } } else { -1 };
-            if scope_args::def_name(b, g) == "OpGetField" && src >= 0 && !scope_fn::is_argument(f, src) && scope_fn::is_record(scope_fn::tp(f, src)) && host >= 0 && scope_fn::is_argument(f, host) && hidden.contains(scope_fn::name(f, host)) {
-              note(w, "exit_record::rewrite: a local record copied into its field of the return buffer");
-            }
-          },
-          _ => {}
-        }
       }
     },
     _ => {}
   }
   for c in scope_fn::children(n) {
-    record_triggers(b, c, f, hidden, w);
+    record_triggers(b, c, f, w);
   }
 }
 
