@@ -1805,6 +1805,18 @@ pub fn arm_scope_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
 }
 
+/// `@FR-O-Buffer` at an exit that answers the promoted local (loft#2684): a local the
+/// returned ARGUMENT — the local renamed onto the caller's return buffer — names in its deps
+/// is released by store identity, `OpFreeRefIfDistinct(local, buffer)`, where the deps alone
+/// withheld its free — **DEFAULT ON**, both backends (scope pass).  Opt OUT with
+/// `LOFT_NO_PROMOTED_RETURN_IDENTITY_FREE`: such a local is never released at that exit again,
+/// and a copy the exit made of it leaks — the first bisect step for a double free at an exit
+/// of a function that renames its return buffer onto a local.
+pub fn promoted_return_identity_free() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PROMOTED_RETURN_IDENTITY_FREE"))
+}
+
 /// `@FR-R-LoopRecord`'s return paths (loft#2681): a `return` inside the loop nest of a kept
 /// loop record frees the record first unless its own block already does — **DEFAULT ON**,
 /// both backends (an IR rewrite in `opt::loop_record`).  Opt OUT with
