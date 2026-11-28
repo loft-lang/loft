@@ -3785,6 +3785,16 @@ pub fn lift_delivered_move() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LIFT_DELIVERED_MOVE"))
 }
 
+/// `LOFT_NO_TEMP_HELD_VIEW=1` — a local bound from a value whose every store a compiler temp
+/// holds (`alt(x) ?? P { … }`: the `??` subject and the default's work-ref) is recorded as
+/// owning it again, as before loft#2698: a later bind of a view frees it as the displaced store
+/// and the temp frees it at exit.
+#[must_use]
+pub fn temp_held_view() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_TEMP_HELD_VIEW"))
+}
+
 /// `LOFT_NO_RETURNED_ADOPTER_DISARM=1` — a literal buffer whose adopter is a RETURN SOURCE of the
 /// exit, an owner assigned more than once, keeps its exit free guarded against that adopter
 /// (`Scopes::pair_literal_buffers`): the adopter's rebind and the buffer both release the store.

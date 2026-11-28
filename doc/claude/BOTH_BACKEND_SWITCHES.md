@@ -330,6 +330,11 @@ whole (`x = id(mk(n))`), takes the lift's store, which moves: the lift is reset 
 the bind (`@FR-O-Move`, loft#2697); **`LOFT_NO_LIFT_DELIVERED_MOVE=1`** leaves the lift its exit
 free, and after a rebind of the buffer both release the store.  Guards
 `loft-suite/rules/ownership/O-Move/2697-…`.
+A `??` bind whose every store a compiler temp holds (`x = alt(x) ?? P { … }`: the subject, the
+default's work-ref) is recorded as a VIEW, not as the local's own (`@FR-O-Witness`, loft#2698);
+**`LOFT_NO_TEMP_HELD_VIEW=1`** records it as owned, and a later bind of a view frees that store
+as the displaced one while the temp frees it at exit.  Guards
+`loft-suite/rules/ownership/O-Witness/2698-…`.
 A discarded call whose result owns a store is bound to a temporary the scope frees, also where
 an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
 the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the <!-- doc-lint: ok -->
