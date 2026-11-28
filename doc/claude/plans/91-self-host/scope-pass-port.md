@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 619 of 1 189 programs agree; 284 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 8) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 8): 1 440 of 2 282 programs, 33 677 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 647 of 1 189 programs agree; 256 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults and 1 leak, none the scope pass's answer (step 9) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 9): 1 508 of 2 282 programs, 34 197 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -490,6 +490,54 @@ dead when a `while` body assigns the variable unconditionally, though a loop tha
 reads the init — `hit = false; k = 0; while k < len(v) { k += 1; hit = true; } hit` warns on
 `hit = false` (removing it as told breaks the empty case).  Worked around in
 `scope_host_store::literal_clause` (a count).
+
+**Step 9 (2026-11-28) — loft#2671, `Variable::viewed`, `return_field`.**  Re-taken on
+`c19671e61` (the loft#2671 fix beneath step 8): 1 440 of 2 282 programs, 33 677 of 40 088
+definitions, 0 differ — the corpus (suite `45cb6a2`) holds no join return of the issue's shape.
+`free_vars.rs`' new join leg is transcribed all the same (`view_sources`, the backings released
+unless returned, the guards re-keyed on the value returned, `LOFT_NO_JOIN_RETURN_BACKINGS`): a
+probe of the issue's two shapes differed before and agrees now.
+
+`Variable::viewed` is in the image (Variable byte 48, a `vector<integer>`; the flags after it
+move up by four, the stride stays 72), written from `Function::viewed_of`, read back by
+`set_viewed` and set by the loft elaborator from its own `viewed`.  `scope_fn::viewers_of` is
+`Function::viewers_of`; `construct_elide`'s reorders and `rebind_place`'s callee viewers read it,
+and their two-answer approximations and refusals are gone.
+
+`scope_return_field.loft` is `return_field.rs` whole (`@FR-R-ReturnField`, the plain and the
+presence-tested exits), run after `literal_append`.  Its gain is mostly the stale-callee
+cascade: a function refused for `return_field` refused every later caller whose ownership
+summary reads it.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 8, re-taken on `c19671e61` | 1 440 / 2 282 | 33 677 / 40 088 | 0 | 619 |
+| + loft#2671's join leg | 1 440 | 33 677 | 0 | |
+| + `Variable::viewed` in the image | 1 444 | 33 684 | 0 | 620 |
+| + `return_field` | 1 508 / 2 282 | 34 197 / 40 088 | 0 | 647 |
+
+No definition that agreed was lost at any step, nor a program on the whole path; its faults and
+leak are step 7's.
+
+**The stale-callee refusal** (`use_analysis::return_ownership: a callee laid out earlier was
+refused`, the first refusal of 274 programs) is not a mechanism of its own.  Rust's ownership
+oracle reads a callee's return summary off the callee's body as it stands when the caller is
+laid out — settled, for a callee laid out earlier.  Where this pass refused that callee the
+image holds only its parser body, so the caller is refused by name rather than answered from
+the wrong body.  It never stands alone: no program's refusals are this family only.  Its 517
+definitions refused for nothing else come back as the families that refuse their callees are
+carried — `return_field` alone took it from 675 definitions to 517.  The families behind it now,
+by programs that have a stale-callee definition: a returned join's hooks (`returns`) 106,
+`exit_vector` 106, drop cascades 83, `scan` 68, `const_fn` 62.  `exit_vector.rs` (678 lines)
+is the next transcription with that leverage.
+
+Sole refusal families now (scope gate, programs): the view walk's materialise legs 46,
+`place_result` 23, `owner_witness_locals` 22, the value-form remainder 10,
+`callref_collection_join_base` 8, a fn-ref return's join hooks 4, `keep_viewed_displaced` 4,
+`amp_writeback_owned_copy` 3.  The owner witness is about thirty sites (the mint before the
+scan, `view_bind_bases`, the per-`Set` release and alias hooks in `scan_set`, the scope-end
+`release_witness`, the split propagation) rather than one module; the view walk's legs need its
+sparings transcribed first, so that the walk answers exactly where it now answers a superset.
 
 ## Passes
 
