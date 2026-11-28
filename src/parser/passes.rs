@@ -214,25 +214,19 @@ impl Parser {
             crate::diagnostics::set_first_pass(false);
             self.reverse_iterator = false;
             self.iterable_context = false;
+            let diagnostics_at_pass2 = self.lexer.diagnostics().mark();
+            let returns_read = self.return_protocols();
             self.reparse_main(filename, content, default);
-            // @PLN35 PC3 — reject a left-recursive sub-rule grammar (a cycle in the invocation
-            // graph) at compile time, before it can hang at runtime.  Post-parse over pass-2 edges.
-            self.check_subrule_wellformedness();
-            self.assert_pass2_def_attr_stable(&pass1_attr_counts);
-            self.after_pass2();
-            // `LOFT_PASS2_REPEAT=1` (a measurement for @PLN233): pass 2 once more, so every
-            // caller reads the returns pass 2 settled; reports whether they are then stable.
-            if std::env::var_os("LOFT_PASS2_REPEAT").is_some() {
-                let before: Vec<Vec<u16>> = (0..self.data.definitions())
-                    .map(|d| self.data.def(d).returned().depend())
-                    .collect();
-                self.reparse_main(filename, content, default);
-                self.after_pass2();
-                let changed = (0..before.len().min(self.data.definitions() as usize))
-                    .filter(|&d| self.data.def(d as u32).returned().depend() != before[d])
-                    .count();
-                eprintln!("pass2-repeat: {changed} return(s) changed on the repeat");
-            }
+            self.close_pass2(&pass1_attr_counts);
+            // @PLN233 phase 2: a caller typed against a return pass 2 then changed.
+            self.settle_returns(
+                filename,
+                content,
+                default,
+                diagnostics_at_pass2,
+                returns_read,
+                &pass1_attr_counts,
+            );
         }
         self.backfill_native_symbol_crates();
         // Plan-07 phase 4h — emit `not null` field-reminder hints
@@ -253,10 +247,101 @@ impl Parser {
         self.diagnostics.is_empty()
     }
 
+    /// Close a pass 2: the sub-rule grammar check (@PLN35 PC3 — a left-recursive sub-rule
+    /// grammar is refused at compile time, before it can hang at runtime), the H5 attribute
+    /// stability assert, and `after_pass2`'s promotions — which settle a return too (the
+    /// work-buffer and text-return promotions hand a function its hidden buffer).
+    fn close_pass2(&mut self, pass1_attr_counts: &[usize]) {
+        self.check_subrule_wellformedness();
+        self.assert_pass2_def_attr_stable(pass1_attr_counts);
+        self.after_pass2();
+    }
+
+    /// @PLN233 phase 2 — a caller parsed before its callee read the callee's return as the pass
+    /// before left it; where pass 2 changed that return, the caller's typing is stale (a borrow
+    /// of a store it owns, a store it does not own read as its own).  Pass 2 runs again, reading
+    /// the returns it settled, while that holds, at most twice, each run reporting only its own
+    /// diagnostics.  `LOFT_PASS2_REPEAT=1` — measured, not yet the default: a recursive
+    /// callee's protocol does not settle (`[0]` → `[1]` → `[1, 0]`), and three suite cells over
+    /// a function declared later regress (the plan file, phase 2 status).
+    fn settle_returns(
+        &mut self,
+        filename: &str,
+        content: Option<&str>,
+        default: bool,
+        diagnostics_at_pass2: (usize, Level),
+        mut returns_read: Vec<Vec<u16>>,
+        pass1_attr_counts: &[usize],
+    ) {
+        if !crate::env_once!(std::env::var_os("LOFT_PASS2_REPEAT").is_some()) {
+            return;
+        }
+        for repeat in 1..=2 {
+            if !self.stale_return_read(&returns_read) {
+                return;
+            }
+            if crate::keys::return_drift_enabled() {
+                for d in 0..self.data.definitions() {
+                    let now = self.data.def(d).returned().depend();
+                    if (d as usize) < returns_read.len()
+                        && matches!(self.data.def_type(d), DefType::Function)
+                        && now != returns_read[d as usize]
+                    {
+                        eprintln!(
+                            "return-drift\trepeat {repeat}\t{}\t{:?} -> {now:?}",
+                            self.data.def(d).original_name(),
+                            returns_read[d as usize]
+                        );
+                    }
+                }
+            }
+            returns_read = self.return_protocols();
+            self.lexer.rewind_diagnostics(diagnostics_at_pass2);
+            self.reparse_main(filename, content, default);
+            self.close_pass2(pass1_attr_counts);
+        }
+    }
+
+    /// Each definition's return protocol — the dependency list of what it returns — as the
+    /// next parse's callers will read it.
+    fn return_protocols(&self) -> Vec<Vec<u16>> {
+        (0..self.data.definitions())
+            .map(|d| self.data.def(d).returned().depend())
+            .collect()
+    }
+
+    /// Did a caller read a return the parse then changed?  A function whose protocol differs
+    /// from `read` (what the parse began with), called from a function whose body the parse
+    /// reached BEFORE it (`body_order`): that caller typed the call against the old protocol.
+    /// A caller reached after it read the new one.  A recursive call reads its own function's
+    /// old protocol, which phase 3's clean lists already keep from leaking (loft#2660's own
+    /// program).  Definition numbers are no order here: a call to a function declared below
+    /// mints its definition at the call, numbered before its caller's.
+    fn stale_return_read(&self, read: &[Vec<u16>]) -> bool {
+        let changed: Vec<u32> = (0..read.len().min(self.data.definitions() as usize))
+            .filter(|&d| {
+                matches!(self.data.def_type(d as u32), DefType::Function)
+                    && self.data.def(d as u32).returned().depend() != read[d]
+            })
+            .map(|d| d as u32)
+            .collect();
+        if changed.is_empty() {
+            return false;
+        }
+        let rank = |d: u32| self.body_order.iter().position(|&b| b == d);
+        self.body_order.iter().enumerate().any(|(at, &c)| {
+            self.data.def(c).code.any_node(&mut |n| {
+                matches!(n, Value::Call(d, _)
+                    if *d != c && changed.contains(d) && rank(*d).is_some_and(|r| r > at))
+            })
+        })
+    }
+
     /// Parse the main file once more over the definitions the pass before left (`data.reset()`
     /// keeps them, so def numbers hold): pass 2, and the @PLN233 phase-2a repeat of it.  The
     /// per-parse tables are cleared here and nowhere else, so the two cannot drift apart.
     fn reparse_main(&mut self, filename: &str, content: Option<&str>, default: bool) {
+        self.body_order.clear();
         self.applied_imports.clear();
         self.deferred_unknown.clear();
         self.deferred_import_misses.clear();
