@@ -9,7 +9,7 @@ the branch-level view of what is still IN FLIGHT. A branch with an **open PR** i
 that is **unmerged with no open PR** is an *orphan* — stranded work to land or delete.
 Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
-**7 unmerged branch(es) across 4 repo(s); 7 orphan(s) (unmerged, no open PR).**
+**6 unmerged branch(es) across 3 repo(s); 6 orphan(s) (unmerged, no open PR).**
 
 ## loft-libs-game
 
@@ -25,7 +25,3 @@ Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 ## loft-libs-net
 
 - `security-hardening` — PR no-PR · (4 files) — ssh 0.1.6: connect_pinned keeps a session only  ⚠ orphan
-
-## loft-libs-world
-
-- `pln217-hex-ground-width32` — PR no-PR · (1 files) — hex_ground: a corner index from an angle is a   ⚠ orphan
