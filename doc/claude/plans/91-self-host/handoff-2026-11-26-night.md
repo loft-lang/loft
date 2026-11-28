@@ -207,6 +207,13 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   refuse; return null }` followed by `if cb is TyVector { sv = …; st = …; lt = …; init = … }`
   (assignments to the function's locals inside a nested `if`).  The one `if / else if / else`
   chain builds clean.  Trigger copy: double-free-trigger-el_ex_loop.loft, c035ae98 scratchpad.
+- An unproven variant cast of a field or an element (`g = v[0] as Circle`, no `is` test): Rust
+  reads it as `(v[0] as Circle?)?` — the checked cast, the variant's default record (an
+  `EnumUnitLit`) on a miss.  A syntax rewrite in `variant_cast` (`defaulted_variant_cast`, kept in
+  el_ex_cast.withrewrite in the c035ae98 scratchpad) agrees on probes vc1/vc8, but is held:
+  B-Copy/c131-a-cast-to-a-variant-answers-the-variant goes refused → DIFF through a pass-2-only
+  `__ncc_N` that reuses a pass-1 holder of the same name at another type, the `__ncc` /
+  `__ref_p2` null-init order, and the numbering shift after them.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
