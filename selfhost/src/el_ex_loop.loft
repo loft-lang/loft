@@ -1926,8 +1926,15 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
       el_vars::set_var_type(vars, lv, elem);
     }
   }
+  // (`x#iter_state` is a second-pass mint: numbered after every first-pass variable, made with
+  // the walk's head — before its body, whose `x#remove` names it.)
+  state = -1;
+  if !e.first_pass {
+    state = el_vars::add_variable(vars, "{base}#iter_state", count_type(e));
+    el_vars::set_defined(vars, state);
+  }
   vars.active_loops += [lv];
-  vars.active_values += [ir::NdNull];
+  vars.active_values += [if ct is TySorted || ct is TyIndex { x.code } else { ir::NdNull }];
   fc = el_ex_pattern::loop_filter(e, vars, h.filter);
   b = el_ex_assign::parse_block(e, vars, h.body, "for", ir::TyVoid);
   cnt = el_vars::pop_loop(vars);
@@ -1935,9 +1942,6 @@ pub fn keyed_for(e: el::El, vars: el_vars::Vars, h: ForHead, x: Ex) -> Ex {
   if e.first_pass {
     return ex(ir::NdNull, ir::TyVoid);
   }
-  // (`x#iter_state` is a second-pass mint: numbered after every first-pass variable.)
-  state = el_vars::add_variable(vars, "{base}#iter_state", count_type(e));
-  el_vars::set_defined(vars, state);
   known = el_schema::keyed_type(e, ct);
   on = 128;
   arg = 4;
