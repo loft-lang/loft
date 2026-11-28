@@ -16,6 +16,9 @@
 use ir;
 use scope_fn;
 use opt_names;
+use own;
+use scope_capture_builds;
+use scope_scan;
 
 // port: capture_adoption.rs fn capture_attr_is_cascade_relevant
 pub fn capture_attr_is_cascade_relevant(b: ir::Bundle, record: integer, a: integer) -> boolean {
@@ -268,4 +271,88 @@ fn strip_underscores(t: text) -> text {
     i += 1;
   }
   t[i..]
+}
+
+// port: capture_adoption.rs fn record_adopts_capture — does closure record `record` adopt the
+// store its capture `a` names (its cascade frees it), rather than borrow it?
+pub fn record_adopts_capture(b: ir::Bundle, f: ir::Function, builds: scope_capture_builds::CaptureBuilds, record: integer, a: integer) -> boolean {
+  at = b.data.definitions[record]!.attributes[a]!;
+  match scope_fn::base(at.typedef[0] ?? ir::TyVoid) {
+    TyReference { n: cell } => if cell >= 0 && b.data.definitions[cell]!.name.starts_with("__cell_") && scope_fn::var(f, at.name) >= 0 {
+      return true;
+    },
+    _ => {}
+  }
+  if scope_fn::has(builds.pass_confined, record) {
+    return false;
+  }
+  v = scope_fn::var(f, scope_capture_builds::capture_name(b, record, a));
+  if v < 0 || scope_fn::is_argument(f, v) {
+    return false;
+  }
+  if !scope_fn::has(builds.assigned, v) && env_variable("LOFT_NO_RELAY_CAPTURE_BORROW") == null {
+    return false;
+  }
+  if scope_fn::owner_witness(f, v) != scope_fn::NONE && scope_fn::owner_witness(f, v) >= 0
+    && scope_capture_builds::attr(b, record, "{at.name}__own") >= 0 {
+    bk = scope_scan::get(builds.backing, v);
+    return bk >= 0 && !scope_fn::is_argument(f, bk) && frame_owns_capture_store(f, bk);
+  }
+  frame_owns_capture_store(f, v)
+}
+
+// port: capture_adoption.rs fn frame_owns_capture_store
+fn frame_owns_capture_store(f: ir::Function, start: integer) -> boolean {
+  v = start;
+  for _ in 0..8 {
+    for o in scope_fn::join_owners(f, v) {
+      if o == v || scope_fn::is_argument(f, o) || !frame_owns_capture_store(f, o) {
+        return false;
+      }
+    }
+    tp = scope_fn::tp(f, v);
+    dep = scope_fn::depend(tp);
+    if len(dep) == 0 {
+      return true;
+    }
+    if len(dep) == 1 && dep[0]! == v && scope_fn::is_keyed(tp) {
+      return true;
+    }
+    if len(dep) > 1 {
+      for d in dep {
+        if d == v || scope_fn::is_argument(f, d) || !frame_owns_capture_store(f, d) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if dep[0]! == v || scope_fn::is_argument(f, dep[0]!) {
+      return false;
+    }
+    v = dep[0]!;
+  }
+  false
+}
+
+// port: capture_adoption.rs fn owner_slot_takes — loft#2131: the build hands capture `c` to
+// the record's OWNER slot (the record borrows `c` but the frame's holder of it is handed over).
+pub fn owner_slot_takes(b: ir::Bundle, f: ir::Function, builds: scope_capture_builds::CaptureBuilds, record: integer, c: integer) -> boolean {
+  nm = scope_fn::name(f, c);
+  a = scope_capture_builds::attr(b, record, nm);
+  w = scope_fn::owner_witness(f, c);
+  a >= 0 && scope_capture_builds::attr(b, record, "{nm}__own") >= 0
+    && ((w >= 0 && w != scope_fn::NONE) || len(join_arm_holders(f, builds, c)) > 0)
+    && !record_adopts_capture(b, f, builds, record, a)
+}
+
+// port: capture_adoption.rs fn join_arm_holders
+pub fn join_arm_holders(f: ir::Function, builds: scope_capture_builds::CaptureBuilds, c: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for h in scope_scan::list_of(builds.join_arms_at_build, c) {
+    if h < scope_fn::count(f) && h != c && scope_fn::name(f, h).starts_with("__") && !scope_fn::is_argument(f, h)
+      && own::heap_def_nr(scope_fn::base(scope_fn::tp(f, h))) != null && frame_owns_capture_store(f, h) {
+      out += [h];
+    }
+  }
+  out
 }
