@@ -459,8 +459,19 @@ pub(super) fn give_halt_a_value(code: &mut Value, value: Value, tp: &Type) {
 }
 
 /// Does `ops` reach its last operator only past a halt — the value behind it is never read?
+/// A halt is the halting call, and its other spelling, a `return`, `break` or `continue`
+/// statement of this block: a value `if` whose arm returns gets its sibling's null pushed behind
+/// the `return` (`@FR-C-Never`), and counted as an arm that yields null it made the join `τ?`
+/// (loft#2682).
 fn behind_a_halt(data: &crate::data::Data, ops: &[Value]) -> bool {
-    ops.len() > 1 && ops[..ops.len() - 1].iter().any(|o| is_halt_call(data, o))
+    ops.len() > 1
+        && ops[..ops.len() - 1].iter().any(|o| {
+            is_halt_call(data, o)
+                || matches!(
+                    o.unspan(),
+                    Value::Return(_) | Value::Break(_) | Value::Continue(_)
+                )
+        })
 }
 
 /// `@FR-N-Guard` — can the body of a guard clause NOT fall through: it ends in `return`,
