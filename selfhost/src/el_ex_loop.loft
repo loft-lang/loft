@@ -2454,7 +2454,9 @@ pub fn format_for(e: el::El, vars: el_vars::Vars, n: integer, w: integer, stack:
   b = el_ex_assign::parse_block(e, vars, body!, "for", ir::TyUnknown { n: 0 });
   el_vars::pop_loop(vars);
   vars.active_values = vars.active_values[..-1];
-  vt = el_types::without_deps(b.tp);
+  // (`change_var_type(append_value, format_type)`: the value takes the body's type as it is, a
+  // view of what it borrows included — `{for s in v {s}}`'s `text["s"]`.)
+  vt = b.tp;
   el_vars::set_var_type(vars, val, vt);
   cnt = el_vars::var(vars, "{id}#count");
   if cnt < 0 {
