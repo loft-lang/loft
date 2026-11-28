@@ -21,8 +21,8 @@ finding.  It is a REPORT, never a gate; the one gate is the census guard (§ The
 
 | A project still carries | Because | The check |
 |---|---|---|
-| a workaround for a defect or a restriction loft no longer has | nothing tells a project that an issue closed | 1 — lifted |
-| a rule in its notes about loft that was never an issue, or is no longer true | a belief is written once and never re-measured | 2 — beliefs |
+| a workaround for a defect or a restriction that loft does not have | nothing tells a project that an issue closed | 1 — lifted |
+| a rule in its notes about loft that was never an issue, or does not hold | a belief is written once and never re-measured | 2 — beliefs |
 | a form rewritten for speed, or a habit that reads as the idiom | the language once punished the natural form | 3 — canon |
 | a routine the standard library, a published library or another project already has | the author did not look, or the routine arrived later | 4 — reinvention |
 
