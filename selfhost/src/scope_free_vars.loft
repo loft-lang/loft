@@ -14,6 +14,7 @@ use scope_scan;
 use scope_args;
 use scope_get_free_vars;
 use scope_drops;
+use scope_inline_returns;
 use binds;
 use own;
 use opt_names;
@@ -30,8 +31,8 @@ pub fn no_delivery() -> Delivered {
 
 // port: free_vars.rs fn text_buffer_in_frame — `tp` with a dep on the hidden TEXT buffer
 // renumbered from the attribute index to the argument variable it is; `tp` itself where no dep
-// names it (Rust's `None`).  A tuple's members are renumbered one by one in Rust: refused here.
-fn text_buffer_in_frame(s: scope_scan::Scopes, d: ir::Definition, tp: ir::TypeT, f: ir::Function) -> ir::TypeT {
+// names it (Rust's `None`).
+fn text_buffer_in_frame(d: ir::Definition, tp: ir::TypeT, f: ir::Function) -> ir::TypeT {
   bufs: vector<integer> = [];
   for a in d.attributes {
     if is_text_buffer_attr(a) {
@@ -45,9 +46,32 @@ fn text_buffer_in_frame(s: scope_scan::Scopes, d: ir::Definition, tp: ir::TypeT,
   if len(d.attributes) != len(args) {
     return tp;
   }
-  if scope_fn::base(tp) is TyTuple {
-    scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a tuple return naming a text buffer");
-    return tp;
+  renumber_text_buffer(tp, bufs, args) ?? tp
+}
+
+// port: free_vars.rs fn renumber_text_buffer — null where no dep names the buffer; a tuple's
+// members one by one.
+fn renumber_text_buffer(tp: ir::TypeT, bufs: vector<integer>, args: vector<integer>) -> ir::TypeT? {
+  match scope_fn::base(tp) {
+    TyTuple { elems } => {
+      any = false;
+      out: vector<ir::TypeT> = [];
+      for e in elems {
+        r = renumber_text_buffer(e, bufs, args);
+        if r != null {
+          any = true;
+          out += [r!];
+        } else {
+          out += [e];
+        }
+      }
+      if !any {
+        return null;
+      }
+      tuple = ir::TyTuple { elems: out };
+      return if tp is TyOptional { scope_inline_returns::optional(tuple) } else { tuple };
+    },
+    _ => {}
   }
   raw = scope_fn::depend(tp);
   hit = false;
@@ -61,23 +85,16 @@ fn text_buffer_in_frame(s: scope_scan::Scopes, d: ir::Definition, tp: ir::TypeT,
     }
   }
   if !hit {
-    return tp;
+    return null;
   }
-  match tp {
-    TyText => ir::TyText { dep: frame },
-    TyOptional { inner } => if inner is TyText { ir::TyOptional { inner: ir::TyText { dep: frame } } } else { tp },
-    _ => {
-      scope_scan::refuse(s, "free_vars::text_buffer_in_frame: a non-text return naming a text buffer");
-      tp
-    }
-  }
+  scope_inline_returns::with_deps(tp, frame)
 }
 
 // port: free_vars.rs fn free_vars
 pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr: ir::Node, f: ir::Function, tp0: ir::TypeT, to_scope: integer) -> vector<ir::Node> {
   def = b.data.definitions[s.d_nr]!;
   def_ret = def.returned[0] ?? ir::TyVoid;
-  tp = if to_scope == 1 && "{tp0}" == "{def_ret}" { text_buffer_in_frame(s, def, tp0, f) } else { tp0 };
+  tp = if to_scope == 1 && "{tp0}" == "{def_ret}" { text_buffer_in_frame(def, tp0, f) } else { tp0 };
   if is_return {
     // loft#1476 — the closure records a return delivers on some path.
     for v in 0..scope_fn::count(f) {
@@ -98,8 +115,8 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     // hook away from the sweep: for a record return no source has one (the phase refuses a
     // record type with a cascade, and a vector source's elements are asked here).  A VECTOR
     // return's sources are vectors and records, none with a cascade (the phase refuses both).
-    // A keyed or fn-ref return builds no `materialized_view_return` copy, which all four read,
-    // so none of them applies to it.
+    // A keyed, fn-ref or tuple return builds no `materialized_view_return` copy, which all four
+    // read, so none of them applies to it.
     if (scope_fn::is_record(tp) || scope_fn::base(tp) is TyVector) && !(scope_fn::base(tp) is TyRefVar) {
       for v in 0..scope_fn::count(f) {
         match scope_fn::base(scope_fn::tp(f, v)) {
@@ -112,7 +129,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
           _ => {}
         }
       }
-    } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) && !(scope_fn::base(tp) is TyFunction) && !scope_fn::is_keyed(tp) {
+    } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) && !(scope_fn::base(tp) is TyFunction) && !scope_fn::is_keyed(tp) && !(scope_fn::base(tp) is TyTuple) {
       scope_scan::refuse(s, "returns::move_join_hooks_into_arms: a {scope_fn::kind_name(tp)} return");
     }
   }
@@ -397,8 +414,71 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
     return result;
   }
-  if is_return && scope_fn::base(tp) is TyTuple {
-    scope_scan::refuse(s, "free_vars: a tuple returned past frees (__ret_text_N)");
+  // @P329 — a tuple-of-text return: each text element that is no literal, variable or null is
+  // staged into an owned `__ret_text_N` copy before the frees run.
+  tuple_leg = is_return && !expr_is_terminal && match tp {
+    TyTuple { elems } => {
+      has_text = false;
+      for e in elems {
+        if e is TyText {
+          has_text = true;
+        }
+      }
+      has_text && match scope_fn::unspan(expr) { NdTuple { items } => len(items) == len(elems), _ => false }
+    },
+    _ => false
+  };
+  if tuple_leg {
+    elems: vector<ir::TypeT> = match tp { TyTuple { elems } => elems, _ => [] };
+    items: vector<ir::Node> = match scope_fn::unspan(expr) { NdTuple { items } => items, _ => [] };
+    new_elems: vector<ir::Node> = [];
+    result: vector<ir::Node> = [];
+    for el in items {
+      u = scope_fn::unspan(el);
+      if elems[el#index]! is TyText && !(u is NdText || u is NdVar || u is NdNull) {
+        s.ret_temp_counter += 1;
+        tmp = scope_fn::add_temp_var(f, "__ret_text_{s.ret_temp_counter}", ir::TyText { dep: [] });
+        f.variables[tmp].skip_free = true;
+        scope_scan::set_scope_of(s, tmp, s.scope);
+        s.var_order += [tmp];
+        result += [scope_fn::v_set(tmp, el)];
+        new_elems += [ir::NdVar { n: tmp }];
+      } else {
+        new_elems += [el];
+      }
+    }
+    result += ls;
+    result += [ir::NdReturn { inner: ir::NdTuple { items: new_elems } }];
+    return result;
+  }
+  // @P378(b) — a heap-returning tail `if` whose condition lifted a call: the condition's
+  // preamble runs, its boolean is staged into `__cond_N`, the frees run, then the `if` is
+  // returned.
+  if is_return && !expr_is_terminal && (tp is TyReference || tp is TyVector || match tp { TyEnum { is_ref } => is_ref, _ => false }) && cond_lifts(expr, f) {
+    cond = match scope_fn::unspan(expr) { NdIf { cond } => cond, _ => ir::NdNull };
+    t_arm = match scope_fn::unspan(expr) { NdIf { t } => t, _ => ir::NdNull };
+    f_arm = match scope_fn::unspan(expr) { NdIf { f: e } => e, _ => ir::NdNull };
+    result: vector<ir::Node> = [];
+    bool_expr = cond;
+    match scope_fn::unspan(cond) {
+      NdInsert { items } => {
+        for o in items {
+          if o#index < len(items) - 1 {
+            result += [o];
+          }
+        }
+        bool_expr = items[len(items) - 1]!;
+      },
+      _ => {}
+    }
+    s.ret_temp_counter += 1;
+    ctmp = scope_fn::add_temp_var(f, "__cond_{s.ret_temp_counter}", ir::TyBoolean);
+    scope_scan::set_scope_of(s, ctmp, s.scope);
+    s.var_order += [ctmp];
+    result += [scope_fn::v_set(ctmp, bool_expr)];
+    result += ls;
+    result += [ir::NdReturn { inner: ir::NdIf { cond: ir::NdVar { n: ctmp }, t: t_arm, f: f_arm } }];
+    return result;
   }
   if !is_return && scope_fn::is_text(tp) && !(expr is NdNull) && !(expr is NdVar) && !tail_is_branch(expr) {
     s.ret_temp_counter += 1;
@@ -446,6 +526,20 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     }
   }
   out
+}
+
+// The @P378(b) shape: an `if` whose condition is an `Insert` that starts by binding a `__lift_N`.
+fn cond_lifts(expr: ir::Node, f: ir::Function) -> boolean {
+  match scope_fn::unspan(expr) {
+    NdIf { cond } => match scope_fn::unspan(cond) {
+      NdInsert { items } => len(items) > 0 && match items[0]! {
+        NdSet { var } => scope_fn::name(f, var).starts_with("__lift_"),
+        _ => false
+      },
+      _ => false
+    },
+    _ => false
+  }
 }
 
 // `matches!(t, Type::Reference(..) | Type::Enum(_, true, _))`, bare.
