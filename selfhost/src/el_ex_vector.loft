@@ -1282,13 +1282,57 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
     subject = el_ir::v_block([el_ir::v_set(lifted, x.code), ir::NdVar { n: lifted }], el_types::with_deps(x.tp, [lifted]), "inline_container");
   }
   args: vector<ir::Node> = [subject, ir::NdInt { n: if e.first_pass { 65535 } else { el_schema::keyed_type(e, ct) } }, ir::NdInt { n: len(names) }];
+  kcount = 0;
+  key_pre: vector<ir::Node> = [];
   for k in keys {
     a = attr_nr(el::def(e, el_d), names[k#index]!);
     kt = if a < 0 { ir::TyUnknown { n: 0 } } else { el::def(e, el_d).attributes[a]!.typedef[0] };
+    // (A tuple key field written as a tuple literal, `x.tu[(2, "b")]`: its members are the key
+    // values, each converted to its member's type, counted one by one — `OpGetRecord(c, tp, 2,
+    // 2i32, "b")`.  A tuple held elsewhere is refused by name.)
     if kt is TyTuple {
-      el::refuse(e, "a tuple key");
-      return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      tms = match kt { TyTuple { elems: tme } => tme, _ => [] };
+      titems = match e.p.nodes[k] { STupleLit { elems: tis } => tis, _ => [] };
+      // (A tuple VALUE as the key: a local's members read in place, `k.0, k.1`; any other value
+      // held first in a `___key_t_N`, the lookup then a `keyed_tuple_lookup` block.)
+      if len(titems) == 0 {
+        tvx = el_ex_assign::expression(e, vars, k);
+        if !(el_types::base(tvx.tp) is TyTuple) && !(el_types::is_unknown(tvx.tp) && e.first_pass) {
+          el::refuse(e, "a tuple key");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        tsrc = match el_ir::unspan(tvx.code) { NdVar { n: tvn } => tvn, _ => -1 };
+        if tsrc < 0 {
+          tsrc = el_vars::create_unique(vars, "__key_t", el_types::without_deps(tvx.tp));
+          el_vars::set_defined(vars, tsrc);
+          key_pre += [el_ir::v_set(tsrc, tvx.code)];
+        }
+        for tmi in 0..len(tms) {
+          args += [ir::NdTupleGet { var: tsrc, idx: tmi }];
+          kcount += 1;
+        }
+        continue;
+      }
+      if len(titems) != len(tms) {
+        el::refuse(e, "a tuple key");
+        return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+      }
+      for ti in titems {
+        tx = el_ex_assign::expression(e, vars, ti);
+        tv = stored(e, vars, tx, tms[ti#index]!);
+        if tv == null && e.first_pass {
+          tv = tx.code;
+        }
+        if tv == null {
+          refuse_known(e, tx.tp, "a key its field's type converts: {type_kind(tx.tp)} to {type_kind(tms[ti#index]!)}");
+          return ex(ir::NdNull, ir::TyUnknown { n: 0 });
+        }
+        args += [tv!];
+        kcount += 1;
+      }
+      continue;
     }
+    kcount += 1;
     kx = el_ex_assign::expression(e, vars, k);
     v = stored(e, vars, kx, kt);
     // (As above: the first pass's key is the second pass's to convert.)
@@ -1301,6 +1345,7 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
     }
     args += [v!];
   }
+  args[2] = ir::NdInt { n: kcount };
   t = ir::TyReference { n: el_d, dep: [] };
   ds = el_types::deps(ct);
   if len(ds) > 0 {
@@ -1314,6 +1359,11 @@ pub fn keyed_index(e: el::El, vars: el_vars::Vars, at: integer, x: Ex, keys: vec
     t = el_types::with_deps(t, [lifted]);
   }
   code = el_ir::cl(e, "OpGetRecord", args);
+  if len(key_pre) > 0 {
+    // (The block names the container it reads, not a call's answer lifted for it.)
+    kbt = el_types::with_deps(t, [for kd in el_types::deps(t) if kd != lifted { kd }]);
+    code = el_ir::v_block(key_pre + [code], kbt, "keyed_tuple_lookup");
+  }
   if !e.first_pass {
     code = ir::NdSpan { pos: el::pos_at(e, at), inner: code };
   }

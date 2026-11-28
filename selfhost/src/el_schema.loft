@@ -1049,23 +1049,46 @@ pub fn key_descriptors(e: el::El, t: integer) -> vector<ir::Key> {
   fields = struct_fields(e, c);
   for k in ks {
     f = fields[k.nr]!;
-    tn = 7;
-    start = 0;
-    if f.content <= 5 {
-      tn = 1 + f.content;
-    } else {
-      match e.b.types[f.content]!.parts[0] {
-        PtInt { start: _ } => { tn = 8; },
-        PtShort { start: m } => { tn = 9; start = m; },
-        PtByte { start: m } => { tn = 10; start = m; },
-        PtShortRaw { start: m } => { tn = 11; start = m; },
-        PtIntRaw { start: _ } => { tn = 12; },
-        _ => {}
+    // (`key_contents_for_field`: a tuple key field is its members, each a key of its own at its
+    // offset inside the field — `k: (integer, text)` keys `tp:1` at 0 and `tp:6` at 8.)
+    kcs: vector<integer> = [];
+    kps: vector<integer> = [];
+    key_contents(e, f.content, f.position, kcs, kps);
+    for kc in kcs {
+      tn = 7;
+      start = 0;
+      if kc <= 5 {
+        tn = 1 + kc;
+      } else {
+        match e.b.types[kc]!.parts[0] {
+          PtInt { start: _ } => { tn = 8; },
+          PtShort { start: m } => { tn = 9; start = m; },
+          PtByte { start: m } => { tn = 10; start = m; },
+          PtShortRaw { start: m } => { tn = 11; start = m; },
+          PtIntRaw { start: _ } => { tn = 12; },
+          _ => {}
+        }
       }
+      r += [ir::Key { type_nr: if k.asc { tn } else { -tn }, position: kps[kc#index]!, start: start }];
     }
-    r += [ir::Key { type_nr: if k.asc { tn } else { -tn }, position: f.position, start: start }];
   }
   r
+}
+
+// `Stores::key_contents_for_field`: the (content, position) pairs one key field compares — a
+// `__tuple<…>` field's members, recursively, at their offsets; any other field itself.
+fn key_contents(e: el::El, content: integer, position: integer, cs: vector<integer>, ps: vector<integer>) {
+  if content > 5 && content < len(e.b.types) && starts_with(e.b.types[content]!.name, "__tuple<") && e.b.types[content]!.parts[0] is PtStruct {
+    before = len(cs);
+    for tf in struct_fields(e, content) {
+      key_contents(e, tf.content, position + tf.position, cs, ps);
+    }
+    if len(cs) > before {
+      return;
+    }
+  }
+  cs += [content];
+  ps += [position];
 }
 
 // The element store type of a keyed collection, registered first where it is missing.
