@@ -3,10 +3,8 @@
 # `scripts/scripts_named.py check` gates it; `bless` rewrites it after a move.
 tests/scripts/138-vector-of-vector-single.loft
 tests/scripts/2016-a-chain-site-whose-callee-returns-its-parameter-copies-what-it-hands-up.loft
-tests/scripts/2017-a-nullable-local-rebound-from-its-own-field-frees-the-store-it-built.loft
 tests/scripts/2021-a-returned-branch-arm-that-borrows-a-lifted-argument-copies-what-it-hands-up.loft
 tests/scripts/2028-both-parse-forms-name-every-mismatch-on-the-record.loft
-tests/scripts/2045-a-local-bound-to-owned-and-borrowed-stores-releases-each-once.loft
 tests/scripts/2090-a-passing-assert-builds-no-message.loft
 tests/scripts/2097-a-qualified-variant-is-its-own-enums-variant.loft
 tests/scripts/2112-a-parallel-arm-stops-at-its-own-frame.loft
