@@ -1883,4 +1883,3 @@ fn work_ref_view_frees() -> bool {
 fn rebound_adopter_disarm_off() -> bool {
     crate::env_once!(std::env::var_os("LOFT_NO_REBOUND_ADOPTER_DISARM").is_some())
 }
-
