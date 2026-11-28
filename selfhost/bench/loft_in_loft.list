@@ -23,6 +23,7 @@ loft-suite/rules/binding/B-Ref-Write/a-link-to-a-borrowed-place-releases-nothing
 loft-suite/rules/binding/B-Ref-Write/a-write-through-a-link-modifies-the-amp-parameter.loft
 loft-suite/rules/binding/B-RefType/a-link-variable-reads-and-writes-its-place.loft
 loft-suite/rules/binding/B-Scope/1156-a-loop-body-local-read-after-the-loop-is-not-freed-per-iteration.loft
+loft-suite/rules/binding/B-Scope/1700b-a-closure-captures-the-binding-its-name-spells-now.loft
 loft-suite/rules/binding/B-Scope/1700c-a-later-bind-splits-where-pass-one-cannot-type-the-ended-binding.loft
 loft-suite/rules/binding/B-Scope/1700d-a-split-binds-literal-is-built-into-the-new-binding.loft
 loft-suite/rules/binding/B-Scope/1955b-a-rebind-reading-its-old-value-keeps-it.loft
@@ -174,6 +175,7 @@ loft-suite/rules/layout/L-Sound/2174-an-image-without-its-sidecar-is-refused.lof
 loft-suite/rules/layout/L-Struct/1718-a-virtual-field-has-no-slot-on-native.loft
 loft-suite/rules/layout/L-Struct/a-record-packs-by-descending-alignment-and-pads-to-its-largest.loft
 loft-suite/rules/layout/L-Struct/a-whole-dbref-field-packs-at-alignment-four-among-the-other-fields.loft
+loft-suite/rules/layout/L-Total/a-fn-ref-field-a-capturing-lambda-reaches-carries-its-closure.loft
 loft-suite/rules/layout/L-Total/a-fn-ref-field-no-capturing-lambda-reaches-is-a-function-id.loft
 loft-suite/rules/layout/L-Total/a-record-nothing-links-is-stored-inline.loft
 loft-suite/rules/layout/L-Total/a-record-the-program-links-is-stored-by-id.loft
@@ -679,6 +681,7 @@ tests/scripts/a-comprehension-element-goes-straight-into-its-push.loft
 tests/scripts/a-computed-range-start-steps-one-counter.loft
 tests/scripts/a-count-a-run-of-statements-repeats-is-made-once.loft
 tests/scripts/a-counted-loop-pushing-one-value-is-one-fill.loft
+tests/scripts/a-counted-loop-variable-shares-its-index-slot.loft
 tests/scripts/a-counter-below-a-length-local-is-read-in-range.loft
 tests/scripts/a-counter-wrapped-at-the-length-is-read-in-range.loft
 tests/scripts/a-field-path-handed-to-a-tuple-parameter-is-read-at-the-call.loft
