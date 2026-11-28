@@ -396,6 +396,7 @@ contract](doc/claude/LIBRARY_AUTHORING.md); publishing is the `loft-library` ski
 [.github/LABELS.md](.github/LABELS.md) · [RELEASE.md](doc/claude/RELEASE.md) (start here) /
 [RELEASE_PUBLISH.md](doc/claude/RELEASE_PUBLISH.md) / [releases/](doc/claude/releases/README.md) ·
 [LIBRARY_DOC_REVIEW.md](doc/claude/LIBRARY_DOC_REVIEW.md) · [SKILLS_REVIEW.md](doc/claude/SKILLS_REVIEW.md) ·
+[CONSUMER_REVIEW.md](doc/claude/CONSUMER_REVIEW.md) the monthly pass that removes a project's workarounds ·
 [COMPATIBILITY.md](doc/claude/COMPATIBILITY.md) · [MOVING.md](doc/claude/MOVING.md) · [CHANGELOG.md](CHANGELOG.md) /
 [CHANGELOG_TECHNICAL.md](doc/claude/CHANGELOG_TECHNICAL.md) · [DOC.md](doc/claude/DOC.md) · [USER_DOCS.md](doc/claude/USER_DOCS.md) ·
 [LAVITION.md](doc/claude/LAVITION.md) · [PROMPTS.md](doc/PROMPTS.md) · the owner's notes live OUTSIDE git
