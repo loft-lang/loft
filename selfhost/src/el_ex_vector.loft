@@ -308,7 +308,8 @@ pub fn vector_slice(e: el::El, vars: el_vars::Vars, x: Ex, lo: vector<integer>, 
     sv = held;
   }
   // (A FIELD of records is the same loop, the field read written out again as the subject.)
-  heap_elem = (sv >= 0 || (place && !(elem is TyText))) && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")));
+  // (…and a struct enum's: its record read through its handle, `OpGetField(…, 0, <enum>)`.)
+  heap_elem = (sv >= 0 || (place && !(elem is TyText))) && (elem is TyText || (struct_ref(e, elem) >= 0 && !(elem is TyOptional) && el::def(e, struct_ref(e, elem)).def_type == el::DT_STRUCT && !starts_with(el::def(e, struct_ref(e, elem)).name, "__")) || (el_types::struct_enum_def(elem) >= 0 && !(elem is TyOptional)));
   nested = sv >= 0 && held < 0 && el_types::base(elem) is TyVector && !(elem is TyOptional);
   if (sv < 0 && !place) || x.tp is TyOptional || !(is_scalar(elem) || heap_elem || nested) {
     el::refuse(e, "a slice of a vector that is no local of plain scalars");
@@ -442,6 +443,8 @@ pub fn slice_start(e: el::El, vars: el_vars::Vars, x: Ex, id: text) -> SliceStar
   // A record element walked is a view of the vector's local.
   match elem {
     TyReference { n: _ } => { match el_ir::unspan(subj) { NdVar { n: sv } => { elem = el_types::with_deps(elem, [sv]); }, _ => {} } },
+    // (…as is a struct enum's.)
+    TyEnum { is_ref: er } => { if er { match el_ir::unspan(subj) { NdVar { n: sv } => { elem = el_types::with_deps(elem, [sv]); }, _ => {} } } },
     _ => {}
   }
   SliceStart { init: rename_var(init, walk, idx), subj: subj, idx: idx, elem: elem }
@@ -485,6 +488,14 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
   if inner_vt >= 0 {
     size = 4;
   }
+  // (A struct enum's element is read through its handle too, at the enum's record size; the read
+  // typed as the bare enum.)
+  enum_read = false;
+  if inner_vt < 0 && !e.first_pass && el_types::struct_enum_def(st.elem) >= 0 && !(st.elem is TyOptional) {
+    enum_read = true;
+    inner_vt = el::def(e, el_types::struct_enum_def(st.elem)).known_type;
+    size = record_size(e, st.elem);
+  }
   if hiv < 0 || (nxt < 0 && !rev) || (rev && lov < 0) || (size < 0 && shv < 0) || (op == "" && !record && inner_vt < 0) {
     return null;
   }
@@ -509,7 +520,7 @@ pub fn slice_read(e: el::El, vars: el_vars::Vars, st: SliceStart, rev: boolean =
     return el_ir::v_block([el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step])], el_types::with_deps(st.elem, []), "Vector Index");
   }
   if inner_vt >= 0 {
-    return el_ir::v_block([el_ir::cl(e, "OpGetField", [el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }, ir::NdInt { n: inner_vt }])], st.elem, "Vector Index");
+    return el_ir::v_block([el_ir::cl(e, "OpGetField", [el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]), ir::NdInt { n: 0 }, ir::NdInt { n: inner_vt }])], if enum_read { el_types::without_deps(st.elem) } else { st.elem }, "Vector Index");
   }
   el_ir::v_block([elem_read(e, st.elem, el_ir::cl(e, "OpGetVectorNullable", [st.subj, ir::NdInt { n: size }, step]))], el_types::with_deps(st.elem, []), "Vector Index")
 }
@@ -696,7 +707,9 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
   // element temp, borrowing the vector the slice reads.
   rsd = struct_ref(e, elem);
   vec_elem = el_types::base(elem) is TyVector && !(elem is TyOptional);
-  if elem is TyText || rsd >= 0 || vec_elem {
+  // (A struct enum's element is copied as a record is, through its handle.)
+  esd = if rsd < 0 && !(elem is TyOptional) { el_types::struct_enum_def(elem) } else { -1 };
+  if elem is TyText || rsd >= 0 || vec_elem || esd >= 0 {
     idx = -1;
     match init {
       NdInsert { items } => {
@@ -755,8 +768,8 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     // (A text element's temp keeps the type it was minted with — the placeholder, or a pass-1
     // `_elm_N` of another site the name reuses (`add_variable(reuse)`) — its borrow the store's,
     // `depend` above.)
-    if vec_elem || rsd >= 0 {
-      el_vars::set_var_type(vars, elm_v, if vec_elem { el_types::with_deps(el_types::without_deps(elem), [db]) } else { ir::TyReference { n: rsd, dep: [db] } });
+    if vec_elem || rsd >= 0 || esd >= 0 {
+      el_vars::set_var_type(vars, elm_v, if vec_elem || esd >= 0 { el_types::with_deps(el_types::without_deps(elem), [db]) } else { ir::TyReference { n: rsd, dep: [db] } });
     }
     at = ir::NdVar { n: elm_v };
     // (A vector element is copied into the new element itself, typed as the inner vector.)
@@ -766,7 +779,7 @@ pub fn slice_copy(e: el::El, vars: el_vars::Vars, v: integer, x: Ex) -> ir::Node
     // instance re-lowers at its bound type; a field read around the destination it would not
     // match.)
     tv_elem = el_types::type_var(e, el_types::base(elem)) >= 0;
-    write = if vec_elem { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: inner_vt }]) } else if tv_elem && rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: el::def(e, rsd).known_type + 16384 }]) } else if rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
+    write = if vec_elem { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: inner_vt }]) } else if tv_elem && rsd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, at, ir::NdInt { n: el::def(e, rsd).known_type + 16384 }]) } else if rsd >= 0 || esd >= 0 { el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: se }, el_ir::cl(e, "OpGetField", [at, ir::NdInt { n: 0 }, ir::NdInt { n: rec }]), ir::NdInt { n: rec }]) } else { el_ir::cl(e, "OpSetText", [at, ir::NdInt { n: 0 }, ir::NdVar { n: se }]) };
     steps = [
       el_ir::v_set(se, read!),
       el_ir::v_set(elm_v, el_ir::cl(e, "OpNewRecord", [ir::NdVar { n: v }, ir::NdInt { n: r.vec_known }, ir::NdInt { n: 65535 }])),
