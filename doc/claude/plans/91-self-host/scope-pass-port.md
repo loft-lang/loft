@@ -9,8 +9,8 @@ assignment, IR passes, bytecode writer, runner — and prints what `loft --inter
 
 | layer | measured | command |
 |---|---|---|
-| front (the whole loft path) | 769 of 1 189 programs agree; 135 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 13) | `run_image_survey.py --front` |
-| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 13): 1 872 of 2 282 programs, 36 359 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
+| front (the whole loft path) | 799 of 1 189 programs agree; 105 stop at the scope pass, 281 at the elaborator; 0 differ; 2 faults, no leak, neither the scope pass's answer (step 14) | `run_image_survey.py --front` |
+| scope gate (Rust's parsed image in, per definition) | the transcription (`LOFT_SCOPE_PORT=1`, step 14): 1 951 of 2 282 programs, 37 018 of 40 088 definitions (libraries' included), 0 differ | `scope_survey.py` |
 
 The unscoped definitions, by what stops them: a compiler-made reference (≈13 500), a
 collection local (≈8 300), a text or reference returned past a local to free (646), a `&`
@@ -724,6 +724,57 @@ buffers and `materialised_views`).  An exact walk is `view_walk.rs` (2 088 lines
 `disturbance.rs` (1 109) and `places.rs` (381), and reads five facts the image does not carry:
 `is_iteration_source`, `text_payload_views`, `group_write_views`, `is_amp_container_link` and
 `keyed_views`.
+
+**Step 14 (2026-11-28) — the owner witness, the value-form remainder, the drops arc begun.**
+`witness::owner_witness_locals` (loft#1336, `@FR-O-Witness`) is carried at every site Rust
+has it.  The phase mints each mixed-ownership local's `__own_<name>` before the scan (the
+local never-free, `Variable.owner_witness` set, `view_bind_bases` joined into its deps, the
+null-init in Rust's prepend order); `scan_set` keeps it in step per `witness_set_kind` (the
+guarded `release_witness`, `witness_points_at`, `MintUnless` with its temps,
+`transfer_lift_to_witness`), a split copy inherits it, `scan`'s in-place rebuild arm
+(loft#1510) re-points it, `get_free_vars` releases through it at a scope exit, and
+`drops::witness_hook` is transcribed.  `witness_aliases` and `return_moved_holders` feed hooks
+only and are not recorded; a captured local that could take a witness refuses by name (its
+clauses read `capture_build_backings`).
+
+`arm_lift`'s value-form remainder is carried: a reassignment `sink_set_into_arms` declines takes
+`scan_set`'s generic legs.  Two facts made it differ.  `pair_literal_buffers`' rebound
+parameters include a local renamed onto the return buffer (`is_promoted_return_buffer`), so
+the construction buffers a promoted buffer adopts take no free.  And `written_out` is keyed as
+Rust keys it, by the node of the code the scan was handed: a `Set` inside a value `scan_set`
+built itself (a written-out branch, a copied bind) is never recorded (`Scopes::built_depth`),
+and `rewrite_written_out` matches a value's text BEFORE its children are rewritten.  The port's
+text key had written out a `??` chain's subject nested in a sunk branch (`c131`).
+
+The drops arc begins with the records no copy hands a drop on: `drop_hook` answers the cascade;
+`displaced_drop` takes Rust's `__disp_N` snapshot, placed by `convert` around an in-place
+rebuild; `drop_handoff_node`'s construction arm arms the adopted work-refs per statement and
+early for a loop body; `hooks_follow_returned_frees` guards a hook ahead of a returned
+`OpFreeRefIfDistinct`.  `scope_handoff.loft` is `handoff.rs` begun (`copy_moves_drop_from`,
+`copy_carries_drop`, `copy_record_handoff`).  Refused by name where `handed_off` would take a
+flag: a whole-value copy that moves a drop (`holds_caller_record` read as false, a superset),
+a droppable record copied into a buffer or container, a droppable first bind Rust writes out
+per arm (`arm_source_outlives_loop`), a closure record rebuilt.
+
+| measured | programs agree | definitions agree | differ | whole path |
+|---|---|---|---|---|
+| step 13 | 1 872 / 2 282 | 36 359 / 40 088 | 0 | 769 |
+| + the owner witness | 1 911 | 36 545 | 0 | 780 |
+| + the value-form remainder | 1 943 | 36 642 | 0 | 793 |
+| + drops without a copy hand-off | 1 951 / 2 282 | 37 018 / 40 088 | 0 | 799 |
+
+No definition that agreed was lost, nor a whole-path program; the faults are step 7's (one
+whole-path run timed out `164-element-place` under build load: it agrees alone, in step 13's
+time).  The stale-callee cascade: 172 definitions refused for nothing else, in 37 programs.
+
+Sole refusal families now (programs): the view walk 71, drops 39, closures 16 (113 counting
+`displaced_drop`'s closure-record rebuild with them), `callref_collection_join_base` 11.  By
+first refusal: closure records 133, the view walk 72, `copy_record_handoff` 21,
+`callref_collection_join_base` 16, the droppable first bind written out 10, `copy_moves_drop_from`
+7.  The drops arc continues with the hand-offs themselves: `mint_handoff_flag` and the per-path
+pairs (`per_path_handoffs`, `loop_self_stopping_copies`, `caller_record_locals`,
+`arm_container_handoffs`, `local_copy_pairs`), `drop_handoff_node`'s copy arms, `scan_set`'s
+`stops_target` / inherited flag writes, then `arm_source_outlives_loop`; closures follow.
 
 ## Passes
 
