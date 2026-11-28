@@ -7930,8 +7930,22 @@ use a separate collection or add after the loop"
         // `h = mk(); h += [R { … }]` made `h` a `vector<R>` on pass 1, and pass 2 refused the
         // hash, sorted or index the function answers as a type change.
         let leaves_untyped = op != "=" && self.untyped_on_pass1(var_nr);
+        // `@FR-Col-Insert`, @PLN85 cluster V — a vector `+=` appends INTO the place, so the
+        // place keeps its own type as it keeps its own backing: a nullable source
+        // (`s: vector<integer>?`) appends nothing when absent and never makes the destination
+        // a `τ?` (it was widened by `(N-Join)`'s nullable arm, as a WRITE of the source would
+        // be, and `len(c)` then warned about a null `c` that cannot be).  The element type
+        // still comes from the source, where pass 1 left it to decide.
+        let append_source = if preserve_append_backing
+            && let Type::Optional(inner) = &s_type
+            && matches!(inner.as_ref(), Type::Vector(_, _))
+        {
+            (**inner).clone()
+        } else {
+            s_type.clone()
+        };
         if !compound_keeps_place && !text_appends_rendering && !leaves_untyped {
-            self.change_var(to, &s_type);
+            self.change_var(to, &append_source);
         }
         // @PLN110 3a — track `n = len(s)` so `for i in 0..n` keeps the strict-index
         // bound.  Any OTHER assignment to `n` drops the entry: a miss is the right
