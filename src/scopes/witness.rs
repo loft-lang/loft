@@ -994,6 +994,7 @@ fn loop_coalesce_locals(code: &Value, function: &Function) -> Vec<u16> {
         if let Value::Set(t, val) = node.unspan() {
             let at = *first.entry(*t).or_insert(depth);
             if at < depth
+                // @FR-O-Proxy asks alloc — decides whether the local gets a witness, not a release
                 && coalesce_subject_temp(val, function)
                     .is_some_and(|n| function.proxy_says_owned(n))
                 && val.reads_var(*t)
