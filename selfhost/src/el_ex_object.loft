@@ -1923,7 +1923,7 @@ pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::
   // `parse_vector` builds a hinted one: its store numbers before the next argument's literal.)
   if match e.p.nodes[node] { SVecLit { items: eis } => len(eis) == 0, _ => false } && !el_types::is_unknown(elem) {
     evt = ir::TyVector { inner: elem, dep: [] };
-    enode = el_ex_pattern::empty_literal_to(e, vars, evt);
+    enode = el_ex_pattern::empty_literal_to(e, vars, evt, lit: node);
     etp = match enode { NdBlock { block: ebk } => ebk[0].result[0] ?? evt, _ => evt };
     return ex(enode, etp);
   }
