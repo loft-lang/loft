@@ -197,14 +197,125 @@ fn record_type_in(b: ir::Bundle, n: ir::Node, v: integer, ops: Ops) -> integer {
 
 // port: loop_record.rs fn rewrite — the statement lists under `v` (a block under its spans, and
 // again as the span's child, as `unspan_mut` and `for_each_child_mut` reach it); `hv`/`hs`
-// collect each record whose declaration moved, with the scope it moved to.
+// collect each record whose declaration moved, with the scope it moved to.  After the children,
+// the loops of this block that keep a record get the record's free ahead of every `return`
+// (`free_before_returns`, loft#2681).
 fn rewrite(v: ir::Node, recs: vector<Rec>, ops: Ops, hv: vector<integer>, hs: vector<integer>) -> ir::Node {
   w = with_statements(v, recs, ops, hv, hs);
   kids = scope_fn::children(w);
   if len(kids) == 0 {
     return w;
   }
-  ir_pass_tree::with_children(w, [for k in kids { rewrite(k, recs, ops, hv, hs) }])
+  done = ir_pass_tree::with_children(w, [for k in kids { rewrite(k, recs, ops, hv, hs) }]);
+  if (env_variable("LOFT_NO_LOOP_RECORD_RETURN_FREE") ?? "") != "" {
+    return done;
+  }
+  kept_loops(done, recs, ops)
+}
+
+// The records whose outermost loop is the loop of scope `ls`, sorted.
+fn mine_of(recs: vector<Rec>, ls: integer) -> vector<integer> {
+  mine: vector<integer> = [];
+  for r in recs {
+    if r.lr.loop_scope == ls {
+      mine += [r.lr.v];
+    }
+  }
+  for i in 1..len(mine) {
+    j = i;
+    while j > 0 && mine[j - 1]! > mine[j]! {
+      t = mine[j - 1]!;
+      mine[j - 1] = mine[j]!;
+      mine[j] = t;
+      j -= 1;
+    }
+  }
+  mine
+}
+
+// `v`'s block (under its spans), each loop statement that keeps a record given the record's
+// free ahead of its returns.
+fn kept_loops(v: ir::Node, recs: vector<Rec>, ops: Ops) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: kept_loops(inner, recs, ops) },
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, kept_statements(block[0]!, recs, ops))] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, kept_statements(block[0]!, recs, ops))] },
+    _ => v,
+  }
+}
+
+fn kept_statements(bl: ir::Block, recs: vector<Rec>, ops: Ops) -> vector<ir::Node> {
+  [for stmt in bl.operators {
+    ls = match scope_fn::unspan(stmt) { NdLoop { block } => block[0]!.scope, _ => -1 };
+    mine = if ls >= 0 { mine_of(recs, ls) } else { [] };
+    if len(mine) == 0 { stmt } else { free_before_returns(stmt, mine, ops) }
+  }]
+}
+
+// port: loop_record.rs fn free_before_returns — every `return` inside a loop that keeps records
+// `mine` frees them first, unless its own block already frees one ahead of it; a `return` that
+// is no statement of a block becomes a block of the frees and the return, its spans inside it
+// (loft#2681).
+fn free_before_returns(v: ir::Node, mine: vector<integer>, ops: Ops) -> ir::Node {
+  match scope_fn::unspan(v) {
+    NdBlock { block } => {
+      return in_spans(v, ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, returns_freed(block[0]!, mine, ops))] });
+    },
+    NdLoop { block } => {
+      return in_spans(v, ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, returns_freed(block[0]!, mine, ops))] });
+    },
+    NdReturn { inner } => {
+      ops_list: vector<ir::Node> = [for r in mine { ir::NdCall { def_nr: ops.free_ref, args: [ir::NdVar { n: r }] } }];
+      ops_list += [in_spans(v, ir::NdReturn { inner: free_before_returns(inner, mine, ops) })];
+      return ir::NdBlock { block: [ir_pass_tree::block("loop record return", ops_list, ir::TyNever, 65535)] };
+    },
+    _ => {}
+  }
+  kids = scope_fn::children(v);
+  if len(kids) == 0 {
+    return v;
+  }
+  ir_pass_tree::with_children(v, [for k in kids { free_before_returns(k, mine, ops) }])
+}
+
+// `n` under the spans `v` wears (`unspan_mut`'s place).
+fn in_spans(v: ir::Node, n: ir::Node) -> ir::Node {
+  match v {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: in_spans(inner, n) },
+    _ => n,
+  }
+}
+
+fn returns_freed(bl: ir::Block, mine: vector<integer>, ops: Ops) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for stmt in bl.operators {
+    match scope_fn::unspan(stmt) {
+      NdReturn { inner } => {
+        ret = in_spans(stmt, ir::NdReturn { inner: free_before_returns(inner, mine, ops) });
+        for r in mine {
+          freed = false;
+          for o in out {
+            match scope_fn::unspan(o) {
+              NdCall { def_nr, args } => {
+                if is_free(ops, def_nr) && var_of(args, 0) == r {
+                  freed = true;
+                }
+              },
+              _ => {}
+            }
+          }
+          if !freed {
+            out += [ir::NdCall { def_nr: ops.free_ref, args: [ir::NdVar { n: r }] }];
+          }
+        }
+        out += [ret];
+      },
+      _ => {
+        out += [free_before_returns(stmt, mine, ops)];
+      }
+    }
+  }
+  out
 }
 
 fn with_statements(v: ir::Node, recs: vector<Rec>, ops: Ops, hv: vector<integer>, hs: vector<integer>) -> ir::Node {
