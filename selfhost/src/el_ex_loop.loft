@@ -1492,7 +1492,9 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
   push = el_ex_pattern::push_op(in_t);
   // A text or a plain record element is made through the vector (`OpNewRecord`), written, and
   // finished — each pass of the walk its own element.
-  made_d = match in_t { TyReference { n: mdn, dep: _ } => if el::def(e, mdn).def_type == el::DT_STRUCT && !el::def(e, mdn).name.starts_with("__") { mdn } else { -1 }, _ => -1 };
+  // (A tuple element walked whole, `[for x in vi { x }]`, is its `__tuple<…>` record: copied as
+  // a record is, inside a `tuple_elem_set` block.)
+  made_d = match in_t { TyReference { n: mdn, dep: _ } => if el::def(e, mdn).def_type == el::DT_STRUCT && (!el::def(e, mdn).name.starts_with("__") || el::def(e, mdn).name.starts_with("__tuple<")) { mdn } else { -1 }, _ => -1 };
   // (So is a vector element: its handle zeroed, the body's vector copied in, `OpCopyRecord`.)
   made_vec = in_t is TyVector && el_types::elem_name(e, in_t) != "" && !(b.tp is TyOptional);
   made = (in_t is TyText || made_d >= 0 || made_vec) && !(b.tp is TyOptional);
@@ -1608,7 +1610,8 @@ pub fn comprehension_into(e: el::El, vars: el_vars::Vars, v: integer, n: integer
       el_ir::cl(e, "OpSetText", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdVar { n: comp }])
     } else {
       mk = el::def(e, made_d).known_type;
-      el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdInt { n: mk }]), ir::NdInt { n: mk + 16384 }])
+      mcp = el_ir::cl(e, "OpCopyRecord", [ir::NdVar { n: comp }, el_ir::cl(e, "OpGetField", [ir::NdVar { n: celm }, ir::NdInt { n: 0 }, ir::NdInt { n: mk }]), ir::NdInt { n: mk + 16384 }]);
+      if el::def(e, made_d).name.starts_with("__tuple<") { el_ir::v_block([mcp], ir::TyVoid, "tuple_elem_set") } else { mcp }
     };
     // (A record body answers its record: the body's block is typed without the work ref.)
     body_code = b.code;
