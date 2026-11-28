@@ -280,11 +280,13 @@ pub(super) fn reuse_record_buffers(
         }
         if !ungated
             && !crate::env_once!(std::env::var_os("LOFT_POOL_UNGUARDED_FREE_OK").is_some())
-            && call_result_locals(&bl.operators, av, data).iter().any(|&v| {
-                bl.operators
-                    .iter()
-                    .any(|op| frees_unguarded(op, v, av, data))
-            })
+            && call_result_locals(&bl.operators, av, data)
+                .iter()
+                .any(|&v| {
+                    bl.operators
+                        .iter()
+                        .any(|op| frees_unguarded(op, v, av, data))
+                })
         {
             // `@FR-H-FreeTwice` — the same question of the local the buffer's CALL is bound to,
             // which need not be the result local above: a join arm's call lifted into a
