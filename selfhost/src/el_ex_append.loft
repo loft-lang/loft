@@ -62,13 +62,11 @@ fn own_buffer_item(e: el::El, vars: el_vars::Vars, inner: ir::TypeT, elm: intege
   // records have no plain vector of their own — as Rust's arm does, `vector_def`, at the `]`.)
   bare = el_types::without_deps(inner);
   enm = el_types::elem_name(e, bare);
-  made_here = false;
   if enm != "" && el::def_nr(e, "main_vector<{enm}>") < 0 {
     match e.p.nodes[lit] {
       SVecLit { at: lat } => { el_schema::make_vector_def(e, bare, enm, el::pos_at(e, el_ex_base::closing_bracket(e, lat)), true); },
       _ => {}
     }
-    made_here = true;
     // (Laid out at once: the backing below is given its store type here, on this pass.)
     el_schema::lay_out_late(e, el::def_nr(e, "main_vector<{enm}>"));
   } else if enm != "" && el_schema::wants_vector_def(e, enm) {
@@ -82,22 +80,6 @@ fn own_buffer_item(e: el::El, vars: el_vars::Vars, inner: ir::TypeT, elm: intege
   if rows == null || rd < 0 {
     el::refuse(e, "a field append built apart of this element type: {type_kind(inner)}");
     return null;
-  }
-  // (Rust's `vector_def` is made from the element type as it stands — a keyed field's element
-  // borrowing its owner — so the definitions' types carry that borrow; their layout, laid out
-  // above from the bare type, does not.)
-  if made_here && inner != bare {
-    wtp = ir::TyVector { inner: inner, dep: [] };
-    vdn = el::def_nr(e, "vector<{enm}>");
-    if vdn >= 0 {
-      e.b.data.definitions[vdn].returned = [wtp];
-    }
-    mvn = el::def_nr(e, "main_vector<{enm}>");
-    if mvn >= 0 {
-      for va in el::def(e, mvn).attributes {
-        e.b.data.definitions[mvn].attributes[va#index].typedef = [wtp];
-      }
-    }
   }
   vec = el_vars::create_unique(vars, "vec", ir::TyVector { inner: inner, dep: [] });
   el_vars::set_defined(vars, vec);
