@@ -1063,6 +1063,48 @@ pub fn variant_arm(e: el::El, vars: el_vars::Vars, pats: vector<integer>, sd: in
                 if plain_variant_ord(e, pat!, pft) >= 0 {
                   pen = match el_types::base(pft) { TyEnum { n: fen } => fen, _ => -1 };
                   fcx = el_ir::cl(e, "OpEqInt", [el_ir::cl(e, "OpConvIntFromEnum", [pread!]), el_ir::cl(e, "OpConvIntFromEnum", [ir::NdEnum { ord: plain_variant_ord(e, pat!, pft), tp: pen }])]);
+                } else if el_types::struct_enum_def(pft) >= 0 && !(pft is TyOptional) && e.p.nodes[pat!] is PName {
+                  // A struct enum's field matched by a variant pattern (`Rs { i: Sp { x }, k }`):
+                  // that pattern asked of the field's record — its bindings joining this
+                  // pattern's, in field order, its tag test the guard's (`OpGetEnum` of the read).
+                  // (Inside an alternation, a nested capture of a name an earlier pattern bound is
+                  // bound apart, `_mv_<n>_2`, and copied into that pattern's slot.)
+                  prior: vector<el_vars::VarName> = [for pal in r.aliases { el_vars::VarName { name: pal.name, nr: el_vars::var(vars, pal.name) } }];
+                  sarm = variant_arm(e, vars, [pat!], el_types::struct_enum_def(pft), pread!);
+                  if sarm == null {
+                    return null;
+                  }
+                  if len(sarm!.alts) > 0 {
+                    el::refuse(e, "a field pattern with a sub-pattern that lists binding alternatives");
+                    return null;
+                  }
+                  ab += sarm!.binds;
+                  for sal in sarm!.aliases {
+                    pv = -1;
+                    for pr in prior {
+                      if pr.name == sal.name {
+                        pv = pr.nr;
+                      }
+                    }
+                    if pv >= 0 {
+                      nv = el_vars::var(vars, sal.name);
+                      if !el_types::is_equal(e, el_vars::tp(vars, pv), el_vars::tp(vars, nv)) {
+                        el::refuse(e, "a binding the listed patterns type differently: {sal.name}");
+                        return null;
+                      }
+                      ab += [el_ir::v_set(pv, ir::NdVar { n: nv })];
+                      el_vars::set_name(vars, sal.name, pv);
+                    } else {
+                      r.aliases += [sal];
+                    }
+                    anames += [sal.name];
+                  }
+                  // (Its own field tests are asked before its tag test.)
+                  if sarm!.cond != null {
+                    fcx = if sarm!.fcond == null { sarm!.cond } else { el_ir::v_if(sarm!.fcond!, sarm!.cond!, ir::NdBoolean { b: false }) };
+                  } else {
+                    fcx = sarm!.fcond;
+                  }
                 } else if !(e.p.nodes[pat!] is PWild) {
                   if !el_convert::plain_scalar(el_types::base(pft)) && !(el_types::base(pft) is TyText) {
                     el::refuse(e, "a field pattern with a sub-pattern of this type: {type_kind(pft)}");
