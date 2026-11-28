@@ -1341,6 +1341,10 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   // an item reads the place itself (`v: [len(b.inner.v)]`): any other field place is built in
   // place.  An element place (`vs.els[i] = …`) is still built apart.
   apart = false;
+  // (Built apart from a field of a LOCAL, a comprehension field and an item indexing the place
+  // stay refused: Rust parses the literal twice there — the abandoned attempt's loop names
+  // (`x`, `_comp_1`) and the snapshot `_build_src_N` (a second-pass variable) are not carried.)
+  apart_hard = false;
   aroot = place_root(e, place);
   // (A shared capture's record, `OpGetDbRef(__closure, pos)`, is rooted at the closure record.)
   if aroot < 0 {
@@ -1372,6 +1376,9 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
         view_field = vcoll && fe != null && aroot >= 0 && match e.p.nodes[fe!] { SName { name: vsn, member: vsm } => vsm == "" && el_vars::var(vars, vsn) >= 0 && el_ex_copy::store_viewers(vars, aroot).contains(el_vars::var(vars, vsn)), _ => false };
         if fe != null && ((e.p.nodes[fe!] is SVecLit && (element_place || rec_item || fmt_item || aroot < 0 || el_ex_into::syntax_names(e, fe!, el_vars::name_of(vars, aroot)))) || comp_field || view_field) {
           apart = true;
+          if comp_field || (aroot >= 0 && e.p.nodes[fe!] is SVecLit && el_ex_into::indexes_name(e, fe!, el_vars::name_of(vars, aroot))) {
+            apart_hard = true;
+          }
           // (`snapshot_read_destination`: an item INDEXING the destination's vector —
           // `v: [len(b.inner.v), b.inner.v[0]]` — has Rust copy it first, `_build_src_N` and the
           // store it is built in, the copy borrowing that store, before the build takes this road.)
@@ -1420,16 +1427,18 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
   }
   coll_decline = coll_decline || (apart && local_elem);
   apart = apart || coll_decline;
-  // (Carried where the place is reached through a parameter: elsewhere Rust's head lists the
-  // literal's unused `_elm_N` by when it was registered, not by number — not carried.)
+  if apart_hard && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) && !calls(e, place, "OpGetVector") {
+    el::refuse(e, "a record literal written into a field or an element: a vector literal field of a place in a local");
+    return ex(ir::NdNull, ir::TyVoid);
+  }
+  // (Carried where the place is reached through a parameter, and from a field of a local where
+  // the items read the place without indexing it — the abandoned attempt's `_elm_N` an inline
+  // ref, `unique_elm_var`.)
   // (Built apart from a place in a local, a scalar or text field reading the place is staged
   // first, as in place — `k: v[1].k + 1` into a `__ref_N` ahead of the record's writes.  The
   // ELEMENT form only: a field place keeps the refusal, Rust's head lists its unused `_elm_N` by
   // when it was registered.)
-  if apart && !e.first_pass && !(place_root(e, place) >= 0 && vars.vars[place_root(e, place)].argument) && !calls(e, place, "OpGetVector") {
-    el::refuse(e, "a record literal written into a field or an element: a vector literal field of a place in a local");
-    return ex(ir::NdNull, ir::TyVoid);
-  }
+
   if apart {
     if e.first_pass {
       el_ex_pattern::first_pass_fields(e, vars, rd, fields);
@@ -1477,6 +1486,8 @@ pub fn literal_into_place(e: el::El, vars: el_vars::Vars, place: ir::Node, rd: i
       if len([for vlf in fields if match e.p.nodes[vlf] { SFieldInit { e: vle } => vle != null && (e.p.nodes[vle!] is SVecLit || e.p.nodes[vle!] is SComprehension), _ => false } { 1 }]) > 0 {
         fe = el_vars::create_unique(vars, "elm", ir::TyReference { n: eld, dep: [] });
         el_vars::register_work_ref(vars, fe);
+        // (The abandoned in-place attempt's element is an inline ref, `unique_elm_var`.)
+        el_vars::mark_inline(vars, fe, "unique_elm_var");
       }
     }
     // (Named apart from the `built` below, so a loft without the `@FR-B-Scope` split fix
