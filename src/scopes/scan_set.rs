@@ -920,9 +920,21 @@ impl Scopes<'_> {
             // the flag's to answer, per path.  Recorded as a view, the arm that copied and the
             // arm that did not disagreed at the join, so a later rebind released neither
             // (heap-history.md `D-heap-7`).
+            // loft#2698, `@FR-O-Witness`, `@FR-O-Owner` — a `??` every store of which a COMPILER
+            // TEMP holds (its subject `__ncc_N`, a default literal's work-ref) is a view of that
+            // temp, which releases it: the local does not own it, whatever the oracle says of
+            // the value.  Recorded as owned, the next bind of a view freed it as the store the
+            // local displaced (the transition free below), and the temp freed it again at exit
+            // (`x = alt(p) ?? p; x = alt(x) ?? P { … }; x = alt(p) ?? p`).  Only a `??`: a
+            // literal bound directly is owned through its tracked work-ref, which the
+            // transition free disarms (`construction_backing`).
+            // `LOFT_NO_TEMP_HELD_VIEW=1` records it as owned again.
+            let temp_held = crate::keys::temp_held_view()
+                && super::witness::coalesce_subject_temp(value, function).is_some()
+                && super::witness::held_by_compiler_temp(value, function, data);
             if self.copy_flagged_on_target(function, data, v, value)
                 || var_bind_copies(function, data, v, value)
-                || matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned)
+                || (matches!(self.ref_rhs_ownership(value, data), RefRhs::Owned) && !temp_held)
             {
                 self.owned_refs.insert(v, self.loops.len());
             } else {

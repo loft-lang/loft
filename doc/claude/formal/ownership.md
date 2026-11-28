@@ -882,6 +882,13 @@ analysis directly (the certifier sidesteps it).
   keeps no exit free beside the buffer's release.  Guard
   `loft-suite/rules/ownership/O-Move/2697-…`.
 
+- **A store a compiler temp holds is never the local's (`O-Witness`, loft#2698)** — the rule
+  above names a `??` result held by its subject or its default's work-ref as a view; the scope
+  pass's record of the latest assignment's ownership now reads such a `??` so too (a literal
+  bound directly stays owned: its tracked work-ref is disarmed where it is released).
+  Recorded as owned, `x = alt(x) ?? P { … }` followed by a bind of a view freed the temp's
+  store as the displaced one.  Guard `loft-suite/rules/ownership/O-Witness/2698-…`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN

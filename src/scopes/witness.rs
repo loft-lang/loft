@@ -734,7 +734,7 @@ fn ncr_tail_holds_own_store(
 /// so a binding of it is a VIEW of that temp, never a store the local owns: read as a mint,
 /// the witness adopted the temp's store and released it a second time (loft#2045), and read
 /// as a mint beside a real one it hid the mix the witness exists for (loft#2041).
-fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> bool {
+pub(super) fn held_by_compiler_temp(value: &Value, function: &Function, data: &Data) -> bool {
     match value.unspan() {
         Value::Var(r) => {
             (*r as usize) < function.count() as usize
@@ -938,4 +938,25 @@ pub(super) fn view_bind_bases(code: &Value, v: u16, function: &Function, data: &
         false
     });
     out
+}
+
+/// The subject temp of a `??` value (`{#ncc __ncc_N = subject; if __ncc_N { __ncc_N } else { … } }`)
+/// whose store the value hands over on its present arm, or `None` for any other value.  The temp
+/// may OWN that store (a call's answer) or view it (a projection subject, never-free): a caller
+/// that moves the store asks which (`Function::proxy_says_owned`).
+pub(super) fn coalesce_subject_temp(value: &Value, function: &Function) -> Option<u16> {
+    let Value::Block(b) = value.unspan() else {
+        return None;
+    };
+    let Value::If(_, present, _) = b.operators.last()?.unspan() else {
+        return None;
+    };
+    let Value::Var(t) = present.unspan() else {
+        return None;
+    };
+    (function.name(*t).starts_with("__ncc_")
+        && b.operators
+            .iter()
+            .any(|op| matches!(op.unspan(), Value::Set(x, _) if x == t)))
+    .then_some(*t)
 }
