@@ -2331,6 +2331,19 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
     }
     return ex(el_ir::v_set(v, rc.code), ir::TyVoid);
   }
+  // `keyed_local_fill`: a vector of the collection's records added to a keyed local
+  // (`h += w`) is filed record by record — `OpFillKeyed(h, w, <keyed>, <keyed>, 65535)` in an
+  // `Insert` of its own.  (Rust's `0x8000` give-away bit — `call_gives_away_its_store` — is not
+  // carried: a call answering into this frame's `__ref_N` gives nothing away.)  Pass 1 emits
+  // nothing.
+  if bin == "+" && keyed_kind(vt) && !(vt is TyOptional) && match el_types::base(x.tp) { TyVector { inner: kvi } => struct_ref(e, kvi) >= 0 && struct_ref(e, kvi) == el_types::keyed_elem(el_types::base(vt)), _ => false } && !(el_ir::unspan(x.code) is NdInsert) {
+    el_vars::drop_use(vars, v);
+    if e.first_pass {
+      return ex(ir::NdNull, ir::TyVoid);
+    }
+    kkt = el_schema::keyed_type(e, el_types::without_deps(el_types::base(vt)));
+    return ex(ir::NdInsert { items: [el_ir::cl(e, "OpFillKeyed", [ir::NdVar { n: v }, x.code, ir::NdInt { n: kkt }, ir::NdInt { n: kkt }, ir::NdInt { n: 65535 }])] }, ir::TyVoid);
+  }
   if !el_ex_call::scalar(sv) || sv is TyVoid {
     el::refuse(e, "a compound assignment to a local of this type: {type_kind(sv)}");
     return ex(ir::NdNull, ir::TyVoid);
