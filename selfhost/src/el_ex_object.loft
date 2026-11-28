@@ -1863,7 +1863,8 @@ pub fn argument_element_hint(e: el::El, d: integer, i: integer, node: integer) -
   if d < 0 || el::def(e, d).def_type != el::DT_FUNCTION || i >= len(el::def(e, d).attributes) {
     return none;
   }
-  if !(match e.p.nodes[node] { SVecLit { items } => len(items) > 0, _ => false }) {
+  // (An empty `[]` takes the hint too: it is built where it is read, `hinted_argument`.)
+  if !(e.p.nodes[node] is SVecLit) {
     return none;
   }
   match el::def(e, d).attributes[i]!.typedef[0] ?? ir::TyVoid {
@@ -1917,6 +1918,14 @@ pub fn hinted_argument(e: el::El, vars: el_vars::Vars, node: integer, elem: ir::
       vars.bare_literal = node;
     }
     return el_ex_assign::expression(e, vars, node);
+  }
+  // (An empty `[]` read against the parameter's element is built where it is read, as Rust's
+  // `parse_vector` builds a hinted one: its store numbers before the next argument's literal.)
+  if match e.p.nodes[node] { SVecLit { items: eis } => len(eis) == 0, _ => false } && !el_types::is_unknown(elem) {
+    evt = ir::TyVector { inner: elem, dep: [] };
+    enode = el_ex_pattern::empty_literal_to(e, vars, evt);
+    etp = match enode { NdBlock { block: ebk } => ebk[0].result[0] ?? evt, _ => evt };
+    return ex(enode, etp);
   }
   el_ex_pattern::vector_value(e, vars, node, elem: elem).x
 }
