@@ -305,7 +305,10 @@ pub fn wants_vector_def(e: el::El, nm: text) -> boolean {
   el::def_nr(e, "vector<{nm}>") < 0 || el::def_nr(e, "main_vector<{nm}>") < 0
 }
 
-pub fn make_vector_def(e: el::El, t: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true, store: boolean = true) {
+pub fn make_vector_def(e: el::El, elm: ir::TypeT, nm: text, pos: ir::Position, typed: boolean, narrow_early: boolean = true, store: boolean = true) {
+  // The wrapper is global: its field type keeps the element's shape and none of the asking
+  // frame's deps (`Data::vector_def`'s `tp.without_deps()`).
+  t = el_types::without_deps(elm);
   vt = ir::TyVector { inner: t, dep: [] };
   if el::def_nr(e, "vector<{nm}>") < 0 {
     vd = el::add_def(e, "vector<{nm}>", pos, el::DT_VECTOR);
