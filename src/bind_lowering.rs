@@ -1255,8 +1255,39 @@ fn re_arm(
 /// The base a rebind joins on (R1): a choice's whole-variable arm ([`choice_var_arm`]), else
 /// the oracle's `Join` base.
 fn join_base(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16) -> Option<u16> {
+    join_base_with(
+        data,
+        d_nr,
+        function,
+        value,
+        v,
+        !crate::keys::discharge_block_join(),
+    )
+}
+
+/// The C writer's twin of [`join_base`]: keeps the discharge-block exclusion even when
+/// `LOFT_DISCHARGE_BLOCK_JOIN=1` toggles the interpreter's `bind_lowering` falsifier
+/// (`tests/bind_census.rs`).
+pub(crate) fn join_base_c(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    value: &Value,
+    v: u16,
+) -> Option<u16> {
+    join_base_with(data, d_nr, function, value, v, true)
+}
+
+fn join_base_with(
+    data: &Data,
+    d_nr: u32,
+    function: &Function,
+    value: &Value,
+    v: u16,
+    skip_discharge: bool,
+) -> Option<u16> {
     choice_var_arm(data, d_nr, function, value, v).or_else(|| {
-        if block_hands_over_its_own(data, d_nr, function, value) {
+        if skip_discharge && block_hands_over_its_own(data, d_nr, function, value) {
             return None;
         }
         match crate::use_analysis::ownership_of(data, d_nr, value) {
@@ -1276,9 +1307,6 @@ fn join_base(data: &Data, d_nr: u32, function: &Function, value: &Value, v: u16)
 /// keeps a view, answer `false` and keep the oracle's reading.  @PLN220.
 /// `LOFT_DISCHARGE_BLOCK_JOIN=1` joins such a block again.
 fn block_hands_over_its_own(data: &Data, d_nr: u32, function: &Function, value: &Value) -> bool {
-    if crate::keys::discharge_block_join() {
-        return false;
-    }
     let Value::Block(b) = value.unspan() else {
         return false;
     };
