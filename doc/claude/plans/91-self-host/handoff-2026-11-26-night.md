@@ -45,6 +45,19 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
 
 ## Open, measured (next)
 
+- **2026-11-28 state:** loft30-gate 6887f0f7bc (1787/2284, 496 refused, 0 differ, 1 unaligned).
+  Try 27c6296024 is with the tester.  Next refusal families: the tester's list in
+  `single-family-worklist.md` (scratchpad) — 2500 `reference<…>` of an enum, 1274 an operator on
+  a type variable, 1328 a fn-ref rebind, 2256 a text member branch, 1160 a variant binding write.
+- **A literal early `return` beside a constant exit, a parameter exit or a local tail** (probes
+  `nm3`, `lr2`, `lr3`, older DIFFs): Rust's `parse_return` copies the literal into the buffer
+  at the `return` (`clear + append + Return(buf)`) whenever `return_buffer()` finds the buffer
+  under the name its attribute had as pass 2 began and the signature names it; the port copies
+  it at the body's end (`mid_deliver`).  Mirroring the rule broke `lr1` (literal exits, literal
+  tail): there Rust renamed the attribute onto the tail literal's `__vdb_N` on PASS 1, so the
+  lookup found nothing, while the port keeps `__retbuf` until pass 2's end (`rename_onto`).  The
+  cure wants the pass-1 rename (or its verdict) visible on pass 2, not an undo at the end.
+
 - **2026-11-27 state:** loft30-gate 12d1c0290 (1666/2277, 0 differ).  `tuxedo-pln204-next` now
   MERGES loft30-gate (a force-push after a rebase was refused by the session's classifier); a
   try is its `selfhost/` diff from loft30-gate, or the listed commits.  Gating: 0d3a4a6e8 +
