@@ -2801,6 +2801,21 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
   if !(el_ir::unspan(x.code) == ir::NdVar { n: v }) && el_types::base(x.tp) is TyText && el_ex_assign::copied_place(e, x.code) {
     el_vars::mark_copy_bound(vars, v, "parse_assign_op_inner");
   }
+  // (…and its function value read off a field or an element, as an inferred bind's: the closure
+  // record copied, the local a view of the place unless that copy ran.)
+  if el_types::base(x.tp) is TyFunction && match el_ir::unspan(x.code) { NdBlock { block: dfb } => dfb[0].name == "fn_ref_field_read", _ => false } {
+    x = el_ex_object::copied_field_closure(e, vars, x);
+    dcopied = match el_ir::unspan(x.code) { NdBlock { block: dcb } => len(dcb[0].operators) == 2 && match el_ir::unspan(dcb[0].operators[1]!) { NdCall { def_nr: dcd } => el::def(e, dcd).name == "OpCopyClosure", _ => false }, _ => false };
+    if dcopied {
+      // (The copy is the local's own: it borrows nothing — the first pass's borrow of the
+      // record dropped.)
+      vars.vars[v].skip_free = false;
+      x = ex(x.code, el_types::with_deps(x.tp, []));
+      el_vars::set_var_type(vars, v, el_types::with_deps(el_vars::tp(vars, v), []));
+    } else {
+      el_vars::set_skip_free(vars, v, "parse_assign_op_inner");
+    }
+  }
   if el_types::base(x.tp) is TyVector && copies_whole_vector(e, vars, x.code) && !el_ex_bind::is_link(e, rhs!) {
     return el_ex_bind::vec_copy_bind(e, vars, v, x);
   }

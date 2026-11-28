@@ -252,6 +252,17 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
   // `build_vector_list`: each element made once every item is read — a record item's copy minted
   // here, after the items' own buffers (a call's), as Rust numbers them.
   if e.first_pass {
+    // (A named function item mints its `__fn_ref_tmp` on this pass too, as Rust's
+    // `fn_ref_slot_dnr` does: numbered before what follows the literal.)
+    if el_types::base(inner) is TyFunction {
+      for fx in xs {
+        if !built[fx#index] && el_ir::unspan(fx.code) is NdInt {
+          ftmp = el_vars::create_unique(vars, "__fn_ref_tmp", el_types::with_deps(el_types::base(inner), []));
+          el_vars::set_defined(vars, ftmp);
+          el_vars::set_skip_free(vars, ftmp, "fn_ref_slot_dnr");
+        }
+      }
+    }
     xs = [];
   }
   for x in xs {
@@ -299,6 +310,25 @@ pub fn field_vector(e: el::El, vars: el_vars::Vars, v: integer, r: ir::Node, d: 
         return null;
       }
       out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))] + fill!;
+      out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
+    } else if el_types::base(inner) is TyFunction && match el_ir::unspan(x.code) { NdVar { n: fpv } => el_types::base(el_vars::tp(vars, fpv)) is TyFunction, _ => false } {
+      // A function-value local is pushed as its own projection (`OpPushInt4`, `FnRefDnr`).
+      fpn = match el_ir::unspan(x.code) { NdVar { n: fpv2 } => fpv2, _ => -1 };
+      out += [el_ir::cl(e, "OpPushInt4", [el_ir::cl(e, "OpGetField", [r, ir::NdInt { n: pos }, ir::NdInt { n: vk }]), ir::NdFnRefDnr { n: fpn }])];
+    } else if el_types::base(inner) is TyFunction {
+      // A named function item is its four-byte number in the element made for it, bound to a
+      // `__fn_ref_tmp` first (`fn_number_write`).
+      at = ir::NdVar { n: elm };
+      fw = fn_number_write(e, vars, at, ir::NdInt { n: 0 }, x.code, inner);
+      if fw == null {
+        el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
+        return null;
+      }
+      out += [el_ir::v_set(elm, el_ir::cl(e, "OpNewRecord", [r, ir::NdInt { n: kt }, ir::NdInt { n: fnr }]))];
+      match fw! {
+        NdBlock { block: fwb } => { out += fwb[0].operators; },
+        _ => { out += [fw!]; }
+      }
       out += [el_ir::cl(e, "OpFinishRecord", [r, at, ir::NdInt { n: kt }, ir::NdInt { n: fnr }])];
     } else {
       el::refuse(e, "a vector field of records written from a literal: an item that is no literal");
