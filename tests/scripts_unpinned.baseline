@@ -65,7 +65,6 @@ tests/scripts/a-transient-sites-text-local-keeps-a-write-after-its-bind.loft
 tests/scripts/a-vector-of-scalars-clears-without-a-release-walk.loft
 tests/scripts/a-vector-prepended-to-is-rebuilt-in-place.loft
 tests/scripts/an-early-exit-that-builds-a-text-is-written-as-a-cold-helper.loft
-tests/scripts/an-index-a-passed-test-keeps-below-the-length-is-read-in-range.loft
 tests/scripts/an-index-walk-steps-from-its-hint-only-while-it-holds.loft
 tests/scripts/an-operand-is-copied-only-when-a-later-operand-can-write-it.loft
 tests/scripts/sort-places-null-first-and-keeps-equal-floats-in-order.loft
