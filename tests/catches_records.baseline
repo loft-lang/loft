@@ -26,6 +26,7 @@ rules/heap/H-View-Drop/a-view-of-a-member-that-owns-a-droppable-is-never-materia
 rules/heap/H-View-Drop/a-view-of-a-member-without-a-droppable-materialises-where-one-with-is-refused.loft	LOFT_NO_CALLEE_DISTURB	CLEAN
 rules/iteration/I-Comp/a-build-that-reads-its-destination-reads-what-it-held.loft	LOFT_NO_APPEND_STAGING	STATIC
 rules/layout/L-Null-Which/1367-a-tagged-projection-bound-to-a-local-is-the-pointer.loft	LOFT_NO_OWNER_WITNESS	STATIC
+rules/ownership/O-Buffer/2686-a-renamed-buffer-rebound-from-a-call-keeps-the-callers-store.loft	LOFT_NO_C_JOIN_ENTRY_GUARD	CLEAN
 rules/ownership/O-Detach/2397-a-literal-reads-its-field-under-another-name.loft	LOFT_NO_APPEND_STAGING	CLEAN
 rules/ownership/O-Detach/a-rebind-or-a-build-reads-its-destination-through-any-view-first.loft	LOFT_NO_DETACH_VIEW_READS	STATIC
 rules/ownership/O-Detach/a-rebind-or-a-build-reads-its-destination-through-any-view-first.loft	LOFT_NO_TRANSITIVE_VIEW_READ	CLEAN

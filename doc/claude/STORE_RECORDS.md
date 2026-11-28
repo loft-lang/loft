@@ -596,7 +596,10 @@ the C writer always did (`LOFT_NO_BUFFER_OPAQUE_CALL=1` binds it plain).  A rebo
 no entry witness frees nothing before the bind, as the C writer never did: a by-value parameter
 is detached in the IR first, and a renamed return buffer holds the store its caller handed it,
 which that free released under the caller (`LOFT_ARG_DISPLACED_FREE=1` emits it again; the
-records report the free as a `store-wrong-end`).  A nullable local, whose
+records report the free as a `store-wrong-end`).  The C writer's joined rebind (`join_stmt`) holds the
+same line: a renamed return buffer frees what it displaces only with its entry witness, and
+never the store the caller handed (loft#2686); `LOFT_NO_C_JOIN_ENTRY_GUARD=1` frees it bare
+again, which the lowering census names `join-arg-bare`, an arm the interpreter never takes.  A nullable local, whose
 displaced free waits until after the bind, joins too when
 the value is a call that does not read it, with its slot reset first so the copy arm mints a
 store of its own; `LOFT_NO_STASHED_JOIN=1` copies it.  A copied call result's bracket

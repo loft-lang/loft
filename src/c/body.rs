@@ -238,6 +238,10 @@ pub(crate) struct FnWriter<'a> {
     /// The arm each open `set_stmt` took, innermost last, for `LOFT_TRACE_BIND_C` (the lowering
     /// census): a value's own assignments are lowered inside its arm.
     bind_arm: Vec<&'static str>,
+    /// The joined rebind just lowered freed a promoted buffer ARGUMENT's displaced store with
+    /// no entry witness (loft#2686): the census names that arm apart (`join-arg-bare`), a store
+    /// effect the bytecode writer never takes.
+    join_arg_bare: bool,
     /// `@FR-R-Transient`: this body's transient variables, when it is a twin or holds a site.
     tr: Option<Box<transient::TrFn>>,
     /// `@FR-H-KeepRoom`: vector wrappers just minted by `loft_database_room`, with their type,
@@ -902,6 +906,7 @@ impl<'a> FnWriter<'a> {
             slice_carriers: Vec::new(),
             vr: value::VrFn::of(cx, d).map(Box::new),
             bind_arm: Vec::new(),
+            join_arg_bare: false,
             tr: None,
             room_minted: std::collections::HashMap::new(),
             filed: None,
@@ -6368,21 +6373,25 @@ impl<'a> FnWriter<'a> {
                 &format!("loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});"),
             );
             self.line(ind, &format!("}} else {{ {name} = {r}; }}"));
-            if rebind_owned {
+            // `@FR-O-Buffer` — a promoted return buffer is an ARGUMENT holding, at entry, the
+            // store its CALLER handed: it frees what it displaces only with its entry witness,
+            // and never that store, as `displacing_rebind` and the bytecode writer's `re_bind`
+            // do (@FR-O-NoDiverge).  Freed bare here, a rebind of the buffer from a call that
+            // may answer its argument released the caller's store, which the caller freed
+            // again (loft#2686).  `LOFT_NO_C_JOIN_ENTRY_GUARD=1` frees it bare again.
+            let entry_guard = crate::keys::c_join_entry_guard() && self.vars.is_argument(var);
+            let entry = self.vars.entry_witness(var).filter(|_| entry_guard);
+            if rebind_owned && !(entry_guard && entry.is_none()) {
                 // Native's guard (`dispatch.rs`'s `_old_<v>` free, @FR-O-NoDiverge): kept only
-                // where the new value, the entry witness (`@FR-O-Buffer`, when `var` is a
-                // promoted return buffer), or the call's pooled buffer is that store.
+                // where the new value or the call's pooled buffer (`@FR-O-Buffer`) is that store.
                 // Not the base or another argument: the variable owns what it displaces, so an
                 // argument naming that store is a view of the variable itself (`f(c ?? d)`'s
                 // `__lift`), and keeping it there leaked the displaced record on every rebind.
                 let mut keep = vec![format!("{old}.store_nr != {name}.store_nr")];
-                if let Some(w) = self
-                    .vars
-                    .entry_witness(var)
-                    .filter(|_| self.vars.is_argument(var))
-                {
+                if let Some(w) = entry {
                     keep.push(format!("{old}.store_nr != {}.store_nr", self.var(w)));
                 }
+                self.join_arg_bare = self.vars.is_argument(var) && entry.is_none();
                 if let Some(buf) = self.vars.displaced_buffer_witness(var, x, self.cx.data) {
                     keep.push(format!("{old}.store_nr != {}.store_nr", self.var(buf)));
                 }
@@ -6961,10 +6970,15 @@ impl<'a> FnWriter<'a> {
             return Err("assigns a text parameter".into());
         }
         let name = self.var(var);
+        self.join_arg_bare = false;
         if self.join_stmt(var, x, first, &name, ind)?
             || self.opaque_callref_stmt(var, x, first, &name, ind)?
         {
-            self.set_arm("join");
+            self.set_arm(if self.join_arg_bare {
+                "join-arg-bare"
+            } else {
+                "join"
+            });
             return Ok(());
         }
         // A REBIND copies a call's answer into the variable's own store only where

@@ -313,8 +313,15 @@ pub fn ref_set(x: Cx, w: W, var: integer, value: ir::Node, first: boolean, ind: 
     cgen_tables::copy_type(x, bytes);
     line(w, ind + 1, "loft_bind_copy(cx, loft_types, {bytes}, &{name}, {r});");
     line(w, ind, "}} else {{ {name} = {r}; }}");
-    if rebind_owned {
+    // loft#2686 — a promoted return buffer (an argument) frees what it displaces only with its
+    // entry witness, never the store its caller handed (`join_stmt`, `@FR-O-Buffer`).
+    entry_guard = (env_variable("LOFT_NO_C_JOIN_ENTRY_GUARD") ?? "") == "" && own::is_argument(f, var);
+    entry = if entry_guard { binds::entry_witness(f, var) } else { null };
+    if rebind_owned && !(entry_guard && entry == null) {
       keep = "{old}.store_nr != {name}.store_nr";
+      if entry != null {
+        keep += " && {old}.store_nr != {w.names[entry!]!}.store_nr";
+      }
       buf = binds::displaced_buffer_witness(b, f, var, value);
       if buf != null {
         keep += " && {old}.store_nr != {w.names[buf!]!}.store_nr";
