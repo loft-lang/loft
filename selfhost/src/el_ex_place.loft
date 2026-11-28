@@ -520,7 +520,8 @@ fn place_assignment_to(e: el::El, vars: el_vars::Vars, op: text, target: integer
   }
   // (An element at an index nothing proves reads as `τ?`; a literal is still written into it
   // field by field, a record there or a fault.)
-  if op == "=" && e.p.nodes[rhs] is SStructLit && (!(p.tp is TyOptional) || calls(e, el_ir::unspan(p.code), "OpGetVector")) && struct_ref(e, el_types::base(p.tp)) >= 0 {
+  // (So is an embedded struct field of such an element, `os[k].f = It { … }`.)
+  if op == "=" && e.p.nodes[rhs] is SStructLit && (!(p.tp is TyOptional) || element_rooted(e, el_ir::unspan(p.code))) && struct_ref(e, el_types::base(p.tp)) >= 0 {
     return literal_into_place(e, vars, el_ir::unspan(p.code), struct_ref(e, el_types::base(p.tp)), rhs);
   }
   // `assign_var_nr`'s text arm: `o.s += t` appends to a `_field_N` local that takes the
@@ -2847,4 +2848,15 @@ pub fn declaration(e: el::El, vars: el_vars::Vars, special: boolean, name: text,
     code = g ?? el_convert::guard_range(e, code, declared!, el_convert::guard_source(vars, code, x.tp), declared! is TyOptional);
   }
   ex(el_ir::v_set(v, code), ir::TyVoid)
+}
+
+// An element read (`OpGetVector`), or an embedded field of one (`OpGetField` over it).
+fn element_rooted(e: el::El, n: ir::Node) -> boolean {
+  if calls(e, n, "OpGetVector") {
+    return true;
+  }
+  match n {
+    NdCall { def_nr: erd, args: era } => el::def(e, erd).name == "OpGetField" && len(era) == 3 && element_rooted(e, el_ir::unspan(era[0]!)),
+    _ => false
+  }
 }
