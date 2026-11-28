@@ -3330,6 +3330,10 @@ pub fn vector_build(e: el::El, vars: el_vars::Vars, v: integer, n: integer, decl
     size = elem_size(in_t);
     if size == -2 && senum >= 0 && len(recs) == 0 {
       size = record_size(e, ir::TyEnum { n: senum, is_ref: true, dep: [] });
+      // (A linked struct enum, `reference<…>` over it somewhere, is held by its four-byte id.)
+      if !e.first_pass && linked_record(e, ir::TyEnum { n: senum, is_ref: true, dep: [] }) {
+        size = 4;
+      }
     }
     if size == -2 && (len(recs) > 0 || struct_ref(e, in_t) >= 0 || in_t is TyTuple) {
       size = if !e.first_pass && linked_record(e, in_t) { 4 } else { record_size(e, in_t) };
