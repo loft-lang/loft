@@ -1310,6 +1310,22 @@ pub fn enum_field(e: el::El, vars: el_vars::Vars, x: Ex, ed: integer, name: text
       // only some variants declare, or at several offsets, reads the place again per test: not
       // carried.)
       proot = place_root(e, place);
+      // `(N-Chain)`'s per-link `?` (`e?.n`) is `(N-Default)`: the value, or the type's empty record
+      // where it is absent — no place, so it is read once, at the first declaring variant's
+      // offset, its tag unchecked (`advice[variant-field-unchecked]` says so).
+      // (On the first pass the discharge is not built yet: its receiver reads as no code.)
+      ndefault = match place { NdIf { f: ndf } => match el_ir::unspan(ndf) { NdBlock { block: ndb } => ndb[0].name == "EnumUnitLit", _ => false }, NdNull => e.first_pass, _ => false };
+      if ndefault {
+        if e.first_pass {
+          return ex(ir::NdNull, t);
+        }
+        // (The value read borrows the record the present arm names.)
+        nroot = match place { NdIf { t: ndt } => place_root(e, el_ir::unspan(ndt)), _ => -1 };
+        if nroot >= 0 {
+          t = el_types::with_deps(t, [nroot]);
+        }
+        return ex(field_get(e, found, fa, place) ?? ir::NdNull, t);
+      }
       uniform = len(owning) == total && len([for ov in owning if field_position(e, ov, name) != field_position(e, found, name) { 1 }]) == 0;
       slot_read = match place { NdCall { def_nr: spd } => el::def(e, spd).name == "OpGetField" || el::def(e, spd).name == "OpGetVector", _ => false };
       if proot < 0 || !uniform || !slot_read {
