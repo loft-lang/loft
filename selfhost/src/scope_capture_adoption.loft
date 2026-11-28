@@ -2,16 +2,15 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN91 — `src/scopes/capture_adoption.rs`, the part `check` runs after its loop
-// (`mark_borrowed_captures`), transcribed where the pass can decide it (scope-pass-port.md
-// step 3).  Which closure-record captures a record BORROWS is decided on the settled body of
-// the frame that builds the record; a capture that holds no store
-// (`capture_attr_is_cascade_relevant`) never gets a verdict, so a record with no such capture
-// is never marked and its cascade keeps every walk.  A cascade of a record WITH such a capture
-// is refused before the loop by name, and so is every cascade that calls one.  The rest of the
-// marking — `prune_empty_cascades` (an effectless cascade retired, every call of it dropped)
-// and `cascade_before_record_frees` — runs on the settled bodies, three-valued: a cascade the
-// pass refused has no settled body, so what depends on whether it is pruned is refused too.
+// @PLN91 — `src/scopes/capture_adoption.rs`: which closure-record captures a record ADOPTS and
+// which it BORROWS, the per-arm release of a record a return delivers on some path
+// (`free_record_in_omitting_arms`), and the part `check` runs after its loop
+// (`mark_borrowed_captures`).  The verdicts are decided on the settled body of each frame that
+// builds a record; a record type a refused frame builds has none, so its cascade, and every
+// cascade calling it, is refused after the loop.  The rest of the marking —
+// `prune_empty_cascades` (an effectless cascade retired, every call of it dropped) and
+// `cascade_before_record_frees` — runs on the settled bodies, three-valued: a cascade the pass
+// refused has no settled body, so what depends on whether it is pruned is refused too.
 
 use ir;
 use scope_fn;
@@ -37,13 +36,13 @@ pub fn capture_attr_is_cascade_relevant(b: ir::Bundle, record: integer, a: integ
   }
 }
 
-// The drop cascades whose final form a frame's capture verdicts decide: the cascade of every
-// closure record with a capture that holds a store, and every cascade that calls one.  Indexed
-// by definition, true where decided by a frame.
-pub fn frame_decided_cascades(b: ir::Bundle) -> vector<boolean> {
+// The drop cascades whose final form the capture verdicts of the frames building `records`
+// decide: the cascade of each such closure record with a capture that holds a store, and every
+// cascade that calls one.  Indexed by definition.
+pub fn frame_decided_cascades(b: ir::Bundle, records: vector<integer>) -> vector<boolean> {
   out: vector<boolean> = [for d in b.data.definitions { false }];
   for d in b.data.definitions {
-    if !d.name.starts_with("__closure_") {
+    if !d.name.starts_with("__closure_") || !scope_fn::has(records, d#index) {
       continue;
     }
     relevant = false;
@@ -63,7 +62,7 @@ pub fn frame_decided_cascades(b: ir::Bundle) -> vector<boolean> {
     changed = false;
     for d in b.data.definitions {
       i = d#index;
-      if out[i] ?? false || d.def_type != 1 || len(d.code) == 0 || !d.name.contains("OpDrop") {
+      if (out[i] ?? false) || d.def_type != 1 || len(d.code) == 0 || !d.name.contains("OpDrop") {
         continue;
       }
       if calls_marked(d.code[0]!, out) {
@@ -220,55 +219,6 @@ fn drop_calls(n: ir::Node, pruned: vector<boolean>) -> ir::Node {
   }
 }
 
-// `cascade_before_record_frees` would patch a statement of `d`: a free of a closure-record
-// local whose type keeps a cascade, or a bind of a displaced one (`___oldrec_N`).
-pub fn owes_record_cascade(b: ir::Bundle, d: ir::Definition) -> boolean {
-  f = d.variables;
-  holds = false;
-  for x in f.variables {
-    match x.type_def[0] ?? ir::TyVoid {
-      TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__closure_") && opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
-        holds = true;
-      },
-      _ => {}
-    }
-  }
-  holds && patched(b, d.code[0]!, f)
-}
-
-fn patched(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
-  match scope_fn::unspan(n) {
-    NdCall { def_nr, args } => if len(args) == 1 && b.data.definitions[def_nr]!.name == "OpFreeRef" {
-      match scope_fn::unspan(args[0]!) {
-        NdVar { n: v } => if v < scope_fn::count(f) {
-          match scope_fn::base(scope_fn::tp(f, v)) {
-            TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__closure_") && opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
-              return true;
-            },
-            _ => {}
-          }
-        },
-        _ => {}
-      }
-    },
-    NdSet { var, inner } => if !(scope_fn::unspan(inner) is NdNull) && var < scope_fn::count(f) && strip_underscores(scope_fn::name(f, var)).starts_with("oldrec") {
-      match scope_fn::base(scope_fn::tp(f, var)) {
-        TyReference { n: r } => if opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
-          return true;
-        },
-        _ => {}
-      }
-    },
-    _ => {}
-  }
-  for c in scope_fn::children(n) {
-    if patched(b, c, f) {
-      return true;
-    }
-  }
-  false
-}
-
 // `trim_start_matches('_')`.
 fn strip_underscores(t: text) -> text {
   i = 0;
@@ -298,7 +248,14 @@ fn closure_record_of(b: ir::Bundle, f: ir::Function, w: integer) -> integer {
 // settled body's displaced-record releases of a borrowed slot go
 // (`strip_borrowed_displaced_releases`).  A record type a REFUSED frame builds has no verdict:
 // the settled bodies those strips would read it in are returned, to be refused.
-pub fn mark_borrowed_captures(b: ir::Bundle, ops: scope_scan::Ops, settled: vector<boolean>) -> vector<integer> {
+// What `mark_borrowed_captures` could not decide: the settled bodies to refuse, and the record
+// types a refused frame builds (no verdict).
+pub struct Undecided {
+  pub refuse: vector<integer>,
+  pub records: vector<integer>
+}
+
+pub fn mark_borrowed_captures(b: ir::Bundle, ops: scope_scan::Ops, settled: vector<boolean>) -> Undecided {
   borrowed: vector<integer> = [];
   unknown: vector<integer> = [];
   for d in b.data.definitions {
@@ -348,7 +305,7 @@ pub fn mark_borrowed_captures(b: ir::Bundle, ops: scope_scan::Ops, settled: vect
       refuse += [d#index];
     }
   }
-  refuse
+  Undecided { refuse: refuse, records: unknown }
 }
 
 // The verdicts of one settled frame, appended to `borrowed`.
@@ -621,6 +578,301 @@ fn displaced_of_unknown(b: ir::Bundle, ops: scope_scan::Ops, n: ir::Node, f: ir:
   false
 }
 
+// The operators `cascade_before_record_frees` reads and writes (`ReleaseOps`), and the cascades
+// whose final form this pass cannot settle (`blocked` is set where a patch would call one).
+struct ReleaseOps {
+  ops: scope_scan::Ops,
+  live: integer,
+  eq_ref: integer,
+  settled: vector<boolean>,
+  unsettled: vector<integer>,
+  blocked: boolean
+}
+
+// port: capture_adoption.rs fn cascade_before_record_frees — `@FR-L-CapOwn`: every release of a
+// closure RECORD runs the record's cascade first, emitted at the one point that sees every release
+// after adoption is final.  A settled body whose patch would call a cascade the pass refused, or
+// one whose pruning is undecided, is returned, to be refused.
+pub fn cascade_before_record_frees(b: ir::Bundle, ops: scope_scan::Ops, settled: vector<boolean>, unsettled: vector<integer>) -> vector<integer> {
+  refuse: vector<integer> = [];
+  live = scope_fn::def_nr(b, "OpStoreLive");
+  if ops.free_ref == opt_names::NONE || live == opt_names::NONE || !ops.any_closure_drop {
+    return refuse;
+  }
+  for d in b.data.definitions {
+    i = d#index;
+    if d.def_type != 1 || len(d.code) == 0 || !(settled[i] ?? false) || scope_fn::has(unsettled, i) || !holds_a_record(b, d.variables) {
+      continue;
+    }
+    rx = ReleaseOps { ops: ops, live: live, eq_ref: scope_fn::def_nr(b, "OpEqRef"), settled: settled, unsettled: unsettled, blocked: false };
+    code = patch_statement_lists(b, rx, d.code[0]!, d.variables);
+    if rx.blocked {
+      refuse += [i];
+    } else {
+      b.data.definitions[i].code = [code];
+    }
+  }
+  refuse
+}
+
+// port: capture_adoption.rs fn ReleaseOps::holds_a_record
+fn holds_a_record(b: ir::Bundle, f: ir::Function) -> boolean {
+  for v in 0..scope_fn::count(f) {
+    match scope_fn::base(scope_fn::tp(f, v)) {
+      TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__closure_") && opt_names::drop_cascade_nr(b, r) != opt_names::NONE {
+        return true;
+      },
+      _ => {}
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn patch_statement_lists — the children first, then the node's own
+// statement list.
+fn patch_statement_lists(b: ir::Bundle, rx: ReleaseOps, n: ir::Node, f: ir::Function) -> ir::Node {
+  kids: vector<ir::Node> = [];
+  for c in scope_fn::children(n) {
+    kids += [patch_statement_lists(b, rx, c, f)];
+  }
+  out = ir_pass_tree::with_children(n, kids);
+  match out {
+    NdBlock { block } => ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, patch(b, rx, block[0]!.operators, f))] },
+    NdLoop { block } => ir::NdLoop { block: [ir_pass_tree::with_operators(block[0]!, patch(b, rx, block[0]!.operators, f))] },
+    NdInsert { items } => ir::NdInsert { items: patch(b, rx, items, f) },
+    _ => out
+  }
+}
+
+// port: capture_adoption.rs fn ReleaseOps::patch — ahead of each free of a closure record, its
+// cascade guarded by `OpStoreLive` (an earlier statement running it is re-guarded or kept), the
+// shared names detached first; after each bind of a displaced record (`___oldrec_N`), its cascade
+// unless the record is this frame's own build.
+fn patch(b: ir::Bundle, rx: ReleaseOps, list: vector<ir::Node>, f: ir::Function) -> vector<ir::Node> {
+  owes = false;
+  for op in list {
+    if owed(b, rx, f, op) >= 0 || old_record(b, f, op) >= 0 {
+      owes = true;
+    }
+  }
+  if !owes {
+    return list;
+  }
+  out: vector<ir::Node> = [];
+  for op in list {
+    at = op#index;
+    orc = old_record(b, f, op);
+    if orc >= 0 {
+      t = orc / 4294967296;
+      c = orc % 4294967296;
+      note_cascade(rx, c);
+      out += [op];
+      cascade = ir::NdIf { cond: ir::NdCall { def_nr: rx.ops.conv_bool_from_ref, args: [ir::NdVar { n: t }] }, t: ir::NdCall { def_nr: c, args: [ir::NdVar { n: t }] }, f: ir::NdNull };
+      placed = unless_own_build(rx, t, cascade, f);
+      if at + 1 >= len(list) || "{list[at + 1]!}" != "{placed}" {
+        out += [placed];
+      }
+      continue;
+    }
+    oc = owed(b, rx, f, op);
+    if oc >= 0 {
+      v = oc / 4294967296;
+      c = oc % 4294967296;
+      note_cascade(rx, c);
+      prev: ir::Node? = null;
+      if len(out) > 0 && runs_cascade(out[len(out) - 1]!, v, c) {
+        prev = out[len(out) - 1]!;
+        out.remove(len(out) - 1);
+      }
+      if env_variable("LOFT_NO_RECORD_RELEASE_DETACH") == null {
+        out += detach_shared_names(b, rx, v, f, [for x in list[at + 1..len(list)] { x }]);
+      }
+      if prev != null {
+        reguard = match scope_fn::unspan(prev!) {
+          NdIf { cond } => match scope_fn::unspan(cond) {
+            NdCall { def_nr: d } => d == rx.ops.conv_bool_from_ref || d == rx.live,
+            _ => false
+          },
+          _ => false
+        };
+        out += [if reguard { guarded(rx, v, c) } else { prev! }];
+      } else {
+        out += [guarded(rx, v, c)];
+      }
+    }
+    out += [op];
+  }
+  out
+}
+
+// A cascade this pass refused, or whose pruning it could not decide, blocks the patch.
+fn note_cascade(rx: ReleaseOps, c: integer) {
+  if !(rx.settled[c] ?? false) || scope_fn::has(rx.unsettled, c) {
+    rx.blocked = true;
+  }
+}
+
+// port: capture_adoption.rs fn ReleaseOps::owed — `OpFreeRef(Var(v))` of a closure record whose
+// type has a cascade: `v * 2^32 + cascade`, -1 for none.
+fn owed(b: ir::Bundle, rx: ReleaseOps, f: ir::Function, op: ir::Node) -> integer {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr: d, args } => if d == rx.ops.free_ref && len(args) == 1 {
+      v = ir_pass_tree::var_of(args[0]!);
+      if v == null || v! >= scope_fn::count(f) {
+        return -1;
+      }
+      match scope_fn::base(scope_fn::tp(f, v!)) {
+        TyReference { n: r } => if b.data.definitions[r]!.name.starts_with("__closure_") {
+          c = opt_names::drop_cascade_nr(b, r);
+          if c != opt_names::NONE {
+            return v! * 4294967296 + c;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// port: capture_adoption.rs fn ReleaseOps::old_record — a bind of a displaced record
+// (`___oldrec_N = …`, not null) whose type has a cascade: `t * 2^32 + cascade`, -1 for none.
+fn old_record(b: ir::Bundle, f: ir::Function, op: ir::Node) -> integer {
+  match scope_fn::unspan(op) {
+    NdSet { var: t, inner } => {
+      if scope_fn::unspan(inner) is NdNull || t >= scope_fn::count(f) || !strip_underscores(scope_fn::name(f, t)).starts_with("oldrec") {
+        return -1;
+      }
+      match scope_fn::base(scope_fn::tp(f, t)) {
+        TyReference { n: r } => {
+          c = opt_names::drop_cascade_nr(b, r);
+          if c != opt_names::NONE {
+            return t * 4294967296 + c;
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  -1
+}
+
+// port: capture_adoption.rs fn ReleaseOps::unless_own_build — a displaced record this frame
+// itself built (a `___clos_N` of its type, by identity) is left behind: that local is emptied and
+// no cascade runs.
+fn unless_own_build(rx: ReleaseOps, t: integer, cascade: ir::Node, f: ir::Function) -> ir::Node {
+  if rx.eq_ref == opt_names::NONE || rx.ops.null_ref_sentinel == opt_names::NONE {
+    return cascade;
+  }
+  r = match scope_fn::base(scope_fn::tp(f, t)) {
+    TyReference { n } => n,
+    _ => -1
+  };
+  if r < 0 {
+    return cascade;
+  }
+  rest = cascade;
+  for w in 0..scope_fn::count(f) {
+    if scope_capture_builds::is_record_local(f, w) {
+      match scope_fn::base(scope_fn::tp(f, w)) {
+        TyReference { n: x } => if x == r {
+          rest = ir::NdIf { cond: ir::NdCall { def_nr: rx.eq_ref, args: [ir::NdVar { n: t }, ir::NdVar { n: w }] }, t: scope_fn::v_set(w, ir::NdCall { def_nr: rx.ops.null_ref_sentinel, args: [] }), f: rest };
+        },
+        _ => {}
+      }
+    }
+  }
+  rest
+}
+
+// port: capture_adoption.rs fn ReleaseOps::detach_shared_names — `@FR-H-FreeTwice`: before
+// record `v`'s cascade releases what its OWNED capture slots hold, a frame local of the capture's
+// name still naming that store, released by a PLAIN free later in the list and read nowhere else
+// there, lets go of it.
+fn detach_shared_names(b: ir::Bundle, rx: ReleaseOps, v: integer, f: ir::Function, rest: vector<ir::Node>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  r = match scope_fn::base(scope_fn::tp(f, v)) {
+    TyReference { n } => n,
+    _ => -1
+  };
+  if r < 0 {
+    return out;
+  }
+  kt = b.data.definitions[r]!.known_type;
+  for at in b.data.definitions[r]!.attributes {
+    borrowed_share = match scope_fn::base(at.typedef[0] ?? ir::TyVoid) {
+      TyReference { dep } => len(dep) == 2 && dep[0]! == scope_fn::NONE && dep[1]! == scope_fn::NONE,
+      _ => true
+    };
+    if borrowed_share {
+      continue;
+    }
+    x = scope_fn::var(f, at.name);
+    if x < 0 || x == v || scope_fn::is_argument(f, x) {
+      continue;
+    }
+    plain_free = false;
+    read_elsewhere = false;
+    for op in rest {
+      if plain_free_of(rx, op, x) {
+        plain_free = true;
+      } else if binds::reads_var(op, x) {
+        read_elsewhere = true;
+      }
+    }
+    if !plain_free || read_elsewhere {
+      continue;
+    }
+    pos = scope_handles::position(b, kt, at.name);
+    if pos == 65535 {
+      continue;
+    }
+    slot = ir::NdCall { def_nr: rx.ops.get_dbref, args: [ir::NdVar { n: v }, ir::NdInt { n: pos }] };
+    same = ir::NdIf { cond: ir::NdCall { def_nr: rx.ops.distinct_store, args: [ir::NdVar { n: x }, slot] }, t: ir::NdNull, f: scope_fn::v_set(x, ir::NdCall { def_nr: rx.ops.null_ref_sentinel, args: [] }) };
+    out += [ir::NdIf { cond: ir::NdCall { def_nr: rx.live, args: [ir::NdVar { n: v }] }, t: same, f: ir::NdNull }];
+  }
+  out
+}
+
+// `OpFreeRef(Var(x))`.
+fn plain_free_of(rx: ReleaseOps, op: ir::Node, x: integer) -> boolean {
+  match scope_fn::unspan(op) {
+    NdCall { def_nr: d, args } => if d == rx.ops.free_ref && len(args) == 1 {
+      y = ir_pass_tree::var_of(args[0]!);
+      return y != null && y! == x;
+    },
+    _ => {}
+  }
+  false
+}
+
+// port: capture_adoption.rs fn ReleaseOps::guarded — `if OpStoreLive(v) { cascade(v) }`.
+fn guarded(rx: ReleaseOps, v: integer, c: integer) -> ir::Node {
+  ir::NdIf { cond: ir::NdCall { def_nr: rx.live, args: [ir::NdVar { n: v }] }, t: ir::NdCall { def_nr: c, args: [ir::NdVar { n: v }] }, f: ir::NdNull }
+}
+
+// port: capture_adoption.rs fn runs_cascade — a call of cascade `c` on `Var(v)` anywhere in `op`.
+fn runs_cascade(op: ir::Node, v: integer, c: integer) -> boolean {
+  u = scope_fn::unspan(op);
+  match u {
+    NdCall { def_nr: d, args } => if d == c && len(args) > 0 {
+      x = ir_pass_tree::var_of(args[0]!);
+      if x != null && x! == v {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if runs_cascade(ch, v, c) {
+      return true;
+    }
+  }
+  false
+}
+
 // port: capture_adoption.rs fn arm_value_delivers_record — does this ARM VALUE hand out closure
 // record `r`?  Only three shapes answer no: a bare def-number (a non-capturing lambda), a `FnRef`
 // naming a different record, and a fn-ref local whose own type deps do not mention `r`.
@@ -849,11 +1101,13 @@ fn adoption_owner_index(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, g
 
 // port: capture_adoption.rs fn owning_record_locals — the closure-record locals whose cascade
 // releases the store capture `v` names (`@FR-L-CapOwn`), read off the same grouping the
-// borrow-marking reads.  `Variable::promoted_from` is not in the image: where a group's
-// attribute names an ARGUMENT that is not `v` and no backing settles it, the shadow-cell clause
-// (loft#2639) would decide, and the function is refused by name.
+// borrow-marking reads.  A scalar argument a closure mutates lives in a shadow cell
+// (`__bx_<name>`) whose record attribute keeps the argument's name: the shadow answers to it
+// (loft#2639, `LOFT_NO_SHADOW_CELL_OWNER=1` matches the shadow's own name only).
 pub fn owning_record_locals(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, builds: scope_capture_builds::CaptureBuilds, v: integer) -> vector<integer> {
   nm = scope_fn::name(f, v);
+  pa = scope_fn::promoted_from(f, v);
+  arg_name = if pa >= 0 && pa < scope_fn::count(f) && env_variable("LOFT_NO_SHADOW_CELL_OWNER") == null { scope_fn::name(f, pa) } else { "" };
   for g in capture_store_adopters(b, f, builds).groups {
     owners: vector<integer> = [];
     if group_is_pairwise_exclusive(s.def_code, g) || group_leaver_is_per_run(s, b, f, g) {
@@ -865,10 +1119,8 @@ pub fn owning_record_locals(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Functio
     for o in owners {
       at = scope_capture_builds::capture_name(b, g.records[o]!, g.attrs[o]!);
       av = scope_fn::var(f, at);
-      if at == nm || (av >= 0 && scope_scan::get(builds.backing, av) == v) {
+      if at == nm || (arg_name != "" && arg_name == at) || (av >= 0 && scope_scan::get(builds.backing, av) == v) {
         locals += [g.locals[o]!];
-      } else if av >= 0 && scope_fn::is_argument(f, av) && env_variable("LOFT_NO_SHADOW_CELL_OWNER") == null {
-        scope_scan::refuse(s, "capture_adoption::owning_record_locals: a capture named after an argument (Variable::promoted_from is not in the image)");
       }
     }
     if len(locals) > 0 {

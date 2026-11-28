@@ -711,7 +711,7 @@ fn var_named_here(n: ir::Node) -> integer? {
 // src/data.rs:837 fn reads_var — does `n` read (or name) variable `v` anywhere?  `any_node`
 // (:727) asking `names_var_here` (:850) of every node, `Span` transparent, over the children
 // `for_each_child` (:679) enumerates.  Each arm asks the node itself first, then its children.
-fn reads_var(n: ir::Node, v: integer) -> boolean {
+pub fn reads_var(n: ir::Node, v: integer) -> boolean {
   match n {
     NdSpan { pos: _, inner } => reads_var(inner, v),
     NdCall { def_nr: _, args } => any_reads_var(args, v),

@@ -246,8 +246,15 @@ pub fn displaced_drop(s: scope_scan::Scopes, b: ir::Bundle, v: integer, rhs_owne
   if !scope_fn::has(f.inline_refs, disp) {
     f.inline_refs += [disp];
   }
-  scope_scan::set_scope_of(s, disp, s.scope);
+  // A CLOSURE record's snapshot is homed at the FUNCTION body (1), its null-init hoisted there
+  // (`lift_vars`): the record is rebuilt inside its lambda's `fn_ref_with_closure` block, whose
+  // value is the `FnRef` it ends in (loft#1606).  Every other snapshot keeps its statement's scope.
+  closure_record = scope_fn::name(f, v).starts_with("___clos_");
+  scope_scan::set_scope_of(s, disp, if closure_record { 1 } else { s.scope });
   s.var_order += [disp];
+  if closure_record {
+    s.lift_vars += [disp];
+  }
   live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] };
   snapshot = ir::NdInsert { items: [
     ir::NdCall { def_nr: s.ops.database, args: [ir::NdVar { n: disp }, ir::NdInt { n: kt }] },

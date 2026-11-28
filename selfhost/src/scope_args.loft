@@ -287,8 +287,7 @@ pub fn lift_join_arm_tails(s: scope_scan::Scopes, b: ir::Bundle, node: ir::Node,
   out = lift_owned_call_tails(s, b, out, home, f, owned);
   // loft#1623 — every frame-owned temp this join's value may live in, recorded against the
   // binding that borrows them (`join_holders`): the arm lifts, the arms the parser already
-  // owns, the minting-call arms just given a temp, the constructions' work-refs.  (The join
-  // owners `Function::add_join_owners` records are a closure record's question.)
+  // owns, the minting-call arms just given a temp, the constructions' work-refs.
   holders: vector<integer> = [for t in lf.copied_tmp { t }];
   holders += lf.called;
   for w in owned {
@@ -296,6 +295,12 @@ pub fn lift_join_arm_tails(s: scope_scan::Scopes, b: ir::Bundle, node: ir::Node,
   }
   for w in scope_backings::construction_work_refs(b, out, f) {
     scope_scan::set_add(holders, w);
+  }
+  // @FR-O-Complete, @FR-L-CapOwn (loft#2131) — the same holders are the binding's JOIN OWNERS:
+  // the stores it may hold, one per path, settled by store identity wherever a closure record
+  // adopts the binding.
+  if len(holders) > 1 {
+    scope_fn::add_join_owners(f, bound, holders);
   }
   for w in holders {
     scope_scan::list_add(s.join_holders, bound, w);

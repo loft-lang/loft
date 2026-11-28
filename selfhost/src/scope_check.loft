@@ -127,16 +127,6 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   // @PLN164 C3 — the callee half of `(B-Disturb)`, built once over the parser's bodies as the
   // pre-loop rewrites left them.
   ops.disturbed = scope_view_walk::disturbed_params(b);
-  // `mark_borrowed_captures` (after the loop) decides a closure record's cascade from the
-  // building frame's settled body where a capture holds a store: such a cascade, and one calling
-  // it, is refused here by name.
-  decided = scope_capture_adoption::frame_decided_cascades(b);
-  for d in b.data.definitions {
-    i = d#index;
-    if (decided[i] ?? false) && (program[i] ?? "") == "" {
-      program[i] = "capture_adoption::mark_borrowed_captures: a drop cascade the building frame's capture verdicts decide";
-    }
-  }
   // The definitions with a settled body: the standard library's, and each one laid out below.
   settled: vector<boolean> = [for d in b.data.definitions { d.source == 0 }];
   // The functions refused so far: Rust laid each out before the ones after it, so a summary of
@@ -374,24 +364,39 @@ pub fn check(b: ir::Bundle) -> vector<text> {
   // (`mark_borrowed_captures`): the attributes marked borrowed, the cascades' walks over them and
   // the displaced-record releases stripped.  A body whose strip reads a record type a refused
   // frame builds is refused.
-  for i in scope_capture_adoption::mark_borrowed_captures(b, ops, settled) {
+  mb = scope_capture_adoption::mark_borrowed_captures(b, ops, settled);
+  for i in mb.refuse {
     d = b.data.definitions[i]!;
     if d.source != 0 {
       refused += ["{d.name}: capture_adoption::mark_borrowed_captures: a closure record whose building frame this pass refused"];
     }
   }
+  // A cascade those verdicts decide for a record a refused frame builds — and one calling it —
+  // has no settled form.
+  decided = scope_capture_adoption::frame_decided_cascades(b, mb.records);
+  for d in b.data.definitions {
+    i = d#index;
+    if (decided[i] ?? false) && (settled[i] ?? false) {
+      settled[i] = false;
+      if d.source != 0 {
+        refused += ["{d.name}: capture_adoption::mark_borrowed_captures: a drop cascade the building frame's capture verdicts decide"];
+      }
+    }
+  }
   // After the loop: the cascades left with nothing to do are retired, and every call of one
   // dropped (`prune_empty_cascades`); `cascade_before_record_frees` runs a record's cascade
   // before each release of it.
-  for i in scope_capture_adoption::prune_empty_cascades(b, settled) {
+  unsettled = scope_capture_adoption::prune_empty_cascades(b, settled);
+  for i in unsettled {
     d = b.data.definitions[i]!;
     if d.source != 0 {
       refused += ["{d.name}: capture_adoption::prune_empty_cascades: a call of a cascade a refused function decides"];
     }
   }
-  for d in b.data.definitions {
-    if d.source != 0 && (settled[d#index] ?? false) && scope_capture_adoption::owes_record_cascade(b, d) {
-      refused += ["{d.name}: capture_adoption::cascade_before_record_frees: a closure record released"];
+  for i in scope_capture_adoption::cascade_before_record_frees(b, ops, settled, unsettled) {
+    d = b.data.definitions[i]!;
+    if d.source != 0 {
+      refused += ["{d.name}: capture_adoption::cascade_before_record_frees: a closure record released, its cascade one this pass refused"];
     }
   }
   // `@FR-H-TextReplace` — which text-field assignments release what they replace.
