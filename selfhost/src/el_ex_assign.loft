@@ -836,7 +836,11 @@ fn expression_node(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
     },
     SYield { from, e: ye } => el_ex_loop::yield_expr(e, vars, from, ye),
     SComprehension { at: _ } => el_ex_loop::comprehension_value(e, vars, n),
-    SAs { at, e: ae, tp: at_tp, checked } => el_ex_cast::cast_expr(e, vars, ae, at_tp),
+    SAs { at, e: ae, tp: at_tp, checked } => {
+      // (Whether the cast is a bind's value, read into its destination: `cast_bind_read`.)
+      vars.cast_bind_read = n == vars.read_into && vars.bind_rhs;
+      el_ex_cast::cast_expr(e, vars, ae, at_tp)
+    },
     SParen { e: pe } => if pe == null { ex(ir::NdNull, ir::TyUnknown { n: 0 }) } else { expression(e, vars, pe!) },
     SSizeof { kind, tp: st, e: se } => if kind == "sizeof" { el_ex_name::sizeof_of(e, vars, st, se) } else if kind == "type_name" { el_ex_name::type_name_of(e, vars, st, se) } else { el_ex_name::sizeof_expr(e, vars, kind, st) },
     STupleLit { elems } => el_ex_tuple::tuple_lit(e, vars, elems),

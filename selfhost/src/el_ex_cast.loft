@@ -67,6 +67,8 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   }
   coalesced = vars.dn4_coalesce;
   vars.dn4_coalesce = false;
+  bind_read = vars.cast_bind_read;
+  vars.cast_bind_read = false;
   x = el_ex_assign::expression(e, vars, ae!);
   t = el_types::parse_type(e, tn!);
   if t == null {
@@ -95,6 +97,14 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
   // as the enum itself.
   ten = match el_types::base(to) { TyEnum { n: tn0, is_ref: tr0 } => if tr0 { -1 } else { tn0 }, _ => -1 };
   if ten >= 0 && el_types::base(x.tp) is TyText && !(x.tp is TyOptional) {
+    // (The parse reads the text: its value borrows what the text does — a local text, that local.)
+    // (A bind's value reads it borrowing nothing — `parse_var`'s `into` arm — so the read's own
+    // type says.)
+    tdeps: vector<integer> = match el_ir::unspan(x.code) { NdVar { n: tdv } => if bind_read { [] } else { [tdv] }, _ => el_types::deps(x.tp) };
+    tto = el_types::with_deps(el_types::base(to), tdeps);
+    if e.first_pass && coalesced && !(to is TyOptional) {
+      vars.p1_no_holder = true;
+    }
     // (The UNCHECKED parse is `subparse_default`'s `(s as E?) ?? <first variant>`: held in
     // `__ncc_N`, the first variant where it names none — unless a `??` is its fallback.)
     // (A second-pass holder: Rust's first pass mints none.)
@@ -102,12 +112,12 @@ pub fn cast_expr(e: el::El, vars: el_vars::Vars, ae: integer?, tn: integer?) -> 
       if e.first_pass {
         return ex(ir::NdNull, el_types::base(to));
       }
-      th = el_vars::create_unique(vars, "_ncc", el_types::base(to));
+      th = el_vars::create_unique(vars, "_ncc", tto);
       thv = ir::NdVar { n: th };
       tparse = el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]);
       return ex(el_ir::v_block([el_ir::v_set(th, tparse), el_ir::v_if(el_ir::cl(e, "OpConvBoolFromEnum", [thv]), thv, ir::NdEnum { ord: 1, tp: el::def(e, ten).known_type })], el_types::base(to), "ncc"), el_types::base(to));
     }
-    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, el_types::base(to));
+    return ex(if e.first_pass { ir::NdNull } else { el_ir::cl(e, "OpCastEnumFromText", [x.code, ir::NdInt { n: el::def(e, ten).known_type }]) }, if coalesced { tto } else { el_types::base(to) });
   }
   // A text to a vector (`"[1.0, 2.0]" as vector<float>`): `Parser::cast`'s two-parameter
   // `OpCast`, `OpCastVectorFromText(text, <the vector's known type>)` — the vector definition
