@@ -61,6 +61,7 @@ pub struct Ops {
   pub fn_ref_detach_shared: integer,
   pub clear_vector: integer,
   pub ref_is_null: integer,
+  pub put_ref: integer,
   // `Data::any_closure_drop`: some lambda's closure record has a drop cascade.
   pub any_closure_drop: boolean,
   // The `vector<T>` definitions (`DefType::Vector`) with a drop cascade, the ones
@@ -97,6 +98,7 @@ pub fn ops_of(b: ir::Bundle) -> Ops {
     fn_ref_detach_shared: scope_fn::def_nr(b, "OpFnRefDetachShared"),
     clear_vector: scope_fn::def_nr(b, "OpClearVector"),
     ref_is_null: scope_fn::def_nr(b, "OpRefIsNull"),
+    put_ref: scope_fn::def_nr(b, "OpPutRef"),
     any_closure_drop: any_closure_drop(b),
     vec_cascades: vec_cascades(b),
     disturbed: []
@@ -283,6 +285,13 @@ pub struct Scopes {
   // (the oracle follows a variable to its binds there).
   pub stale_defs: vector<integer>,
   pub orig_code: ir::Node,
+  // The definition's code as Rust's `data.def(d_nr).code()` reads it during this scan: the
+  // parsed body at the first scan, the previous scan's result at every rescan (`check`
+  // installs each scan's body before the next).
+  pub def_code: ir::Node,
+  // `arm_released_records` — the closure records the return being swept releases inside its
+  // omitting arms (`free_record_in_omitting_arms`), cleared after the sweep.
+  pub arm_released_records: vector<integer>,
   // `capture_build_backing` — the closure-build facts of this body (`capture_build_backings`).
   pub capture_build_backing: scope_capture_builds::CaptureBuilds,
   // `closure_keep` — the frame's per-run closure keep set (`closure_keep_set`).
@@ -1651,7 +1660,7 @@ fn record_field_pos(s: Scopes, b: ir::Bundle, f: ir::Function, rec: integer, fie
 
 // port: scan.rs fn owner_slot_handoff — loft#2131: where the build of closure record local
 // `rec` hands capture `c` to its OWNER slot, the slot's position and the frame's holders.
-fn owner_slot_handoff(s: Scopes, b: ir::Bundle, f: ir::Function, rec: integer, c0: integer) -> OwnerHolders? {
+pub fn owner_slot_handoff(s: Scopes, b: ir::Bundle, f: ir::Function, rec: integer, c0: integer) -> OwnerHolders? {
   rec_v = mapped(s, rec);
   c = mapped(s, c0);
   if !scope_fn::name(f, rec_v).starts_with("___clos_") {

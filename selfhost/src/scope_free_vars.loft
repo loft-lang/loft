@@ -18,6 +18,8 @@ use scope_inline_returns;
 use binds;
 use own;
 use opt_names;
+use ir_pass_tree;
+use scope_capture_adoption;
 
 // port: free_vars.rs struct Delivered — the return's sources; the locals whose hook the return
 // already placed (`arm_dropped`); the holders whose record it may be handing out
@@ -103,23 +105,70 @@ fn renumber_text_buffer(tp: ir::TypeT, bufs: vector<integer>, args: vector<integ
   scope_inline_returns::with_deps(tp, frame)
 }
 
+// port: free_vars.rs fn record_capture_slots — the capture slots closure record `record`'s builds
+// write (`OpSetDbRef(record, offset, capture)`), as byte offsets in walk order.
+fn record_capture_slots(code: ir::Node, record: integer, set_dbref: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  capture_slots_walk(code, record, set_dbref, out);
+  out
+}
+
+fn capture_slots_walk(n: ir::Node, record: integer, set_dbref: integer, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr: d, args } => if d == set_dbref && len(args) > 1 {
+      r = ir_pass_tree::var_of(args[0]!);
+      off = ir_pass_tree::int_of(args[1]!);
+      if r != null && r! == record && off != null && !scope_fn::has(out, off!) {
+        out += [off!];
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    capture_slots_walk(c, record, set_dbref, out);
+  }
+}
+
 // port: free_vars.rs fn free_vars
 pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr: ir::Node, f: ir::Function, tp0: ir::TypeT, to_scope: integer) -> vector<ir::Node> {
   def = b.data.definitions[s.d_nr]!;
   def_ret = def.returned[0] ?? ir::TyVoid;
   tp = if to_scope == 1 && "{tp0}" == "{def_ret}" { text_buffer_in_frame(def, tp0, f) } else { tp0 };
   if is_return {
-    // loft#1476 — the closure records a return delivers on some path.
+    // loft#1476 — a closure record the return delivers on SOME path is released INSIDE the arms
+    // that do not hand it out: the arm is the path.  A record that shares its store with another
+    // adopter nulls its capture slots first, so its cascade reaches no capture the delivered one
+    // still holds.  A record handed out through a `&fn(…)` link is never in the tail, so no arm
+    // speaks for it.
+    adopters = scope_capture_adoption::capture_store_adopters(b, f, s.capture_build_backing).groups;
+    link_delivered = scope_capture_adoption::link_written_closure_records(s, b, f);
     for v in 0..scope_fn::count(f) {
       if scope_fn::is_argument(f, v) {
         continue;
       }
-      match scope_fn::tp(f, v) {
-        TyReference { n: rec } => if scope_args::def_name(b, rec).starts_with("__closure_") {
-          scope_scan::refuse(s, "capture_adoption::free_record_in_omitting_arms: a closure record at a return");
-        },
-        _ => {}
+      rec = match scope_fn::tp(f, v) {
+        TyReference { n } => n,
+        _ => -1
+      };
+      if rec < 0 || !scope_args::def_name(b, rec).starts_with("__closure_") || !scope_capture_adoption::record_store_leaves_frame(s, b, f, v) || scope_fn::has(link_delivered, v) {
+        continue;
       }
+      shared = false;
+      for g in adopters {
+        if len(g.locals) > 1 && scope_fn::has(g.locals, v) {
+          shared = true;
+        }
+      }
+      release: vector<ir::Node> = [];
+      if shared {
+        for off in record_capture_slots(s.def_code, v, s.ops.set_dbref) {
+          release += [ir::NdCall { def_nr: s.ops.set_dbref, args: [ir::NdVar { n: v }, ir::NdInt { n: off }, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }] }];
+        }
+      }
+      release += [ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: v }] }];
+      expr = scope_capture_adoption::free_record_in_omitting_arms(expr, v, f, tp, release);
+      scope_scan::set_add(s.arm_released_records, v);
     }
     // `move_join_hooks_into_arms`, `return_copies_whole_local`, `return_copies_view_holders`,
     // `return_moved_holders` read a `materialized_view_return` copy, which a record or vector
@@ -265,6 +314,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     }
   }
   ls = scope_get_free_vars::get_free_vars(s, b, f, to_scope, tp, ret_var, Delivered { sources: sources, arm_dropped: arm_dropped, moved_x: moved_x, moved_holders: moved_holders });
+  s.arm_released_records = [];
   // loft#2671 — a backing the sweep already releases is that free's; and a buffer guarded against
   // a source that owns nothing needs the join leg's temp to be re-keyed on.
   if len(join_backings) > 0 {
@@ -1323,7 +1373,7 @@ pub fn collect_return_sources(s: scope_scan::Scopes, n: ir::Node, out: vector<in
 }
 
 // port: returns.rs fn last_non_free_result — its index, -1 for none.
-fn last_non_free_result(s: scope_scan::Scopes, ops: vector<ir::Node>) -> integer {
+pub fn last_non_free_result(s: scope_scan::Scopes, ops: vector<ir::Node>) -> integer {
   k = len(ops);
   i = k - 1;
   while i >= 0 {

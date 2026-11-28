@@ -19,6 +19,11 @@ use opt_names;
 use own;
 use scope_capture_builds;
 use scope_scan;
+use scope_free_vars;
+use scope_phase;
+use ir_pass_tree;
+use scope_backings;
+use scope_handles;
 
 // port: capture_adoption.rs fn capture_attr_is_cascade_relevant
 pub fn capture_attr_is_cascade_relevant(b: ir::Bundle, record: integer, a: integer) -> boolean {
@@ -271,6 +276,1110 @@ fn strip_underscores(t: text) -> text {
     i += 1;
   }
   t[i..]
+}
+
+// A closure-record local of this frame: `___clos_N` of a `__closure_` record type, -1 for none.
+fn closure_record_of(b: ir::Bundle, f: ir::Function, w: integer) -> integer {
+  if !scope_capture_builds::is_record_local(f, w) {
+    return -1;
+  }
+  match scope_fn::tp(f, w) {
+    TyReference { n } => if b.data.definitions[n]!.name.starts_with("__closure_") { n } else { -1 },
+    _ => -1
+  }
+}
+
+// port: capture_adoption.rs fn mark_borrowed_captures, the verdict half: which closure-record
+// captures a record BORROWS, decided on the settled body of each frame that builds a record —
+// the attributes a record adopts nothing through, a join-bound capture reassigned after the build
+// whose record stays, a loop-rebound call-buffer capture, and every record but the owner of one
+// adopted store.  Each verdict marks the attribute borrowed (`Data::mark_capture_borrowed`) and
+// scrubs the record's cascade walk over that slot (`strip_borrowed_capture_walk`), and every
+// settled body's displaced-record releases of a borrowed slot go
+// (`strip_borrowed_displaced_releases`).  A record type a REFUSED frame builds has no verdict:
+// the settled bodies those strips would read it in are returned, to be refused.
+pub fn mark_borrowed_captures(b: ir::Bundle, ops: scope_scan::Ops, settled: vector<boolean>) -> vector<integer> {
+  borrowed: vector<integer> = [];
+  unknown: vector<integer> = [];
+  for d in b.data.definitions {
+    if d.def_type != 1 || len(d.code) == 0 {
+      continue;
+    }
+    f = d.variables;
+    recs: vector<integer> = [];
+    for w in 0..scope_fn::count(f) {
+      r = closure_record_of(b, f, w);
+      if r >= 0 && !scope_fn::has(recs, r) {
+        recs += [r];
+      }
+    }
+    if len(recs) == 0 {
+      continue;
+    }
+    if !(settled[d#index] ?? false) {
+      for r in recs {
+        scope_scan::set_add(unknown, r);
+      }
+      continue;
+    }
+    frame_verdicts(b, ops, d#index, borrowed);
+  }
+  for p in borrowed {
+    record = p / 65536;
+    a = p % 65536;
+    at = b.data.definitions[record]!.attributes[a]!;
+    match at.typedef[0] ?? ir::TyVoid {
+      TyReference { n } => b.data.definitions[record].attributes[a].typedef = [ir::TyReference { n: n, dep: [scope_fn::NONE, scope_fn::NONE] }],
+      _ => {}
+    }
+    strip_borrowed_capture_walk(b, ops, record, a);
+  }
+  refuse: vector<integer> = [];
+  if env_variable("LOFT_NO_BORROWED_DISPLACED_STRIP") == null && len(borrowed) > 0 {
+    for d in b.data.definitions {
+      if d.def_type == 1 && len(d.code) > 0 && (settled[d#index] ?? false) {
+        b.data.definitions[d#index].code = [strip_displaced(b, ops, d.code[0]!, d.variables, borrowed)];
+      }
+    }
+  }
+  // A settled body holding a displaced-record release of a record type no verdict reaches.
+  for d in b.data.definitions {
+    if d.def_type == 1 && len(d.code) > 0 && (settled[d#index] ?? false) && len(unknown) > 0 && displaced_of_unknown(b, ops, d.code[0]!, d.variables, unknown) {
+      refuse += [d#index];
+    }
+  }
+  refuse
+}
+
+// The verdicts of one settled frame, appended to `borrowed`.
+fn frame_verdicts(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, borrowed: vector<integer>) {
+  d = b.data.definitions[d_nr]!;
+  f = d.variables;
+  code = d.code[0]!;
+  builds = scope_capture_builds::capture_build_backings(b, ops.set_dbref, f, code);
+  s = scope_phase::new_scopes(b, ops, d_nr, code, f, [], [], [], [], code);
+  s.capture_build_backing = builds;
+  sets = capture_store_adopters(b, f, builds);
+  borrowed += sets.never;
+  groups = sets.groups;
+  // `@FR-L-CapOwn`, `@FR-H-FreeTwice` — a JOIN-bound capture reassigned after its build whose
+  // record STAYS borrows (loft#1725's `r2`); so does a capture the loop reassigns from a call's
+  // buffer the frame keeps releasing.  `LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS=1`.
+  if env_variable("LOFT_NO_STAYING_JOIN_CAPTURE_BORROWS") == null {
+    delivered = claimed_into_delivered(s, b, f);
+    for g in groups {
+      kl: vector<integer> = [];
+      kr: vector<integer> = [];
+      ka: vector<integer> = [];
+      for i in 0..len(g.locals) {
+        local = g.locals[i]!;
+        record = g.records[i]!;
+        a = g.attrs[i]!;
+        c = scope_fn::var(f, scope_capture_builds::capture_name(b, record, a));
+        stays = !record_store_leaves_frame(s, b, f, local) && !scope_fn::has(delivered, local);
+        borrows = c >= 0 && scope_fn::has(builds.reassigned_after_build, c)
+          && scope_fn::has(builds.join_bound_builds, local * 65536 + c)
+          && len(join_arm_holders(f, builds, c)) > 0 && stays;
+        if !borrows && env_variable("LOFT_NO_LOOP_BUFFER_CAPTURE_BORROWS") == null && c >= 0 && stays {
+          bk = scope_scan::get(builds.backing, c);
+          borrows = (env_variable("LOFT_NO_CALL_BUFFER_REBIND_DETACH") != null || rotated_through_buffers(code, ops, c))
+            && scope_fn::has(builds.rebound_in_loop, c)
+            && assigned_from_call_buffer(code, f, c)
+            && bk >= 0 && (scope_fn::name(f, bk).starts_with("__ref_") || scope_fn::name(f, bk).starts_with("__vdb_"))
+            && !scope_capture_builds::capture_adoption_owns_free(b, f, builds, bk);
+        }
+        if borrows {
+          borrowed += [record * 65536 + a];
+        } else {
+          kl += [local];
+          kr += [record];
+          ka += [a];
+        }
+      }
+      groups[g#index].locals = kl;
+      groups[g#index].records = kr;
+      groups[g#index].attrs = ka;
+    }
+  }
+  // `@FR-L-CapOwn` — one STORE, one owner: among the records that adopted one store, the one
+  // that leaves keeps it (else the first), the rest borrow — unless they cannot coexist
+  // (`@FR-L-CapOne`), every one leaves, or which leaves is a fact of the run.
+  for g in groups {
+    if len(g.locals) < 2 {
+      continue;
+    }
+    every_leaves = true;
+    for local in g.locals {
+      if !record_store_leaves_frame(s, b, f, local) {
+        every_leaves = false;
+      }
+    }
+    if group_is_pairwise_exclusive(code, g) || every_leaves || group_leaver_is_per_run(s, b, f, g) {
+      continue;
+    }
+    owner = adoption_owner_index(s, b, f, g);
+    for i in 0..len(g.locals) {
+      if i != owner {
+        borrowed += [g.records[i]! * 65536 + g.attrs[i]!];
+      }
+    }
+  }
+}
+
+// port: backings.rs fn rotated_through_buffers — does the frame rotate `c` through its call
+// buffers (`OpPutRef(__ref_N, c)`)?
+fn rotated_through_buffers(code: ir::Node, ops: scope_scan::Ops, c: integer) -> boolean {
+  u = scope_fn::unspan(code);
+  match u {
+    NdCall { def_nr: d, args } => if d == ops.put_ref && len(args) > 1 {
+      x = ir_pass_tree::var_of(args[1]!);
+      if x != null && x! == c {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if rotated_through_buffers(ch, ops, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn assigned_from_call_buffer — is local `c` assigned anywhere from a
+// call handed a hidden buffer?
+fn assigned_from_call_buffer(code: ir::Node, f: ir::Function, c: integer) -> boolean {
+  u = scope_fn::unspan(code);
+  match u {
+    NdSet { var: v, inner } => if v == c && scope_backings::call_buffer_of(inner, f) >= 0 {
+      return true;
+    },
+    _ => {}
+  }
+  for ch in scope_fn::children(u) {
+    if assigned_from_call_buffer(ch, f, c) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn strip_borrowed_capture_walk — every walk the record's cascade
+// guards on the borrowed slot's `OpGetDbRef(self, offset)` is removed.
+fn strip_borrowed_capture_walk(b: ir::Bundle, ops: scope_scan::Ops, record: integer, a: integer) {
+  off = scope_handles::position(b, b.data.definitions[record]!.known_type, b.data.definitions[record]!.attributes[a]!.name);
+  if off == 65535 {
+    return;
+  }
+  cascade = opt_names::drop_cascade_nr(b, record);
+  if cascade != opt_names::NONE && len(b.data.definitions[cascade]!.code) > 0 {
+    b.data.definitions[cascade].code = [scrub_slot(b.data.definitions[cascade]!.code[0]!, ops.get_dbref, off)];
+  }
+}
+
+fn scrub_slot(n: ir::Node, get_dbref: integer, off: integer) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdIf { cond } => if reads_slot(cond, get_dbref, off) {
+      return ir::NdNull;
+    },
+    _ => {}
+  }
+  ir_pass_tree::with_children(n, [for c in scope_fn::children(n) { scrub_slot(c, get_dbref, off) }])
+}
+
+fn reads_slot(n: ir::Node, get_dbref: integer, off: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr: d, args } => if d == get_dbref && len(args) > 1 {
+      o = ir_pass_tree::int_of(args[1]!);
+      if o != null && o! == off {
+        return true;
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if reads_slot(c, get_dbref, off) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn strip_borrowed_displaced_releases — in a `fn_ref_with_closure`
+// block, the displaced-record release of a borrowed slot (`if … { OpFreeRefIfDistinct(
+// OpGetDbRef(w, off), …) }`) goes.
+fn strip_displaced(b: ir::Bundle, ops: scope_scan::Ops, n: ir::Node, f: ir::Function, borrowed: vector<integer>) -> ir::Node {
+  out = n;
+  match scope_fn::unspan(n) {
+    NdBlock { block } => if block[0]!.name == "fn_ref_with_closure" {
+      slots = displaced_slots(b, f, block[0]!.operators, borrowed);
+      if len(slots) > 0 {
+        kept = [for op in block[0]!.operators if !releases_slot(ops, op, slots) { op }];
+        out = respan(n, ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, kept)] });
+      }
+    },
+    _ => {}
+  }
+  ir_pass_tree::with_children(out, [for c in scope_fn::children(out) { strip_displaced(b, ops, c, f, borrowed) }])
+}
+
+// `n`'s spans around `inner` in place of what they wrapped.
+fn respan(n: ir::Node, inner: ir::Node) -> ir::Node {
+  match n {
+    NdSpan { pos, inner: x } => ir::NdSpan { pos: pos, inner: respan(x, inner) },
+    _ => inner
+  }
+}
+
+// The borrowed slot offsets of the record a build block's tail `FnRef(_, w, _)` names, as
+// `w * 65536 + offset`; empty when the tail is no such build.
+fn displaced_slots(b: ir::Bundle, f: ir::Function, ops: vector<ir::Node>, borrowed: vector<integer>) -> vector<integer> {
+  out: vector<integer> = [];
+  if len(ops) == 0 {
+    return out;
+  }
+  w = match scope_fn::unspan(ops[len(ops) - 1]!) {
+    NdFnRef { var } => var,
+    _ => -1
+  };
+  if w < 0 || w >= scope_fn::count(f) {
+    return out;
+  }
+  match scope_fn::base(scope_fn::tp(f, w)) {
+    TyReference { n: r } => for p in borrowed {
+      if p / 65536 == r {
+        off = scope_handles::position(b, b.data.definitions[r]!.known_type, b.data.definitions[r]!.attributes[p % 65536]!.name);
+        if off != 65535 {
+          out += [w * 65536 + off];
+        }
+      }
+    },
+    _ => {}
+  }
+  out
+}
+
+// `if _ { OpFreeRefIfDistinct(OpGetDbRef(w, off), _) }` for one of `slots`.
+fn releases_slot(ops: scope_scan::Ops, op: ir::Node, slots: vector<integer>) -> boolean {
+  match scope_fn::unspan(op) {
+    NdIf { t } => match scope_fn::unspan(t) {
+      NdCall { def_nr: d, args } => if d == ops.free_if_distinct && len(args) > 0 {
+        match scope_fn::unspan(args[0]!) {
+          NdCall { def_nr: g, args: ga } => if g == ops.get_dbref && len(ga) > 1 {
+            w = ir_pass_tree::var_of(ga[0]!);
+            o = ir_pass_tree::int_of(ga[1]!);
+            return w != null && o != null && scope_fn::has(slots, w! * 65536 + o!);
+          },
+          _ => {}
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  false
+}
+
+// Does a build block in `n` end in a record of a type in `unknown`, with a displaced-record
+// release in it?
+fn displaced_of_unknown(b: ir::Bundle, ops: scope_scan::Ops, n: ir::Node, f: ir::Function, unknown: vector<integer>) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdBlock { block } => if block[0]!.name == "fn_ref_with_closure" && len(block[0]!.operators) > 0 {
+      w = match scope_fn::unspan(block[0]!.operators[len(block[0]!.operators) - 1]!) {
+        NdFnRef { var } => var,
+        _ => -1
+      };
+      if w >= 0 && w < scope_fn::count(f) {
+        match scope_fn::base(scope_fn::tp(f, w)) {
+          TyReference { n: r } => if scope_fn::has(unknown, r) {
+            for op in block[0]!.operators {
+              match scope_fn::unspan(op) {
+                NdIf { t } => match scope_fn::unspan(t) {
+                  NdCall { def_nr: d } => if d == ops.free_if_distinct {
+                    return true;
+                  },
+                  _ => {}
+                },
+                _ => {}
+              }
+            }
+          },
+          _ => {}
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if displaced_of_unknown(b, ops, c, f, unknown) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn arm_value_delivers_record — does this ARM VALUE hand out closure
+// record `r`?  Only three shapes answer no: a bare def-number (a non-capturing lambda), a `FnRef`
+// naming a different record, and a fn-ref local whose own type deps do not mention `r`.
+fn arm_value_delivers_record(leaf: ir::Node, r: integer, f: ir::Function) -> boolean {
+  match scope_fn::unspan(leaf) {
+    NdInt => false,
+    NdLong => false,
+    NdFnRef { var: w } => w == r,
+    NdVar { n: v } => if v < scope_fn::count(f) {
+      match scope_fn::base(scope_fn::tp(f, v)) {
+        TyFunction { dep } => scope_fn::has(dep, r),
+        _ => true
+      }
+    } else {
+      true
+    },
+    _ => true
+  }
+}
+
+// port: capture_adoption.rs fn free_record_in_omitting_arms — closure record `r` freed inside
+// each arm of `op` that does NOT hand it out (`@FR-L-CapOwn`, loft#1476): the arm is the path.
+// A block or an insert takes the release as statements before its value; a leaf is widened
+// (`widen_bare_fn_ref`) and wrapped.
+pub fn free_record_in_omitting_arms(op: ir::Node, r: integer, f: ir::Function, tp: ir::TypeT, release: vector<ir::Node>) -> ir::Node {
+  match op {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: free_record_in_omitting_arms(inner, r, f, tp, release) },
+    NdReturn { inner } => ir::NdReturn { inner: free_record_in_omitting_arms(inner, r, f, tp, release) },
+    NdDrop { inner } => ir::NdDrop { inner: free_record_in_omitting_arms(inner, r, f, tp, release) },
+    NdIf { cond, t, f: e } => ir::NdIf { cond: cond, t: free_record_in_omitting_arms(t, r, f, tp, release), f: free_record_in_omitting_arms(e, r, f, tp, release) },
+    NdBlock { block } => {
+      if len(block[0]!.operators) == 0 {
+        return op;
+      }
+      ir::NdBlock { block: [ir_pass_tree::with_operators(block[0]!, omitting_ops(block[0]!.operators, r, f, tp, release))] }
+    },
+    NdInsert { items } => {
+      if len(items) == 0 {
+        return op;
+      }
+      ir::NdInsert { items: omitting_ops(items, r, f, tp, release) }
+    },
+    _ => {
+      if arm_value_delivers_record(op, r, f) {
+        return op;
+      }
+      out: vector<ir::Node> = [for x in release { x }];
+      out += [widen_bare_fn_ref(op, tp) ?? op];
+      ir::NdInsert { items: out }
+    }
+  }
+}
+
+// The statements of a block or an insert with the release placed before the last one, or the
+// last one rewritten where it hands the record out.
+fn omitting_ops(ops: vector<ir::Node>, r: integer, f: ir::Function, tp: ir::TypeT, release: vector<ir::Node>) -> vector<ir::Node> {
+  k = len(ops);
+  last = ops[k - 1]!;
+  out: vector<ir::Node> = [for o in ops[0..k - 1] { o }];
+  if arm_value_delivers_record(last, r, f) {
+    out += [free_record_in_omitting_arms(last, r, f, tp, release)];
+  } else {
+    out += [for x in release { x }];
+    out += [last];
+  }
+  out
+}
+
+// port: parser/mod.rs fn widen_bare_fn_ref — a bare def-number where a `Function`-typed slot is
+// read at full width becomes `FnRef(d, NONE)`; a block widens its last operator and restates its
+// result.  Null where nothing is widened.  (The parser's helper, called here because this rewrite
+// creates the position; the elaborator has its own spelling in `el_ex_match`.)
+pub fn widen_bare_fn_ref(v: ir::Node, tp: ir::TypeT) -> ir::Node? {
+  fn_tp = scope_fn::base(tp);
+  if !(fn_tp is TyFunction) {
+    return null;
+  }
+  match v {
+    NdSpan { pos, inner } => {
+      w = widen_bare_fn_ref(inner, tp);
+      if w == null { null } else { ir::NdSpan { pos: pos, inner: w! } }
+    },
+    NdBlock { block } => {
+      bl = block[0]!;
+      k = len(bl.operators);
+      if k == 0 {
+        return null;
+      }
+      w = widen_bare_fn_ref(bl.operators[k - 1]!, tp);
+      if w == null {
+        return null;
+      }
+      ops: vector<ir::Node> = [for o in bl.operators[0..k - 1] { o }];
+      ops += [w!];
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [fn_tp], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInt { n: d } => ir::NdFnRef { def_nr: d, var: scope_fn::NONE, t: [fn_tp] },
+    NdLong { n: d } => ir::NdFnRef { def_nr: d ?? 0, var: scope_fn::NONE, t: [fn_tp] },
+    _ => null
+  }
+}
+
+// port: capture_adoption.rs fn subtree_builds_record — is closure record `r` built inside `n`
+// (its `FnRef(_, r, _)`)?
+fn subtree_builds_record(n: ir::Node, r: integer) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdFnRef { var: w } => if w == r {
+      return true;
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if subtree_builds_record(c, r) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn builds_are_mutually_exclusive — can closure records `a` and `b`
+// never exist on the same run (`@FR-L-CapOne`): built in opposite arms of one branch, or one
+// inside an arm that returns and the other not?
+fn builds_are_mutually_exclusive(body: ir::Node, a: integer, b: integer) -> boolean {
+  u = scope_fn::unspan(body);
+  match u {
+    NdIf { t, f } => {
+      ta = subtree_builds_record(t, a);
+      tb = subtree_builds_record(t, b);
+      fa = subtree_builds_record(f, a);
+      fb = subtree_builds_record(f, b);
+      if (ta && fb && !tb && !fa) || (tb && fa && !ta && !fb) {
+        return true;
+      }
+      for arm in [t, f] {
+        if scope_free_vars::expr_ends_in_return(arm) && subtree_builds_record(arm, a) != subtree_builds_record(arm, b) {
+          return true;
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    if builds_are_mutually_exclusive(c, a, b) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn group_is_pairwise_exclusive — are the records adopting one store
+// pairwise unable to coexist?
+fn group_is_pairwise_exclusive(body: ir::Node, g: Adopters) -> boolean {
+  for i in 0..len(g.locals) {
+    for j in i + 1..len(g.locals) {
+      if !builds_are_mutually_exclusive(body, g.locals[i]!, g.locals[j]!) {
+        return false;
+      }
+    }
+  }
+  true
+}
+
+// port: capture_adoption.rs fn group_leaver_is_per_run — loft#2281: is WHICH record of the group
+// leaves the frame a fact of the run (one fn-ref bound to builds of two of its records, and that
+// fn-ref returned)?
+fn group_leaver_is_per_run(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, g: Adopters) -> boolean {
+  if len(g.locals) < 2 || group_is_pairwise_exclusive(s.def_code, g) {
+    return false;
+  }
+  returned = false;
+  for raw in scope_fn::depend(b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid) {
+    if raw != scope_fn::NONE && (raw / 32768) % 2 == 1 && scope_fn::has(g.locals, raw - 32768) {
+      returned = true;
+    }
+  }
+  if !returned || scope_fn::count(f) == 0 {
+    return false;
+  }
+  bound: vector<scope_scan::VarList> = [];
+  per_run_walk(s.def_code, g.locals, s.ops.database, bound);
+  for e in bound {
+    if len(e.items) > 1 {
+      return true;
+    }
+  }
+  false
+}
+
+fn per_run_walk(n: ir::Node, locals: vector<integer>, database: integer, bound: vector<scope_scan::VarList>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: h, inner } => match scope_fn::unspan(inner) {
+      NdBlock { block } => if block[0]!.name == "fn_ref_with_closure" {
+        for op in block[0]!.operators {
+          match scope_fn::unspan(op) {
+            NdCall { def_nr: d, args } => if d == database && len(args) > 0 {
+              r = ir_pass_tree::var_of(args[0]!);
+              if r != null && scope_fn::has(locals, r!) {
+                scope_scan::list_add(bound, h, r!);
+              }
+            },
+            _ => {}
+          }
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    per_run_walk(c, locals, database, bound);
+  }
+}
+
+// port: capture_adoption.rs fn adoption_owner_index — which of one store's adopters KEEPS it: the
+// record that leaves the frame, else the first.
+fn adoption_owner_index(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, g: Adopters) -> integer {
+  for v in g.locals {
+    if record_leaves_frame(s, b, f, v) {
+      return v#index;
+    }
+  }
+  0
+}
+
+// port: capture_adoption.rs fn owning_record_locals — the closure-record locals whose cascade
+// releases the store capture `v` names (`@FR-L-CapOwn`), read off the same grouping the
+// borrow-marking reads.  `Variable::promoted_from` is not in the image: where a group's
+// attribute names an ARGUMENT that is not `v` and no backing settles it, the shadow-cell clause
+// (loft#2639) would decide, and the function is refused by name.
+pub fn owning_record_locals(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, builds: scope_capture_builds::CaptureBuilds, v: integer) -> vector<integer> {
+  nm = scope_fn::name(f, v);
+  for g in capture_store_adopters(b, f, builds).groups {
+    owners: vector<integer> = [];
+    if group_is_pairwise_exclusive(s.def_code, g) || group_leaver_is_per_run(s, b, f, g) {
+      owners = [for x in g.locals { x#index }];
+    } else {
+      owners = [adoption_owner_index(s, b, f, g)];
+    }
+    locals: vector<integer> = [];
+    for o in owners {
+      at = scope_capture_builds::capture_name(b, g.records[o]!, g.attrs[o]!);
+      av = scope_fn::var(f, at);
+      if at == nm || (av >= 0 && scope_scan::get(builds.backing, av) == v) {
+        locals += [g.locals[o]!];
+      } else if av >= 0 && scope_fn::is_argument(f, av) && env_variable("LOFT_NO_SHADOW_CELL_OWNER") == null {
+        scope_scan::refuse(s, "capture_adoption::owning_record_locals: a capture named after an argument (Variable::promoted_from is not in the image)");
+      }
+    }
+    if len(locals) > 0 {
+      return locals;
+    }
+  }
+  []
+}
+
+// One store's adopters (`capture_store_adopters`): its key `(capture, second)`, and
+// `(record local, record, attribute)` for each closure record in the running for it.
+pub struct Adopters {
+  pub capture: integer,
+  pub key: integer,
+  pub locals: vector<integer>,
+  pub records: vector<integer>,
+  pub attrs: vector<integer>
+}
+
+// `capture_store_adopters`' two answers: the groups, and the `record * 65536 + attribute` pairs
+// that adopt NOTHING (they borrow outright).
+pub struct AdopterSets {
+  pub groups: vector<Adopters>,
+  pub never: vector<integer>
+}
+
+// port: capture_adoption.rs fn capture_store_adopters — this function's closure records,
+// grouped by the STORE each adopted, in first-adoption order, and the pairs that adopt nothing.
+pub fn capture_store_adopters(b: ir::Bundle, f: ir::Function, builds: scope_capture_builds::CaptureBuilds) -> AdopterSets {
+  out: vector<Adopters> = [];
+  never: vector<integer> = [];
+  for v in 0..scope_fn::count(f) {
+    if !scope_capture_builds::is_record_local(f, v) {
+      continue;
+    }
+    record = match scope_fn::tp(f, v) {
+      TyReference { n } => n,
+      _ => -1
+    };
+    if record < 0 || !b.data.definitions[record]!.name.starts_with("__closure_") {
+      continue;
+    }
+    united = b.data.definitions[record]!.name.starts_with("__closure_u_");
+    for at in b.data.definitions[record]!.attributes {
+      a = at#index;
+      if !capture_attr_is_cascade_relevant(b, record, a) {
+        continue;
+      }
+      if united {
+        nm = scope_capture_builds::capture_name(b, record, a);
+        hit = false;
+        for p in scope_scan::list_of(builds.adopted, v) {
+          if scope_fn::name(f, p / 65536) == nm {
+            hit = true;
+          }
+        }
+        if !hit {
+          continue;
+        }
+      }
+      // loft#2131 — an OWNER slot never enters the one-store grouping: it is the record's
+      // where its capture is witnessed, and leaves the cascade where nothing writes it.
+      cap = scope_capture_builds::owner_slot_capture(b, record, a);
+      if cap != "" {
+        c = scope_fn::var(f, cap);
+        if c < 0 || !owner_slot_takes(b, f, builds, record, c) {
+          never += [record * 65536 + a];
+        }
+        continue;
+      }
+      if record_adopts_capture(b, f, builds, record, a) {
+        k = adopted_store_key(b, f, builds, v, record, a);
+        at_g = -1;
+        for g in out {
+          if g.capture == k / 4294967296 && g.key == k % 4294967296 {
+            at_g = g#index;
+          }
+        }
+        if at_g < 0 {
+          out += [Adopters { capture: k / 4294967296, key: k % 4294967296, locals: [], records: [], attrs: [] }];
+          at_g = len(out) - 1;
+        }
+        out[at_g].locals += [v];
+        out[at_g].records += [record];
+        out[at_g].attrs += [a];
+      } else {
+        never += [record * 65536 + a];
+      }
+    }
+  }
+  AdopterSets { groups: out, never: never }
+}
+
+// port: capture_adoption.rs fn adopted_store_key — `(capture, generation)`, or the unique
+// `(NONE, record_local << 16 | a)` that groups with nothing; as `capture * 2^32 + second`.
+fn adopted_store_key(b: ir::Bundle, f: ir::Function, builds: scope_capture_builds::CaptureBuilds, record_local: integer, record: integer, a: integer) -> integer {
+  unique = scope_fn::NONE * 4294967296 + record_local * 65536 + a % 65536;
+  capture = scope_fn::var(f, scope_capture_builds::capture_name(b, record, a));
+  if capture < 0 || (scope_fn::has(builds.rebuilt_in_loop, capture) && env_variable("LOFT_NO_LOOP_CAPTURE_GROUP") != null) {
+    return unique;
+  }
+  for p in scope_scan::list_of(builds.adopted, record_local) {
+    if p / 65536 == capture {
+      return capture * 4294967296 + p % 65536;
+    }
+  }
+  unique
+}
+
+// port: capture_adoption.rs fn record_leaves_frame — does the closure record held by local `v`
+// LEAVE the frame that built it (`@FR-L-CapOwn`)?
+pub fn record_leaves_frame(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  record_leaves_frame_at(s, b, f, v, 0)
+}
+
+// port: capture_adoption.rs fn record_leaves_frame_at — `depth` records deep into the records
+// that hold one another.
+fn record_leaves_frame_at(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, depth: integer) -> boolean {
+  if record_store_leaves_frame(s, b, f, v) || scope_fn::has(claimed_into_delivered(s, b, f), v) {
+    return true;
+  }
+  if depth < 8 {
+    for w in records_holding(s, b, f, v) {
+      if w != v && record_leaves_frame_at(s, b, f, w, depth + 1) {
+        return true;
+      }
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn record_held_by_a_leaving_record (loft#1869).
+fn record_held_by_a_leaving_record(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  for w in records_holding(s, b, f, v) {
+    if w != v && record_leaves_frame_at(s, b, f, w, 1) {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn closure_record_leaves_frame — does closure-record local `v` leave
+// this frame: its own store delivered, or held through a captured fn-ref by a record that is?
+pub fn closure_record_leaves_frame(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  closure = match scope_fn::base(scope_fn::tp(f, v)) {
+    TyReference { n: r } => b.data.definitions[r]!.name.starts_with("__closure_"),
+    _ => false
+  };
+  closure && (record_store_leaves_frame(s, b, f, v) || record_held_by_a_leaving_record(s, b, f, v))
+}
+
+// The records a value can deliver (`records_holding`'s `built`): a build's, or any arm's.
+fn built_records(n: ir::Node, out: vector<integer>) {
+  match scope_fn::unspan(n) {
+    NdFnRef { var: rec } => if rec != scope_fn::NONE {
+      out += [rec];
+    },
+    NdBlock { block } => if len(block[0]!.operators) > 0 {
+      built_records(block[0]!.operators[len(block[0]!.operators) - 1]!, out);
+    },
+    NdInsert { items } => if len(items) > 0 {
+      built_records(items[len(items) - 1]!, out);
+    },
+    NdIf { t, f } => {
+      built_records(t, out);
+      built_records(f, out);
+    },
+    _ => {}
+  }
+}
+
+// port: capture_adoption.rs fn records_holding — the closure-record locals whose build captured
+// a fn-ref while that fn-ref held record local `v`, followed in program order (`@FR-O-Latest`).
+fn records_holding(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> vector<integer> {
+  latest: vector<scope_scan::VarList> = [];
+  out: vector<integer> = [];
+  holding_walk(s, f, s.def_code, v, scope_fn::def_nr(b, "OpFnRefClosure"), latest, out);
+  out
+}
+
+fn holding_walk(s: scope_scan::Scopes, f: ir::Function, n: ir::Node, v: integer, fn_closure: integer, latest: vector<scope_scan::VarList>, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: g, inner: rhs } => if g < scope_fn::count(f) && scope_fn::base(scope_fn::tp(f, g)) is TyFunction {
+      held: vector<integer> = [];
+      h = ir_pass_tree::var_of(rhs);
+      if h != null {
+        held = scope_scan::list_of(latest, h!);
+      } else {
+        built_records(rhs, held);
+      }
+      set_latest(latest, g, held);
+    },
+    NdCall { def_nr: d, args } => if d == s.ops.set_dbref && len(args) > 2 {
+      w = ir_pass_tree::var_of(args[0]!);
+      match scope_fn::unspan(args[2]!) {
+        NdCall { def_nr: c, args: inner } => if w != null && c == fn_closure && len(inner) > 0 {
+          g = ir_pass_tree::var_of(inner[0]!);
+          if g != null && scope_fn::has(scope_scan::list_of(latest, g!), v) && !scope_fn::has(out, w!) {
+            out += [w!];
+          }
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    holding_walk(s, f, c, v, fn_closure, latest, out);
+  }
+}
+
+// `latest.insert(g, held)`, or `remove` where `held` is empty.
+fn set_latest(latest: vector<scope_scan::VarList>, g: integer, held: vector<integer>) {
+  at = -1;
+  for e in latest {
+    if e.v == g {
+      at = e#index;
+    }
+  }
+  if at >= 0 {
+    latest[at].items = held;
+  } else {
+    latest += [scope_scan::VarList { v: g, items: held }];
+  }
+}
+
+// port: capture_adoption.rs fn claimed_into_delivered — the closure records CLAIMED into a
+// struct the return delivers (loft#1867): `record = OpChildRec(<field of the host>, _)` with the
+// host the return buffer, a returned local or an argument.
+pub fn claimed_into_delivered(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function) -> vector<integer> {
+  body = s.def_code;
+  sources: vector<integer> = [];
+  return_sources_walk(s, body, sources);
+  if scope_free_vars::last_non_free_result(s, [body]) >= 0 {
+    scope_free_vars::collect_return_sources(s, body, sources);
+  }
+  retbuf = scope_phase::hidden_return_buffer_var(b, s.d_nr, f);
+  out: vector<integer> = [];
+  claimed_walk(body, f, scope_fn::def_nr(b, "OpChildRec"), retbuf, sources, out);
+  out
+}
+
+fn return_sources_walk(s: scope_scan::Scopes, n: ir::Node, sources: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdReturn { inner } => scope_free_vars::collect_return_sources(s, inner, sources),
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    return_sources_walk(s, c, sources);
+  }
+}
+
+fn claimed_walk(n: ir::Node, f: ir::Function, child_rec: integer, retbuf: integer, sources: vector<integer>, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: w, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr: op, args } => if op == child_rec && len(args) > 0 {
+        base = base_var(args[0]!);
+        if base >= 0 && (base == retbuf || scope_fn::has(sources, base) || scope_fn::is_argument(f, base)) && !scope_fn::has(out, w) {
+          out += [w];
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    claimed_walk(c, f, child_rec, retbuf, sources, out);
+  }
+}
+
+// port: data.rs fn base_var — the variable an accessor chain is rooted at, -1 for none.
+fn base_var(n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: v } => v,
+    NdCall { args } => if len(args) > 0 { base_var(args[0]!) } else { -1 },
+    _ => -1
+  }
+}
+
+// port: capture_adoption.rs fn record_store_leaves_frame — does the closure record held by local
+// `v` itself leave the frame, through the return or a `&fn(…)` link?  Falls back to the declared
+// type's `CalleeFrame` note where nothing in return position names a record.
+pub fn record_store_leaves_frame(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer) -> boolean {
+  if scope_fn::is_argument(f, v) {
+    return false;
+  }
+  delivered = returned_closure_records(s, b, f);
+  delivered += link_written_closure_records(s, b, f);
+  if len(delivered) > 0 {
+    return scope_fn::has(delivered, v);
+  }
+  for raw in scope_fn::depend(b.data.definitions[s.d_nr]!.returned[0] ?? ir::TyVoid) {
+    if raw != scope_fn::NONE && (raw / 32768) % 2 == 1 && raw - 32768 == v {
+      return true;
+    }
+  }
+  false
+}
+
+// port: capture_adoption.rs fn returned_closure_records — the closure records a function's
+// RETURN can deliver, read off the values in return position (the tail and every `return`).
+fn returned_closure_records(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function) -> vector<integer> {
+  out: vector<integer> = [];
+  sources: vector<integer> = [];
+  body = s.def_code;
+  delivered: vector<ir::Node> = [body];
+  returned_walk(s, body, sources, out);
+  hoisted: vector<integer> = [];
+  for t in sources {
+    if t < scope_fn::count(f) && scope_fn::name(f, t).starts_with("__ret_") {
+      hoisted += [t];
+    }
+  }
+  if len(hoisted) > 0 {
+    hoisted_walk(body, hoisted, delivered);
+  }
+  while len(delivered) > 0 {
+    v = delivered[len(delivered) - 1]!;
+    delivered.remove(len(delivered) - 1);
+    match scope_fn::unspan(v) {
+      NdFnRef { var: w } => if !scope_fn::has(out, w) {
+        out += [w];
+      },
+      NdBlock { block } => {
+        l = scope_free_vars::last_non_free_result(s, block[0]!.operators);
+        if l >= 0 {
+          delivered += [block[0]!.operators[l]!];
+        }
+      },
+      NdInsert { items } => {
+        l = scope_free_vars::last_non_free_result(s, items);
+        if l >= 0 {
+          delivered += [items[l]!];
+        }
+      },
+      NdIf { t, f: e } => {
+        delivered += [t];
+        delivered += [e];
+      },
+      NdReturn { inner } => delivered += [inner],
+      _ => scope_free_vars::collect_return_sources(s, v, sources)
+    }
+  }
+  for v in sources {
+    closure_records_of_source(b, f, v, out);
+  }
+  out
+}
+
+// Every `return`: its sources, and the records its subtree builds (a `FnRef` naming one).
+fn returned_walk(s: scope_scan::Scopes, n: ir::Node, sources: vector<integer>, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdReturn { inner } => {
+      scope_free_vars::collect_return_sources(s, inner, sources);
+      fnref_records(inner, out);
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    returned_walk(s, c, sources, out);
+  }
+}
+
+fn fnref_records(n: ir::Node, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdFnRef { var: w } => if w != scope_fn::NONE && !scope_fn::has(out, w) {
+      out += [w];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    fnref_records(c, out);
+  }
+}
+
+fn hoisted_walk(n: ir::Node, hoisted: vector<integer>, delivered: vector<ir::Node>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: t, inner } => if scope_fn::has(hoisted, t) {
+      delivered += [inner];
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    hoisted_walk(c, hoisted, delivered);
+  }
+}
+
+// port: capture_adoption.rs fn closure_records_of_source — the closure records a source variable
+// stands for: a fn-ref local's own type deps, or the record itself.
+pub fn closure_records_of_source(b: ir::Bundle, f: ir::Function, v: integer, out: vector<integer>) {
+  if v < 0 || v >= scope_fn::count(f) {
+    return;
+  }
+  match scope_fn::tp(f, v) {
+    TyFunction { dep } => for w in dep {
+      if !scope_fn::has(out, w) {
+        out += [w];
+      }
+    },
+    TyReference { n: record } => if b.data.definitions[record]!.name.starts_with("__closure_") && !scope_fn::has(out, v) {
+      out += [v];
+    },
+    _ => {}
+  }
+}
+
+// A `&fn(…)` link: `RefVar(Function)`, both bare.
+fn is_fn_link(f: ir::Function, v: integer) -> boolean {
+  match scope_fn::tp(f, v) {
+    TyRefVar { inner } => inner is TyFunction,
+    _ => false
+  }
+}
+
+// port: capture_adoption.rs fn link_written_closure_records — the closure records a function
+// writes OUT through a `&fn(…)` link, less those a later write to the same link in the same
+// straight line of operators supersedes.
+pub fn link_written_closure_records(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function) -> vector<integer> {
+  any = false;
+  for v in 0..scope_fn::count(f) {
+    if is_fn_link(f, v) {
+      any = true;
+    }
+  }
+  if !any {
+    return [];
+  }
+  out: vector<integer> = [];
+  superseded: vector<integer> = [];
+  link_walk(s, b, f, s.def_code, out, superseded);
+  [for r in out if !scope_fn::has(superseded, r) { r }]
+}
+
+fn link_walk(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, n: ir::Node, out: vector<integer>, superseded: vector<integer>) {
+  u = scope_fn::unspan(n);
+  ops: vector<ir::Node> = [];
+  match u {
+    NdSet { var: v, inner } => if is_fn_link(f, v) {
+      records_of_link_write(s, b, f, inner, out);
+    },
+    NdBlock { block } => ops = block[0]!.operators,
+    NdInsert { items } => ops = items,
+    _ => {}
+  }
+  dests: vector<integer> = [];
+  values: vector<ir::Node> = [];
+  for o in ops {
+    match scope_fn::unspan(o) {
+      NdSet { var: v, inner } => if is_fn_link(f, v) {
+        dests += [v];
+        values += [inner];
+      },
+      _ => {}
+    }
+  }
+  for i in 0..len(dests) {
+    later = false;
+    for j in i + 1..len(dests) {
+      if dests[j] == dests[i] {
+        later = true;
+      }
+    }
+    if later {
+      records_of_link_write(s, b, f, values[i]!, superseded);
+    }
+  }
+  for c in scope_fn::children(u) {
+    link_walk(s, b, f, c, out, superseded);
+  }
+}
+
+// port: capture_adoption.rs fn records_of_link_write — the closure records one write through a
+// `&fn(…)` link hands to the caller, on every arm it may take.
+fn records_of_link_write(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, value: ir::Node, out: vector<integer>) {
+  sources: vector<integer> = [];
+  delivered: vector<ir::Node> = [value];
+  while len(delivered) > 0 {
+    cur = delivered[len(delivered) - 1]!;
+    delivered.remove(len(delivered) - 1);
+    match scope_fn::unspan(cur) {
+      NdFnRef { var: w } => if !scope_fn::has(out, w) {
+        out += [w];
+      },
+      NdBlock { block } => {
+        l = scope_free_vars::last_non_free_result(s, block[0]!.operators);
+        if l >= 0 {
+          delivered += [block[0]!.operators[l]!];
+        }
+      },
+      NdInsert { items } => {
+        l = scope_free_vars::last_non_free_result(s, items);
+        if l >= 0 {
+          delivered += [items[l]!];
+        }
+      },
+      NdIf { t, f: e } => {
+        delivered += [t];
+        delivered += [e];
+      },
+      _ => scope_free_vars::collect_return_sources(s, cur, sources)
+    }
+  }
+  for v in sources {
+    closure_records_of_source(b, f, v, out);
+  }
 }
 
 // port: capture_adoption.rs fn record_adopts_capture — does closure record `record` adopt the

@@ -789,9 +789,39 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     witness_update += [scope_fn::v_set(hv, ir::NdBoolean { b: false })];
   }
   // loft#1336 / @FR-O-Witness — keep the OWNER WITNESS naming exactly the store the local
-  // minted and still holds, by store identity.  A closure build's hand-off of a witnessed
-  // capture is a closure record's (refused by the phase).
+  // minted and still holds, by store identity.
   witness_ops: vector<ir::Node> = [];
+  // …and the record a closure build is about to OVERWRITE gives up what it already holds
+  // (loft#1388): where every capture of the build has a witness, an owner slot still naming
+  // its capture's store goes back to the frame's holder (loft#2131), then the record's hook
+  // and its free.  (The `(L-CapKeep)` snapshot's detach reads `pending_fkeep`, set only by a
+  // gated keep set, which the phase refuses.)
+  built_here = captures_built_in_value(s, value);
+  if len(built_here) > 0 && all_witnessed(s, built_here) {
+    k = 0;
+    while k < len(built_here) {
+      rec = built_here[k]!;
+      c = built_here[k + 1]!;
+      oh = scope_scan::owner_slot_handoff(s, b, f, rec, c);
+      if oh != null {
+        back = if oh!.witness >= 0 { oh!.witness } else { oh!.temps[0]! };
+        c_v = scope_scan::mapped(s, c);
+        held = ir::NdCall { def_nr: s.ops.get_dbref, args: [ir::NdVar { n: rec }, ir::NdInt { n: oh!.own }] };
+        live = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.ref_is_null, args: [ir::NdVar { n: rec }] }, t: ir::NdBoolean { b: false }, f: ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: rec }] } };
+        give_back = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [held, ir::NdVar { n: c_v }] }, t: ir::NdNull, f: ir::NdInsert { items: [
+          scope_fn::v_set(back, held),
+          ir::NdCall { def_nr: s.ops.set_dbref, args: [ir::NdVar { n: rec }, ir::NdInt { n: oh!.own }, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }] }
+        ] } };
+        prefix += [ir::NdIf { cond: live, t: give_back, f: ir::NdNull }];
+      }
+      rhook = scope_drops::drop_hook(s, b, f, rec);
+      if rhook != null {
+        prefix += [rhook!];
+      }
+      prefix += [scope_drops::free_ref(s, rec)];
+      k += 2;
+    }
+  }
   // loft#1628, `@FR-H-Drop` — a REBIND of a witnessed local that still holds a record it took
   // over from a plain local displaces THAT record: its hook runs here, after the new value has
   // landed, and the local's `__hoff_` flag keeps its scope-end hook from running it again.

@@ -41,11 +41,11 @@ pub struct Phase {
   pub written_t: vector<text>
 }
 
-// port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
-// `confined` is the confinement rescan's map, `late` the late owners of an earlier phase;
-// `sunk` the bindings an earlier phase wrote out per arm.
-pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>, confined: vector<integer>, late: vector<integer>, sunk: vector<integer>) -> Phase {
-  s = scope_scan::Scopes {
+// The scan state `run_scan_phase` starts from (`Scopes { … }` in `run_scan_phase`): also built
+// for a settled body after `check`'s loop, where `mark_borrowed_captures` asks the capture
+// analyses of it.
+pub fn new_scopes(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>, confined: vector<integer>, late: vector<integer>, sunk: vector<integer>, def_code: ir::Node) -> scope_scan::Scopes {
+  scope_scan::Scopes {
     ops: ops,
     d_nr: d_nr,
     max_scope: 1,
@@ -133,11 +133,20 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     owned_handle_members: [],
     stale_defs: stale,
     orig_code: orig_code,
+    def_code: def_code,
+    arm_released_records: [],
     capture_build_backing: scope_capture_builds::no_capture_builds(),
     closure_keep: scope_closure_keep::closure_keep_set(b, orig_vars, orig_code),
     why: "",
     whys: []
-  };
+  }
+}
+
+// port: phase.rs fn run_scan_phase — the body and the table it leaves, and the first refusal.
+// `confined` is the confinement rescan's map, `late` the late owners of an earlier phase;
+// `sunk` the bindings an earlier phase wrote out per arm.
+pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code: ir::Node, orig_vars: ir::Function, stale: vector<integer>, confined: vector<integer>, late: vector<integer>, sunk: vector<integer>, def_code: ir::Node) -> Phase {
+  s = new_scopes(b, ops, d_nr, orig_code, orig_vars, stale, confined, late, sunk, def_code);
   // @PLN85 `local_source` — read before any dep strip below.  A right-hand side the oracle
   // classified reads a refused callee's summary through the stale-callee guard.
   if env_variable("LOFT_NO_JOIN_OWN") == null {
@@ -371,7 +380,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
 }
 
 // port: phase.rs fn hidden_return_buffer_var — the variable of the hidden return buffer, -1.
-fn hidden_return_buffer_var(b: ir::Bundle, d_nr: integer, f: ir::Function) -> integer {
+pub fn hidden_return_buffer_var(b: ir::Bundle, d_nr: integer, f: ir::Function) -> integer {
   d = b.data.definitions[d_nr]!;
   idx = binds::hidden_return_buffer_attr(d);
   if idx == null {
