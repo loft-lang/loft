@@ -136,6 +136,9 @@ pub struct El {
   // second pass names it as the function starts, so a caller sees it whatever the body's
   // delivery then does — a refused callee included.
   pub owed_buffer: vector<integer>,
+  // The functions whose body tail the first pass could not type (a struct declared below them):
+  // the second pass's body block keeps no deps for a vector answer, as Rust's does (rv6).
+  pub p1_untyped_tail: vector<integer>,
   // The functions whose return buffer the first pass renamed onto a `MaterializeView` work ref
   // (`view_tail`) rather than a call's own buffer: a mid-body literal there keeps its work ref.
   pub view_renamed: vector<integer>,
@@ -309,6 +312,7 @@ pub fn new_el(p: syntax::Syntax, file: text, default: boolean) -> El {
     refused_in: [],
     unbacked: [],
     owed_buffer: [],
+    p1_untyped_tail: [],
     view_renamed: [],
     lambda_roots: [],
     declared_lambdas: [],
