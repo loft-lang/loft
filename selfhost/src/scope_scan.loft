@@ -214,6 +214,10 @@ pub struct Scopes {
   // `@FR-H-FreeTwice` — per local, the frame temporaries its assignments view
   // (`phase::view_temps_in`).
   pub view_temps: vector<VarList>,
+  // loft#2680 — per local adopting two or more record CONSTRUCTIONS, their work-refs
+  // (`phase::construction_temps_in`): a rebind that releases the displaced store disarms
+  // whichever names it.
+  pub construction_temps: vector<VarList>,
   // loft#2594 — the record locals a literal's store moves into (`phase::literal_moves_in`), and
   // the move the last bind made (`moved_local` -1: none).
   pub literal_moves: vector<integer>,

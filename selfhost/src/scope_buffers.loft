@@ -12,6 +12,7 @@ use binds;
 use scope_fn;
 use scope_scan;
 use scope_args;
+use ir_pass_tree;
 
 // port: buffers.rs fn tail_calls — the calls at the VALUE positions of a branch.
 pub fn tail_calls(v: ir::Node) -> vector<ir::Node> {
@@ -142,6 +143,17 @@ pub fn reuse_record_buffers(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node
       for op in ops {
         if frees_unguarded(b, op, v, av) {
           skip = true;
+        }
+      }
+    }
+    // `@FR-H-FreeTwice` — the same question of the local the buffer's CALL is bound to (a join
+    // arm's call lifted into a `__lift_N`), which need not be the result local above.
+    if !skip && env_variable("LOFT_POOL_UNGUARDED_FREE_OK") == null {
+      for v in call_result_locals(b, ops, av) {
+        for op in ops {
+          if frees_unguarded(b, op, v, av) {
+            skip = true;
+          }
         }
       }
     }
@@ -290,6 +302,40 @@ fn call_uses(b: ir::Bundle, n: ir::Node, av: integer) -> integer {
 
 fn is_var(n: ir::Node, v: integer) -> boolean {
   match scope_fn::unspan(n) { NdVar { n: x } => x == v, _ => false }
+}
+
+// port: buffers.rs fn call_result_locals — the locals a call handed buffer `av` is bound to:
+// `Set(x, Call(f, [.., av, ..]))` anywhere in `ops`, `f` loft-defined.
+fn call_result_locals(b: ir::Bundle, ops: vector<ir::Node>, av: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for op in ops {
+    call_result_walk(b, op, av, out);
+  }
+  out
+}
+
+fn call_result_walk(b: ir::Bundle, n: ir::Node, av: integer, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: x, inner } => match scope_fn::unspan(inner) {
+      NdCall { def_nr: d, args } => {
+        dd = b.data.definitions[d];
+        if dd != null && binds::is_loft_defined(dd!) && !scope_fn::has(out, x) {
+          for a in args {
+            y = ir_pass_tree::var_of(a);
+            if y != null && y! == av && !scope_fn::has(out, x) {
+              out += [x];
+            }
+          }
+        }
+      },
+      _ => {}
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    call_result_walk(b, c, av, out);
+  }
 }
 
 // port: buffers.rs fn frees_unguarded

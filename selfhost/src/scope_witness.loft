@@ -327,6 +327,18 @@ pub fn witness_set_kind(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v
     NdInsert => owned(s, b, u),
     _ => false
   };
+  // loft#2669 — the `!` discharge block (`{ _ncr_N = call(…); check; _ncr_N }`) is a mint where
+  // its temp's first bind holds a store of its own on every run
+  // (`bind_lowering::first_arm(…).holds_own_store()`, not transcribed): refused where that
+  // would decide it.
+  if !mints {
+    k = ncr_tail_holds_own_store(b, u, f);
+    if k > 0 {
+      mints = true;
+    } else if k < 0 {
+      scope_scan::refuse(s, "witness::witness_set_kind: a `!` discharge's temp (bind_lowering::first_arm)");
+    }
+  }
   if !mints {
     if !reads && env_variable("LOFT_NO_WITNESS_NULL_BUFFER") == null && choice_delivering_temps(b, value, f, temps) {
       return SET_MINT_UNLESS;
@@ -334,6 +346,63 @@ pub fn witness_set_kind(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node, v
     return SET_OTHER;
   }
   if reads { SET_MINT_READING } else { SET_MINT }
+}
+
+// port: witness.rs fn ncr_tail_holds_own_store — the `!` discharge block's tail is its `_ncr_N`,
+// and that temp's own bind in the block leaves it a store of its own on every run
+// (`bind_lowering::first_arm(…).holds_own_store()`): 1 yes, 0 no, -1 undecided.  `first_arm`
+// is transcribed as far as it decides here: a text or plain temp holds none; a record bound from
+// a loft-defined call (a call join, adopt or copy) or `OpCopyRecord` holds one; a record viewing
+// another (deps) bound from null or any other shape than a variable, a fn-ref call or a tuple
+// member matches no holding arm.  Every other record or collection bind is undecided.
+fn ncr_tail_holds_own_store(b: ir::Bundle, u: ir::Node, f: ir::Function) -> integer {
+  match u {
+    NdBlock { block } => {
+      ops = block[0]!.operators;
+      if block[0]!.name != "ncr" || len(ops) == 0 {
+        return 0;
+      }
+      t = match scope_fn::unspan(ops[len(ops) - 1]!) {
+        NdVar { n } => n,
+        _ => -1
+      };
+      if t < 0 {
+        return 0;
+      }
+      out = 0;
+      for op in ops {
+        match scope_fn::unspan(op) {
+          NdSet { var: x, inner } => if x == t && out == 0 {
+            tp = scope_fn::tp(f, t);
+            if scope_fn::is_record(tp) {
+              out = match scope_fn::unspan(inner) {
+                // A loft call: a call join, adopt or copy.  `OpCopyRecord`: a record copy.  Any
+                // other operator over a view (deps) matches no arm that holds a store.
+                NdCall { def_nr: d } => if binds::is_loft_defined(b.data.definitions[d]!) || b.data.definitions[d]!.name == "OpCopyRecord" {
+                  1
+                } else if len(scope_fn::deps(f, t)) > 0 {
+                  0
+                } else {
+                  -1
+                },
+                NdNull => 0,
+                NdVar => -1,
+                NdCallRef => -1,
+                NdTupleGet => -1,
+                // Any other shape over a view matches no arm that holds a store.
+                _ => if len(scope_fn::deps(f, t)) > 0 { 0 } else { -1 }
+              };
+            } else if !scope_fn::is_plain(tp) && !scope_fn::is_text(tp) {
+              out = -1;
+            }
+          },
+          _ => {}
+        }
+      }
+      out
+    },
+    _ => 0
+  }
 }
 
 fn owned(s: scope_scan::Scopes, b: ir::Bundle, value: ir::Node) -> boolean {
