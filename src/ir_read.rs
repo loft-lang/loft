@@ -761,8 +761,8 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
             let mut f = read_function(stores, r, ds::DEF_VARIABLES);
             // @PLN91 `Function::ref_evacuations`, four integers each.
             let evs = read_dep_list(stores, r, ds::DEF_REF_EVACUATIONS);
-            for e in evs.chunks_exact(4) {
-                f.add_ref_evacuation(e[0], e[1], e[2], e[3]);
+            for &[a, b, c, d] in evs.as_chunks::<4>().0 {
+                f.add_ref_evacuation(a, b, c, d);
             }
             f
         },
