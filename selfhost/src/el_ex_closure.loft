@@ -333,7 +333,8 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
         }
         // (A short lambda of no parameters needs no hint for them: `|| { t }` is `fn()` whose
         // result its body answers — loft#945's `infer_ret`, the hint naming none.)
-        if !(hint is TyFunction) && len(params) == 0 {
+        // (A short lambda's parameters are its `names`: `|x|` has no `params`.)
+        if !(hint is TyFunction) && len(params) == 0 && len(names) == 0 {
           hint = ir::TyFunction { args: [], result: ir::TyUnknown { n: 0 }, dep: [], consts: 0 };
         }
         if !(hint is TyFunction) {

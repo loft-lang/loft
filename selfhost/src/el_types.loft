@@ -861,6 +861,11 @@ fn type_of(e: el::El, n: integer, attach: boolean) -> ir::TypeT? {
           bits += 1 << 33;
         }
       }
+      // (loft#2190, `@FR-L-FnRef`: a function declared `-> (integer, text)` returns the BOXED
+      // `__tuple<…>` record, so the TYPE `fn(…) -> (integer, text)` names the same result — a
+      // function of exactly that type converts to it.  A result a type variable shapes is the
+      // template's to box at instantiation.)
+      rt = boxed_fn_result(e, rt);
       ir::TyFunction { args: ts, result: rt, dep: [], consts: bits }
     },
     _ => {
@@ -1955,5 +1960,28 @@ fn fill_enum_instance(e: el::El, template: integer, d: integer, bindings: vector
       }
     }
     v += 1;
+  }
+}
+
+// `boxed_tuple_return` for a function TYPE's result (`parse_type_full`'s `-> τ`): a tuple whose
+// members carry a lifetime is the synthetic `__tuple<…>` record; a tuple of plain values, one a
+// type variable shapes, and one with a member not resolved yet stay the tuple they are.
+fn boxed_fn_result(e: el::El, t: ir::TypeT) -> ir::TypeT {
+  match t {
+    TyTuple { elems } => {
+      concern = false;
+      for m in elems {
+        b = base(m);
+        if type_var(e, b) >= 0 {
+          return t;
+        }
+        if b is TyText || b is TyReference || b is TyVector || b is TyHash || b is TySorted || b is TyIndex || (b is TyEnum && struct_enum_def(b) >= 0) {
+          concern = true;
+        }
+      }
+      td = if concern { tuple_def_of(e, elems) } else { -1 };
+      if td < 0 { t } else { ir::TyReference { n: td, dep: [] } }
+    },
+    _ => t
   }
 }
