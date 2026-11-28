@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The world of the slot matrix's SEQUENCE axis (scripts/slot_sequence.py,
+// doc/claude/SLOT_MATRIX.md § The sequence axis).  A cell is a function of a few statements
+// over one local `x` of one of four types, taking a parameter `p` of that type, the number
+// `k` that picks its paths and a holder `h` the cell may copy into; the generator knows what
+// every function below answers and computes what each call of the cell must return.
+//
+// The text above `=== BELOW ===` is written once at the head of a generated program, the
+// text after it once at its END: those callees are declared below every cell that calls
+// them, so pass 1 meets the call before the callee's result type.
+//
+// Every record is "the record numbered n": its fields follow from n (`at.a` is n + 1, `xs`
+// is [n, n + 2], an enum's inner `A` holds n + 1), so a field that lost its write or was read
+// from a freed store shows in the cell's line.  A callee's choice follows the parity of the
+// number: an ODD record is replaced by a fresh one numbered n + 100, an EVEN one is handed
+// back.  The four types: `SqP` a record of one integer; `SqR` a record holding a record and a
+// vector; `SqE` a struct-enum; `vector<integer>`.
+
+struct SqP { v: integer }
+struct SqAt { a: integer }
+struct SqR { v: integer, at: SqAt, xs: vector<integer> }
+enum SqE { A { x: integer }, S { v: integer, inner: SqE } }
+struct HoldP { f: SqP, vs: vector<SqP> }
+struct HoldR { f: SqR, vs: vector<SqR> }
+struct HoldE { f: SqE, vs: vector<SqE> }
+struct HoldL { f: vector<integer>, vs: vector<vector<integer>> }
+
+// mk: a fresh record numbered n.
+fn mk_p(n: integer) -> SqP { SqP { v: n } }
+fn mk_r(n: integer) -> SqR { SqR { v: n, at: SqAt { a: n + 1 }, xs: [n, n + 2] } }
+fn mk_e(n: integer) -> SqE { S { v: n, inner: A { x: n + 1 } } }
+fn mk_l(n: integer) -> vector<integer> { [n, n + 2] }
+
+// id: its argument handed back, always.
+fn id_p(a: SqP) -> SqP { a }
+fn id_r(a: SqR) -> SqR { a }
+fn id_e(a: SqE) -> SqE { a }
+fn id_l(a: vector<integer>) -> vector<integer> { a }
+
+// w: a fresh record for an odd argument (an early return), the argument itself for an even one.
+fn w_p(a: SqP) -> SqP { if a.v % 2 == 1 { return SqP { v: a.v + 100 }; } a }
+fn w_r(a: SqR) -> SqR { if a.v % 2 == 1 { return SqR { v: a.v + 100, at: SqAt { a: a.v + 101 }, xs: [a.v + 100, a.v + 102] }; } a }
+fn w_e(a: SqE) -> SqE { match a { S { v } => if v % 2 == 1 { return S { v: v + 100, inner: A { x: v + 101 } }; }, _ => {} } a }
+fn w_l(a: vector<integer>) -> vector<integer> { if a[0] % 2 == 1 { return [a[0] + 100, a[0] + 102]; } a }
+
+// wt: what `w` answers, as a tail that joins the fresh record and the argument.
+fn wt_p(a: SqP) -> SqP { if a.v % 2 == 1 { SqP { v: a.v + 100 } } else { a } }
+fn wt_r(a: SqR) -> SqR { if a.v % 2 == 1 { SqR { v: a.v + 100, at: SqAt { a: a.v + 101 }, xs: [a.v + 100, a.v + 102] } } else { a } }
+fn wt_e(a: SqE) -> SqE { match a { S { v } => if v % 2 == 1 { S { v: v + 100, inner: A { x: v + 101 } } } else { a }, _ => a } }
+fn wt_l(a: vector<integer>) -> vector<integer> { if a[0] % 2 == 1 { [a[0] + 100, a[0] + 102] } else { a } }
+
+// alt: a fresh record for an odd argument, null for an even one.
+fn alt_p(a: SqP) -> SqP? { if a.v % 2 == 1 { SqP { v: a.v + 100 } } else { null } }
+fn alt_r(a: SqR) -> SqR? { if a.v % 2 == 1 { SqR { v: a.v + 100, at: SqAt { a: a.v + 101 }, xs: [a.v + 100, a.v + 102] } } else { null } }
+fn alt_e(a: SqE) -> SqE? { match a { S { v } => if v % 2 == 1 { S { v: v + 100, inner: A { x: v + 101 } } } else { null }, _ => null } }
+fn alt_l(a: vector<integer>) -> vector<integer>? { if a[0] % 2 == 1 { [a[0] + 100, a[0] + 102] } else { null } }
+
+// pk: a fresh record numbered 9 when the vector holds two or more, else the argument.
+fn pk_p(a: SqP, xs: vector<integer>) -> SqP { if len(xs) > 1 { return SqP { v: 9 }; } a }
+fn pk_r(a: SqR, xs: vector<integer>) -> SqR { if len(xs) > 1 { return SqR { v: 9, at: SqAt { a: 10 }, xs: [9, 11] }; } a }
+fn pk_e(a: SqE, xs: vector<integer>) -> SqE { if len(xs) > 1 { return S { v: 9, inner: A { x: 10 } }; } a }
+fn pk_l(a: vector<integer>, xs: vector<integer>) -> vector<integer> { if len(xs) > 1 { return [9, 11]; } a }
+
+// What the driver prints of a value.
+fn show_p(a: SqP) -> text { "{a.v}" }
+fn show_r(a: SqR) -> text { "{a.v}/{a.at.a}/{a.xs}" }
+fn show_e(a: SqE) -> text { match a { S { v, inner } => "S{v}/{show_e(inner)}", A { x } => "A{x}" } }
+fn show_l(a: vector<integer>) -> text { "{a}" }
+fn show_at(a: SqAt) -> text { "{a.a}" }
+fn show_i(a: integer) -> text { "{a}" }
+fn show_v(a: vector<integer>) -> text { "{a}" }
+fn hold_p() -> HoldP { HoldP { f: SqP { v: 0 }, vs: [] } }
+fn hold_r() -> HoldR { HoldR { f: SqR { v: 0, at: SqAt { a: 1 }, xs: [0, 2] }, vs: [] } }
+fn hold_e() -> HoldE { HoldE { f: S { v: 0, inner: A { x: 1 } }, vs: [] } }
+fn hold_l() -> HoldL { HoldL { f: [0, 2], vs: [] } }
+fn show_hold_p(h: HoldP) -> text { out = show_p(h.f); for e in h.vs { out += "+{show_p(e)}"; } out }
+fn show_hold_r(h: HoldR) -> text { out = show_r(h.f); for e in h.vs { out += "+{show_r(e)}"; } out }
+fn show_hold_e(h: HoldE) -> text { out = show_e(h.f); for e in h.vs { out += "+{show_e(e)}"; } out }
+fn show_hold_l(h: HoldL) -> text { out = show_l(h.f); for e in h.vs { out += "+{show_l(e)}"; } out }
+// === BELOW ===
+// lw: `w`, declared below every cell that calls it.
+fn lw_p(a: SqP) -> SqP { if a.v % 2 == 1 { return SqP { v: a.v + 100 }; } a }
+fn lw_r(a: SqR) -> SqR { if a.v % 2 == 1 { return SqR { v: a.v + 100, at: SqAt { a: a.v + 101 }, xs: [a.v + 100, a.v + 102] }; } a }
+fn lw_e(a: SqE) -> SqE { match a { S { v } => if v % 2 == 1 { return S { v: v + 100, inner: A { x: v + 101 } }; }, _ => {} } a }
+fn lw_l(a: vector<integer>) -> vector<integer> { if a[0] % 2 == 1 { return [a[0] + 100, a[0] + 102]; } a }

@@ -429,6 +429,8 @@ def load_all():
 def cmd_check(_args):
     slots, fillers, outside, problems = load_all()
     problems = check(slots, fillers, outside, lexicon(), defined_rules(), problems)
+    import slot_sequence
+    problems += slot_sequence.table_problems()
     for p in problems:
         print(p)
     if problems:
@@ -662,6 +664,10 @@ SPENT_LOCK = threading.Lock()
 
 # The flag each backend runs under.
 FLAG = {"interp": [], "c": ["--native-c"]}
+# More of loft's checks a run arms beside `LOFT_LEAK_CHECK` (the sequence axis arms the strict
+# stores and poison), and how many programs run at once (`--jobs`; default half the cores).
+EXTRA_ENV = {}
+JOBS = None
 COMPILED = ("c",)
 # A compiled backend builds a cell's whole program at once, so one cell its writer emits
 # wrongly fails every cell of the program with the same compile error; such a batch is
@@ -671,7 +677,7 @@ COMPILE_ERROR = re.compile(r"native compil|error\[E\d+\]|error: (expected|cannot
 
 def invoke(backend, path, limit=None):
     cmd = [loft_binary()] + FLAG[backend] + ["--no-warnings", "--tests", path]
-    env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT=str(limit or TIME_LIMIT[backend]))
+    env = dict(os.environ, LOFT_LEAK_CHECK="1", LOFT_TIMEOUT=str(limit or TIME_LIMIT[backend]), **EXTRA_ENV)
     began = time.monotonic()
     done = subprocess.run(cmd, capture_output=True, text=True, env=env, check=False)
     with SPENT_LOCK:
@@ -680,13 +686,14 @@ def invoke(backend, path, limit=None):
     return done.stdout + done.stderr
 
 
-def run_program(backend, cells, tmp, tag):
+def run_program(backend, cells, tmp, tag, build_program=None):
     """Run `cells` (all of one collection kind) as one program.  Returns, per cell name,
-    ("REFUSED", message) | ("LOST", last output) | ("RAN", count, log, dump, test failure)."""
+    ("REFUSED", message) | ("LOST", last output) | ("RAN", count, log, dump, test failure).
+    `build_program(kind_type, cells)` writes the program; the slot matrix's own by default."""
     results, pending, turn, limit = {}, list(cells), 0, TIME_LIMIT[backend]
     while pending:
         turn += 1
-        text, spans = program(pending[0]["kind_type"], pending)
+        text, spans = (build_program or program)(pending[0]["kind_type"], pending)
         path = os.path.join(tmp, f"{tag}_{turn}.loft")
         with open(path, "w", encoding="utf-8") as f:
             f.write(text)
@@ -718,12 +725,25 @@ def run_program(backend, cells, tmp, tag):
                 and all(COMPILE_ERROR.search(why) for why in failed.values())):
             half = (len(pending) + 1) // 2
             for n, part in enumerate((pending[:half], pending[half:])):
-                results.update(run_program(backend, part, tmp, f"{tag}_{turn}{'ab'[n]}"))
+                results.update(run_program(backend, part, tmp, f"{tag}_{turn}{'ab'[n]}", build_program))
             break
         for fn, why in failed.items():
             if "exit 124" in why:               # the C backend's form of the same limit
                 failed[fn] = (f"it does not finish: loft's time limit ({limit} s) "
                               f"ended it — the statement loops")
+        # A compiled test that the strict stores or the leak check end says only that the run
+        # failed; what it printed after the cell's own line says why.
+        for cell, (_, _, fn) in zip(pending, spans):
+            if "native run failed" in failed.get(fn, ""):
+                m = re.search(r"^%s c=.*$" % re.escape(cell["name"]), out, re.M)
+                said = []
+                for ln in (out[m.end():].splitlines()[1:10] if m else ()):
+                    if ln.startswith(("FAIL ", "  FAIL")) or " log=<" in ln:
+                        break
+                    if ln.startswith(("[strict-store]", "Warning:", "error:")):
+                        said.append(ln.strip())
+                if said:
+                    failed[fn] += ": " + " / ".join(said)[:300]
         lost = []
         for cell, (_, _, fn) in zip(pending, spans):
             m = re.search(r"^%s c=(\d+) log=<(.*?)> \| (.*)$" % re.escape(cell["name"]), out, re.M)
@@ -741,19 +761,19 @@ def run_program(backend, cells, tmp, tag):
             half = (len(lost) + 1) // 2
             for n, part in enumerate((lost[:half], lost[half:])):
                 if part:
-                    results.update(run_program(backend, part, tmp, f"{tag}_{turn}{'ab'[n]}"))
+                    results.update(run_program(backend, part, tmp, f"{tag}_{turn}{'ab'[n]}", build_program))
         break
     return results
 
 
-def run_backend(backend, cells, tmp):
+def run_backend(backend, cells, tmp, build_program=None):
     chunks = []
     for kind_type in sorted({c["kind_type"] for c in cells}):
         mine = [c for c in cells if c["kind_type"] == kind_type]
         chunks += [mine[n:n + CHUNK] for n in range(0, len(mine), CHUNK)]
     results = {}
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max(2, (os.cpu_count() or 4) // 2)) as pool:
-        futures = [pool.submit(run_program, backend, chunk, tmp, f"{backend}{n}")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=JOBS or max(2, (os.cpu_count() or 4) // 2)) as pool:
+        futures = [pool.submit(run_program, backend, chunk, tmp, f"{backend}{n}", build_program)
                    for n, chunk in enumerate(chunks)]
         for f in futures:
             results.update(f.result())
@@ -1527,7 +1547,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bg", metavar="FILE", help="run the command in the background, its output in FILE, "
                     "ending with a `slot_matrix: done exit=<n>` line (before the subcommand)")
+    ap.add_argument("--jobs", type=int, help="how many programs run at once (default: half the cores); "
+                    "before the subcommand")
     sub = ap.add_subparsers(dest="cmd", required=True)
+    # The sequence axis lives in its own module, which reads this one's runner.
+    sys.modules.setdefault("slot_matrix", sys.modules[__name__])
+    import slot_sequence
+    slot_sequence.add_parser(sub)
     sub.add_parser("check").set_defaults(fn=cmd_check)
     sub.add_parser("selftest").set_defaults(fn=cmd_selftest)
     sub.add_parser("list").set_defaults(fn=cmd_list)
@@ -1607,6 +1633,8 @@ def main():
     p.add_argument("--depth", type=int, choices=(1, 2), default=1, help="2 adds every wrapper filler around every other filler")
     p.set_defaults(fn=cmd_walk)
     args = ap.parse_args()
+    global JOBS
+    JOBS = args.jobs
     if args.bg:
         # The same command, detached, its output in a file that ends with one line a wait
         # can look for.  A whole run takes minutes; nothing should have to sit on it.
