@@ -2371,7 +2371,11 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
       return ex(ir::NdNull, ir::TyVoid);
     }
     el_vars::drop_use(vars, v);
-    return ex(el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }]), ir::TyVoid);
+    // (A plain local's is answered as a one-statement insert, as Rust's is: spliced, its end takes
+    // the line marker a following statement on the same line keeps — as the field's append is.
+    // Through a `&` link it is the bare call.)
+    lapp = el_ir::cl(e, "OpAppendVector", [ir::NdVar { n: v }, x.code, ir::NdInt { n: rec }]);
+    return ex(if (vt is TyRefVar) { lapp } else { ir::NdInsert { items: [lapp] } }, ir::TyVoid);
   }
   // A link to a scalar (`n: &integer`) is read and written as the scalar it names, and a `τ?`
   // local steps as its `τ` does (`x += 1` is `OpAddInt`, the local keeping its `?`).
