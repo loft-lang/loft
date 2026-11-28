@@ -25,6 +25,7 @@ use scope_backings;
 use scope_capture_builds;
 use scope_drops;
 use scope_witness;
+use scope_join_rewrite;
 use scope_buffers;
 use scope_handles;
 use scope_tuple_members;
@@ -101,12 +102,16 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
     }
   }
   // `@FR-O-Complete` / `@FR-B-Copy` — a REASSIGNMENT of a heap local from a value branch is
-  // written out per arm (`sink_set_into_arms`).  The droppable-owning first bind is refused by
-  // the phase (`drops::drop_hook`).
+  // written out per arm (`sink_set_into_arms`).  So is the FIRST bind of a local whose type owns
+  // a droppable, unless an arm's source outlives the loop (`arm_source_outlives_loop`, with
+  // `loop_refills`): not transcribed, refused by name.
   writes_out = (scope_scan::in_scope(s, v) || (scope_fn::has(s.multi_assigned, ov) && every_arm_tail_is_var(value)))
     && scope_args::is_value_branch(value)
     && !(t is TyRefVar)
     && scope_fn::is_record(t);
+  if !writes_out && scope_args::is_value_branch(value) && !(t is TyRefVar) && scope_fn::is_record(t) && scope_join_rewrite::droppable(b, t) {
+    scope_scan::refuse(s, "arm_lift::sink_set_into_arms: a droppable first bind written out per arm (arm_source_outlives_loop)");
+  }
   if writes_out && s.built_depth == 0 && sink_set_into_arms(b, v, ov, value, f, true) != null {
     s.written_out_v += [ov];
     s.written_out_t += ["{value}"];

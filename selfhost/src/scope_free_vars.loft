@@ -250,10 +250,11 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
     }
   }
   // @PLN85 P4-records — at a RETURN, any record local's store may BE the returned store: its
-  // free is conditional on not being it.  (`hooks_follow_returned_frees` moves no hook: none is
-  // placed for a record without a cascade.)
+  // free is conditional on not being it, and so is the hook ahead of it
+  // (`hooks_follow_returned_frees`).
   if is_return && ret_var != scope_fn::NONE && ret_var < scope_fn::count(f) && bare_record(scope_fn::tp(f, ret_var)) {
     distinct_frees(s, f, ls, ret_var, false);
+    hooks_follow_returned_frees(s, ls, ret_var);
   }
   expr_is_terminal = expr_ends_in_return(expr);
   // @PLN85 P4-records — a null-arm or joined record return: hoist the value to `__ret_N`, run
@@ -272,6 +273,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
       for k in 0..len(ls) {
         ls[k] = rekey_guard(ls[k]!, view_sources, tmp, s.ops.free_if_distinct);
       }
+      hooks_follow_returned_frees(s, ls, tmp);
     }
     result += ls;
     for src in null_arm {
@@ -372,6 +374,7 @@ pub fn free_vars(s: scope_scan::Scopes, b: ir::Bundle, is_return: boolean, expr:
         _ => {}
       }
     }
+    hooks_follow_returned_frees(s, ls, tmp);
     result = bind_return_temp(s, b, tmp, expr, f);
     result += ls;
     result += [ir::NdReturn { inner: ir::NdVar { n: tmp } }];
@@ -647,6 +650,48 @@ fn distinct_frees(s: scope_scan::Scopes, f: ir::Function, ls: vector<ir::Node>, 
       _ => {}
     }
   }
+}
+
+// port: free_vars.rs fn hooks_follow_returned_frees — a hook just ahead of an
+// `OpFreeRefIfDistinct(w, ret)` is made conditional the same way (`@FR-H-Drop`, loft#2552).
+// `LOFT_NO_RETURNED_HOOK_GUARD=1` leaves it bare.
+fn hooks_follow_returned_frees(s: scope_scan::Scopes, ls: vector<ir::Node>, ret: integer) {
+  if env_variable("LOFT_NO_RETURNED_HOOK_GUARD") != null {
+    return;
+  }
+  for i in 1..len(ls) {
+    match ls[i]! {
+      NdCall { def_nr, args } => if def_nr == s.ops.free_if_distinct && len(args) == 2 {
+        w = match scope_fn::unspan(args[0]!) { NdVar { n } => n, _ => -1 };
+        r = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
+        if w >= 0 && r == ret && w != ret && hook_of(s, ls[i - 1]!, w) {
+          ls[i - 1] = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: w }, ir::NdVar { n: ret }] }, t: ls[i - 1]!, f: ir::NdNull };
+        }
+      },
+      _ => {}
+    }
+  }
+}
+
+// Is `n` the scope-end hook of `w` (`if OpConvBoolFromRef(w) <cascade>(w)`), bare or under the
+// guards the sweep wraps it in?
+fn hook_of(s: scope_scan::Scopes, n: ir::Node, w: integer) -> boolean {
+  match scope_fn::unspan(n) {
+    NdIf { cond, t, f } => {
+      match scope_fn::unspan(cond) {
+        NdCall { def_nr, args } => if def_nr == s.ops.conv_bool_from_ref && names_var0(args, w) {
+          return match scope_fn::unspan(t) { NdCall { args: ha } => names_var0(ha, w), _ => false };
+        },
+        _ => {}
+      }
+      (scope_fn::unspan(f) is NdNull && hook_of(s, t, w)) || (scope_fn::unspan(t) is NdNull && hook_of(s, f, w))
+    },
+    _ => false
+  }
+}
+
+fn names_var0(args: vector<ir::Node>, w: integer) -> boolean {
+  len(args) > 0 && match scope_fn::unspan(args[0]!) { NdVar { n } => n == w, _ => false }
 }
 
 // port: free_vars.rs fn return_borrows_closure

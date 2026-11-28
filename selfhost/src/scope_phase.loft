@@ -22,6 +22,7 @@ use scope_inline_returns;
 use scope_backings;
 use scope_buffers;
 use scope_drops;
+use scope_handoff;
 use scope_view_walk;
 use opt_names;
 
@@ -431,19 +432,10 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   if closure_keep_shared(b, code, f) {
     scope_scan::refuse(s, "closure_keep::closure_keep_set: a fn-ref holder shared (releases by store identity)");
   }
-  // A record type with a DROP cascade (a hook, or a droppable member): its hand-offs, per-path
-  // flags and displaced drops (`handoff.rs`, `drops::displaced_drop`, `drop_hook`) are not
-  // transcribed.  Without one, every one of them answers none.
-  // A PARAMETER of such a type is the caller's: no hand-off, displaced drop or scope-end hook of
-  // this frame reaches it.
-  // Only a local the body BINDS: one never bound (a lambda's capture read through its record)
-  // is no binding of this frame.
-  for v in f.variables {
-    rec = own::heap_def_nr(v.type_def[0] ?? ir::TyVoid);
-    if !v.argument && scope_fn::has(s.assigned, v#index) && rec != null && opt_names::drop_cascade_nr(b, rec!) != opt_names::NONE {
-      scope_scan::refuse(s, "drops::drop_hook: a record type with a drop cascade (handoff, displaced_drop)");
-    }
-  }
+  // A record type with a DROP cascade (a hook, or a droppable member) is carried where no COPY
+  // hands its drop on (`handoff.rs`): the copies that would mint a per-path flag or move a
+  // release refuse by name (`copy_handoff_refusals`), so `handed_off` stays empty.
+  scope_handoff::copy_handoff_refusals(s, b, code, f);
   // The same for a VECTOR whose element type has a collection cascade (`collection_def_nr`):
   // its rebind and scope-end releases, its call rebind, its hand-offs (`collection_handoffs`).
   for v in f.variables {
