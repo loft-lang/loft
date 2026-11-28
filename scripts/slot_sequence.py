@@ -23,7 +23,8 @@ program runs with `LOFT_LEAK_CHECK`, `LOFT_NATIVE_LEAK_CHECK`, `LOFT_STRICT_STOR
 `LOFT_POISON=1`, on the interpreter and the C backend.
 
     seq list    the shapes and the size of the product, per type and length.
-    seq run     the product, sampled and seeded when it is larger than `--sample`.
+    seq run     the product, sampled and seeded when it is larger than `--sample`; each
+                failing cell shrunk to the simplest cell that fails the same way.
     seq cell    one sequence, its statements as loft or as shape ids:
                     seq cell 'x = lw_<t>(p);' 'if k == 0 { return x; }' 'y = w_<t>(x);' 'y'
                 the last is the tail; `<t>` stands for every type.
@@ -518,7 +519,10 @@ def channel(why):
     for word, name in (("differs from the model", "value"), ("freed twice", "double-free"),
                        ("not freed", "leak"), ("NEVER FREED", "leak"), ("left behind", "leak"),
                        ("use after free", "use-after-free"), ("poison", "use-after-free"),
-                       ("does not finish", "loop"), ("refuses", "refused")):
+                       ("does not finish", "loop"), ("refuses", "refused"),
+                       # a compiled program that a check ended without saying which: its
+                       # lines go to stderr, after every cell's, and name no cell
+                       ("store-lifetime check fails", "store")):
         if word in why:
             return name
     return "crash"
