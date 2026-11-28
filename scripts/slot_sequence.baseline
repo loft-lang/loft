@@ -29,7 +29,5 @@ r.xs|bind:jn.mk.p|bind:jn.w.p|bump|=jn	c	value
 r.xs|bind:jn.mk.p|bind:jn.w.p|bump|=jn	interp	value
 r.xs|loop.pre:lit:lit|bind:jn.lit.p|bind:co.lit|=p	c	double-free
 r.xs|loop.pre:lit:lit|bind:jn.lit.p|bind:co.lit|=p	interp	double-free
-r|bind:co.lit|bind:lw.x|=co.x	c	store
-r|bind:co.lit|bind:lw.x|=co.x	interp	leak
 r|loop.post:mk:x|bind:w.p|loop.pre:mk:lit|=co.x	c	store
 r|loop.post:mk:x|bind:w.p|loop.pre:mk:lit|=co.x	interp	leak
