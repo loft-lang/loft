@@ -3772,7 +3772,7 @@ pub fn empty_literal_to(e: el::El, vars: el_vars::Vars, t: ir::TypeT, borrows: v
   if e.first_pass && lit >= 0 {
     lnm = el_types::elem_name(e, inner);
     ltok = match e.p.nodes[lit] { SVecLit { at } => at, _ => -1 };
-    if lnm != "" && ltok >= 0 && el_schema::wants_vector_def(e, lnm) && struct_ref(e, el_types::base(inner)) >= 0 {
+    if lnm != "" && ltok >= 0 && el_schema::wants_vector_def(e, lnm) && (struct_ref(e, el_types::base(inner)) >= 0 || el_types::base(inner) is TyEnum) {
       el_schema::make_vector_def(e, inner, lnm, el::pos_at(e, closing_bracket(e, ltok)), true);
     }
   }
