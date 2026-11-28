@@ -526,6 +526,13 @@ literal's argument-block locals to the enclosing scope only for a vector literal
 literal's vector field then leaves its element records at a scope no emitted code opens, which
 the store records read as `out-of-scope`.
 
+**`LOFT_NO_SPLIT_JOIN_STATEMENT_SCOPE=1`** (`@FR-B-Scope`, scope pass, BOTH backends) records a
+join that starts a new binding of an ended name (`{ x = … } x = if c { lit } else { p }`) for the
+rescan's per-arm rewrite again: the rescan reads the written-out arms as the author's own
+`if c { x = a } else { x = b }`, splits the name inside each arm, and the read after the
+statement finds the arm's released store — null on the interpreter, a crash natively
+(`binding/B-Scope/2687-…`).
+
 **`LOFT_NO_HANDLE_RETAIN=1`** (`(G-Hold)`, default-ON, scope pass, BOTH backends) takes no
 hold for a generator handle a second holder takes while its source keeps one
 (`scopes::handles::retain_shared_handles`, `OpCoroutineRetain`): the second holder's free
