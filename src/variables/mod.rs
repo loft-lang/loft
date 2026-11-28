@@ -1200,7 +1200,8 @@ impl Function {
     /// callee's pass-1 return kept a borrow of a store it owned, and never freed it (loft#2660).
     pub fn strip_carried_deps(&mut self) {
         for v in &mut self.variables {
-            if !v.argument {
+            // A type with no list anywhere is already pass 2's: left as it is, it costs nothing.
+            if !v.argument && v.type_def.carries_deps() {
                 v.pass1_deps = v.type_def.depend();
                 v.type_def = v.type_def.without_deps();
             }
