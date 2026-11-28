@@ -278,6 +278,27 @@ pub(super) fn reuse_record_buffers(
             );
             continue;
         }
+        if !ungated
+            && !crate::env_once!(std::env::var_os("LOFT_POOL_UNGUARDED_FREE_OK").is_some())
+            && call_result_locals(&bl.operators, av, data).iter().any(|&v| {
+                bl.operators
+                    .iter()
+                    .any(|op| frees_unguarded(op, v, av, data))
+            })
+        {
+            // `@FR-H-FreeTwice` — the same question of the local the buffer's CALL is bound to,
+            // which need not be the result local above: a join arm's call lifted into a
+            // `__lift_N` (`atp = if c { … } else { __lift_1 = own(b, __ref_1); __lift_1 }`)
+            // releases its temp plainly at the end of every pass, so when the callee handed the
+            // buffer back the temp released the buffer's store, the next pass refilled a freed
+            // record, and the exit released it again (both backends, a struct-enum join in a
+            // loop).  The lift keeps the mint-per-call this module's header gives it.
+            decline(
+                av,
+                "the local its call is bound to has a free that does not ask this buffer",
+            );
+            continue;
+        }
         if null_init_at(&bl.operators, av).is_none() {
             decline(av, "no top-level null-init");
             continue;
@@ -599,6 +620,29 @@ pub(super) fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data:
 /// (`OpFreeRefIfDistinct(v, av)` is itself one of them), so a raw occurrence count answers a
 /// different question.  Only a loft-defined callee takes a hidden buffer at all, which is
 /// what `is_loft_defined` is the one home for.
+/// The locals a call handed buffer `av` is bound to — `Set(x, Call(f, [.., av, ..]))` anywhere
+/// in `ops`.  Any other use of the buffer binds no local: a call in argument or tail position
+/// hands its answer to an expression, whose own binding is the result local the witness map
+/// already names.
+fn call_result_locals(ops: &[Value], av: u16, data: &Data) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    for op in ops {
+        op.walk(&mut |v| {
+            if let Value::Set(x, rhs) = v
+                && let Value::Call(d_nr, args) = rhs.unspan()
+                && data.def(*d_nr).is_loft_defined()
+                && args
+                    .iter()
+                    .any(|a| matches!(a.unspan(), Value::Var(b) if *b == av))
+                && !out.contains(x)
+            {
+                out.push(*x);
+            }
+        });
+    }
+    out
+}
+
 fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
     let mut n = 0;
     for op in ops {
