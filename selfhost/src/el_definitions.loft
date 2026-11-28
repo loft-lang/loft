@@ -2416,7 +2416,7 @@ fn const_twin_ok(e: el::El, d: integer, body: integer) -> boolean {
 // The plain path: no type variables, no operator form, no annotation, no `both`.
 // A first `self` parameter makes it a method, keyed by its receiver (`Data::fn_key`).  Answers
 // the definition's key, or "" where the declaration was refused before one was known.
-pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = [], short_names: vector<text> = [], hint: ir::TypeT = ir::TyVoid) -> text {
+pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer>, ret: integer?, body: integer?, is_op: boolean = false, tvars: vector<integer> = [], ret_const: boolean = false, annots: vector<integer> = [], short_names: vector<text> = [], hint: ir::TypeT = ir::TyVoid, short: boolean = false) -> text {
   // A capability (`fs#read`) and a `-> const` result are checks at the call and the return; the
   // definition's image is the plain one, so both are read past.  An `operator` form is the
   // method of its name, marked (`operator_form`) so the form it backs reaches it.
@@ -2646,7 +2646,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
   }
   // A short lambda whose hint names no result answers what its body does: the first pass reads
   // the body and records that, the second finds it on the definition.
-  infers = hint is TyFunction && el_types::is_unknown(hint_ret) && ret == null && len(short_names) > 0;
+  infers = hint is TyFunction && el_types::is_unknown(hint_ret) && ret == null && (len(short_names) > 0 || short);
   if infers && !e.first_pass {
     rt = el::def(e, e.context).returned[0] ?? ir::TyVoid;
   }
