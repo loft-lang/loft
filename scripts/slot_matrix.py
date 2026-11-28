@@ -1547,8 +1547,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--bg", metavar="FILE", help="run the command in the background, its output in FILE, "
                     "ending with a `slot_matrix: done exit=<n>` line (before the subcommand)")
-    ap.add_argument("--jobs", type=int, help="how many programs run at once (default: half the cores); "
-                    "before the subcommand")
+    ap.add_argument("--jobs", type=int, help="how many programs run at once (default: $SLOT_MATRIX_JOBS, "
+                    "else half the cores); before the subcommand")
     sub = ap.add_subparsers(dest="cmd", required=True)
     # The sequence axis lives in its own module, which reads this one's runner.
     sys.modules.setdefault("slot_matrix", sys.modules[__name__])
@@ -1634,7 +1634,7 @@ def main():
     p.set_defaults(fn=cmd_walk)
     args = ap.parse_args()
     global JOBS
-    JOBS = args.jobs
+    JOBS = args.jobs or int(os.environ.get("SLOT_MATRIX_JOBS", "0")) or None
     if args.bg:
         # The same command, detached, its output in a file that ends with one line a wait
         # can look for.  A whole run takes minutes; nothing should have to sit on it.
