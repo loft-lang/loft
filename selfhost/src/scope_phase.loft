@@ -95,6 +95,7 @@ pub fn new_scopes(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_code:
     consumed_lifts: [],
     lift_viewers: [],
     view_temps: view_temps_in(orig_code, orig_vars, ops),
+    construction_temps: construction_temps_in(orig_code, orig_vars),
     literal_moves: [],
     moved_local: -1,
     moved_av: -1,
@@ -831,6 +832,29 @@ fn view_temps_walk(n: ir::Node, f: ir::Function, ops: scope_scan::Ops, out: vect
   }
   for c in scope_fn::children(n) {
     view_temps_walk(c, f, ops, out);
+  }
+}
+
+// port: phase.rs fn construction_temps_in — per local, the record CONSTRUCTION work-refs its
+// assignments adopt (`construction_work_ref`), listed only where there are two or more.
+pub fn construction_temps_in(code: ir::Node, f: ir::Function) -> vector<scope_scan::VarList> {
+  out: vector<scope_scan::VarList> = [];
+  construction_temps_walk(code, f, out);
+  [for e in out if len(e.items) > 1 { e }]
+}
+
+fn construction_temps_walk(n: ir::Node, f: ir::Function, out: vector<scope_scan::VarList>) {
+  match scope_fn::unspan(n) {
+    NdSet { var: v, inner } => {
+      t = scope_backings::construction_work_ref(inner, f);
+      if t >= 0 && t != v {
+        scope_scan::list_add(out, v, t);
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(n) {
+    construction_temps_walk(c, f, out);
   }
 }
 

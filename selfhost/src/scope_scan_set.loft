@@ -734,6 +734,13 @@ pub fn scan_set(s: scope_scan::Scopes, b: ir::Bundle, ov: integer, value: ir::No
         fr = ir::NdIf { cond: distinct(s, v, vt), t: fr, f: ir::NdNull };
       }
     }
+    // `@FR-H-FreeTwice`, loft#2680 — the displaced store may be one of several record
+    // constructions' work-refs': where the free releases it, whichever work-ref names it is
+    // disarmed with it, so the frame's exit does not release it again.
+    temps = [for ct in scope_scan::list_of(s.construction_temps, v) if ct != v { ct }];
+    if len(temps) > 0 {
+      fr = disarm_at_release(s, fr, v, temps);
+    }
     prefix += [fr];
   }
   // The collection join's witness snapshot is a collection's.
@@ -1286,6 +1293,37 @@ fn pair_call_buffers(s: scope_scan::Scopes, f: ir::Function, v: integer, value: 
     },
     _ => {}
   }
+}
+
+// port: scan_set.rs fn disarm_at_release — loft#2680: `free` with each release of `v` it holds
+// preceded by the disarm of every work-ref in `temps` naming `v`'s store: a plain `OpFreeRef(v)`
+// by the disarms, an `OpFreeRefIfDistinct(v, w)` by the disarms under its own test.  A guard
+// around a release keeps the disarm inside it.
+fn disarm_at_release(s: scope_scan::Scopes, n: ir::Node, v: integer, temps: vector<integer>) -> ir::Node {
+  match scope_fn::unspan(n) {
+    NdCall { def_nr: d, args } => {
+      x = if len(args) > 0 { ir_pass_tree::var_of(args[0]!) } else { null };
+      if d == s.ops.free_ref && x != null && x! == v {
+        ops = disarms(s, v, temps);
+        ops += [n];
+        return ir::NdInsert { items: ops };
+      }
+      if d == s.ops.free_if_distinct && len(args) == 2 && x != null && x! == v {
+        guard = ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, args[1]!] }, t: ir::NdInsert { items: disarms(s, v, temps) }, f: ir::NdNull };
+        return ir::NdInsert { items: [guard, n] };
+      }
+    },
+    _ => {}
+  }
+  ir_pass_tree::with_children(n, [for c in scope_fn::children(n) { disarm_at_release(s, c, v, temps) }])
+}
+
+fn disarms(s: scope_scan::Scopes, v: integer, temps: vector<integer>) -> vector<ir::Node> {
+  out: vector<ir::Node> = [];
+  for t in temps {
+    out += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: t }] }, t: ir::NdNull, f: scope_fn::v_set(t, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }) }];
+  }
+  out
 }
 
 // port: scan_set.rs fn captures_built_in_value — `(record, capture)` of every
