@@ -2549,12 +2549,18 @@ impl Lexer {
         // never a float.  `n.v.0.0` must lex as `n`, `.`, `v`, `.`,
         // `0`, `.`, `0` instead of `n`, `.`, `v`, `.`, `0.0`.
         let prev_was_field_dot = matches!(&self.peek.has, LexItem::Token(t) if *t == ".");
+        // Where the dot after the number starts: the position of the token queued for it.
+        // Every token sits where its text starts, so no two tokens share a position — a scan
+        // that steps token by token measures its progress by that (pass 1's skip over the
+        // braces of a type declared below: queued at the number's own position, `0..n` read
+        // as no progress and stopped inside the literal, loft#2679).
+        let dot_at = self.position;
         if let Some('.') = self.iter.peek() {
             self.next_char();
             if let Some('.') = self.iter.peek() {
                 self.next_char();
                 self.link = self.memory.len();
-                self.queue(LexResult::new(LexItem::Token(".."), pos));
+                self.queue(LexResult::new(LexItem::Token(".."), dot_at));
                 // Through `ret_number`, NOT a bare `u32` parse (loft#1559).  This
                 // short-circuit is taken when a number is followed by `..`, and parsing it
                 // as `u32` skipped the width split every other integer literal goes
@@ -2597,7 +2603,7 @@ impl Lexer {
                 // the following token (digit, identifier, or whatever)
                 // re-lexes fresh.
                 self.link = self.memory.len();
-                self.queue(LexResult::new(LexItem::Token("."), self.position));
+                self.queue(LexResult::new(LexItem::Token("."), dot_at));
                 // Through `ret_number` for the same reason as the `..` site above: one
                 // home for what an integer literal's token is.  A tuple index this large is
                 // out of range for every tuple, and the three projection sites read it with
@@ -4314,6 +4320,27 @@ mod test {
         assert_eq!(lex.peek().has, LexItem::Token("="));
         lex.cont();
         assert_eq!(lex.peek().has, LexItem::Integer(5, false));
+    }
+
+    #[test]
+    fn a_queued_follow_up_sits_where_its_text_starts() {
+        // The `..` or `.` queued after a number is a token of its own and sits at its own
+        // first character, never at the number's or the next token's: a scan that steps token
+        // by token reads an unchanged position as no progress (loft#2679).
+        for (src, want) in [
+            ("0..n", vec![1, 2, 4]),
+            ("12..=3", vec![1, 3, 5, 6]),
+            ("t.0.1", vec![1, 2, 3, 4, 5]),
+            ("5.abs", vec![1, 2, 3]),
+        ] {
+            let mut lex = Lexer::from_str(src, "queued_position");
+            let mut got = Vec::new();
+            while !matches!(lex.peek().has, LexItem::None) {
+                got.push(lex.peek().position.pos);
+                lex.cont();
+            }
+            assert_eq!(got, want, "{src}");
+        }
     }
 
     #[test]
