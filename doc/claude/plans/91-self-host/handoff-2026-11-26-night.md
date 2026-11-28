@@ -195,6 +195,12 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   but the program goes refused → DIFF through an older `main` gap — `nest([], [1])` mints the
   untyped `[]` argument's store (read against the parameter's `vector<Tok>`) as Rust parses it,
   before the next argument's literal; the port converts it after every argument is read.
+- A vector literal of an element declared BELOW it (`xs = [Node::NdInt { n: 4 }]` before
+  `enum Node`): the second pass makes `main_vector<Node>` and must lay it out where it is made,
+  its store type ahead of `vector<Node>`'s (probe fe1 agrees with `lay_out_late(md)` in
+  `vector_rows`; patch held-late-main-vector-layout.patch, c035ae98 scratchpad).  Held: both
+  programs of the family (O-Complete/2467-…, 371-p375-forward-ref-positions) then go refused →
+  DIFF through older gaps — a variant literal written into a field built apart, a join-arm owner.
 - A write through an `is` capture of a heap payload: Rust routes it back to the field
   (`mv_field_origin`, loft#1160); the port binds the view only.
 
