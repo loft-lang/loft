@@ -2886,6 +2886,7 @@ pub fn parse_function(e: el::El, at: integer, name: text, params: vector<integer
     // The return-promotion verdicts Rust's `ref_return` takes on this body, for the route gate.
     el_retpromo::report(e, vars, code, body!, el_retpromo::body_end(e, body!), inferred: infers && e.first_pass);
     if e.first_pass {
+      withdraw_written_text_buffers(e, vars, e.context);
       add_capture_owner_slots(e, vars, e.context);
     }
     // `infer_function_null_safe` (@PLN46 W3): a function whose every parameter is null-guarded
@@ -3475,5 +3476,35 @@ pub fn mark_width32(e: el::El, from: integer) {
     if wd#index >= from && wd.def_type == el::DT_FUNCTION && wd.source != el::STD_SOURCE && e.width32_files.contains(wd.position.file) {
       e.b.data.definitions[wd#index].width32 = true;
     }
+  }
+}
+
+// `finalize_capture_storage`'s `withdraw_written_text_buffer` (loft#2350, `@FR-L-CapWrite`), at a
+// function's pass-1 body end: a text local that pass 1 made the hidden `&text` return buffer —
+// at a `return s` met before any closure was parsed — and that a closure then WRITES.  The
+// buffer keeps its place in the signature under a compiler name, `__tret_w_<name>`, and the
+// author's name becomes an ordinary local again, which pass 2's flip boxes.
+fn withdraw_written_text_buffers(e: el::El, vars: el_vars::Vars, d: integer) {
+  for sb in el::def(e, d).scalars_to_box {
+    v = el_vars::var(vars, sb.name);
+    if v < 0 || !(el_vars::tp(vars, v) is TyRefVar) {
+      continue;
+    }
+    a = el_ex_base::attr_nr(el::def(e, d), sb.name);
+    if a < 0 {
+      continue;
+    }
+    at = el::def(e, d).attributes[a]!;
+    if !at.hidden || !match el_types::base(at.typedef[0] ?? ir::TyVoid) { TyRefVar { inner: ti } => el_types::base(ti) is TyText, _ => false } {
+      continue;
+    }
+    nn = "__tret_w_{sb.name}";
+    e.b.data.definitions[d].attributes[a].name = nn;
+    vars.vars[v].name = nn;
+    el_vars::set_name(vars, nn, v);
+    // (`rename_binding` drops the old name first: the local is a new slot, not the buffer's.)
+    local = el_vars::new_var(vars, sb.name, ir::TyText { dep: [] });
+    el_vars::set_name(vars, sb.name, local);
+    el_vars::in_use(vars, local, true);
   }
 }

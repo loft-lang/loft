@@ -393,7 +393,11 @@ pub fn lambda_expr(e: el::El, vars: el_vars::Vars, n: integer) -> Ex {
           // lambda's own local a nested lambda writes is boxed by no flip: not carried.
           // A written parameter is boxed through a shadow (`el_cell::flip`); a `const` one, a `&`
           // one and a hidden one are refused, as Rust reports the first two.
-          if vars.vars[cv].argument && (vars.vars[cv].value_const || el_vars::tp(vars, cv) is TyRefVar || hidden_param(e, vars, cv)) {
+          // (A text local pass 1 made the hidden `&text` return buffer, at a `return s` met before
+          // this closure, is withdrawn from the buffer at the body's end and boxed on pass 2:
+          // `withdraw_written_text_buffer`.)
+          withdrawn = e.first_pass && hidden_param(e, vars, cv) && !starts_with(c, "_") && match el_vars::tp(vars, cv) { TyRefVar { inner: wti } => el_types::base(wti) is TyText, _ => false };
+          if vars.vars[cv].argument && !withdrawn && (vars.vars[cv].value_const || el_vars::tp(vars, cv) is TyRefVar || hidden_param(e, vars, cv)) {
             return refuse_lambda(e, vars, at, params, names, body, "a lambda that captures a local of its function: a parameter written by it", ret_at: ret);
           }
           if starts_with(el::def(e, e.context).name, "n___lambda_") || starts_with(el::def(e, e.context).name, "__lambda_") {

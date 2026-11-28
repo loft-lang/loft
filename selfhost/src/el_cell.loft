@@ -240,6 +240,10 @@ pub fn assign(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: in
         return ex(ir::NdNull, ir::TyVoid);
       }
       if c.v >= 0 {
+        // (`assign_var_nr`'s text arm mints its `_field_N` here too, unused — the cell's text is
+        // built in a work text — and `parse_assign_inner` marks the local appended.)
+        el_vars::create_unique(vars, "field", ir::TyText { dep: [] });
+        el_vars::mark_user_appended(vars, c.v, "parse_assign_inner");
         w = el_vars::work_text(vars);
         return ex(ir::NdInsert { items: [el_ir::cl(e, "OpClearText", [ir::NdVar { n: w }]), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, cur.code]), el_ir::cl(e, "OpAppendText", [ir::NdVar { n: w }, x.code]), el_ir::cl(e, setter, [c.place, ir::NdInt { n: 0 }, ir::NdVar { n: w }])] }, ir::TyVoid);
       }
