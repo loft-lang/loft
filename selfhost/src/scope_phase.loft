@@ -24,6 +24,7 @@ use scope_buffers;
 use scope_drops;
 use scope_handoff;
 use scope_capture_builds;
+use scope_closure_keep;
 use scope_view_walk;
 use opt_names;
 
@@ -133,6 +134,7 @@ pub fn run_scan_phase(b: ir::Bundle, ops: scope_scan::Ops, d_nr: integer, orig_c
     stale_defs: stale,
     orig_code: orig_code,
     capture_build_backing: scope_capture_builds::no_capture_builds(),
+    closure_keep: scope_closure_keep::closure_keep_set(b, orig_vars, orig_code),
     why: "",
     whys: []
   };
@@ -492,16 +494,15 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
     scope_scan::refuse(s, "view_walk::collect_views_to_materialise: a text payload view");
   }
   // `closure_keep_set` — the closure records this frame builds.
-  // `capture_adoption::mark_borrowed_captures` (after the loop): `check` refuses a cascade a
-  // frame's capture verdicts decide, and settles the pruning on the laid-out bodies.
-  if has_block(code, "fn_ref_with_closure") {
-    scope_scan::refuse(s, "closure_keep::closure_keep_set: a closure built");
+  // A GATED keep set decides the frame's closure releases per run (`closure_keep_live`,
+  // `_detach`, `_pass_end`, …), which are not transcribed.
+  if s.closure_keep.gated {
+    scope_scan::refuse(s, "closure_keep::closure_keep_set: a frame whose closure releases are decided per run (gated)");
   }
-  // `closure_keep_set` gates a frame without a closure record of its own where a fn-ref holder
-  // is SHARED (`g = f`, a link written from a holder, a holder bound from a call handed one):
-  // its releases are then decided by store identity (`closure_keep_*`), not transcribed.
-  if closure_keep_shared(b, code, f) {
-    scope_scan::refuse(s, "closure_keep::closure_keep_set: a fn-ref holder shared (releases by store identity)");
+  // `captured_record_stand_down` (get_free_vars) — a closure record that captures a fn-ref
+  // holding another of this frame's records: not transcribed.
+  if captures_record_fnref(b, code, f) {
+    scope_scan::refuse(s, "get_free_vars::captured_record_stand_down: a closure record capturing a fn-ref over another record");
   }
   // `mixed_handle_views` — a handle local given a member's handle and one of its own: its
   // per-path flag (`mint_handoff_flag`) and the tagged leaves are not transcribed.
@@ -528,56 +529,32 @@ fn pre_scan_refusals(s: scope_scan::Scopes, b: ir::Bundle, code: ir::Node, f: ir
   }
 }
 
-// port: closure_keep.rs fn closure_keep_set, its `shared` answer over the holders and links
-// (`records` is empty on a frame the pass carries: a `___clos_N` local is refused).
-fn closure_keep_shared(b: ir::Bundle, code: ir::Node, f: ir::Function) -> boolean {
-  holders: vector<integer> = [];
-  links: vector<integer> = [];
-  for x in f.variables {
-    v = x#index;
-    if x.argument {
-      match scope_fn::base(x.type_def[0] ?? ir::TyVoid) {
-        TyRefVar { inner } => if scope_fn::base(inner) is TyFunction { links += [v]; },
-        _ => {}
-      }
-      continue;
-    }
-    if scope_fn::base(x.type_def[0] ?? ir::TyVoid) is TyFunction && !scope_fn::is_compiler_generated(f, v) {
-      holders += [v];
-    }
-  }
-  len(holders) > 0 && keep_shared_walk(b, code, holders, links)
-}
-
-fn keep_shared_walk(b: ir::Bundle, n: ir::Node, holders: vector<integer>, links: vector<integer>) -> boolean {
-  match scope_fn::unspan(n) {
-    NdSet { var, inner } => {
-      rhs = scope_fn::unspan(inner);
-      if scope_fn::has(links, var) && match rhs { NdVar { n: x } => scope_fn::has(holders, x), _ => false } {
-        return true;
-      }
-      if !scope_fn::has(links, var) || !(match rhs { NdVar { n: x } => scope_fn::has(holders, x), _ => false }) {
-        if scope_fn::has(holders, var) {
-          match rhs {
-            NdVar { n: x } => if scope_fn::has(holders, x) { return true; },
-            NdCall { def_nr, args } => if !b.data.definitions[def_nr]!.name.starts_with("Op") {
-              for a in args {
-                match scope_fn::unspan(a) {
-                  NdVar { n: x } => if scope_fn::has(holders, x) { return true; },
-                  NdBlock { block } => if block[0].name == "fn_ref_with_closure" { return true; },
-                  _ => {}
-                }
+// `captured_fnref_sets` with a record to stand down: an `OpSetDbRef(R, off, OpFnRefClosure(h))`
+// where `R` is a closure record and `h`'s deps name another one.
+fn captures_record_fnref(b: ir::Bundle, n: ir::Node, f: ir::Function) -> boolean {
+  u = scope_fn::unspan(n);
+  match u {
+    NdCall { def_nr, args } => if len(args) > 2 && b.data.definitions[def_nr]!.name == "OpSetDbRef" {
+      big = match scope_fn::unspan(args[0]!) { NdVar { n: x } => x, _ => -1 };
+      match scope_fn::unspan(args[2]!) {
+        NdCall { def_nr: c, args: inner } => if big >= 0 && len(inner) > 0 && b.data.definitions[c]!.name == "OpFnRefClosure"
+          && scope_fn::name(f, big).starts_with("___clos_") {
+          h = match scope_fn::unspan(inner[0]!) { NdVar { n: x } => x, _ => -1 };
+          if h >= 0 {
+            for r in scope_fn::deps(f, h) {
+              if r != big && r < scope_fn::count(f) && scope_fn::name(f, r).starts_with("___clos_") {
+                return true;
               }
-            },
-            _ => {}
+            }
           }
-        }
+        },
+        _ => {}
       }
     },
     _ => {}
   }
-  for c in scope_fn::children(scope_fn::unspan(n)) {
-    if keep_shared_walk(b, c, holders, links) {
+  for c in scope_fn::children(u) {
+    if captures_record_fnref(b, c, f) {
       return true;
     }
   }

@@ -26,6 +26,8 @@ use scope_witness;
 // port: get_free_vars.rs fn get_free_vars
 pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_scope: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered) -> vector<ir::Node> {
   ls: vector<ir::Node> = [];
+  // `fnref_releases`: each fn-ref this sweep released, with the records it carries.
+  releases: vector<scope_scan::VarList> = [];
   // `claimants_after_their_tuples`: the claimants are tuple members' buffers, and a tuple
   // local refuses below, so the registration order stands.
   vars = claimants_after_their_tuples(s, scope_scan::variables(s, to_scope));
@@ -129,7 +131,7 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
     // A fn-ref local releases its closure store (`Type::Function`, asked BARE: a `fn(…)?`
     // matches none of the sweep's arms and is released by nobody).
     if t is TyFunction {
-      fnref_release(s, b, f, v, tp, ret_var, delivered, ls);
+      fnref_release(s, b, f, v, tp, ret_var, delivered, ls, releases);
       continue;
     }
     if bt is TyFunction {
@@ -168,9 +170,11 @@ pub fn get_free_vars(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, to_s
       }
     }
   }
-  // `fnref_stand_down`, `captured_record_stand_down` and `captured_view_stand_down` act on the
-  // releases of fn-refs and closure records, which this transcription does not emit; the
-  // `view_rebind` snapshots are refused by the phase.
+  fnref_stand_down(s, f, ls, releases);
+  // `captured_record_stand_down` acts on a closure record that captures a fn-ref holding another
+  // frame record (`captured_fnref_sets`), refused where the phase sees one;
+  // `captured_view_stand_down` on the guarded releases of captured locals, refused where they
+  // are made.  The `view_rebind` snapshots are refused by the phase.
   pair_literal_buffers(s, b, f, ls);
   ls
 }
@@ -273,7 +277,7 @@ fn claim_add(m: vector<scope_scan::VarList>, w: integer, t: integer) {
 // scoped apart from it releases it.  The closure-keep stand-downs (`closure_keep_stand_down`,
 // `fnref_stand_down`) and a capturing record's adoption (`capture_adoption_owns_free`) act on a
 // frame's own closure records, which the phase refuses.
-fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>) {
+fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, tp: ir::TypeT, ret_var: integer, delivered: scope_free_vars::Delivered, ls: vector<ir::Node>, releases: vector<scope_scan::VarList>) {
   def = b.data.definitions[s.d_nr]!;
   rt = def.returned[0] ?? ir::TyVoid;
   ret_carries = false;
@@ -322,6 +326,103 @@ fn fnref_release(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
       ls += [ir::NdCall { def_nr: s.ops.drop_fn_ref, args: [ir::NdVar { n: v }] }];
     }
     ls += [scope_drops::free_ref(s, v)];
+    releases += [scope_scan::VarList { v: v, items: carried }];
+  }
+}
+
+// The statement of `ls` that is `op(Var(v))`, -1 for none.
+fn find_release(ls: vector<ir::Node>, op: integer, v: integer) -> integer {
+  for st in ls {
+    match scope_fn::unspan(st) {
+      NdCall { def_nr, args } => if def_nr == op && len(args) == 1 {
+        match scope_fn::unspan(args[0]!) {
+          NdVar { n: x } => if x == v { return st#index; },
+          _ => {}
+        }
+      },
+      _ => {}
+    }
+  }
+  -1
+}
+
+// `if … { op(Var(r)) } …` — a record's hook ahead of its free.
+fn hook_of(st: ir::Node, r: integer) -> boolean {
+  match scope_fn::unspan(st) {
+    NdIf { t } => match scope_fn::unspan(t) {
+      NdCall { args } => len(args) == 1 && match scope_fn::unspan(args[0]!) { NdVar { n: y } => y == r, _ => false },
+      _ => false
+    },
+    _ => false
+  }
+}
+
+// port: get_free_vars.rs fn fnref_stand_down — a fn-ref released beside a frame record it may
+// hold stands down where it holds that record's store (`@FR-L-CapKeep`): its release moves
+// ahead of the records' and runs only where the store differs from each.
+fn fnref_stand_down(s: scope_scan::Scopes, f: ir::Function, ls: vector<ir::Node>, releases: vector<scope_scan::VarList>) {
+  if env_variable("LOFT_NO_FNREF_STAND_DOWN") != null {
+    return;
+  }
+  k = len(releases) - 1;
+  while k >= 0 {
+    rel = releases[k]!;
+    k -= 1;
+    v = rel.v;
+    records: vector<integer> = [];
+    for r in rel.items {
+      if r != v && r < scope_fn::count(f) && scope_fn::name(f, r).starts_with("___clos_") && find_release(ls, s.ops.free_ref, r) >= 0 {
+        records += [r];
+      }
+    }
+    end = find_release(ls, s.ops.free_ref, v);
+    if end < 0 || len(records) == 0 {
+      continue;
+    }
+    start = end;
+    if end >= 1 && find_release([ls[end - 1]!], s.ops.drop_fn_ref, v) >= 0 {
+      start = end - 1;
+    }
+    at = start;
+    for r in records {
+      p = find_release(ls, s.ops.free_ref, r);
+      if p > 0 && hook_of(ls[p - 1]!, r) {
+        p -= 1;
+      }
+      if p < at {
+        at = p;
+      }
+    }
+    release: vector<ir::Node> = [];
+    rest: vector<ir::Node> = [];
+    for st in ls {
+      i = st#index;
+      if i >= start && i <= end {
+        release += [st];
+      } else {
+        rest += [st];
+      }
+    }
+    guarded = ir::NdInsert { items: release };
+    j = len(records) - 1;
+    while j >= 0 {
+      r = records[j]!;
+      j -= 1;
+      cond = ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdCall { def_nr: s.ops.fn_ref_closure, args: [ir::NdVar { n: v }] }, ir::NdVar { n: r }] };
+      guarded = ir::NdIf { cond: cond, t: guarded, f: ir::NdNull };
+    }
+    out: vector<ir::Node> = [];
+    for st in rest {
+      if st#index == at {
+        out += [guarded];
+      }
+      out += [st];
+    }
+    if at >= len(rest) {
+      out += [guarded];
+    }
+    ls.clear();
+    ls += out;
   }
 }
 

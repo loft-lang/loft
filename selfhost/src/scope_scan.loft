@@ -31,6 +31,7 @@ use scope_drops;
 use scope_witness;
 use scope_handoff;
 use scope_capture_builds;
+use scope_closure_keep;
 
 // The definitions the pass keys on, looked up once per image.
 pub struct Ops {
@@ -282,6 +283,8 @@ pub struct Scopes {
   pub orig_code: ir::Node,
   // `capture_build_backing` — the closure-build facts of this body (`capture_build_backings`).
   pub capture_build_backing: scope_capture_builds::CaptureBuilds,
+  // `closure_keep` — the frame's per-run closure keep set (`closure_keep_set`).
+  pub closure_keep: scope_closure_keep::ClosureKeep,
   // The first refusal met, "" while the scan is in its domain.
   pub why: text,
   // Every refusal met, in order (`LOFT_SCOPE_ALL_REASONS=1` reports them all: what ranks the
