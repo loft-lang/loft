@@ -108,7 +108,6 @@ Read this first.  The method, the traps and the earlier states are in `handoff-2
   (`t_4hash_len(OpGetField(b, …))`, `OpNewRecord(b, B, field)`) — the port has no link-place
   substitution.  Refused by name today; 1433's last function, 1836, a-null-written-….  A
   nullable keyed local's link (`h: hash<…>? ; a = &h`) is refused too.
-- `g([], [Q { a: 1 }])`: the port builds the non-empty literal argument before the empty one.
 - A keyed field returned off a local bound to a parameter (`b = x; b.fr_h`): Rust's body keeps
   `["x"]`, the port's derivation is not found — refused by name (2562's `fr2562_alias`).
 - A struct literal's empty `[]` vector field in `main` (`S { h: [], w: [] }`): `vector<E>` made
