@@ -728,6 +728,26 @@ pub fn var_attr(e: el::El, vars: el_vars::Vars, var: text, attr: text, arg: inte
       el_vars::in_use(vars, idx, true);
       return ex(el_ir::cl(e, "OpRemove", [ir::NdVar { n: idx }, el_ir::unspan(coll), ir::NdInt { n: 0 }, ir::NdInt { n: row }]), ir::TyVoid);
     }
+    // (A walk of an ORDERED keyed local — `sorted`, `index` — removes through the walk's state:
+    // `OpRemove(x#iter_state, c, <on>, <record>)`, `on` the walk's flags as `OpIterate` took
+    // them.  A hash walks a scratch copy: not carried.)
+    kcv = match el_ir::unspan(coll) { NdVar { n: kcn } => kcn, _ => -1 };
+    kct = if kcv >= 0 { el_types::base(el_vars::tp(vars, kcv)) } else { ir::TyVoid };
+    if kcv >= 0 && !vars.reversed.contains(lv) && (kct is TySorted || kct is TyIndex) {
+      if e.first_pass {
+        return ex(ir::NdNull, ir::TyVoid);
+      }
+      kst = el_vars::var(vars, "{el_vars::name_of(vars, lv)}#iter_state");
+      krd = el_types::keyed_elem(kct);
+      if kst >= 0 && krd >= 0 {
+        kkn = el_schema::keyed_type(e, kct);
+        kon = 128 + (if kct is TyIndex { 1 } else if (e.b.types[kkn]!.parts[0] ?? ir::PtBase) is PtOrdered { 3 } else { 2 });
+        el_vars::in_use(vars, kst, true);
+        // (An index names its own store type, a sorted one its record's.)
+        karg = if (kct is TyIndex) { kkn } else { el::def(e, krd).known_type };
+        return ex(el_ir::cl(e, "OpRemove", [ir::NdVar { n: kst }, el_ir::unspan(coll), ir::NdInt { n: kon }, ir::NdInt { n: karg }]), ir::TyVoid);
+      }
+    }
     el::refuse(e, "a `#remove` in a walk that is not a forward walk of a vector local");
     return ex(ir::NdNull, ir::TyVoid);
   }
