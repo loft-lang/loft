@@ -3484,7 +3484,8 @@ pub fn identity_compare(e: el::El, vars: el_vars::Vars, op: text, l: integer, r:
   // as it is.)
   at = el_types::base(match a.tp { TyRefVar { inner } => inner, _ => a.tp });
   bt = el_types::base(match b.tp { TyRefVar { inner } => inner, _ => b.tp });
-  if !places || !(at is TyReference || at is TyVector || keyed_kind(at)) || !el_types::is_equal(e, at, bt) {
+  // (A struct enum's record is a heap record as a struct's is.)
+  if !places || !(at is TyReference || at is TyVector || keyed_kind(at) || el_types::struct_enum_def(at) >= 0) || !el_types::is_equal(e, at, bt) {
     el::refuse(e, "an identity comparison of something other than two places of one heap type");
     return ex(ir::NdNull, ir::TyBoolean);
   }
