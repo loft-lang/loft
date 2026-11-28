@@ -5,34 +5,28 @@
 // @PLN91 — `src/scopes/join_rewrite.rs` `write_out_joined_copies` transcribed: a JOIN copied
 // into a container (`OpCopyRecord(<branch>, dest, tp)`) gives every bare minting call arm the
 // owner block the parser gives it in a view-typed join (`{ __ref_N = call; __ref_N }`), before
-// any analysis reads the function.  The copy that HANDS a release over (into a place a
+// any analysis reads the function; the copy that HANDS a release over (into a place a
 // droppable-owning container reaches, or an appended element of a droppable type) is written
-// out per arm in Rust; it needs a type with a drop cascade, refused here by name.  And
-// `reassociate_coalesce_chains`: a `??` chain the author grouped is written right-associated.
+// out per arm (`sink`).  And `reassociate_coalesce_chains`: a `??` chain the author grouped is
+// written right-associated.
 
 use ir;
+use opt_vr_leaves;
 use own;
 use binds;
 use scope_fn;
 use scope_args;
 use opt_names;
 
-pub struct Rewritten {
-  pub code: ir::Node,
-  pub why: text
-}
-
 JOIN_ARM_OWNER = "join-arm-owner";
 
 // port: join_rewrite.rs fn write_out_joined_copies
-pub fn write_out_joined_copies(b: ir::Bundle, code: ir::Node, f: ir::Function) -> Rewritten {
-  r = Rewritten { code: code, why: "" };
+pub fn write_out_joined_copies(b: ir::Bundle, code: ir::Node, f: ir::Function) -> ir::Node {
   copy_d = scope_fn::def_nr(b, "OpCopyRecord");
   if copy_d < 0 {
-    return r;
+    return code;
   }
-  r.code = visit(b, r, code, copy_d, f);
-  r
+  visit(b, code, copy_d, f)
 }
 
 fn rebuild(n: ir::Node, kids: vector<ir::Node>) -> ir::Node {
@@ -63,22 +57,22 @@ fn rebuild(n: ir::Node, kids: vector<ir::Node>) -> ir::Node {
 }
 
 // Children first, then the node (`for_each_child_mut` before the copy test).
-fn visit(b: ir::Bundle, r: Rewritten, n: ir::Node, copy_d: integer, f: ir::Function) -> ir::Node {
-  out: vector<ir::Node> = [for c in scope_fn::children(n) { visit(b, r, c, copy_d, f) }];
+fn visit(b: ir::Bundle, n: ir::Node, copy_d: integer, f: ir::Function) -> ir::Node {
+  out: vector<ir::Node> = [for c in scope_fn::children(n) { visit(b, c, copy_d, f) }];
   node = if len(out) > 0 { rebuild(n, out) } else { n };
   match node {
     NdSpan { pos, inner } => {
       match inner {
-        NdCall => { return ir::NdSpan { pos: pos, inner: copy_site(b, r, inner, copy_d, f) }; },
+        NdCall => { return ir::NdSpan { pos: pos, inner: copy_site(b, inner, copy_d, f) }; },
         _ => { return node; }
       }
     },
-    NdCall => { return copy_site(b, r, node, copy_d, f); },
+    NdCall => { return copy_site(b, node, copy_d, f); },
     _ => { return node; }
   }
 }
 
-fn copy_site(b: ir::Bundle, r: Rewritten, node: ir::Node, copy_d: integer, f: ir::Function) -> ir::Node {
+fn copy_site(b: ir::Bundle, node: ir::Node, copy_d: integer, f: ir::Function) -> ir::Node {
   match node {
     NdCall { def_nr, args } => {
       if def_nr != copy_d || len(args) != 3 || !scope_args::is_value_branch(args[0]!) || !writable(args[0]!) {
@@ -89,10 +83,7 @@ fn copy_site(b: ir::Bundle, r: Rewritten, node: ir::Node, copy_d: integer, f: ir
         _ => {}
       }
       if copy_hands_off(b, args[1]!, f) || appends_to_element(b, args[1]!, f) {
-        if r.why == "" {
-          r.why = "join_rewrite::write_out_joined_copies: a join copied into a droppable container (handoff::copy_hands_off)";
-        }
-        return node;
+        return sink(b, args[0]!, copy_d, args[1]!, args[2]!, f);
       }
       // No release to hand over, but the store a bare call arm mints still needs an owner.
       ir::NdCall { def_nr: copy_d, args: [own_calls(b, args[0]!, f), args[1]!, args[2]!] }
@@ -121,17 +112,47 @@ fn writable(tail: ir::Node) -> boolean {
   }
 }
 
-// A record type (through `base()`), or a vector's element record, with a drop cascade: the
-// stand-in for `Data::type_owns_droppable_anywhere`, whose types synthesize one.
-fn droppable(b: ir::Bundle, t: ir::TypeT) -> boolean {
-  bt = scope_fn::base(t);
-  d = own::heap_def_nr(bt);
-  if d != null {
-    return opt_names::drop_cascade_nr(b, d!) != opt_names::NONE;
+// `JoinCopy::sink` — the copy written out per arm: each arm's tail copied into `dest` itself,
+// a bare minting call through its owner block, a value arm made a statement block.
+fn sink(b: ir::Bundle, node: ir::Node, copy_d: integer, dest: ir::Node, tp: ir::Node, f: ir::Function) -> ir::Node {
+  o = owned(b, node, f);
+  if o != null {
+    return ir::NdCall { def_nr: copy_d, args: [o!, dest, tp] };
   }
-  match bt {
-    TyVector { inner } => droppable(b, inner),
-    _ => false
+  match node {
+    NdSpan { pos, inner } => ir::NdSpan { pos: pos, inner: sink(b, inner, copy_d, dest, tp, f) },
+    NdIf { cond, t, f: e } => ir::NdIf { cond: cond, t: arm_block(sink(b, t, copy_d, dest, tp, f)), f: arm_block(sink(b, e, copy_d, dest, tp, f)) },
+    NdBlock { block } => {
+      bl = block[0];
+      if bl.name == JOIN_ARM_OWNER || bl.name == "Object" {
+        return ir::NdCall { def_nr: copy_d, args: [node, dest, tp] };
+      }
+      k = len(bl.operators);
+      ops: vector<ir::Node> = [for o2 in bl.operators { o2 }];
+      if k > 0 {
+        ops[k - 1] = sink(b, bl.operators[k - 1]!, copy_d, dest, tp, f);
+      }
+      ir::NdBlock { block: [ir::Block { name: bl.name, operators: ops, result: [ir::TyVoid], scope: bl.scope, var_size: bl.var_size }] }
+    },
+    NdInsert { items } => {
+      k = len(items);
+      if k == 0 {
+        return node;
+      }
+      out: vector<ir::Node> = [for x in items[0..k - 1] { x }];
+      out += [sink(b, items[k - 1]!, copy_d, dest, tp, f)];
+      ir::NdInsert { items: out }
+    },
+    _ => ir::NdCall { def_nr: copy_d, args: [node, dest, tp] }
+  }
+}
+
+// `arm_block` — an arm that is no block or branch becomes the statement block `sunk arm`.
+fn arm_block(arm: ir::Node) -> ir::Node {
+  match scope_fn::unspan(arm) {
+    NdBlock => arm,
+    NdIf => arm,
+    _ => ir::NdBlock { block: [ir::Block { name: "sunk arm", operators: [arm], result: [ir::TyVoid], scope: 0, var_size: 0 }] }
   }
 }
 
@@ -146,7 +167,7 @@ fn copy_hands_off(b: ir::Bundle, dest: ir::Node, f: ir::Function) -> boolean {
           return false;
         }
         match scope_fn::unspan(args[0]!) {
-          NdVar { n: cv } => { return droppable(b, scope_fn::tp(f, cv)); },
+          NdVar { n: cv } => { return opt_vr_leaves::owns_droppable(b, scope_fn::base(scope_fn::tp(f, cv))); },
           _ => { cur = args[0]!; }
         }
       },
@@ -156,10 +177,21 @@ fn copy_hands_off(b: ir::Bundle, dest: ir::Node, f: ir::Function) -> boolean {
   false
 }
 
-// port: handoff.rs fn appends_to_element
+// port: handoff.rs fn appends_to_element — `_elm_N` of a record type that owns a droppable
+// (`Data::owns_droppable`): the collection's cascade releases it.
 fn appends_to_element(b: ir::Bundle, dest: ir::Node, f: ir::Function) -> boolean {
   match scope_fn::unspan(dest) {
-    NdVar { n: dv } => scope_fn::name(f, dv).starts_with("_elm_") && droppable(b, scope_fn::tp(f, dv)),
+    NdVar { n: dv } => {
+      if !scope_fn::name(f, dv).starts_with("_elm_") {
+        return false;
+      }
+      ed = match scope_fn::base(scope_fn::tp(f, dv)) {
+        TyReference { n } => n,
+        TyEnum { n, is_ref } => if is_ref { n } else { -1 },
+        _ => -1
+      };
+      ed >= 0 && opt_vr_leaves::owns_droppable(b, ir::TyReference { n: ed, dep: [] })
+    },
     _ => false
   }
 }

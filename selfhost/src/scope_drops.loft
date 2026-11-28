@@ -2,16 +2,12 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @PLN91 — `src/scopes/drops.rs` transcribed for record locals (scope-pass-port.md step 2): the
-// hook a record's release runs, the release a reassignment owes for the record it displaces, and
-// the in-place rebuild.  A record type WITH a cascade is refused by the phase
-// (`pre_scan_refusals`), so `drop_hook` answers none for every record the scan carries; where it
-// would answer one anyway the function is refused here by name.  The vector arms
-// (`vector_rebind_release`, `vector_call_rebind`, `promoted_vector_refill`) are carried for a
-// vector whose element has no collection cascade, where each releases nothing but the displaced
-// backings' stores; a vector of droppable elements is refused by the phase, and where its
-// release is reached anyway, here by name.  `adopted_backing_detach` acts on a frame's own
-// closure records, which the phase refuses.
+// @PLN91 — `src/scopes/drops.rs` transcribed (scope-pass-port.md steps 2, 14 and 15): the hook a
+// record's or a collection's release runs, the release a reassignment owes for what it
+// displaces (a record's snapshot, a vector's displaced literal backings, a call-delivered
+// vector, a promoted vector's refill), and the in-place rebuild.  A closure record's rebuild
+// (`rebuild_releases_displaced`) and `adopted_backing_detach` act on a frame's own closure
+// records, which the phase refuses; a keyed collection's generator walk refuses by name.
 
 use ir;
 use own;
@@ -39,7 +35,6 @@ pub fn drop_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
       if subject < 0 {
         return null;
       }
-      scope_scan::refuse(s, "drops::drop_hook: a vector of droppable elements (handoff, collection_handoffs)");
       live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: subject }] };
       return ir::NdIf { cond: live, t: ir::NdCall { def_nr: cnr, args: [ir::NdVar { n: subject }] }, f: ir::NdNull };
     },
@@ -387,8 +382,45 @@ pub fn vector_call_rebind(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, 
   if len(scope_scan::list_of(s.vector_call_buffers, ov)) == 0 {
     return no_pre_post();
   }
-  scope_scan::refuse(s, "drops::vector_call_rebind: a vector of droppable elements rebound from a call");
-  no_pre_post()
+  // The value can live in any call buffer of its type (a call that reads its own destination
+  // rotates two, `OpPutRef`), so every one of them is asked.
+  want = "{scope_fn::without_deps(scope_fn::base(scope_fn::tp(f, v)))}";
+  buffers: vector<integer> = [];
+  for x in 0..scope_fn::count(f) {
+    if scope_fn::name(f, x).starts_with("__ref_") && scope_scan::in_scope(s, x) && "{scope_fn::without_deps(scope_fn::base(scope_fn::tp(f, x)))}" == want {
+      buffers += [x];
+    }
+  }
+  if len(buffers) == 0 {
+    return no_pre_post();
+  }
+  rhs = match scope_fn::unspan(stmt) { NdSet { inner } => inner, _ => ir::NdNull };
+  incoming = scope_backings::call_buffer_of(rhs, f);
+  tp = scope_fn::without_deps(scope_fn::base(scope_fn::tp(f, v)));
+  s.lift_counter += 1;
+  tmp = scope_fn::add_temp_var(f, "__vdisp_{s.lift_counter}", tp);
+  scope_scan::set_scope_of(s, tmp, s.scope);
+  s.var_order += [tmp];
+  pre: vector<ir::Node> = [scope_fn::v_set(tmp, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  for bf in buffers {
+    take: vector<ir::Node> = [scope_fn::v_set(tmp, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: v }] })];
+    if bf == incoming {
+      take += [scope_fn::v_set(bf, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+    }
+    pre += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: v }, ir::NdVar { n: bf }] }, t: ir::NdNull, f: ir::NdInsert { items: take } }];
+  }
+  post: vector<ir::Node> = [];
+  // A detached buffer is handed back the store its callee minted instead.
+  if incoming >= 0 {
+    post += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.ref_is_null, args: [ir::NdVar { n: incoming }] }, t: scope_fn::v_set(incoming, ir::NdCall { def_nr: s.ops.ref_alias, args: [ir::NdVar { n: v }] }), f: ir::NdNull }];
+  }
+  post += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: tmp }] }, t: ir::NdCall { def_nr: nr, args: [ir::NdVar { n: tmp }] }, f: ir::NdNull }];
+  for bf in buffers {
+    post += [ir::NdIf { cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: bf }, ir::NdVar { n: tmp }] }, t: ir::NdNull, f: scope_fn::v_set(bf, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }) }];
+  }
+  post += [free_ref(s, tmp)];
+  post += [scope_fn::v_set(tmp, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  PrePost { some: true, pre: pre, post: post, waits: false }
 }
 
 // port: drops.rs fn promoted_vector_refill — `@FR-H-Drop` for a vector local promoted onto the
@@ -397,11 +429,15 @@ pub fn vector_call_rebind(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, 
 // set where the statement is a clear its literal fills after.
 pub fn promoted_vector_refill(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::Node, f: ir::Function) -> PrePost {
   v = -1;
+  waits = false;
   match scope_fn::unspan(stmt) {
     NdSet { var } => { v = scope_scan::mapped(s, var); },
     NdCall { def_nr, args } => if def_nr == s.ops.clear_vector && len(args) > 0 {
       match scope_fn::unspan(args[0]!) {
-        NdVar { n } => { v = n; },
+        NdVar { n } => {
+          v = n;
+          waits = true;
+        },
         _ => { return no_pre_post(); }
       }
     },
@@ -421,6 +457,24 @@ pub fn promoted_vector_refill(s: scope_scan::Scopes, b: ir::Bundle, stmt: ir::No
     s.promoted_filled += [v];
     return no_pre_post();
   }
-  scope_scan::refuse(s, "drops::promoted_vector_refill: a promoted vector of droppable elements refilled");
-  no_pre_post()
+  elem = match scope_fn::base(scope_fn::tp(f, v)) { TyVector { inner } => own::heap_def_nr(inner), _ => null };
+  if elem == null {
+    return no_pre_post();
+  }
+  elem_kt = b.data.definitions[elem!]!.known_type;
+  tp = scope_fn::without_deps(scope_fn::base(scope_fn::tp(f, v)));
+  s.lift_counter += 1;
+  tmp = scope_fn::add_temp_var(f, "__vsnap_{s.lift_counter}", tp);
+  scope_scan::set_scope_of(s, tmp, s.scope);
+  s.var_order += [tmp];
+  pre: vector<ir::Node> = [
+    scope_fn::v_set(tmp, ir::NdNull),
+    ir::NdIf { cond: ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] }, t: ir::NdCall { def_nr: s.ops.append_vector, args: [ir::NdVar { n: tmp }, ir::NdVar { n: v }, ir::NdInt { n: elem_kt }] }, f: ir::NdNull }
+  ];
+  post: vector<ir::Node> = [
+    ir::NdIf { cond: ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: tmp }] }, t: ir::NdCall { def_nr: nr, args: [ir::NdVar { n: tmp }] }, f: ir::NdNull },
+    free_ref(s, tmp),
+    scope_fn::v_set(tmp, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })
+  ];
+  PrePost { some: true, pre: pre, post: post, waits: waits }
 }
