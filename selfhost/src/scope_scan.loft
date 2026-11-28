@@ -32,6 +32,8 @@ use scope_witness;
 use scope_handoff;
 use scope_capture_builds;
 use scope_closure_keep;
+use scope_capture_adoption;
+use scope_handles;
 
 // The definitions the pass keys on, looked up once per image.
 pub struct Ops {
@@ -1241,20 +1243,82 @@ fn scan_call(s: Scopes, b: ir::Bundle, d_nr: integer, args: vector<ir::Node>, f:
       _ => {}
     }
   }
-  // The capture arms of a closure record (`owner_slot_handoff`) are refused by name.
-  if d_nr == s.ops.set_dbref || d_nr == s.ops.free_if_distinct {
-    first = scope_fn::unspan(args[0] ?? ir::NdNull);
-    rec = match first {
-      NdVar { n } => n,
-      NdCall { def_nr: g, args: ga } => if g == s.ops.get_dbref {
-        match scope_fn::unspan(ga[0] ?? ir::NdNull) { NdVar { n } => n, _ => -1 }
-      } else {
-        -1
+  // loft#2131 — a closure record's build hands a capture to its OWNER slot
+  // (`owner_slot_handoff`): the slot takes the frame's holder, which is reset.
+  if d_nr == s.ops.set_dbref && len(args) > 2 {
+    rec = var_node(args[0]!);
+    c = var_node(args[2]!);
+    if rec >= 0 && c >= 0 {
+      oh = owner_slot_handoff(s, b, f, rec, c);
+      if oh != null {
+        ops: vector<ir::Node> = [];
+        ls: vector<ir::Node> = [];
+        post: vector<ir::Node> = [];
+        scope_args::scan_args(s, b, args, f, d_nr, ops, ls, post);
+        rec_arg = ls[0] ?? ir::NdNull;
+        c_v = mapped(s, c);
+        ops += [ir::NdCall { def_nr: d_nr, args: ls }];
+        ops += post;
+        if oh!.witness >= 0 {
+          ops += [ir::NdCall { def_nr: d_nr, args: [rec_arg, ir::NdInt { n: oh!.own }, ir::NdVar { n: oh!.witness }] }];
+          ops += [scope_fn::v_set(oh!.witness, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+        } else {
+          ops += [ir::NdCall { def_nr: d_nr, args: [rec_arg, ir::NdInt { n: oh!.own }, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] }] }];
+        }
+        for h in oh!.temps {
+          ops += [ir::NdIf {
+            cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [ir::NdVar { n: h }, ir::NdVar { n: c_v }] },
+            t: ir::NdNull,
+            f: ir::NdInsert { items: [
+              ir::NdCall { def_nr: d_nr, args: [rec_arg, ir::NdInt { n: oh!.own }, ir::NdVar { n: h }] },
+              scope_fn::v_set(h, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })
+            ] }
+          }];
+        }
+        return ir::NdInsert { items: ops };
+      }
+      // A capture with an owner witness and no owner-slot hand-off: the witness no longer
+      // holds the store the record took.
+      cw = get(s.owner_witness, mapped(s, c));
+      if scope_fn::name(f, mapped(s, rec)).starts_with("___clos_") && cw >= 0 {
+        ops: vector<ir::Node> = [];
+        ls: vector<ir::Node> = [];
+        post: vector<ir::Node> = [];
+        scope_args::scan_args(s, b, args, f, d_nr, ops, ls, post);
+        ops += [ir::NdCall { def_nr: d_nr, args: ls }];
+        ops += post;
+        ops += [scope_fn::v_set(cw, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+        return ir::NdInsert { items: ops };
+      }
+    }
+  }
+  // The release of a capture slot whose owner slot took the store: freed only where the slot
+  // holds another store, else given back to the frame's holder.
+  if d_nr == s.ops.free_if_distinct && len(args) > 1 {
+    c = var_node(args[1]!);
+    match scope_fn::unspan(args[0]!) {
+      NdCall { def_nr: g, args: ga } => if g == s.ops.get_dbref && c >= 0 && len(ga) > 1 {
+        rec = var_node(ga[0]!);
+        at = match scope_fn::unspan(ga[1]!) { NdInt { n } => n, _ => -1 };
+        if rec >= 0 && at >= 0 && record_field_pos(s, b, f, rec, scope_fn::name(f, mapped(s, c))) == at {
+          oh = owner_slot_handoff(s, b, f, rec, c);
+          if oh != null {
+            rec_v = mapped(s, rec);
+            if scope_fn::has(s.prefix_released, rec_v) {
+              return ir::NdNull;
+            }
+            c_v = mapped(s, c);
+            back = if oh!.witness >= 0 { oh!.witness } else { oh!.temps[0]! };
+            held = ir::NdCall { def_nr: g, args: [ir::NdVar { n: rec_v }, ir::NdInt { n: oh!.own }] };
+            return ir::NdIf {
+              cond: ir::NdCall { def_nr: s.ops.distinct_store, args: [held, ir::NdVar { n: c_v }] },
+              t: ir::NdCall { def_nr: s.ops.free_ref, args: [held] },
+              f: scope_fn::v_set(back, held)
+            };
+          }
+        }
       },
-      _ => -1
-    };
-    if rec >= 0 && scope_fn::name(f, mapped(s, rec)).starts_with("___clos_") {
-      refuse(s, "scan::owner_slot_handoff: a closure record's capture (capture_adoption)");
+      _ => {}
     }
   }
   preamble: vector<ir::Node> = [];
@@ -1539,4 +1603,91 @@ fn tail_vars_through_arms(v: ir::Node, out: vector<integer>) {
     },
     _ => {}
   }
+}
+
+// The variable a node is (spans peeled), -1 for another node.
+fn var_node(n: ir::Node) -> integer {
+  match scope_fn::unspan(n) {
+    NdVar { n: x } => x,
+    _ => -1
+  }
+}
+
+// The frame's holders of a capture's store an owner-slot hand-off takes: the owner witness, or
+// the join arms' and the adopted literal buffers' temps.
+pub struct OwnerHolders {
+  pub own: integer,
+  pub witness: integer,
+  pub temps: vector<integer>
+}
+
+// port: scan.rs fn record_field_pos — the byte position of `field` in record local `rec`'s
+// record, -1 for none.
+fn record_field_pos(s: Scopes, b: ir::Bundle, f: ir::Function, rec: integer, field: text) -> integer {
+  r = mapped(s, rec);
+  record = match scope_fn::base(scope_fn::tp(f, r)) {
+    TyReference { n } => n,
+    _ => -1
+  };
+  if record < 0 || scope_capture_builds::attr(b, record, field) < 0 {
+    return -1;
+  }
+  t = b.types[b.data.definitions[record]!.known_type];
+  if t == null {
+    return -1;
+  }
+  fields: vector<ir::DbField> = match t!.parts[0] {
+    PtStruct { fields } => fields,
+    PtEnumValue { fields } => fields,
+    _ => []
+  };
+  for fld in fields {
+    if fld.name == field {
+      return if fld.position == 65535 { -1 } else { fld.position };
+    }
+  }
+  -1
+}
+
+// port: scan.rs fn owner_slot_handoff — loft#2131: where the build of closure record local
+// `rec` hands capture `c` to its OWNER slot, the slot's position and the frame's holders.
+fn owner_slot_handoff(s: Scopes, b: ir::Bundle, f: ir::Function, rec: integer, c0: integer) -> OwnerHolders? {
+  rec_v = mapped(s, rec);
+  c = mapped(s, c0);
+  if !scope_fn::name(f, rec_v).starts_with("___clos_") {
+    return null;
+  }
+  record = match scope_fn::base(scope_fn::tp(f, rec_v)) {
+    TyReference { n } => n,
+    _ => -1
+  };
+  if record < 0 || !scope_capture_adoption::owner_slot_takes(b, f, s.capture_build_backing, record, c) {
+    return null;
+  }
+  own_pos = record_field_pos(s, b, f, rec, "{scope_fn::name(f, c)}__own");
+  if own_pos < 0 {
+    return null;
+  }
+  temps = scope_capture_adoption::join_arm_holders(f, s.capture_build_backing, c);
+  buffers: vector<integer> = [];
+  for e in s.capture_build_backing.buffer_adopted {
+    hit = false;
+    for pr in e.items {
+      if mapped(s, pr / 65536) == rec_v && mapped(s, pr % 65536) == c {
+        hit = true;
+      }
+    }
+    bm = mapped(s, e.v);
+    if hit && !scope_fn::has(temps, bm) {
+      buffers += [bm];
+    }
+  }
+  for x in scope_handles::sorted(buffers) {
+    temps += [x];
+  }
+  w = get(s.owner_witness, c);
+  if w < 0 && len(temps) == 0 {
+    return null;
+  }
+  OwnerHolders { own: own_pos, witness: w, temps: temps }
 }
