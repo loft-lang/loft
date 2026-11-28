@@ -1,7 +1,36 @@
-diff --git b/src/scopes/backings.rs a/src/scopes/backings.rs
-index 4e86da598..ad09f8fdb 100644
---- b/src/scopes/backings.rs
-+++ a/src/scopes/backings.rs
+diff --git a/src/keys.rs b/src/keys.rs
+index 2e7d80e650..bf9fcca7a9 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -3341,24 +3341,6 @@ pub fn arm_frees_param_deps() -> bool {
+     *ON.get_or_init(|| env_set("LOFT_ARM_FREES_PARAM_DEPS"))
+ }
+ 
+-/// `LOFT_NO_DELIVERED_EVERY_RETURN=1` — a callee whose TAIL hands its parameter back counts as
+-/// delivering the construction it was handed even where an earlier `return` answers a record of
+-/// its own, as before loft#2674.
+-#[must_use]
+-pub fn delivered_every_return() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_EVERY_RETURN"))
+-}
+-
+-/// `LOFT_NO_DELIVERED_FIRST_ADOPT=1` — a first bind of a call that delivers its construction
+-/// hoists the construction out and copies the answer, as before loft#2674, while the
+-/// construction's buffer is still paired with the binding as its adopter: the buffer leaks.
+-#[must_use]
+-pub fn delivered_first_adopt() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_FIRST_ADOPT"))
+-}
+-
+ /// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local
+ /// the body assigns copies even where the source IS that buffer, as before loft#2673: the
+ /// re-mint clears the record and the copy reads the cleared record back.
+diff --git a/src/scopes/backings.rs b/src/scopes/backings.rs
+index 4e86da5986..ad09f8fdbd 100644
+--- a/src/scopes/backings.rs
++++ b/src/scopes/backings.rs
 @@ -252,26 +252,6 @@ pub(super) fn delivered_work_ref(rhs: &Value, function: &Function, data: &Data)
          let Value::Var(returned) = body else {
              return None;
@@ -29,10 +58,10 @@ index 4e86da598..ad09f8fdb 100644
          // The argument is the construction itself while the scan reads it — its block, whose
          // tail is the work-ref — or, once lifted, that work-ref by name.
          def.returned.depend().iter().find_map(|&k| {
-diff --git b/src/scopes/scan.rs a/src/scopes/scan.rs
-index 7ae987a0c..9c233eca8 100644
---- b/src/scopes/scan.rs
-+++ a/src/scopes/scan.rs
+diff --git a/src/scopes/scan.rs b/src/scopes/scan.rs
+index 9a19baef3c..5e4d5b619c 100644
+--- a/src/scopes/scan.rs
++++ b/src/scopes/scan.rs
 @@ -310,14 +310,6 @@ impl Scopes<'_> {
                  let first = !self
                      .var_scope
@@ -56,31 +85,3 @@ index 7ae987a0c..9c233eca8 100644
                              && !crate::env_once!(
                                  std::env::var_os("LOFT_NO_SET_PREAMBLE_HOIST").is_some()
                              )
-diff --git a/src/keys.rs b/src/keys.rs
---- a/src/keys.rs
-+++ b/src/keys.rs
-@@ -3340,24 +3340,6 @@
- pub fn renamed_arm_merge() -> bool {
-     static ON: OnceLock<bool> = OnceLock::new();
-     *ON.get_or_init(|| !env_set("LOFT_NO_RENAMED_ARM_MERGE"))
--}
--
--/// `LOFT_NO_DELIVERED_EVERY_RETURN=1` — a callee whose TAIL hands its parameter back counts as
--/// delivering the construction it was handed even where an earlier `return` answers a record of
--/// its own, as before loft#2674.
--#[must_use]
--pub fn delivered_every_return() -> bool {
--    static ON: OnceLock<bool> = OnceLock::new();
--    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_EVERY_RETURN"))
--}
--
--/// `LOFT_NO_DELIVERED_FIRST_ADOPT=1` — a first bind of a call that delivers its construction
--/// hoists the construction out and copies the answer, as before loft#2674, while the
--/// construction's buffer is still paired with the binding as its adopter: the buffer leaks.
--#[must_use]
--pub fn delivered_first_adopt() -> bool {
--    static ON: OnceLock<bool> = OnceLock::new();
--    *ON.get_or_init(|| !env_set("LOFT_NO_DELIVERED_FIRST_ADOPT"))
- }
- 
- /// `LOFT_NO_SELF_COPY_GUARD=1` — a return copied into a buffer that pass 1 renamed onto a local

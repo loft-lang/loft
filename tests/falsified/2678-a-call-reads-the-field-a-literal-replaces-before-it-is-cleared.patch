@@ -1,8 +1,8 @@
-diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
-index b5bf39a22..a59592563 100644
---- b/src/parser/vectors.rs
-+++ a/src/parser/vectors.rs
-@@ -5861,15 +5861,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
+index 9344fa695a..4f9fdd0056 100644
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
+@@ -5862,15 +5862,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
      ///   the destination (loft#2397);
      /// * the destination's own root reached through an element step that may be the same
      ///   element — another index variable, or an index the statement cannot name
@@ -19,14 +19,14 @@ index b5bf39a22..a59592563 100644
      ///
      /// A construction slot (an inline-ref element) is the build's own record, not a read.
      /// Over-wide costs a temp or a buffer, never a wrong answer: a sibling element read
-@@ -5913,35 +5905,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+@@ -5914,35 +5906,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
          };
          let exact =
              |s: &[Option<PlaceStep>]| s == steps.as_slice() && s.iter().all(Option::is_some);
 -        let loft_fn = |d: u32| {
 -            let def = self.data.def(d);
 -            !def.name().starts_with("Op")
--                && !(matches!(def.code(), Value::Null) && !def.rust().is_empty())
+-                && (!matches!(def.code(), Value::Null) || def.rust().is_empty())
 -        };
 -        // A function argument naming a place that may hold the destination: a prefix of it.
 -        // An EXACT prefix of a destination named in full, inside a part that is itself a
