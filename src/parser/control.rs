@@ -13136,10 +13136,35 @@ impl Parser {
         }
         let rec_tp = self.append_elem_tp(elm);
         let orig = std::mem::replace(tail, Value::Null);
+        // `@FR-F-Ret`, loft#2694 — a local that may BE the buffer (`x = if k == 0 { mk(32) }
+        // else { x }`, the call arm delivering into the buffer) is already where the copy would
+        // put it on that run: cleared first, the copy read the cleared buffer back, `[]`.  The
+        // copy runs only where the two are distinct stores, as a record's does (loft#2673).
+        // Asked of the STORES at run time, not of the local's borrow list: a call arm's buffer
+        // is substituted onto the return buffer after the list was written (`["__ref_1"]` where
+        // the arm fills `__retbuf`), and for a local that is never the buffer the test is
+        // always true, so the copy runs as before.
+        let src = if let Value::Var(s) = orig.unspan() {
+            Some(*s)
+        } else {
+            None
+        };
+        let may_be_buffer = src.is_some_and(|s| s != w);
         let clear = self.cl("OpClearVector", &[Value::Var(w)]);
         let append = self.cl("OpAppendVector", &[Value::Var(w), orig, Value::Int(rec_tp)]);
+        let copy = if may_be_buffer && let Some(s) = src {
+            vec![v_if(
+                self.cl("OpDistinctStore", &[Value::Var(s), Value::Var(w)]),
+                Value::Insert(vec![clear, append]),
+                Value::Null,
+            )]
+        } else {
+            vec![clear, append]
+        };
+        let mut ops = copy;
+        ops.push(Value::Var(w));
         *tail = crate::data::v_block(
-            vec![clear, append, Value::Var(w)],
+            ops,
             Type::Vector(Box::new(elm.clone()), Deps::frame1(w)),
             "one_buffer_vec_copy",
         );
