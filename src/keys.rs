@@ -1805,6 +1805,17 @@ pub fn arm_scope_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
 }
 
+/// `@FR-O-Buffer` in the C writer's joined rebind (loft#2686): a promoted return buffer — an
+/// argument — frees the store it displaces only with its entry witness and never the store the
+/// caller handed, as the bytecode writer's `re_bind` and the C writer's `displacing_rebind` do —
+/// **DEFAULT ON**, `--native`.  Opt OUT with `LOFT_NO_C_JOIN_ENTRY_GUARD`: the joined rebind
+/// frees it bare again and a buffer rebound from a call that may answer its argument releases
+/// the caller's store, which the caller frees a second time (`LOFT_STRICT_STORES=1`).
+pub fn c_join_entry_guard() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_C_JOIN_ENTRY_GUARD"))
+}
+
 /// `@FR-O-Buffer` at an exit that answers the promoted local (loft#2684): a local the
 /// returned ARGUMENT — the local renamed onto the caller's return buffer — names in its deps
 /// is released by store identity, `OpFreeRefIfDistinct(local, buffer)`, where the deps alone
