@@ -315,7 +315,9 @@ the records, beside `ReBind::copies_into_fresh`); `LOFT_NO_FRESH_PROTECTS_OLD=1`
 and the copy's source-free and the stashed free both release it.  A literal buffer adopted by
 an owning local that is assigned again takes no scope-exit free (the local releases its store
 on every path) — a local renamed onto the return buffer included, which releases at exit
-through its entry witness; `LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing.  Such a renamed
+through its entry witness, and a local the exit returns, which the return releases;
+`LOFT_NO_REBOUND_ADOPTER_DISARM=1` keeps the pairing, `LOFT_NO_RETURNED_ADOPTER_DISARM=1` the
+returned local's.  Such a renamed
 buffer, rebound from a call that reads it, copies the call's answer where the copy lands in a
 fresh store (`re_arm`); `LOFT_NO_BUFFER_FRESH_COPY=1` binds it plainly, aliasing what the call
 answered.  A branch arm delivering a vector local into the return buffer frees only the

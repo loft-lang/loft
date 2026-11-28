@@ -867,6 +867,14 @@ analysis directly (the certifier sidesteps it).
   loop's literal keeps the pairing, rebuilt in place each pass and freed once.  Guard
   `loft-suite/rules/ownership/O-Buffer/2688-…`.
 
+- **A returned adopter of a delivered literal releases it once (`O-Buffer`, `O-Owner`)** — an
+  owning local assigned more than once releases every store it adopts, at its rebind or at
+  its own release, so the literal's buffer takes no exit free.  A local the exit RETURNS is
+  released by the return (handed out, or freed by identity against the value returned), not
+  by the scope sweep, and was read as unreleased: `x = id(P { … }); x = mk(…); alt(x) ?? x`
+  kept the buffer's free guarded against `x`, which the rebind had made distinct.  Guard
+  `loft-suite/rules/ownership/O-Buffer/a-returned-adopter-of-a-delivered-literal-…`.
+
 This area's "falsifying programs" are the store-lifetime bugs themselves — each is a
 program where the derived-free invariant (O-Derived) or completeness (O-Complete) fails
 and a store leaks, double-frees, or a backend diverges. The area is **formal when OPEN
