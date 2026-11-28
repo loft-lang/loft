@@ -478,9 +478,10 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
           ob.result = [ir::TyOptional { inner: el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]) }];
           return ir::NdBlock { block: [ob] };
         }
-        // (A DENSE local that views another local, `e = vv[0]; e` — `Bind` on the first pass — is
-        // copied in where present, as a nullable one is, its store not its own to free.)
-        vtl = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdVar { n: vtv } => if !vars.vars[vtv].argument && el_vars::tp(vars, vtv) is TyVector && el_ex_copy::views_a_local(vars, vtv) { vtv } else { -1 }, _ => -1 } } else { -1 };
+        // (A local that views another local, `e = vv[0]; e` — `Bind` on the first pass — is
+        // copied in where present, as a nullable one is, its store not its own to free; dense or
+        // `vector<T>["vv"]?`, an element read of a vector of vectors.)
+        vtl = if len(ob.operators) > 0 { match el_ir::unspan(ob.operators[-1]) { NdVar { n: vtv } => if !vars.vars[vtv].argument && el_types::base(el_vars::tp(vars, vtv)) is TyVector && el_ex_copy::views_a_local(vars, vtv) { vtv } else { -1 }, _ => -1 } } else { -1 };
         if vtl >= 0 && nrow >= 0 && attr_nr(el::def(e, d), "__retbuf") >= 0 && el_ex_copy::returns_in(mids) == 0 {
           b = ir::NdVar { n: rb };
           copy = ir::NdInsert { items: [el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, ir::NdVar { n: vtl }, ir::NdInt { n: nrow }]), b] };
