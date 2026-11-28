@@ -174,7 +174,12 @@ off any other parameter (`h.link`) names the record that slot holds, a store of 
 the holder's: a callee answering it beside a fresh store answers `JoinSlot`, and the caller
 reads the answer as what its records know that slot of the argument holds — so a join whose
 witness is the holder adopts the record, and the two holders' frees are one store's
-(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  Inside
+(`@FR-F-Ret`; `LOFT_RECORDS_NO_STORED_REF_PARAM=1` reads it as unknown).  A callee that answers
+its hidden buffer on one path and an argument on another (`if … { return P { … }; } p`)
+answers `BufArg`: where the call hands the buffer null, the argument's store, borrowed, or a fresh
+store the answer owns, so a dropped answer the callee minted is a leak the records see; handed a
+live buffer it is not followed (loft#2677; `LOFT_RECORDS_NO_BUF_ARG=1` reads it as unknown
+everywhere).  Inside
 the callee such a record is judged only where it is answered: who owns a field's value is not
 one fact here (a record a stored reference names, a generator a hand-off flag guards).
 A fn-ref a callee hands

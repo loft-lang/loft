@@ -944,13 +944,18 @@ enum Summary {
     /// Fresh on some paths, the record the i-th argument's slot names on others
     /// (`h.link ?? S { … }`).
     JoinSlot(u16, i32),
+    /// The hidden buffer (the first index) filled — a fresh store where the caller handed it
+    /// null — on some paths, the second argument's store on others: `if … { return P { … }; } p`
+    /// (loft#2677).  Read as `Unknown`, a dropped answer the callee minted was followed by
+    /// nothing, and its leak went unreported.
+    BufArg(u16, u16),
     /// Not followed.
     Unknown,
 }
 
 impl Summary {
     fn join(self, other: Summary) -> Summary {
-        use Summary::{Arg, Args, Bottom, Buf, Fresh, Join, JoinSlot, Slot, Unknown};
+        use Summary::{Arg, Args, Bottom, Buf, BufArg, Fresh, Join, JoinSlot, Slot, Unknown};
         let bit = |i: u16| if i < 32 { Some(1u32 << i) } else { None };
         // Every rule naming an argument index names ONE index on both sides (or collects them
         // in `Args`): the answer does not depend on the order the returns are met in.
@@ -966,6 +971,9 @@ impl Summary {
             (Buf(i), Arg(j)) | (Arg(j), Buf(i)) if i == j => Buf(i),
             (Fresh, Arg(i) | Buf(i) | Join(i)) | (Arg(i) | Buf(i) | Join(i), Fresh) => Join(i),
             (Join(i), Arg(j) | Buf(j)) | (Arg(j) | Buf(j), Join(i)) if i == j => Join(i),
+            (Buf(b), Arg(a)) | (Arg(a), Buf(b)) if b != a && buf_arg_summary() => BufArg(b, a),
+            (BufArg(b, a), Buf(c)) | (Buf(c), BufArg(b, a)) if b == c => BufArg(b, a),
+            (BufArg(b, a), Arg(c)) | (Arg(c), BufArg(b, a)) if a == c => BufArg(b, a),
             (Fresh, Slot(i, o) | JoinSlot(i, o)) | (Slot(i, o) | JoinSlot(i, o), Fresh) => {
                 JoinSlot(i, o)
             }
@@ -975,6 +983,12 @@ impl Summary {
             _ => Unknown,
         }
     }
+}
+
+/// `LOFT_RECORDS_NO_BUF_ARG=1` reads a callee answering its buffer or an argument as `Unknown`
+/// again, as before loft#2677.
+fn buf_arg_summary() -> bool {
+    !crate::env_once!(std::env::var_os("LOFT_RECORDS_NO_BUF_ARG").is_some())
 }
 
 /// One record per creation site.

@@ -895,6 +895,30 @@ impl Scopes<'_> {
             }
             Value::Drop(inner) => {
                 let scanned = self.scan(inner, function, data);
+                // loft#2677 — the scanned value may carry its source position: a `Span` around
+                // the `Insert` a lifted argument made (`visit(t, []);`, the vector literal hoisted)
+                // hid the shape below, so the discarded call's owned result was never lifted
+                // and nothing freed it, one record per evaluation.  The position stays on the
+                // final value, as `scan_set`'s flatten keeps it (loft#1884).
+                // `LOFT_NO_DROP_SPAN_PEEL=1` leaves the span in place.
+                let scanned = match scanned {
+                    Value::Span(b)
+                        if matches!(&b.1, Value::Insert(ops) if !ops.is_empty())
+                            && !crate::env_once!(
+                                std::env::var_os("LOFT_NO_DROP_SPAN_PEEL").is_some()
+                            ) =>
+                    {
+                        let (pos, inner) = *b;
+                        let Value::Insert(mut ops) = inner else {
+                            unreachable!("matched as an Insert above")
+                        };
+                        if let Some(last) = ops.pop() {
+                            ops.push(Value::Span(Box::new((pos, last))));
+                        }
+                        Value::Insert(ops)
+                    }
+                    other => other,
+                };
                 // #490 — a discarded statement result that owns a fresh store
                 // (`json_parse(x);`, `mk();`) lowers to a plain stack-pop
                 // (`FreeStack` on the interpreter, a dropped Rust return value

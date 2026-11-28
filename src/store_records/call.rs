@@ -1498,6 +1498,32 @@ impl Run<'_> {
                     corr: [k].into(),
                 }
             }
+            // loft#2677 — handed a NULL buffer, the callee mints the record it answers on that
+            // path, or answers the argument's store, borrowed: the answer owns only what the
+            // callee made.  Handed a live buffer the answer is the buffer or the argument, a
+            // store this frame already follows by another name, and it stays not followed.
+            Summary::BufArg(buf, arg)
+                if vals
+                    .get(buf as usize)
+                    .is_none_or(|v| v.pts.iter().all(|p| *p == Pt::Null)) =>
+            {
+                let mut pts = vals
+                    .get(arg as usize)
+                    .map(|v| v.pts.clone())
+                    .unwrap_or_default();
+                let mut corr = BTreeSet::new();
+                let site = self.site(node, Origin::Call(d));
+                let minted = Self::fresh(&mut s, site);
+                pts.insert(Pt::Store(minted));
+                corr.insert(minted);
+                // A `-> T?` callee may answer null instead, as `Fresh` says: the stores are
+                // named only where the answer is present.
+                if matches!(def.returned(), crate::data::Type::Optional(_)) {
+                    pts.insert(Pt::Null);
+                }
+                Val { pts, corr }
+            }
+            Summary::BufArg(..) => Val::unknown(),
             // The argument's store, BORROWED: the answer owns none of it, so a copy or a join
             // guard that consumes what its value owns leaves it with the argument's owner.
             Summary::Arg(i) => vals.get(i as usize).map_or_else(Val::unknown, |v| Val {

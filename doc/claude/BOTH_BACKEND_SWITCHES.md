@@ -308,6 +308,11 @@ paired with the binding — one leaked record per first bind.  Only a callee who
 hands the parameter back delivers it; **`LOFT_NO_DELIVERED_EVERY_RETURN=1`** reads the tail
 alone, so a rebind from `if p.v > 3 { return P { … }; } p` adopts plainly and the run answering
 the fresh record leaves the literal to nobody.  Guards `loft-suite/rules/ownership/O-Move/`.
+A discarded call whose result owns a store is bound to a temporary the scope frees, also where
+an argument was lifted ahead of it (`pick(q, [i, 2]);`, the `Insert` that lift makes arrives in
+the statement's `Span`) (`@FR-O-Derived`, loft#2677); **`LOFT_NO_DROP_SPAN_PEEL=1`** leaves the
+span in place, and the record the callee minted is owned by nobody, one per evaluation.
+Guards `loft-suite/rules/ownership/O-Derived/`.
 
 **A match lowered once per arm (`@FR-M-Once`, default-ON, both backends, parse time):** a
 guarded arm folds its guard into its own condition (`parser::control::guarded_arm`), so a
