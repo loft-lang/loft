@@ -521,7 +521,12 @@ pub fn name_expression(e: el::El, vars: el_vars::Vars, name: text, member: text,
     }
     // (An enum declared below its qualified value, `Color::Green` above `enum Color`, has no
     // definition on the first pass: the value is unknown there, the second pass resolves it.)
-    if e.first_pass && qen < 0 && !el::use_exists(e, name) {
+    // (Its qualifier leaves a stub of the enum's name, which the declaration adopts in place,
+    // keeping its number — as a type's spelling read above its declaration does.)
+    if e.first_pass && (qen < 0 || el::def(e, qen).def_type == el::DT_UNKNOWN) && !el::use_exists(e, name) {
+      if qen < 0 && looks_like_a_type(name) && e.at >= 0 && !el::pending_import_names(e, name) && el::any_source_nr(e, name) < 0 {
+        e.speculative += [el::add_def(e, name, el::pos_at(e, e.at), el::DT_UNKNOWN)];
+      }
       return ex(ir::NdNull, ir::TyUnknown { n: 0 });
     }
     if !el::use_exists(e, name) {
