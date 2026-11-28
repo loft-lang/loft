@@ -1,0 +1,130 @@
+#package
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN91 — `src/scopes/handoff.rs` begun (doc/claude/plans/91-self-host/scope-pass-port.md
+// step 14): which side of a whole-value copy stops DROPPING (`copy_moves_drop_from`), and the
+// hand-off a construction makes to the binding that adopts it (`drop_handoff_node`'s
+// construction arm, armed per statement by `convert` and early by a loop).  The hand-offs a
+// COPY makes — a whole-value copy that moves a drop (`per_path_handoffs`, `local_copy_pairs`,
+// the statement's `handoff_target`), a record copied into a buffer or a container
+// (`copy_record_handoff`, `arm_container_handoffs`) — are refused by name in the phase
+// (`copy_handoff_refusals`), so `handed_off` stays empty wherever the scan runs.
+
+use ir;
+use own;
+use scope_fn;
+use scope_scan;
+use scope_args;
+use scope_backings;
+use scope_drops;
+use opt_names;
+use scope_join_rewrite;
+
+// port: handoff.rs fn copy_moves_drop_from — the side of `v = src` that stops dropping (the
+// source), -1 where the copy moves nothing.  `Function::holds_caller_record` is read as false:
+// `caller_record_locals` is not transcribed, and the phase refuses wherever this answers a side,
+// so the superset costs a refusal, never a difference.
+pub fn copy_moves_drop_from(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integer, src: integer, buffer_dst: boolean) -> integer {
+  if v == src
+    || (!buffer_dst && scope_fn::is_argument(f, v) && !scope_drops::is_promoted_ret_buffer(s, b, f, v))
+    || scope_fn::is_captured(f, v)
+    || scope_fn::is_captured(f, src) {
+    return -1;
+  }
+  if !copy_carries_drop(b, f, v, scope_fn::tp(f, src)) {
+    return -1;
+  }
+  if scope_fn::is_argument(f, src) {
+    return -1;
+  }
+  src
+}
+
+// port: handoff.rs fn copy_carries_drop — the destination a heap record, the source copying as
+// that record (`copies_as`), the record's type with a cascade.
+pub fn copy_carries_drop(b: ir::Bundle, f: ir::Function, v: integer, src_tp: ir::TypeT) -> boolean {
+  d = own::heap_def_nr(scope_fn::tp(f, v));
+  sd = own::heap_def_nr(src_tp);
+  if d == null || sd == null {
+    return false;
+  }
+  own::copies_as(b, d!, sd!) && opt_names::drop_cascade_nr(b, d!) != opt_names::NONE
+}
+
+// The hand-offs a COPY makes, refused by name: a whole-value copy between locals that moves a
+// drop (`per_path_handoffs`, `loop_self_stopping_copies`, `local_copy_pairs`, the statement arm
+// of `drop_handoff_node`), and an `OpCopyRecord` of a record with a cascade
+// (`copy_record_handoff`, `arm_container_handoffs`).
+pub fn copy_handoff_refusals(s: scope_scan::Scopes, b: ir::Bundle, n: ir::Node, f: ir::Function) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: v, inner } => match scope_fn::unspan(inner) {
+      NdVar { n: src } => if src < scope_fn::count(f) && v < scope_fn::count(f) && copy_moves_drop_from(s, b, f, v, src, false) >= 0 {
+        scope_scan::refuse(s, "handoff::copy_moves_drop_from: a whole-value copy that moves a drop (per_path_handoffs, mint_handoff_flag)");
+      },
+      _ => {}
+    },
+    NdCall { def_nr, args } => if def_nr == s.ops.copy_record && len(args) >= 3 {
+      r = copy_record_handoff(s, b, args, f);
+      if r == -2 || (r >= 0 && r < scope_fn::count(f) && scope_join_rewrite::droppable(b, scope_fn::tp(f, r))) {
+        scope_scan::refuse(s, "handoff::copy_record_handoff: a droppable record copied into a buffer or container (arm_container_handoffs)");
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    copy_handoff_refusals(s, b, c, f);
+  }
+}
+
+// port: handoff.rs fn copy_record_handoff — the variable whose drop an `OpCopyRecord(src, dst,
+// tp)` hands over: a whole-value copy into a compiler buffer moves it as `t = s` does, a copy
+// that frees its source or lands in a droppable container moves the source's; -1 for none, -2
+// for a tuple member (`tuple_member_backing`, not transcribed).
+fn copy_record_handoff(s: scope_scan::Scopes, b: ir::Bundle, args: vector<ir::Node>, f: ir::Function) -> integer {
+  src = scope_scan::drop_bearing_source(args[0]!);
+  dst = match scope_fn::unspan(args[1]!) { NdVar { n } => n, _ => -1 };
+  if src >= 0 && dst >= 0 && (scope_fn::name(f, dst).starts_with("__ref") || scope_fn::name(f, dst) == "__retbuf" || scope_drops::is_promoted_ret_buffer(s, b, f, dst)) {
+    from = src;
+    deps = scope_fn::deps(f, src);
+    if len(deps) == 1 && deps[0]! != src && !scope_fn::is_argument(f, src) && scope_fn::name(f, deps[0]!).starts_with("__ref_") {
+      from = deps[0]!;
+    }
+    moved = copy_moves_drop_from(s, b, f, dst, from, true);
+    if moved >= 0 {
+      return moved;
+    }
+  }
+  if !copy_record_moves_source(b, args, f) {
+    return -1;
+  }
+  scope_scan::drop_bearing_source(args[0]!)
+}
+
+// port: handoff.rs fn copy_record_moves_source — the copy frees its source (`0x8000`), or lands
+// in a container whose cascade releases what it holds.
+fn copy_record_moves_source(b: ir::Bundle, args: vector<ir::Node>, f: ir::Function) -> boolean {
+  bit = match scope_fn::unspan(args[2] ?? ir::NdNull) { NdInt { n } => (n / 32768) % 2 == 1, _ => false };
+  bit || (len(args) > 1 && (scope_join_rewrite::copy_hands_off(b, args[1]!, f) || scope_join_rewrite::appends_to_element(b, args[1]!, f)))
+}
+
+// port: handoff.rs fn drop_handoff_node, its CONSTRUCTION arm — a construction block delivers its
+// work-ref's record to the binding that owns it, so the work-ref stops dropping; every arm's
+// construction where the value is a branch join.  Into `out`.
+pub fn construction_handoffs(b: ir::Bundle, n: ir::Node, f: ir::Function, out: vector<integer>) {
+  u = scope_fn::unspan(n);
+  match u {
+    NdSet { var: v, inner } => if v < scope_fn::count(f) && scope_fn::proxy_says_owned(f, v) {
+      for w in scope_backings::construction_work_refs(b, inner, f) {
+        if w != v && !scope_fn::has(out, w) {
+          out += [w];
+        }
+      }
+    },
+    _ => {}
+  }
+  for c in scope_fn::children(u) {
+    construction_handoffs(b, c, f, out);
+  }
+}

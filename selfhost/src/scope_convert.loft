@@ -17,6 +17,7 @@ use scope_scan;
 use scope_branches;
 use scope_free_vars;
 use scope_drops;
+use scope_handoff;
 use scope_backings;
 use binds;
 
@@ -51,12 +52,9 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
         ls += [scope_fn::v_set(h, ir::NdNull)];
       }
     }
-    // `s = S {…}` on a live record local is a REBUILD (`drops::in_place_rebuild`): its release
-    // pair is empty without a drop cascade (refused by the phase) and a hand-off flag (empty).
+    // `s = S {…}` on a live record local is a REBUILD (`drops::in_place_rebuild`): the snapshot of
+    // the record it displaces before, its release after.
     rebuilt = scope_drops::in_place_rebuild(s, b, v, f);
-    if rebuilt.some {
-      scope_scan::refuse(s, "drops::in_place_rebuild: a droppable record rebuilt in place");
-    }
     rebind_release = scope_drops::vector_rebind_release(s, b, v, f);
     // `vector_call_rebind`, `closure_keep_rebind` (gated frames, refused by the phase), then
     // `fnref_call_rebind`.
@@ -83,10 +81,16 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
       _ => {}
     }
     sv = scope_scan::scan(s, b, v, f);
+    ls += rebuilt.pre;
     ls += rebind_pre;
     ls += promoted_refill.pre;
-    // The hand-offs a statement arms after it is scanned: `drop_handoff_node`'s are facts about
-    // drop-bearing records, refused where they are bound; the tuple member moves follow.
+    // The hand-offs a statement arms after it is scanned: `drop_handoff_node`'s construction arm
+    // (the copy arms are refused by the phase); the tuple member moves follow.
+    handed: vector<integer> = [];
+    scope_handoff::construction_handoffs(b, v, f, handed);
+    for w in handed {
+      scope_scan::set_add(s.drop_transferred, w);
+    }
     arm_moved = tuple_member_moves(s, b, v, f);
     match sv {
       NdInsert { items } => { ls += items; },
@@ -95,6 +99,9 @@ pub fn convert(s: scope_scan::Scopes, b: ir::Bundle, bl: ir::Block, f: ir::Funct
     for member in scope_tuple_members::sorted_ints(arm_moved) {
       ls += [scope_fn::v_set(tuple_moved_flag(s, f, member), ir::NdBoolean { b: true })];
     }
+    // A record rebuilt in place re-mints no vector literal's backing (`remints_literal_backing`:
+    // a vector of droppable elements is refused by the phase), so its release follows at once.
+    ls += rebuilt.post;
     if promoted_refill.waits {
       at_end += promoted_refill.post;
     } else {

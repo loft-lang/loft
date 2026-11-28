@@ -55,9 +55,6 @@ pub fn drop_hook(s: scope_scan::Scopes, b: ir::Bundle, f: ir::Function, v: integ
   if nr == opt_names::NONE {
     return null;
   }
-  // The phase refuses every record type with a cascade; reaching one here is a type it did not
-  // see (a temp's), refused by name.
-  scope_scan::refuse(s, "drops::drop_hook: a record type with a drop cascade");
   live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] };
   ir::NdIf { cond: live, t: ir::NdCall { def_nr: nr, args: [ir::NdVar { n: v }] }, f: ir::NdNull }
 }
@@ -209,8 +206,38 @@ pub fn displaced_drop(s: scope_scan::Scopes, b: ir::Bundle, v: integer, rhs_owne
   if d == null || opt_names::drop_cascade_nr(b, d!) == opt_names::NONE {
     return no_pre_post();
   }
-  scope_scan::refuse(s, "drops::displaced_drop: a droppable record displaced");
-  no_pre_post()
+  // `rebuild_releases_displaced`: a closure record (`___clos_`) is refused by the phase.
+  if scope_fn::name(f, v).starts_with("___clos_") {
+    scope_scan::refuse(s, "drops::displaced_drop: a closure record rebuilt (closure_cascade_has_hooks)");
+    return no_pre_post();
+  }
+  kt = b.data.definitions[d!]!.known_type;
+  tp = scope_fn::without_deps(scope_fn::base(scope_fn::tp(f, v)));
+  s.lift_counter += 1;
+  disp = scope_fn::add_temp_var(f, "__disp_{s.lift_counter}", tp);
+  if !scope_fn::has(f.inline_refs, disp) {
+    f.inline_refs += [disp];
+  }
+  scope_scan::set_scope_of(s, disp, s.scope);
+  s.var_order += [disp];
+  live = ir::NdCall { def_nr: s.ops.conv_bool_from_ref, args: [ir::NdVar { n: v }] };
+  snapshot = ir::NdInsert { items: [
+    ir::NdCall { def_nr: s.ops.database, args: [ir::NdVar { n: disp }, ir::NdInt { n: kt }] },
+    ir::NdCall { def_nr: s.ops.copy_record, args: [ir::NdVar { n: v }, ir::NdVar { n: disp }, ir::NdInt { n: kt }] }
+  ] };
+  take = ir::NdIf { cond: live, t: snapshot, f: ir::NdNull };
+  flag = scope_scan::get(s.handed_off, v);
+  if flag >= 0 {
+    take = ir::NdIf { cond: ir::NdVar { n: flag }, t: ir::NdNull, f: take };
+  }
+  post: vector<ir::Node> = [];
+  hook = drop_hook(s, b, f, disp);
+  if hook != null {
+    post += [hook!];
+  }
+  post += [ir::NdCall { def_nr: s.ops.free_ref, args: [ir::NdVar { n: disp }] }];
+  post += [scope_fn::v_set(disp, ir::NdCall { def_nr: s.ops.null_ref_sentinel, args: [] })];
+  PrePost { some: true, pre: [scope_fn::v_set(disp, ir::NdNull), take], post: post, waits: false }
 }
 
 // port: drops.rs fn in_place_rebuild — `OpDatabase(v, tp)` on a local already in scope (also
