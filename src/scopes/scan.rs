@@ -382,6 +382,11 @@ impl Scopes<'_> {
                     let early = collect_drop_transferred(op, function, data, &self.per_path_pairs);
                     self.drop_transferred.extend(early);
                 }
+                // `@FR-O-Buffer`, `@FR-H-FreeTwice`, loft#2693 — a rebind inside the loop that
+                // adopts a literal buffer into a binding already live on entry leaves both
+                // names pointing at that store on the next pass, so an exit ahead of the
+                // rebind needs the pairing before the body's statements are scanned.
+                self.pre_arm_loop_literal_buffers(lp, function, data);
                 let ls = self.convert(lp, function, data, false);
                 // A local owned on entry to the loop AND at the end of its body is owned after
                 // it, whether the body ran no passes or many, so it keeps its entry — at the

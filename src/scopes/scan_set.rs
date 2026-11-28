@@ -261,6 +261,18 @@ impl Scopes<'_> {
         function: &Function,
         data: &Data,
     ) -> Option<Value> {
+        self.copy_temp_held_bind_if(ov, v, value, false, function, data)
+    }
+
+    fn copy_temp_held_bind_if(
+        &self,
+        ov: u16,
+        v: u16,
+        value: &Value,
+        stripped_to_owner: bool,
+        function: &Function,
+        data: &Data,
+    ) -> Option<Value> {
         // A local renamed onto the hidden return buffer (`RetPromotion::Rename`) is an argument
         // by slot and takes the rewrite as the local it was (loft#2372); a parameter keeps the
         // caller's value.
@@ -270,17 +282,19 @@ impl Scopes<'_> {
                 .attributes()
                 .iter()
                 .any(|a| a.hidden && a.name == function.name(v));
+        let skip_free = !stripped_to_owner && function.is_skip_free(v);
+        let has_deps = !stripped_to_owner && !function.tp(v).depend().is_empty();
         if !self.multi_assigned.contains(&ov)
             || function.is_compiler_generated(v)
             || (function.is_argument(v) && !return_buffer)
             // A witnessed local is never-free too, and takes the rewrite all the same (loft#2372).
-            || (function.is_skip_free(v) && function.owner_witness(v).is_none() && !return_buffer)
+            || (skip_free && function.owner_witness(v).is_none() && !return_buffer)
             || !matches!(
                 function.tp(v),
                 Type::Reference(_, _) | Type::Enum(_, true, _)
             )
             // @FR-O-Proxy asks copy — an owner copies the block's variable, a view keeps it
-            || !function.tp(v).depend().is_empty()
+            || has_deps
         {
             return None;
         }
@@ -1509,43 +1523,7 @@ impl Scopes<'_> {
         // once at exit), a real free where the local moved on.  Every arm of a value branch
         // minted a buffer of its own and the local adopted whichever ran, so the pairing
         // carries them all and the free declines against each.
-        if matches!(
-            function.tp(v).base(),
-            Type::Reference(_, _) | Type::Enum(_, true, _)
-        ) {
-            let mut adopted: Vec<u16> = Vec::new();
-            adopted_work_refs(unspanned_value, function, data, &mut adopted);
-            let v_scope = self.var_scope.get(&v).copied().unwrap_or(u16::MAX);
-            for av in adopted {
-                if av == v || v_scope == u16::MAX {
-                    continue;
-                }
-                // The witness must outlive the buffer, or native's `let` for it has fallen
-                // out of scope by the time the buffer's free runs — the same condition the
-                // call-shaped pairing above states at length.
-                let av_scope = self.var_scope.get(&av).copied().unwrap_or(u16::MAX);
-                if v_scope <= av_scope {
-                    self.literal_buffer.entry(av).or_insert(v);
-                } else if av_scope != u16::MAX
-                    && (self.literal_moves.contains(&ov) || self.literal_moves.contains(&v))
-                    && construction_work_ref(unspanned_value, function) == Some(av)
-                {
-                    // loft#2594 — a MOVE, not a pairing (`literal_moves_in` says when and why):
-                    // the bind takes the literal's store and the buffer is reset to null behind it.
-                    self.moved_buffer = Some((ov, av));
-                } else if av_scope != u16::MAX {
-                    let buffers = self.witness_buffer.entry(v).or_default();
-                    if !buffers.contains(&av) {
-                        buffers.push(av);
-                    }
-                    // loft#1522 — the same pairing the scope-exit free asks about, carried to
-                    // the one fact BOTH backends read for the DISPLACEMENT free.  Recorded
-                    // here so the two cannot drift: a local gains the veto exactly when it
-                    // gains the guarded scope-exit free.
-                    function.mark_buffer_witnessed(v);
-                }
-            }
-        }
+        self.pair_adopted_literal_buffers(v, ov, unspanned_value, true, function, data);
         // @PLN130 F2 — an element view that is live across a RESHAPE of its container cannot
         // stay an alias.  `remove` renumbers the positions in the container's store and the
         // view is a `DbRef` pinned to one, so it silently starts naming a different element:
@@ -2954,6 +2932,229 @@ impl Scopes<'_> {
             Value::Null,
         );
         Some((pre, vec![free]))
+    }
+
+    /// `@FR-O-Buffer`, `@FR-H-FreeTwice` — pre-arm literal-buffer pairings across `lp` for
+    /// bindings already live on entry (`var_scope`), walking statements in scan order so a bind
+    /// that first strips a view's deps into an owner (`views_to_materialise`, var/call deep-copy)
+    /// lets a later `t = Literal` in the same loop take `copy_temp_held_bind` instead of pairing a
+    /// copied work-ref (loft#2334, loft#2693).
+    pub(super) fn pre_arm_loop_literal_buffers(
+        &mut self,
+        lp: &crate::data::Block,
+        function: &mut Function,
+        data: &Data,
+    ) {
+        let mut stripped_to_owner: super::HashSet<u16> = super::HashSet::default();
+        for op in &lp.operators {
+            self.walk_pre_arm_loop(op, &mut stripped_to_owner, function, data);
+        }
+    }
+
+    fn walk_pre_arm_loop(
+        &mut self,
+        node: &Value,
+        stripped_to_owner: &mut super::HashSet<u16>,
+        function: &mut Function,
+        data: &Data,
+    ) {
+        let Value::Set(ov, rhs) = node else {
+            node.for_each_child(&mut |child| {
+                self.walk_pre_arm_loop(child, stripped_to_owner, function, data);
+            });
+            return;
+        };
+        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+        let live_on_entry = self
+            .var_scope
+            .get(&v)
+            .is_some_and(|&s| s == self.scope || self.stack.contains(&s));
+        if !live_on_entry {
+            self.walk_pre_arm_loop(rhs, stripped_to_owner, function, data);
+            return;
+        }
+        let unspanned = rhs.unspan();
+        if let Some(copy) = self.copy_temp_held_bind_if(
+            *ov,
+            v,
+            unspanned,
+            stripped_to_owner.contains(&v),
+            function,
+            data,
+        ) {
+            self.walk_pre_arm_loop(&copy, stripped_to_owner, function, data);
+            return;
+        }
+        if !matches!(function.tp(v), Type::RefVar(_))
+            && Self::is_value_branch(unspanned)
+            && matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            && let Some(sunk) = Self::sink_set_into_arms(v, *ov, unspanned, function, data, false)
+        {
+            if !function.is_skip_free(v) && !matches!(function.tp(v), Type::Optional(_)) {
+                let tails = branch_tail_vars(unspanned);
+                let all_stripped = function.tp(v).depend().iter().all(|d| {
+                    tails.iter().any(|&src| {
+                        src == *d
+                            && (src == v
+                                || src == *ov
+                                || (per_path_stops(function, data, v, src) == Some(src)
+                                    && var_copy_owns(function, data, v, src)))
+                    })
+                });
+                if all_stripped {
+                    stripped_to_owner.insert(v);
+                }
+            }
+            self.walk_pre_arm_loop(&sunk, stripped_to_owner, function, data);
+            return;
+        }
+        self.walk_pre_arm_loop(rhs, stripped_to_owner, function, data);
+        self.pair_adopted_literal_buffers(v, *ov, unspanned, false, function, data);
+        if self.set_strips_to_owner(v, *ov, rhs, function, data) {
+            stripped_to_owner.insert(v);
+        }
+    }
+
+    fn set_strips_to_owner(
+        &self,
+        v: u16,
+        ov: u16,
+        value: &Value,
+        function: &Function,
+        data: &Data,
+    ) -> bool {
+        if matches!(function.tp(v), Type::Optional(_) | Type::RefVar(_))
+            || !matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+        {
+            return false;
+        }
+        let unspanned = value.unspan();
+        if !keyed_payload_view(function, v)
+            && self.views_to_materialise.contains_key(&v)
+            && let Some(container) = base_container_var(unspanned, data).or_else(|| {
+                plain_element_read(value, data)
+                    .and_then(|plain| base_container_var(plain.unspan(), data))
+            })
+            && function
+                .tp(v)
+                .depend()
+                .iter()
+                .all(|d| *d == container || function.tp(container).depend().contains(d))
+        {
+            return true;
+        }
+        if function.is_skip_free(v) {
+            return false;
+        }
+        if let Value::Var(src) = unspanned
+            && var_copy_owns(function, data, v, *src)
+        {
+            return true;
+        }
+        if matches!(unspanned, Value::Call(_, _) | Value::CallRef(_, _))
+            && let Some(fn_nr) = crate::use_analysis::callee_of(data, self.d_nr, unspanned)
+            && data.def(fn_nr).is_loft_defined()
+            && (self.displaced_owned.contains(&ov)
+                || (!data.def(fn_nr).return_adopts_fresh_store()
+                    && crate::use_analysis::view_elision_bind(
+                        data,
+                        self.d_nr,
+                        function,
+                        v,
+                        unspanned,
+                        &crate::use_analysis::BodyFacts {
+                            read_only: &self.read_only_locals,
+                            multi_assigned: &self.multi_assigned,
+                            assigned: &self.assigned,
+                        },
+                    )
+                    .is_none()))
+        {
+            return true;
+        }
+        crate::use_analysis::callref_join_first_bind(data, self.d_nr, function.tp(v), unspanned)
+            .is_some()
+            || (!function.is_argument(v)
+                && crate::use_analysis::opaque_callref_record(
+                    data,
+                    self.d_nr,
+                    function.tp(v),
+                    unspanned,
+                )
+                .is_some())
+    }
+
+    /// `@FR-O-Buffer`, `@FR-H-FreeTwice` — record the literal work-refs `rhs` delivers to `v`
+    /// (`literal_buffer` when `v` outlives the buffer, `witness_buffer` when the buffer outlives
+    /// `v` and the bind does not move it).  `at_bind` is true at the `Set` itself, which also
+    /// arms `moved_buffer` for the statement wrapper in `scan`; false when `Value::Loop` pre-arms
+    /// the pairings for bindings already live in an enclosing scope before scanning the loop body,
+    /// so an exit lexically ahead of the rebind sees the same pairing a later iteration reaches it
+    /// with (loft#2693).
+    pub(super) fn pair_adopted_literal_buffers(
+        &mut self,
+        v: u16,
+        ov: u16,
+        rhs: &Value,
+        at_bind: bool,
+        function: &mut Function,
+        data: &Data,
+    ) {
+        if !matches!(
+            function.tp(v).base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _)
+        ) {
+            return;
+        }
+        let Some(&v_scope) = self
+            .var_scope
+            .get(&v)
+            .filter(|&&s| s == self.scope || self.stack.contains(&s))
+        else {
+            return;
+        };
+        let unspanned = rhs.unspan();
+        let mut adopted: Vec<u16> = Vec::new();
+        adopted_work_refs(unspanned, function, data, &mut adopted);
+        for av in adopted {
+            if av == v {
+                continue;
+            }
+            let Some(&av_scope) = self
+                .var_scope
+                .get(&av)
+                .filter(|&&s| s == self.scope || self.stack.contains(&s))
+            else {
+                continue;
+            };
+            if v_scope <= av_scope {
+                self.literal_buffer.entry(av).or_insert(v);
+            } else if (self.literal_moves.contains(&ov) || self.literal_moves.contains(&v))
+                && construction_work_ref(unspanned, function) == Some(av)
+            {
+                // loft#2594 — a MOVE, not a pairing (`literal_moves_in` says when and why):
+                // the bind takes the literal's store and the buffer is reset to null behind it.
+                if at_bind {
+                    self.moved_buffer = Some((ov, av));
+                }
+            } else {
+                let buffers = self.witness_buffer.entry(v).or_default();
+                if !buffers.contains(&av) {
+                    buffers.push(av);
+                }
+                // loft#1522 — the same pairing the scope-exit free asks about, carried to
+                // the one fact BOTH backends read for the DISPLACEMENT free.  Recorded
+                // here so the two cannot drift: a local gains the veto exactly when it
+                // gains the guarded scope-exit free.
+                function.mark_buffer_witnessed(v);
+            }
+        }
     }
 }
 
