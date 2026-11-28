@@ -137,6 +137,7 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         }
       }
     }
+    early_rcall = match tail { NdCall { args: eca } => match el_ir::unspan(eca[-1] ?? ir::NdNull) { NdVar { n: ecv } => if vars.vars[ecv].argument && hidden_param(e, vars, ecv) { ecv } else { -1 }, _ => -1 }, _ => -1 };
     if len(bl.operators) > 0 && !null_exits && el_ex_copy::returns_in(bl.operators[0..len(bl.operators) - 1]) > 0 {
       row = el_ex_vector::append_row(e, match el_types::base(result) { TyVector { inner } => inner, _ => ir::TyVoid });
       if tail_buf >= 0 && row >= 0 {
@@ -218,6 +219,22 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
           return code;
         }
         code = ir::NdBlock { block: [bl] };
+      } else if tail_buf < 0 && early_rcall >= 0 && row >= 0 {
+        // A tail call the first pass renamed the buffer onto (`Rename`, below): every early exit
+        // delivers into that buffer (`deliver_mid_vector_returns`) and answers it.
+        for op in bl.operators {
+          if op#index < len(bl.operators) - 1 {
+            bl.operators[op#index] = mid_deliver(e, vars, op, early_rcall, row);
+          }
+        }
+        if el_ex_copy::stray_returns(bl.operators[0..len(bl.operators) - 1], early_rcall) > 0 {
+          el::refuse(e, "a vector `return` before the body's end");
+          return code;
+        }
+      } else if tail_buf < 0 && fresh_tail_call(e, vars, tail) && el_ex_copy::returns_in(mids) == el_ex_copy::literal_returns(mids) {
+        // A tail call answering a fresh vector of its own, handed no buffer, and every early
+        // exit a fresh literal: nothing is promoted — each path returns its own store.
+        return code;
       } else if tail_buf < 0 || row < 0 || el_ex_copy::stray_returns(bl.operators[0..len(bl.operators) - 1], tail_buf) > 0 {
         el::refuse(e, "a vector `return` before the body's end");
         return code;
@@ -2974,5 +2991,18 @@ pub fn stage_exit(e: el::El, vars: el_vars::Vars, v: ir::Node, rb: integer) -> i
       ir::NdBlock { block: [b] }
     },
     _ => v
+  }
+}
+
+// A tail call answering a vector that borrows nothing (a native's fresh vector), handed no
+// `__ref_` buffer of the caller's: its answer is its own store.
+fn fresh_tail_call(e: el::El, vars: el_vars::Vars, tail: ir::Node) -> boolean {
+  match tail {
+    NdCall { def_nr: ftd, args: fta } => {
+      frt = el::def(e, ftd).returned[0] ?? ir::TyVoid;
+      lastbuf = match el_ir::unspan(fta[-1] ?? ir::NdNull) { NdVar { n: fln } => starts_with(el_vars::name_of(vars, fln), "__ref_") && el_types::base(el_vars::tp(vars, fln)) is TyVector, _ => false };
+      el_types::base(frt) is TyVector && len(el_types::deps(el_types::base(frt))) == 0 && !lastbuf && !starts_with(el::def(e, ftd).name, "Op")
+    },
+    _ => false
   }
 }
