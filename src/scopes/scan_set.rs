@@ -2620,6 +2620,8 @@ impl Scopes<'_> {
                     if crate::keys::ncc_witness_handover()
                         && (value.reads_var(v) || value.reads_var(ov))
                         && let Some(t) = super::witness::coalesce_subject_temp(value, function)
+                        // @FR-O-Proxy asks free — the temp's store moves to the witness, which
+                        // frees it; a viewing subject stays the temp's (@FR-O-Override above).
                         && function.proxy_says_owned(t)
                         && let Some(&loop_scope) = self.loops.last()
                         && self.var_scope.get(&v).is_some_and(|&vs| vs < loop_scope)
