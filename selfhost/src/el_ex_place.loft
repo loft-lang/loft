@@ -2380,7 +2380,8 @@ pub fn compound(e: el::El, vars: el_vars::Vars, op: text, target: integer, rhs: 
   // A link to a scalar (`n: &integer`) is read and written as the scalar it names, and a `τ?`
   // local steps as its `τ` does (`x += 1` is `OpAddInt`, the local keeping its `?`).
   sv = match vt {
-    TyRefVar { inner } => if el_convert::plain_scalar(inner) { inner } else { vt },
+    // (…and a link to a `τ?` local, `p = &a` with `a: integer?`, steps as `τ` too.)
+    TyRefVar { inner } => if el_convert::plain_scalar(inner) { inner } else { match inner { TyOptional { inner: rvo } => if el_convert::plain_scalar(rvo) { rvo } else { vt }, _ => vt } },
     TyOptional { inner } => if el_convert::plain_scalar(inner) { inner } else { vt },
     _ => vt
   };
