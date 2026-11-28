@@ -369,6 +369,9 @@ impl Scopes<'_> {
             function.file,
             function.name
         );
+        // Did THIS bind start a new binding of a name whose earlier one has ended
+        // (`(B-Scope)`)?  Read by the written-out join below (loft#2687).
+        let mut split_here = false;
         if let Some(s) = self.var_scope.get(&ov)
             && self.scope != *s
             && !self.stack.contains(s)
@@ -390,10 +393,12 @@ impl Scopes<'_> {
                 {
                     let nv = self.split_variable(function, ov, &[value]);
                     self.var_mapping.insert(ov, nv);
+                    split_here = true;
                 }
             } else {
                 let nv = self.split_variable(function, ov, &[value]);
                 self.var_mapping.insert(ov, nv);
+                split_here = true;
             }
         }
         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
@@ -502,7 +507,17 @@ impl Scopes<'_> {
         // handed, for `rewrite_written_out` — with every arm shape the rewrite accepts, a
         // projection arm beside an owned call included: the rescan's analyses see that
         // projection's assignment, which this scan's could not.
-        if writes_out && Self::sink_set_into_arms(v, ov, value, function, data, true).is_some() {
+        //
+        // A join that starts a NEW binding of an ended name (`split_here`) is not recorded:
+        // the rewrite turns it into the author's per-arm spelling, where `(B-Scope)` makes each
+        // arm's bind a local of that arm, and the rescan split the name inside each arm — the
+        // read after the statement then found the arm's released store (loft#2687).  Left in
+        // its value form, the rescan splits it at the statement, as this scan does.
+        let new_binding = split_here && crate::keys::split_join_statement_scope();
+        if writes_out
+            && !new_binding
+            && Self::sink_set_into_arms(v, ov, value, function, data, true).is_some()
+        {
             self.written_out
                 .push((std::ptr::from_ref(value).addr(), ov));
         }
@@ -537,6 +552,21 @@ impl Scopes<'_> {
                     let flag = self.mint_handoff_flag(function, ov);
                     self.handed_off.insert(v, flag);
                 }
+            }
+            // `@FR-B-Scope` — the new binding belongs to the STATEMENT's block, so it is
+            // declared here, ahead of the written-out arms.  Left to the `if`'s own pre-init it
+            // was declared at the scope that `if` runs in, which for a `match` is the value
+            // block holding its subject: released at that block's end, before the read
+            // (loft#2687).
+            if new_binding {
+                self.register_binding(v, function);
+                let init = if matches!(function.tp(v), Type::Text(_)) {
+                    Value::Text(String::new())
+                } else {
+                    Value::Null
+                };
+                let scanned = self.scan(&sunk, function, data);
+                return Value::Insert(vec![v_set(v, init), scanned]);
             }
             return self.scan(&sunk, function, data);
         }
