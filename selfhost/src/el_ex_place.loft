@@ -1713,6 +1713,30 @@ pub fn vector_field_bind(e: el::El, vars: el_vars::Vars, place: ir::Node, pt: ir
   }
   // `@FR-B-Ref-Uniform`: a `&` record parameter holds the record it links.
   pd = if base >= 0 { heap_def(match el_vars::tp(vars, base) { TyRefVar { inner } => inner, _ => el_vars::tp(vars, base) }) } else { -1 };
+  // (A field of a struct held inline in a local, `o.inner.xs`: the record is that struct, read
+  // off its field read's known type, and the local holds it.)
+  if base < 0 {
+    match place {
+      NdCall { def_nr: ofd, args: ofa } => {
+        if el::def(e, ofd).name == "OpGetField" && len(ofa) == 3 {
+          inr = el_ir::unspan(ofa[0]!);
+          iroot = place_root(e, inr);
+          ikt = match inr { NdCall { def_nr: ird2, args: ira } => if el::def(e, ird2).name == "OpGetField" && len(ira) == 3 { match ira[2] ?? ir::NdNull { NdInt { n: ikn } => ikn, _ => -1 } } else { -1 }, _ => -1 };
+          if iroot >= 0 && ikt >= 0 {
+            for idf in e.b.data.definitions {
+              if pd < 0 && idf.def_type == el::DT_STRUCT && idf.known_type == ikt {
+                pd = idf#index;
+              }
+            }
+            if pd >= 0 {
+              base = iroot;
+            }
+          }
+        }
+      },
+      _ => {}
+    }
+  }
   inner = match el_types::base(pt) { TyVector { inner: i } => i, _ => ir::TyUnknown { n: 0 } };
   if pd < 0 || el::def(e, pd).def_type != el::DT_STRUCT || has_keyed_field(e, pd) || x.tp is TyOptional || !(el_types::base(x.tp) is TyVector) || !el_types::is_equal(e, x.tp, ir::TyVector { inner: inner, dep: [] }) {
     why = if pd < 0 { "the record is not a local" } else if el::def(e, pd).def_type != el::DT_STRUCT { "the record is not a plain struct" } else if has_keyed_field(e, pd) { "the record has a keyed field" } else if x.tp is TyOptional { "the value is nullable" } else { "the value is {display_type_name(e, x.tp)}" };

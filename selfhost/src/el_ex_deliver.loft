@@ -181,7 +181,9 @@ pub fn vector_return(e: el::El, vars: el_vars::Vars, code: ir::Node, rb: integer
         own = el_types::with_deps(el_types::without_deps(el_types::base(result)), [rb]);
         bl.operators[-1] = el_ir::v_block([el_ir::cl(e, "OpClearVector", [b]), el_ir::cl(e, "OpAppendVector", [b, bl.operators[-1], ir::NdInt { n: row }]), b], own, "one_buffer_vec_copy");
         ps = el_ex_copy::returned_params(e, vars, bl.operators[0..len(bl.operators) - 1], rb);
-        lbt = el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(ps) > 0 { ps } else { [rb] });
+        // (An exit answering a constant's view makes the tail `Bind` — the literal copied into a
+        // buffer nobody renamed — and the body's result names no buffer.)
+        lbt = if len(ps) == 0 && cview_exits > 0 { el_types::without_deps(el_types::base(result)) } else { el_types::with_deps(el_types::without_deps(el_types::base(result)), if len(ps) > 0 { ps } else { [rb] }) };
         bl.result = [if result is TyOptional { ir::TyOptional { inner: lbt } } else { lbt }];
         // (The leading clear is the dense result's step: a `vector<T>?` tail clears on each path.)
         if !(result is TyOptional) {
